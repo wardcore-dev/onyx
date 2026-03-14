@@ -1,0 +1,3641 @@
+// lib/screens/external_group_chat_screen.dart
+import 'package:ONYX/managers/settings_manager.dart';
+import '../l10n/app_localizations.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb, compute;
+import 'package:flutter/services.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+import 'package:file_picker/file_picker.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import '../models/group.dart';
+import '../models/external_server.dart';
+import '../managers/external_server_manager.dart';
+import '../enums/media_provider.dart';
+import '../widgets/external_server_badge.dart';
+import '../widgets/message_bubble.dart';
+import '../widgets/drag_drop_zone.dart';
+import '../widgets/file_preview_dialog.dart';
+import '../widgets/album_preview_dialog.dart';
+import '../widgets/voice_confirm_dialog.dart';
+import '../widgets/avatar_crop_screen.dart';
+import '../utils/file_utils.dart';
+import '../globals.dart';
+import 'package:flutter/services.dart';
+import 'chats_tab.dart' show getPreviewText;
+
+const List<String> _randomHints = [
+  'Say something!',
+  'Type it out!',
+  'Write something...',
+  'Break the silence!',
+];
+
+List<Map<String, dynamic>> _parseJsonInIsolate(String jsonString) {
+  final data = jsonDecode(jsonString) as List<dynamic>;
+  return data.cast<Map<String, dynamic>>();
+}
+
+String _encodeJsonInIsolate(List<Map<String, dynamic>> messages) {
+  return jsonEncode(messages);
+}
+
+class ExternalGroupChatScreen extends StatefulWidget {
+  final Group group;
+  final ExternalServer server;
+  const ExternalGroupChatScreen(
+      {super.key, required this.group, required this.server});
+
+  @override
+  State<ExternalGroupChatScreen> createState() =>
+      _ExternalGroupChatScreenState();
+}
+
+class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
+    with SingleTickerProviderStateMixin {
+  
+  static final Set<String> _sessionInputAnimationsShown = {};
+
+  final TextEditingController _textCtrl = TextEditingController();
+  late FocusNode _focusNode;
+  final ScrollController _scroll = ScrollController();
+  List<Map<String, dynamic>> _messages = [];
+  final Set<String> _allMessageIds = {};
+  final Set<String> _alreadyRenderedMessageIds = {};
+  final Map<String, String> _pendingMessageIds = {};
+  bool _showScrollDownButton = false;
+  late String _inputHint;
+  bool _isConnected = false;
+  bool _isConnecting = false;
+  bool _isLoadingHistory = false;
+  bool _isDisposed = false;
+
+  late String _groupName;
+  late int _avatarVersion;
+  late String? _myRole;
+
+  Map<String, dynamic>? _replyingToMessage;
+
+  final List<Map<String, dynamic>> _wsIncomingBuffer = [];
+  Timer? _wsFlushTimer;
+  Timer? _cacheSaveTimer; 
+  bool _suppressAutoRefocus = false;
+  static const int _wsBatchSize = 50;
+  static const int _wsBatchDelayMs = 150; 
+  static const int _cacheSaveDelayMs = 500; 
+
+  bool _isVisible = false;
+  late final AnimationController _enterAnimController;
+  late final Animation<double> _enterOpacity;
+
+  late AnimationController _inputEntryController;
+  late Animation<double> _inputEntryScaleX;
+  late Animation<double> _inputEntryOpacity;
+  bool _hasInputAnimated = false;
+
+  final Set<String> _newMessageIds = {};
+
+  static const int _initialMessageLoadCount = 50;
+  static const int _messageLoadIncrement = 30;
+  int _displayedMessageCount = _initialMessageLoadCount;
+  bool _isLoadingMoreMessages = false;
+
+  bool get _canPost {
+    if (!widget.group.isChannel) return true; 
+    return _myRole == 'owner' || _myRole == 'moderator'; 
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    _groupName = widget.group.name;
+    _avatarVersion = widget.group.avatarVersion;
+    _myRole = widget.group.myRole;
+    _inputHint = _randomHints[Random().nextInt(_randomHints.length)];
+    _focusNode = FocusNode();
+    _isConnected = ExternalServerManager.isServerConnected(widget.server.id);
+
+    _fetchGroupInfo();
+
+    _loadHistoryFromCache();
+
+    if (_isConnected) {
+      debugPrint('[ext-chat] Server connected, disconnecting for fresh reconnection');
+      ExternalServerManager.disconnectWebSocket(widget.server.id);
+      _isConnected = false; 
+    }
+
+    _isConnecting = true;
+
+    debugPrint('[ext-chat] Connecting to server for fresh message history');
+    _connectToServer();
+
+    ExternalServerManager.connectedServerIds.addListener(_onConnectionChanged);
+
+    _checkBanStatus().then((isBanned) {
+      if (isBanned && mounted) {
+        
+        setState(() {
+          _messages.clear();
+          _allMessageIds.clear();
+          _alreadyRenderedMessageIds.clear();
+        });
+      }
+    });
+    _scroll.addListener(_onScroll);
+
+    _enterAnimController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _enterOpacity = CurvedAnimation(
+      parent: _enterAnimController,
+      curve: Curves.easeOut,
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() => _isVisible = true);
+        _enterAnimController.forward();
+      }
+    });
+
+    _inputEntryController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+
+    _inputEntryScaleX = Tween<double>(begin: 0.3, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _inputEntryController,
+        curve: Curves.easeInOutCubic,
+      ),
+    );
+
+    _inputEntryOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _inputEntryController,
+        curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+      ),
+    );
+
+    _checkInputAnimationState();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_focusNode.hasFocus && isDesktop) {
+        _focusNode.requestFocus();
+      }
+    });
+
+    _focusNode.addListener(() {
+      if (!_focusNode.hasFocus && mounted && isDesktop) {
+        
+        if (ModalRoute.of(context)?.isCurrent != true) return;
+        if (_suppressAutoRefocus) return;
+        _focusNode.requestFocus();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    
+    _isDisposed = true;
+
+    ExternalServerManager.connectedServerIds
+        .removeListener(_onConnectionChanged);
+
+    ExternalServerManager.unsubscribeFromGroup(widget.server.id, widget.group.id);
+
+    debugPrint('[ext-chat] Disconnecting from server on screen close');
+    ExternalServerManager.disconnectWebSocket(widget.server.id);
+
+    _wsFlushTimer?.cancel();
+    _cacheSaveTimer?.cancel();
+    _wsIncomingBuffer.clear(); 
+    _textCtrl.dispose();
+    _focusNode.dispose();
+    _scroll.dispose();
+    _enterAnimController.dispose();
+    _inputEntryController.dispose();
+    super.dispose();
+  }
+
+  void _checkInputAnimationState() {
+    final groupId = 'external_group_${widget.server.id}_${widget.group.id}';
+
+    if (!_sessionInputAnimationsShown.contains(groupId)) {
+      
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _inputEntryController.forward();
+        }
+      });
+      _sessionInputAnimationsShown.add(groupId);
+      _hasInputAnimated = true;
+    } else {
+      
+      _inputEntryController.value = 1.0;
+      _hasInputAnimated = true;
+    }
+  }
+
+  @override
+  void reassemble() {
+    super.reassemble();
+    
+    final connected = ExternalServerManager.isServerConnected(widget.server.id);
+    if (connected != _isConnected) {
+      setState(() => _isConnected = connected);
+    }
+    if (_isConnected) {
+      _subscribeWebSocket();
+      _loadHistoryFromNetwork();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ExternalGroupChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    final isSameChat = oldWidget.server.id == widget.server.id &&
+        oldWidget.group.id == widget.group.id;
+
+    if (isSameChat) {
+      
+      return;
+    }
+
+    _allMessageIds.clear();
+    _pendingMessageIds.clear();
+    _alreadyRenderedMessageIds.clear();
+    _inputHint = _randomHints[Random().nextInt(_randomHints.length)];
+    _isConnected = ExternalServerManager.isServerConnected(widget.server.id);
+    _displayedMessageCount = _initialMessageLoadCount; 
+    _loadHistoryFromCache().then((_) {
+      if (_isConnected) _loadHistoryFromNetwork();
+    });
+    if (_isConnected) {
+      _subscribeWebSocket();
+    }
+  }
+
+  void _onConnectionChanged() {
+    final connected =
+        ExternalServerManager.isServerConnected(widget.server.id);
+    if (connected != _isConnected && mounted) {
+      debugPrint('[ext-chat] Connection state changed: $_isConnected -> $connected');
+      setState(() {
+        _isConnected = connected;
+        _isConnecting = false;
+      });
+      if (connected) {
+        debugPrint('[ext-chat] Now connected, subscribing to WebSocket');
+        _subscribeWebSocket();
+        _loadHistoryFromNetwork();
+      }
+    } else if (_isConnecting && connected && mounted) {
+      
+      debugPrint('[ext-chat] Was connecting, now connected');
+      setState(() {
+        _isConnected = true;
+        _isConnecting = false;
+      });
+      _subscribeWebSocket();
+      _loadHistoryFromNetwork();
+    }
+  }
+
+  Future<void> _connectToServer() async {
+    
+    if (ExternalServerManager.isServerConnected(widget.server.id)) {
+      debugPrint('[ext-chat] Server already connected, just subscribing');
+      if (mounted) {
+        setState(() {
+          _isConnected = true;
+          _isConnecting = false;
+        });
+        _subscribeWebSocket();
+        _loadHistoryFromNetwork();
+      }
+      return;
+    }
+
+    setState(() => _isConnecting = true);
+    try {
+      debugPrint('[ext-chat] Connecting to server: ${widget.server.name} (${widget.server.id})');
+
+      final connected = await ExternalServerManager.connectWebSocket(widget.server.id);
+      debugPrint('[ext-chat] Connection result: $connected');
+
+      if (connected) {
+        await ExternalServerManager.refreshAllExternalGroups();
+        debugPrint('[ext-chat] Connected successfully to: ${widget.server.name}');
+
+        if (mounted) {
+          setState(() {
+            _isConnected = true;
+            _isConnecting = false;
+          });
+          _subscribeWebSocket();
+          _loadHistoryFromNetwork();
+        }
+      } else {
+        debugPrint('[ext-chat] WARNING: Connection failed');
+        if (mounted) {
+          setState(() => _isConnecting = false);
+        }
+      }
+    } catch (e) {
+      debugPrint('[ext-chat] Connection failed: $e');
+      if (mounted) {
+        setState(() => _isConnecting = false);
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedToConnect(e.toString()));
+      }
+    }
+  }
+
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+
+    final atBottom = _scroll.position.pixels <= 1.0;
+    if (mounted && _showScrollDownButton != !atBottom) {
+      setState(() => _showScrollDownButton = !atBottom);
+    }
+
+    if (!_isLoadingMoreMessages && _messages.length > _displayedMessageCount) {
+      final maxScroll = _scroll.position.maxScrollExtent;
+      final currentScroll = _scroll.position.pixels;
+
+      final threshold = maxScroll > 0 ? maxScroll * 0.5 : 500;
+
+      if (currentScroll > threshold) {
+        _isLoadingMoreMessages = true;
+
+        debugPrint('[lazy-load] Triggering load: scroll=$currentScroll, max=$maxScroll, threshold=$threshold');
+
+        setState(() {
+          final oldCount = _displayedMessageCount;
+          _displayedMessageCount = (_displayedMessageCount + _messageLoadIncrement)
+              .clamp(0, _messages.length);
+          _isLoadingMoreMessages = false;
+
+          debugPrint('[lazy-load] Loaded more messages: $oldCount -> $_displayedMessageCount / ${_messages.length}');
+        });
+      }
+    }
+  }
+
+  void _subscribeWebSocket() {
+    
+    ExternalServerManager.subscribeToGroup(
+      widget.server.id,
+      widget.group.id,
+      _onWsMessage,
+    );
+  }
+
+  void _onWsMessage(Map<String, dynamic> obj) {
+    
+    final type = obj['type']?.toString();
+
+    if (type == 'banned') {
+      _handleBanned(obj['reason']?.toString());
+      return;
+    }
+
+    if (type == 'kicked') {
+      
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+      return;
+    }
+
+    if (type == 'unbanned') {
+      _handleUnbanned();
+      return;
+    }
+
+    if (type == 'role_changed') {
+      final newRole = obj['role']?.toString();
+      if (newRole != null && mounted) {
+        
+        final currentGroups = ExternalServerManager.externalGroups.value;
+        final updatedGroups = currentGroups.map((g) {
+          if (g.id == widget.group.id && g.externalServerId == widget.server.id) {
+            return Group(
+              id: g.id,
+              name: g.name,
+              isChannel: g.isChannel,
+              owner: g.owner,
+              inviteLink: g.inviteLink,
+              avatarVersion: g.avatarVersion,
+              externalServerId: g.externalServerId,
+              myRole: newRole,
+            );
+          }
+          return g;
+        }).toList();
+        ExternalServerManager.externalGroups.value = updatedGroups;
+
+        setState(() {
+          _myRole = newRole;
+        });
+
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).roleChanged(newRole));
+      }
+      return;
+    }
+
+    if (type == 'group_updated') {
+      final newName = obj['name']?.toString();
+      debugPrint('[ws] group_updated: newName=$newName');
+      if (newName != null && mounted) {
+        setState(() {
+          _groupName = newName;
+        });
+        debugPrint('[ws] Updated _groupName to: $_groupName');
+
+        final currentGroups = ExternalServerManager.externalGroups.value;
+        final updatedGroups = currentGroups.map((g) {
+          if (g.id == widget.group.id && g.externalServerId == widget.server.id) {
+            return Group(
+              id: g.id,
+              name: newName,
+              isChannel: g.isChannel,
+              owner: g.owner,
+              inviteLink: g.inviteLink,
+              avatarVersion: g.avatarVersion,
+              externalServerId: g.externalServerId,
+              myRole: g.myRole,
+            );
+          }
+          return g;
+        }).toList();
+        ExternalServerManager.externalGroups.value = updatedGroups;
+      }
+      return;
+    }
+
+    if (type == 'group_msg_edited') {
+      final editedId = (obj['message_id'] ?? '').toString();
+      final newContent = obj['new_content'] as String?;
+      if (editedId.isNotEmpty && newContent != null && mounted) {
+        setState(() {
+          final idx =
+              _messages.indexWhere((m) => m['id']?.toString() == editedId);
+          if (idx >= 0) _messages[idx]['content'] = newContent;
+        });
+        _saveHistoryToCache(_messages);
+      }
+      return;
+    }
+
+    if (type == 'group_msg_deleted') {
+      final deletedId = (obj['message_id'] ?? '').toString();
+      if (deletedId.isNotEmpty && mounted) {
+        setState(() {
+          _messages.removeWhere((m) => m['id']?.toString() == deletedId);
+          _allMessageIds.remove(deletedId);
+        });
+        _saveHistoryToCache(_messages);
+      }
+      return;
+    }
+
+    if (type == 'group_avatar_updated') {
+      final newVersion = obj['avatar_version'];
+      debugPrint('[ws] group_avatar_updated: newVersion=$newVersion');
+      if (newVersion != null && mounted) {
+        final parsedVersion = newVersion is int ? newVersion : int.tryParse(newVersion.toString()) ?? _avatarVersion;
+        setState(() {
+          _avatarVersion = parsedVersion;
+        });
+        debugPrint('[ws] Updated _avatarVersion to: $_avatarVersion');
+
+        final currentGroups = ExternalServerManager.externalGroups.value;
+        final updatedGroups = currentGroups.map((g) {
+          if (g.id == widget.group.id && g.externalServerId == widget.server.id) {
+            return Group(
+              id: g.id,
+              name: g.name,
+              isChannel: g.isChannel,
+              owner: g.owner,
+              inviteLink: g.inviteLink,
+              avatarVersion: parsedVersion,
+              externalServerId: g.externalServerId,
+              myRole: g.myRole,
+            );
+          }
+          return g;
+        }).toList();
+        ExternalServerManager.externalGroups.value = updatedGroups;
+      }
+      return;
+    }
+
+    final msgId = obj['message_id']?.toString() ?? '';
+
+    if (msgId.isEmpty) return; 
+    if (_allMessageIds.contains(msgId)) {
+      debugPrint('[ext-chat] Duplicate blocked in _onWsMessage (in _allMessageIds): $msgId');
+      return;
+    }
+    if (_pendingMessageIds.containsValue(msgId)) {
+      debugPrint('[ext-chat] Duplicate blocked in _onWsMessage (in _pendingMessageIds): $msgId');
+      return;
+    }
+
+    if (_messages.any((m) => m['id']?.toString() == msgId)) {
+      debugPrint('[ext-chat] Duplicate blocked in _onWsMessage (in _messages): $msgId');
+      return;
+    }
+
+    if (_wsIncomingBuffer.any((m) => m['id']?.toString() == msgId)) {
+      debugPrint('[ext-chat] Duplicate blocked in _onWsMessage (in _wsIncomingBuffer): $msgId');
+      return;
+    }
+
+    final sender = obj['sender']?.toString() ?? '';
+    
+    if (widget.group.isChannel) {
+      
+      if (_pendingMessageIds.containsValue(msgId)) return;
+    } else {
+      
+      if (sender == widget.server.username) {
+        for (final entry in _pendingMessageIds.entries) {
+          if (entry.value == msgId) return;
+        }
+      }
+    }
+
+    final newMsg = {
+      'id': msgId,
+      'sender': sender,
+      'content': obj['content']?.toString() ?? '',
+      'timestamp':
+          obj['timestamp']?.toString() ?? DateTime.now().toIso8601String(),
+      'timestamp_ms':
+          obj['timestamp_ms'] ?? DateTime.now().millisecondsSinceEpoch,
+      'reply_to_id': obj['reply_to_id'],
+      'reply_to_sender': obj['reply_to_sender'],
+      'reply_to_content': obj['reply_to_content'],
+    };
+    _bufferIncomingMessage(newMsg);
+  }
+
+  Future<void> _handleBanned(String? reason) async {
+    
+    ExternalServerManager.disconnectWebSocket(widget.server.id);
+
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.block, color: Theme.of(dialogContext).colorScheme.error),
+            const SizedBox(width: 8),
+            Text(AppLocalizations.of(context).youHaveBeenBanned),
+          ],
+        ),
+        content: Text(
+          reason != null && reason.isNotEmpty
+              ? AppLocalizations.of(context).bannedReason(reason)
+              : AppLocalizations.of(context).bannedFromGroup,
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(AppLocalizations.of(context).ok),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      final isDesktop = !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+      if (isDesktop) {
+        
+        rootScreenKey.currentState?.hideDetailPanel();
+      } else {
+        
+        try {
+          if (Navigator.canPop(context)) {
+            Navigator.of(context).pop();
+          }
+        } catch (e) {
+          debugPrint('[ExternalGroupChat] Error closing screen after ban: $e');
+        }
+      }
+    });
+  }
+
+  Future<void> _handleUnbanned() async {
+    if (!mounted) return;
+
+    rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).unbannedReconnecting);
+
+    final isConnected = ExternalServerManager.isServerConnected(widget.server.id);
+    if (!isConnected) {
+      debugPrint('[ext-chat] Reconnecting after unban...');
+      final connected = await ExternalServerManager.connectWebSocket(widget.server.id);
+      if (connected && mounted) {
+        _subscribeWebSocket();
+        setState(() {
+          _isConnected = true;
+        });
+        _loadHistoryFromNetwork();
+      }
+    } else {
+      
+      setState(() {
+        _isConnected = true;
+      });
+      _loadHistoryFromNetwork();
+    }
+  }
+
+  Future<bool> _checkBanStatus() async {
+    try {
+      final url = '${widget.server.baseUrl}/ban-status';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${widget.server.token}'},
+      ).timeout(const Duration(seconds: 2));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final isBanned = data['banned'] == true;
+
+        if (isBanned && mounted) {
+          final reason = data['reason']?.toString();
+          _handleBanned(reason);
+          return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[ban-check] Error checking ban status: $e');
+      return false;
+    }
+  }
+
+  void _bufferIncomingMessage(Map<String, dynamic> msg) {
+    _wsIncomingBuffer.add(msg);
+    if (_wsIncomingBuffer.length >= _wsBatchSize) {
+      _flushIncomingMessages();
+    } else {
+      _wsFlushTimer?.cancel();
+      _wsFlushTimer = Timer(
+        const Duration(milliseconds: _wsBatchDelayMs),
+        _flushIncomingMessages,
+      );
+    }
+  }
+
+  void _flushIncomingMessages() {
+    _wsFlushTimer?.cancel();
+    if (_wsIncomingBuffer.isEmpty) return;
+
+    final batch = List<Map<String, dynamic>>.from(_wsIncomingBuffer);
+    _wsIncomingBuffer.clear();
+
+    if (!mounted) return;
+
+    final newMessagesToAdd = <Map<String, dynamic>>[];
+    final newIdsToAdd = <String>[];
+
+    for (final msg in batch) {
+      final id = msg['id']?.toString() ?? '';
+      
+      if (id.isNotEmpty && !_allMessageIds.contains(id)) {
+        newMessagesToAdd.add(msg);
+        newIdsToAdd.add(id);
+      }
+    }
+
+    if (newMessagesToAdd.isEmpty) return;
+
+    setState(() {
+      _messages.addAll(newMessagesToAdd);
+      _allMessageIds.addAll(newIdsToAdd);
+      _newMessageIds.addAll(newIdsToAdd);
+
+      final addedCount = newMessagesToAdd.length;
+      if (_displayedMessageCount < _messages.length) {
+        
+        _displayedMessageCount = (_displayedMessageCount + addedCount)
+            .clamp(0, _messages.length);
+      }
+    });
+
+    _scrollToBottomIfNeeded();
+    _debouncedCacheSave();
+  }
+
+  void _debouncedCacheSave() {
+    _cacheSaveTimer?.cancel();
+    _cacheSaveTimer = Timer(
+      const Duration(milliseconds: _cacheSaveDelayMs),
+      () => _saveHistoryToCache(_messages),
+    );
+  }
+
+  Future<void> _loadHistoryFromCache() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File(
+          '${dir.path}/ext_group_${widget.server.id}_${widget.group.id}_history.json');
+      if (await file.exists()) {
+        
+        final jsonString = await file.readAsString();
+        final msgs = await compute(_parseJsonInIsolate, jsonString);
+
+        final newIds = <String>{};
+        for (final m in msgs) {
+          final id = m['id']?.toString() ?? '';
+          if (id.isNotEmpty) newIds.add(id);
+        }
+
+        if (mounted && !_isDisposed) {
+          setState(() {
+            _messages = msgs;
+            _allMessageIds.clear();
+            _allMessageIds.addAll(newIds);
+            _displayedMessageCount = _initialMessageLoadCount.clamp(0, _messages.length);
+            debugPrint('[lazy-load] Cache loaded: displaying $_displayedMessageCount of ${_messages.length} messages');
+          });
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _scrollToBottom();
+          });
+        }
+      }
+    } catch (e) { debugPrint('[err] $e'); }
+  }
+
+  Future<void> _fetchGroupInfo() async {
+    try {
+      final response = await http.get(
+        Uri.parse('${widget.server.baseUrl}/group'),
+        headers: {'authorization': 'Bearer ${widget.server.token}'},
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is Map<String, dynamic>) {
+          final name = data['name']?.toString();
+          final avatarVersion = data['avatar_version'];
+          if (mounted && name != null) {
+            setState(() {
+              _groupName = name;
+              if (avatarVersion != null) {
+                _avatarVersion = avatarVersion is int ? avatarVersion : int.tryParse(avatarVersion.toString()) ?? _avatarVersion;
+              }
+            });
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[fetch-group-info] Error: $e');
+    }
+  }
+
+  Future<void> _loadHistoryFromNetwork() async {
+    if (mounted && !_isDisposed) {
+      setState(() => _isLoadingHistory = true);
+    }
+
+    try {
+      final messages = await ExternalServerManager.fetchHistory(
+        widget.server.id,
+        widget.group.id,
+      );
+      if (!mounted || _isDisposed) return;
+
+      final newMessages = <Map<String, dynamic>>[];
+      for (final m in messages) {
+        final id = m['id']?.toString() ??
+            '${m['timestamp_ms'] ?? DateTime.now().millisecondsSinceEpoch}';
+        newMessages.add({
+          'id': id,
+          'sender': m['sender'] ?? '',
+          'content': m['content'] ?? '',
+          'timestamp': m['timestamp'] ?? DateTime.now().toIso8601String(),
+          'timestamp_ms': m['timestamp_ms'] ?? 0,
+          'reply_to_id': m['reply_to_id'],
+          'reply_to_sender': m['reply_to_sender'],
+          'reply_to_content': m['reply_to_content'],
+        });
+      }
+
+      final pendingMessages = _messages.where((msg) {
+        final id = msg['id']?.toString() ?? '';
+        return id.startsWith('temp_') || msg['isPending'] == true;
+      }).toList();
+
+      final mergedMessages = <Map<String, dynamic>>[];
+      final seenIds = <String>{};
+
+      for (final m in newMessages) {
+        final id = m['id']?.toString() ?? '';
+        if (id.isNotEmpty && !seenIds.contains(id)) {
+          mergedMessages.add(m);
+          seenIds.add(id);
+        }
+      }
+
+      for (final m in pendingMessages) {
+        final id = m['id']?.toString() ?? '';
+        if (id.isNotEmpty && !seenIds.contains(id)) {
+          mergedMessages.add(m);
+          seenIds.add(id);
+        }
+      }
+
+      mergedMessages.sort((a, b) {
+        final aTime = a['timestamp_ms'] as int? ?? 0;
+        final bTime = b['timestamp_ms'] as int? ?? 0;
+        return aTime.compareTo(bTime);
+      });
+
+      final newAllMessageIds = <String>{};
+      for (final m in mergedMessages) {
+        final id = m['id']?.toString() ?? '';
+        if (id.isNotEmpty) newAllMessageIds.add(id);
+      }
+
+      setState(() {
+        _messages = mergedMessages;
+        _allMessageIds.clear();
+        _allMessageIds.addAll(newAllMessageIds);
+        _displayedMessageCount = _initialMessageLoadCount.clamp(0, _messages.length);
+        _isLoadingHistory = false;
+        debugPrint('[lazy-load] Network loaded: displaying $_displayedMessageCount of ${_messages.length} messages');
+      });
+
+      _debouncedCacheSave();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollToBottom();
+      });
+    } catch (e) {
+      debugPrint('[ext-chat] Failed to load history: $e');
+      if (mounted && !_isDisposed) {
+        setState(() => _isLoadingHistory = false);
+      }
+    }
+  }
+
+  Future<void> _saveHistoryToCache(
+      List<Map<String, dynamic>> messages) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File(
+          '${dir.path}/ext_group_${widget.server.id}_${widget.group.id}_history.json');
+      
+      final jsonString = await compute(_encodeJsonInIsolate, messages);
+      await file.writeAsString(jsonString);
+    } catch (e) { debugPrint('[err] $e'); }
+  }
+
+  Future<void> _sendMessage(String text) async {
+    if (text.trim().isEmpty) return;
+
+    if (!_canPost) {
+      rootScreenKey.currentState
+          ?.showSnack(AppLocalizations(SettingsManager.appLocale.value).onlyModsCanPost);
+      return;
+    }
+
+    final replyInfo = _replyingToMessage;
+    _textCtrl.clear();
+    setState(() => _replyingToMessage = null);
+
+    final tempId =
+        'temp_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}';
+    final now = DateTime.now();
+
+    final sender = widget.group.isChannel ? _groupName : widget.server.username;
+
+    setState(() {
+      _messages.add({
+        'id': tempId,
+        'sender': sender,
+        'content': text.trim(),
+        'timestamp': now.toIso8601String(),
+        'timestamp_ms': now.millisecondsSinceEpoch,
+        'isPending': true,
+        'reply_to_id': replyInfo?['id'],
+        'reply_to_sender': replyInfo?['sender'],
+        'reply_to_content': replyInfo?['content'],
+      });
+      _allMessageIds.add(tempId);
+      _newMessageIds.add(tempId); 
+
+      if (_displayedMessageCount < _messages.length) {
+        _displayedMessageCount = _messages.length;
+      }
+    });
+
+    _saveHistoryToCache(_messages);
+    _scrollToBottom();
+
+    if (!isDesktop) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_focusNode.hasFocus) {
+          _focusNode.requestFocus();
+        }
+      });
+    }
+
+    try {
+      final result = await ExternalServerManager.sendMessage(
+        widget.server.id,
+        widget.group.id,
+        text.trim(),
+        replyToId: replyInfo != null
+            ? int.tryParse(replyInfo['id']?.toString() ?? '')
+            : null,
+        replyToSender: replyInfo?['sender']?.toString(),
+        replyToContent: replyInfo?['content']?.toString(),
+      );
+
+      if (result != null && mounted) {
+        final serverId = result['message_id']?.toString() ?? '';
+        setState(() {
+          final idx = _messages.indexWhere((m) => m['id'] == tempId);
+          if (idx >= 0) {
+            _messages[idx] = {
+              ..._messages[idx],
+              'id': serverId,
+              'isPending': false
+            };
+            _allMessageIds.add(serverId);
+            _pendingMessageIds[tempId] = serverId;
+          }
+        });
+        _saveHistoryToCache(_messages);
+      } else if (mounted) {
+        setState(() {
+          _messages.removeWhere((m) => m['id'] == tempId);
+          _allMessageIds.remove(tempId);
+        });
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedSendMessage);
+      }
+    } catch (e) {
+      debugPrint('[ext-chat] send error: $e');
+      if (mounted) {
+        setState(() {
+          _messages.removeWhere((m) => m['id'] == tempId);
+          _allMessageIds.remove(tempId);
+        });
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).sendFailed);
+      }
+    }
+  }
+
+  void _scrollToBottom() {
+    if (!_scroll.hasClients) return;
+    final distance = _scroll.position.pixels.abs();
+    if (distance > 200) {
+      _scroll.jumpTo(0.0);
+    } else {
+      _scroll.animateTo(0.0,
+          duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+    }
+  }
+
+  void _scrollToBottomIfNeeded() {
+    if (!_scroll.hasClients) return;
+    final maxScroll = _scroll.position.maxScrollExtent;
+    final current = _scroll.position.pixels;
+    if (current >= maxScroll - 120) {
+      _scroll.animateTo(maxScroll,
+          duration: const Duration(milliseconds: 180), curve: Curves.easeOut);
+    }
+  }
+
+  void _startReply(Map<String, dynamic> msg) {
+    setState(() => _replyingToMessage = msg);
+    _focusNode.requestFocus();
+  }
+
+  void _cancelReplying() {
+    if (_replyingToMessage == null) return;
+    setState(() => _replyingToMessage = null);
+  }
+
+  void _showExternalMessageMenu(Map<String, dynamic> msg) {
+    _focusNode.unfocus();
+    final content = msg['content']?.toString() ?? '';
+    final isMedia = content.toUpperCase().startsWith('MEDIA_PROXYV1:') ||
+        (content.startsWith('http') &&
+            (content.contains('/uploads/') ||
+                content.contains('file.io') ||
+                content.contains('cdn.')));
+    final colorScheme = Theme.of(context).colorScheme;
+
+    Widget actionTile(IconData icon, String label, VoidCallback? onTap,
+        {Color? color}) {
+      final effective = color ?? colorScheme.onSurface;
+      return ListTile(
+        leading: Icon(icon,
+            color: onTap != null
+                ? effective
+                : colorScheme.onSurface.withValues(alpha: 0.3)),
+        title: Text(label,
+            style: TextStyle(
+                color: onTap != null
+                    ? effective
+                    : colorScheme.onSurface.withValues(alpha: 0.3))),
+        onTap: onTap,
+        dense: true,
+      );
+    }
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => ValueListenableBuilder<double>(
+        valueListenable: SettingsManager.elementBrightness,
+        builder: (_, brightness, __) {
+          final sheetColor = SettingsManager.getElementColor(
+              colorScheme.surfaceContainerHighest, brightness);
+          return SafeArea(
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              decoration: BoxDecoration(
+                color: sheetColor,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 8),
+                  Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: colorScheme.onSurface.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  actionTile(Icons.reply_rounded, 'Reply', () {
+                    Navigator.pop(ctx);
+                    _startReply(msg);
+                  }),
+                  if (!isMedia)
+                    actionTile(Icons.copy_rounded, 'Copy', () {
+                      Navigator.pop(ctx);
+                      Clipboard.setData(ClipboardData(text: content));
+                      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).msgCopied);
+                    }),
+                  const SizedBox(height: 4),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  List<ContextMenuButtonItem>? _buildDesktopMenuItems(Map<String, dynamic> msg) {
+    if (!isDesktop) return null;
+    final content = msg['content']?.toString() ?? '';
+    final rawSender = msg['sender']?.toString() ?? '';
+    final isMedia = content.toUpperCase().startsWith('MEDIA_PROXYV1:') ||
+        (content.startsWith('http') &&
+            (content.contains('/uploads/') ||
+                content.contains('file.io') ||
+                content.contains('cdn.')));
+    return [
+      ContextMenuButtonItem(
+        label: 'Reply',
+        onPressed: () => _startReply({
+          'id': msg['id']?.toString(),
+          'sender': rawSender,
+          'content': content,
+        }),
+      ),
+      if (!isMedia)
+        ContextMenuButtonItem(
+          label: 'Copy',
+          type: ContextMenuButtonType.copy,
+          onPressed: () {
+            Clipboard.setData(ClipboardData(text: content));
+            rootScreenKey.currentState?.showSnack(
+                AppLocalizations(SettingsManager.appLocale.value).msgCopied);
+          },
+        ),
+    ];
+  }
+
+  bool get _isReadOnlyChannel => !_canPost;
+
+  Future<String?> _uploadToProvider(
+      Uint8List bytes, String filename, MediaProvider provider) async {
+    try {
+      switch (provider) {
+        case MediaProvider.catbox:
+          final req = http.MultipartRequest(
+              'POST', Uri.parse('https://catbox.moe/user/api.php'));
+          req.fields['reqtype'] = 'fileupload';
+          req.files.add(http.MultipartFile.fromBytes('fileToUpload', bytes,
+              filename: filename));
+          final resp = await http.Response.fromStream(await req.send());
+          if (resp.statusCode == 200) {
+            final body = resp.body.trim();
+            if (body.startsWith('http')) return body;
+          }
+          debugPrint('[upload:catbox] status=${resp.statusCode} body=${resp.body.trim()}');
+          return null;
+      }
+    } catch (e, st) {
+      debugPrint('[upload:${provider.name}] exception: $e\n$st');
+      return null;
+    }
+  }
+
+  bool get _serverHasLocalMedia => widget.server.mediaProvider == 'local';
+
+  Future<String?> _uploadToServer(Uint8List bytes, String filename) async {
+    try {
+      
+      final fileSizeMB = (bytes.length / (1024 * 1024)).toStringAsFixed(2);
+      debugPrint('[ext-media] Uploading $filename, size: $fileSizeMB MB');
+
+      String getCurrentToken() {
+        final server = ExternalServerManager.servers.value
+            .cast<ExternalServer?>()
+            .firstWhere((s) => s?.id == widget.server.id, orElse: () => null);
+        return server?.token ?? widget.server.token;
+      }
+
+      Future<http.Response> doUpload(String token) async {
+        
+        final client = http.Client();
+        try {
+          final uri = Uri.parse('${widget.server.baseUrl}/data/media/upload');
+          final req = http.MultipartRequest('POST', uri);
+          req.headers['authorization'] = 'Bearer $token';
+          req.files.add(http.MultipartFile.fromBytes('file', bytes,
+              filename: filename));
+
+          debugPrint('[ext-media] Sending request to $uri');
+
+          final streamedResponse = await client.send(req).timeout(
+            const Duration(minutes: 10),
+            onTimeout: () {
+              throw TimeoutException('Upload timed out after 10 minutes');
+            },
+          );
+
+          debugPrint('[ext-media] Got response status: ${streamedResponse.statusCode}');
+
+          final response = await http.Response.fromStream(streamedResponse);
+          return response;
+        } finally {
+          
+          client.close();
+        }
+      }
+
+      var resp = await doUpload(getCurrentToken());
+      
+      if (resp.statusCode == 401) {
+        debugPrint('[ext-media] got 401, re-authenticating...');
+        final newToken = await ExternalServerManager.reAuthenticate(widget.server.id);
+        if (newToken != null) {
+          resp = await doUpload(newToken);
+        }
+      }
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body);
+        if (json['ok'] == true) {
+          final url = json['url']?.toString() ?? '';
+          String fullUrl;
+          if (url.startsWith('/')) {
+            fullUrl = '${widget.server.baseUrl}$url';
+          } else {
+            fullUrl = url;
+          }
+          debugPrint('[ext-media] upload OK, server url=$url -> fullUrl=$fullUrl');
+          return fullUrl;
+        }
+      }
+      debugPrint('[ext-media] server upload failed ${resp.statusCode}: ${resp.body}');
+      return null;
+    } catch (e) {
+      debugPrint('[ext-media] server upload error: $e');
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadFailedConnectionAborted);
+      }
+      return null;
+    }
+  }
+
+  Future<void> _sendMediaMessage(String content) async {
+    if (_isReadOnlyChannel) return;
+
+    final tempId =
+        'temp_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}';
+    final now = DateTime.now();
+    final sender = widget.group.isChannel ? _groupName : widget.server.username;
+
+    setState(() {
+      _messages.add({
+        'id': tempId,
+        'sender': sender,
+        'content': content,
+        'timestamp': now.toIso8601String(),
+        'timestamp_ms': now.millisecondsSinceEpoch,
+        'isPending': true,
+      });
+      _allMessageIds.add(tempId);
+      _newMessageIds.add(tempId);
+
+      if (_displayedMessageCount < _messages.length) {
+        _displayedMessageCount = _messages.length;
+      }
+    });
+
+    _scrollToBottom();
+
+    try {
+      final result = await ExternalServerManager.sendMessage(
+        widget.server.id,
+        widget.group.id,
+        content,
+      );
+
+      if (result != null && mounted) {
+        final serverId = result['message_id']?.toString() ?? '';
+        setState(() {
+          final idx = _messages.indexWhere((m) => m['id'] == tempId);
+          if (idx >= 0) {
+            _messages[idx] = {
+              ..._messages[idx],
+              'id': serverId,
+              'isPending': false
+            };
+            _allMessageIds.add(serverId);
+            _pendingMessageIds[tempId] = serverId;
+          }
+        });
+        _saveHistoryToCache(_messages);
+      } else if (mounted) {
+        setState(() {
+          _messages.removeWhere((m) => m['id'] == tempId);
+          _allMessageIds.remove(tempId);
+        });
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedSendMedia);
+      }
+    } catch (e) {
+      debugPrint('[ext-chat] media send error: $e');
+      if (mounted) {
+        setState(() {
+          _messages.removeWhere((m) => m['id'] == tempId);
+          _allMessageIds.remove(tempId);
+        });
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).sendFailed);
+      }
+    }
+  }
+
+  Future<void> _joinGroup() async {
+    try {
+      final res = await http.post(
+        Uri.parse('${widget.server.baseUrl}/group/join/${widget.group.inviteLink}'),
+        headers: {
+          'authorization': 'Bearer ${widget.server.token}',
+        },
+      );
+      if (res.statusCode == 200) {
+        if (mounted) {
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).joinedGroup);
+          
+          setState(() {
+            _myRole = 'member';
+          });
+        }
+      } else {
+        if (mounted) {
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedJoinGroup);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).networkError);
+      }
+    }
+  }
+
+  Future<void> _processAndUploadFile(String filePath) async {
+    if (_isReadOnlyChannel) return;
+    final bytes = await File(filePath).readAsBytes();
+    final basename = p.basename(filePath);
+
+    String? link;
+    String providerName;
+
+    if (_serverHasLocalMedia) {
+      
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadingFile(basename));
+      }
+      link = await _uploadToServer(bytes, basename);
+      providerName = 'server';
+    } else {
+      
+      const provider = MediaProvider.catbox;
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadingFile(basename));
+      }
+      link = await _uploadToProvider(bytes, basename, provider);
+      providerName = provider.name;
+    }
+
+    if (link == null) {
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadFailed);
+      }
+      return;
+    }
+
+    final fileType = FileTypeDetector.getFileType(filePath);
+    final typeMapping = {
+      'IMAGE': 'image',
+      'VIDEO': 'video',
+      'AUDIO': 'audio',
+      'DOCUMENT': 'document',
+      'COMPRESS': 'archive',
+      'DATA': 'data',
+      'FILE': 'file',
+    };
+    final type = typeMapping[fileType]?.toLowerCase();
+
+    final payload = jsonEncode({
+      'url': link,
+      'orig': basename,
+      'provider': providerName,
+      if (type != null) 'type': type,
+    });
+    final content = 'MEDIA_PROXYv1:$payload';
+    debugPrint('[ext-media] sending media: $content');
+    unawaited(_sendMediaMessage(content));
+  }
+
+  Future<void> _pickAndUploadMedia() async {
+    if (_isReadOnlyChannel) return;
+    if (kIsWeb) {
+      if (mounted) {
+        rootScreenKey.currentState
+            ?.showSnack(AppLocalizations(SettingsManager.appLocale.value).mediaUploadNotSupportedWeb);
+      }
+      return;
+    }
+    FilePickerResult? result;
+    try {
+      result = await FilePicker.platform
+          .pickFiles(type: FileType.any, allowMultiple: true);
+    } catch (e) {
+      debugPrint('[Attach] FilePicker error: $e');
+      if (mounted) rootScreenKey.currentState?.showSnack('File picker error: $e');
+      return;
+    }
+    if (result?.files.isEmpty ?? true) return;
+
+    final paths = result!.files
+        .map((f) => f.path)
+        .whereType<String>()
+        .toList();
+    if (paths.isEmpty) {
+      if (mounted) rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).localFileRequired);
+      return;
+    }
+
+    if (paths.length > 1 && paths.every(FileTypeDetector.isImage)) {
+      if (SettingsManager.confirmFileUpload.value) {
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          builder: (_) => AlbumPreviewDialog(
+            filePaths: paths,
+            onSend: () => _processAndUploadAlbum(paths),
+            onCancel: () {},
+          ),
+        );
+        return;
+      }
+      await _processAndUploadAlbum(paths);
+      return;
+    }
+
+    final path = paths.first;
+    if (!FileTypeDetector.isAllowed(path)) {
+      if (mounted) {
+        rootScreenKey.currentState
+            ?.showSnack(AppLocalizations(SettingsManager.appLocale.value).unsupportedFileType(p.extension(path)));
+      }
+      return;
+    }
+    if (SettingsManager.confirmFileUpload.value) {
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (_) => FilePreviewDialog(
+          filePath: path,
+          onSend: () => _processAndUploadFile(path),
+          onCancel: () {
+            rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).cancelled);
+          },
+        ),
+      );
+      return;
+    }
+    await _processAndUploadFile(path);
+  }
+
+  Future<void> _processAndUploadAlbum(List<String> filePaths) async {
+    if (_isReadOnlyChannel) return;
+    final limited = filePaths.take(10).toList();
+    if (limited.isEmpty) return;
+
+    final items = <Map<String, String>>[];
+
+    if (_serverHasLocalMedia) {
+      if (mounted) {
+        rootScreenKey.currentState
+            ?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadingImages(limited.length));
+      }
+      for (final filePath in limited) {
+        final basename = p.basename(filePath);
+        final bytes = await File(filePath).readAsBytes();
+        final link = await _uploadToServer(bytes, basename);
+        if (link == null) {
+          debugPrint('[ext-album] server upload failed for $basename');
+          continue;
+        }
+        items.add({'url': link, 'orig': basename, 'provider': 'server'});
+      }
+    } else {
+      const provider = MediaProvider.catbox;
+      if (mounted) {
+        rootScreenKey.currentState
+            ?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadingImages(limited.length));
+      }
+      for (final filePath in limited) {
+        final basename = p.basename(filePath);
+        final bytes = await File(filePath).readAsBytes();
+        final link = await _uploadToProvider(bytes, basename, provider);
+        if (link == null) {
+          debugPrint('[ext-album] upload failed for $basename');
+          continue;
+        }
+        items.add({'url': link, 'orig': basename, 'provider': provider.name});
+      }
+    }
+
+    if (items.isEmpty) {
+      if (mounted) rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).albumUploadFailed);
+      return;
+    }
+
+    final payload = jsonEncode({'type': 'album', 'items': items});
+    final content = 'MEDIA_PROXYv1:$payload';
+    debugPrint('[ext-album] sending album: $content');
+    unawaited(_sendMediaMessage(content));
+  }
+
+  Future<void> _startRecording() async {
+    if (_isReadOnlyChannel) return;
+    rootScreenKey.currentState?.startRecording();
+  }
+
+  Future<void> _uploadVoiceBytes(Uint8List bytes) async {
+    final recordedPath = rootScreenKey.currentState?.lastRecordedPathForUpload;
+    final ext = recordedPath != null ? p.extension(recordedPath) : '.wav';
+    final basename = 'voice_${DateTime.now().millisecondsSinceEpoch}$ext';
+    String? link;
+    String providerName;
+
+    if (_serverHasLocalMedia) {
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadingVoice);
+      }
+      link = await _uploadToServer(bytes, basename);
+      providerName = 'server';
+    } else {
+      const provider = MediaProvider.catbox;
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadingVoice);
+      }
+      link = await _uploadToProvider(bytes, basename, provider);
+      providerName = provider.name;
+    }
+
+    if (link == null) {
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).voiceUploadFailed);
+      }
+      return;
+    }
+    final payload = jsonEncode({
+      'url': link,
+      'orig': basename,
+      'provider': providerName,
+      'type': 'voice',
+    });
+    final content = 'MEDIA_PROXYv1:$payload';
+    unawaited(_sendMediaMessage(content));
+  }
+
+  Future<void> _stopRecordingAndUpload() async {
+    if (_isReadOnlyChannel) return;
+
+    await rootScreenKey.currentState?.stopRecordingOnly();
+
+    final path = rootScreenKey.currentState?.lastRecordedPathForUpload;
+    if (path == null) return;
+    final file = File(path);
+    if (!await file.exists()) return;
+    final bytes = await file.readAsBytes();
+
+    if (SettingsManager.confirmVoiceUpload.value) {
+      final durationSeconds = (bytes.length / 16000).ceil();
+      final duration = Duration(seconds: durationSeconds);
+
+      if (mounted) {
+        await showDialog<bool>(
+              context: context,
+              builder: (_) => VoiceConfirmDialog(
+                duration: duration,
+                onSend: () async {
+                  await _uploadVoiceBytes(bytes);
+                },
+                onCancel: () {
+                  if (mounted) {
+                    rootScreenKey.currentState
+                        ?.showSnack(AppLocalizations(SettingsManager.appLocale.value).voiceCancelled);
+                  }
+                },
+              ),
+            ) ??
+            false;
+      }
+    } else {
+      await _uploadVoiceBytes(bytes);
+    }
+  }
+
+  Future<void> _handleDroppedFiles(List<String> filePaths) async {
+    if (filePaths.isEmpty) return;
+
+    final existing = <String>[];
+    for (final fp in filePaths) {
+      if (await File(fp).exists()) {
+        existing.add(fp);
+      } else {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+      }
+    }
+    if (existing.isEmpty) return;
+
+    if (existing.length > 1 && existing.every(FileTypeDetector.isImage)) {
+      if (SettingsManager.confirmFileUpload.value) {
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          builder: (_) => AlbumPreviewDialog(
+            filePaths: existing,
+            onSend: () => _processAndUploadAlbum(existing),
+            onCancel: () {},
+          ),
+        );
+        return;
+      }
+      await _processAndUploadAlbum(existing);
+      return;
+    }
+
+    for (final filePath in existing) {
+      if (SettingsManager.confirmFileUpload.value) {
+        showDialog(
+          context: context,
+          builder: (_) => FilePreviewDialog(
+            filePath: filePath,
+            onSend: () => _processAndUploadFile(filePath),
+            onCancel: () {
+              rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileCancelled);
+            },
+          ),
+        );
+      } else {
+        _processAndUploadFile(filePath);
+      }
+    }
+  }
+
+  static const _clipboardChannel = MethodChannel('onyx/clipboard');
+
+  Future<void> _handlePasteFromClipboard() async {
+    try {
+      
+      List<Object?>? rawPaths;
+      try {
+        rawPaths = await _clipboardChannel.invokeMethod<List<Object?>>('getClipboardFilePaths');
+      } catch (e) { debugPrint('[err] $e'); }
+      final filePaths = rawPaths?.whereType<String>().where((s) => s.isNotEmpty).toList();
+      if (filePaths != null && filePaths.isNotEmpty) {
+        debugPrint('[clipboard] File paths from clipboard: $filePaths');
+        _handleDroppedFiles(filePaths);
+        return;
+      }
+
+      Uint8List? imageBytes;
+      try {
+        imageBytes = await _clipboardChannel.invokeMethod<Uint8List>('getClipboardImage');
+      } catch (e) { debugPrint('[err] $e'); }
+      if (imageBytes != null && imageBytes.isNotEmpty) {
+        final tempDir = await getTemporaryDirectory();
+        final tempFile = File('${tempDir.path}/clipboard_${DateTime.now().millisecondsSinceEpoch}.png');
+        await tempFile.writeAsBytes(imageBytes);
+        debugPrint('[clipboard] Image pasted from native clipboard: ${tempFile.path}');
+        _handleDroppedFiles([tempFile.path]);
+        return;
+      }
+
+      final data = await Clipboard.getData('text/plain');
+      if (data == null || data.text == null) {
+        debugPrint('[clipboard] No content in clipboard');
+        return;
+      }
+      final text = data.text!.trim();
+      final uri = Uri.tryParse(text);
+      if (uri != null && uri.scheme == 'file') {
+        final filePath = uri.toFilePath();
+        if (await File(filePath).exists()) {
+          debugPrint('[clipboard] File URI pasted: $filePath');
+          if (!mounted) return;
+
+          if (SettingsManager.confirmFileUpload.value) {
+            showDialog(
+              context: context,
+              builder: (_) => FilePreviewDialog(
+                filePath: filePath,
+                onSend: () => _processAndUploadFile(filePath),
+                onCancel: () {
+                  rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileCancelled);
+                },
+              ),
+            );
+          } else {
+            _processAndUploadFile(filePath);
+          }
+          return;
+        }
+      }
+
+      debugPrint('[clipboard] No supported format found in clipboard');
+    } catch (e, stackTrace) {
+      debugPrint('[clipboard] Error pasting from clipboard: $e');
+      debugPrint('[clipboard] Stack trace: $stackTrace');
+    }
+  }
+
+  Widget _buildInputBar(BuildContext context, ColorScheme colorScheme) {
+    return ValueListenableBuilder<double>(
+      valueListenable: SettingsManager.elementOpacity,
+      builder: (_, opacity, __) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            
+            AnimatedSize(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              child: _replyingToMessage != null
+                  ? ValueListenableBuilder<double>(
+                      valueListenable: SettingsManager.elementBrightness,
+                      builder: (_, brightness, ___) {
+                        final baseColor = SettingsManager.getElementColor(
+                          colorScheme.surfaceContainerHighest,
+                          brightness,
+                        );
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: baseColor.withValues(alpha: opacity),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: colorScheme.outlineVariant
+                                  .withValues(alpha: 0.15),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      _replyingToMessage!['senderDisplayName']
+                                              ?.toString() ??
+                                          _replyingToMessage!['sender']
+                                              ?.toString() ??
+                                          'Unknown',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: colorScheme.primary,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      getPreviewText(
+                                        (_replyingToMessage!['content'] ?? '')
+                                            .toString(),
+                                      ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: colorScheme.onSurface
+                                            .withValues(alpha: 0.7),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: _cancelReplying,
+                                visualDensity: VisualDensity.compact,
+                                splashRadius: 18,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                    minWidth: 32, minHeight: 32),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            
+            ValueListenableBuilder<double>(
+              valueListenable: SettingsManager.elementBrightness,
+              builder: (_, brightness, ___) {
+                final baseColor = SettingsManager.getElementColor(
+                  colorScheme.surfaceContainerHighest,
+                  brightness,
+                );
+                return Container(
+                  decoration: BoxDecoration(
+                    color: baseColor.withValues(alpha: opacity),
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.15),
+                      width: 1,
+                    ),
+                  ),
+              child: Row(
+                children: [
+                  
+                  ValueListenableBuilder<bool>(
+                    valueListenable: recordingNotifier,
+                    builder: (context, isRecording, _) {
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          AnimatedOpacity(
+                            duration: const Duration(milliseconds: 180),
+                            opacity: isRecording ? 1.0 : 0.0,
+                            child: isRecording
+                                ? Padding(
+                                    padding: const EdgeInsets.only(bottom: 6.0),
+                                    child: Material(
+                                      shape: const CircleBorder(),
+                                      color: colorScheme.errorContainer,
+                                      child: IconButton(
+                                        icon: Icon(
+                                          Icons.delete,
+                                          color: colorScheme.onErrorContainer,
+                                          size: 18,
+                                        ),
+                                        onPressed: () {
+                                          rootScreenKey.currentState
+                                              ?.cancelRecording();
+                                        },
+                                        visualDensity: VisualDensity.compact,
+                                        padding: EdgeInsets.zero,
+                                        splashRadius: 20,
+                                      ),
+                                    ),
+                                  )
+                                : const SizedBox.shrink(),
+                          ),
+                          Material(
+                            shape: const CircleBorder(),
+                            color: isRecording
+                                ? colorScheme.error.withValues(alpha: 0.12)
+                                : Colors.transparent,
+                            child: IconButton(
+                              icon: Icon(
+                                isRecording ? Icons.stop : Icons.mic,
+                                color: isRecording
+                                    ? colorScheme.error
+                                    : colorScheme.onSurface
+                                        .withValues(alpha: 0.6),
+                                size: 20,
+                              ),
+                              onPressed: () {
+                                if (isRecording) {
+                                  _stopRecordingAndUpload();
+                                } else {
+                                  _startRecording();
+                                }
+                              },
+                              visualDensity: VisualDensity.compact,
+                              splashRadius: 20,
+                              padding: EdgeInsets.zero,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+
+                  IconButton(
+                    icon: Icon(
+                      Icons.attach_file,
+                      color: colorScheme.onSurface.withValues(alpha: 0.6),
+                      size: 20,
+                    ),
+                    onPressed: _pickAndUploadMedia,
+                    visualDensity: VisualDensity.compact,
+                    splashRadius: 20,
+                    padding: EdgeInsets.zero,
+                  ),
+
+                  Expanded(
+                    child: KeyboardListener(
+                      focusNode: FocusNode(),
+                      onKeyEvent: (event) {
+                        if (event is KeyDownEvent) {
+                          
+                          if (HardwareKeyboard.instance.isLogicalKeyPressed(LogicalKeyboardKey.keyV) &&
+                              (HardwareKeyboard.instance.isControlPressed ||
+                               HardwareKeyboard.instance.isMetaPressed)) {
+                            _handlePasteFromClipboard();
+                            return;
+                          }
+
+                          if (HardwareKeyboard.instance
+                              .isLogicalKeyPressed(LogicalKeyboardKey.enter)) {
+                            if (!HardwareKeyboard.instance.isShiftPressed) {
+                              if (_textCtrl.text.trim().isNotEmpty) {
+                                _sendMessage(_textCtrl.text);
+                              }
+                              return;
+                            }
+                            if (HardwareKeyboard.instance.isShiftPressed &&
+                                _textCtrl.text.isNotEmpty) {
+                              final text = _textCtrl.text;
+                              final selection = _textCtrl.selection;
+                              _textCtrl.text =
+                                  '${text.substring(0, selection.start)}\n${text.substring(selection.start)}';
+                              _textCtrl.selection =
+                                  TextSelection.fromPosition(TextPosition(
+                                      offset: selection.start + 1));
+                            }
+                          }
+                        }
+                      },
+                      child: TextField(
+                        focusNode: _focusNode,
+                        controller: _textCtrl,
+                        onTap: () => _suppressAutoRefocus = false,
+                        maxLines: null,
+                        style: TextStyle(color: colorScheme.onSurface),
+                        decoration: InputDecoration(
+                          hintText: AppLocalizations.of(context).localizeHint(_inputHint),
+                          hintStyle: TextStyle(
+                            color:
+                                colorScheme.onSurface.withValues(alpha: 0.5),
+                          ),
+                          filled: false,
+                          fillColor: Colors.transparent,
+                          border: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                              vertical: 12, horizontal: 12),
+                        ),
+                        textInputAction: TextInputAction.none,
+                        contentInsertionConfiguration:
+                            ContentInsertionConfiguration(
+                          allowedMimeTypes: const [
+                            'image/png',
+                            'image/jpeg',
+                            'image/gif',
+                            'image/webp',
+                          ],
+                          onContentInserted: (data) async {
+                            try {
+                              Uint8List? bytes = data.data;
+                              if (bytes == null && data.uri.isNotEmpty) {
+                                try {
+                                  bytes = await _clipboardChannel
+                                      .invokeMethod<Uint8List>(
+                                          'readContentUri',
+                                          {'uri': data.uri});
+                                } catch (e) { debugPrint('[err] $e'); }
+                              }
+                              if (bytes != null && bytes.isNotEmpty && mounted) {
+                                final ext = data.mimeType.contains('/')
+                                    ? data.mimeType.split('/').last
+                                    : 'png';
+                                final tempDir = await getTemporaryDirectory();
+                                final tempFile = File(
+                                    '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext');
+                                await tempFile.writeAsBytes(bytes);
+                                _handleDroppedFiles([tempFile.path]);
+                              }
+                            } catch (e) {
+                              debugPrint('[ContentInsert] Error: $e');
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      Icons.send,
+                      color: colorScheme.primary,
+                      size: 20,
+                    ),
+                    onPressed: () => _sendMessage(_textCtrl.text),
+                    visualDensity: VisualDensity.compact,
+                    splashRadius: 20,
+                    padding: EdgeInsets.zero,
+                  ),
+                ],
+              ),
+            );
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showEditProfileDialog() async {
+    final nameController = TextEditingController(text: _groupName);
+    Uint8List? newAvatarBytes;
+    bool removeAvatar = false;
+
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: Theme.of(context).colorScheme.surface.withValues(alpha: SettingsManager.elementOpacity.value),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(widget.group.isChannel ? 'Edit Channel' : 'Edit Group'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                
+                GestureDetector(
+                  onTap: () async {
+                    
+                    final result = await FilePicker.platform.pickFiles(
+                      type: FileType.image,
+                      withData: true,
+                    );
+                    if (result == null || result.files.first.bytes == null || !mounted) {
+                      return;
+                    }
+                    final bytes = result.files.first.bytes!;
+                    
+                    final croppedBytes = await showAvatarCropScreen(this.context, bytes);
+                    if (croppedBytes != null && mounted) {
+                      setState(() {
+                        newAvatarBytes = croppedBytes;
+                        removeAvatar = false;
+                      });
+                    }
+                  },
+                  onLongPress: () {
+                    
+                    setState(() {
+                      newAvatarBytes = null;
+                      removeAvatar = true;
+                    });
+                    rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).avatarWillBeDeleted);
+                  },
+                  child: CircleAvatar(
+                    key: ValueKey('edit_avatar_${widget.server.id}_${widget.group.id}_${_groupName}_$_avatarVersion'),
+                    radius: 60,
+                    backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                    backgroundImage: newAvatarBytes != null
+                        ? MemoryImage(newAvatarBytes!)
+                        : (!removeAvatar && _avatarVersion > 0
+                            ? NetworkImage('${widget.server.baseUrl}/groups/${widget.group.id}/avatar?v=$_avatarVersion&sid=${widget.server.id}')
+                            : null) as ImageProvider?,
+                    child: (newAvatarBytes == null && (removeAvatar || _avatarVersion == 0))
+                        ? Icon(Icons.group, size: 60, color: Theme.of(context).colorScheme.onPrimaryContainer)
+                        : null,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Tap to change • Hold to remove',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                
+                GestureDetector(
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(
+                        text: '${widget.server.host}:${widget.server.port}'));
+                    rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).ipCopied);
+                  },
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest
+                          .withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.dns_outlined,
+                            size: 13,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${widget.server.host}:${widget.server.port}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(Icons.copy,
+                            size: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                
+                TextField(
+                  controller: nameController,
+                  decoration: InputDecoration(
+                    labelText: widget.group.isChannel
+                        ? 'Channel name'
+                        : 'Group name',
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest
+                        .withValues(alpha: 0.3),
+                    counterText: '',
+                  ),
+                  maxLength: 64,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(AppLocalizations.of(context).cancel),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final newName = nameController.text.trim();
+                if (newName.isEmpty) {
+                  rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).nameCannotBeEmpty);
+                  return;
+                }
+                Navigator.pop(context);
+
+                if (newName != _groupName) {
+                  await _renameGroup(newName);
+                }
+
+                if (newAvatarBytes != null) {
+                  await _uploadGroupAvatar(newAvatarBytes!);
+                } else if (removeAvatar) {
+                  await _deleteGroupAvatar();
+                }
+              },
+              child: Text(AppLocalizations.of(context).save),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showRenameDialog() {
+    final controller = TextEditingController(text: _groupName);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Theme.of(context).colorScheme.surface.withValues(alpha: SettingsManager.elementOpacity.value),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Text(AppLocalizations.of(context).renameGroupTitle),
+        content: TextField(
+          controller: controller,
+          decoration: InputDecoration(
+            labelText: AppLocalizations.of(context).groupNameLabel,
+            border: const OutlineInputBorder(),
+          ),
+          maxLength: 100,
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(AppLocalizations.of(context).cancel),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final newName = controller.text.trim();
+              if (newName.isEmpty) {
+                rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).nameCannotBeEmpty);
+                return;
+              }
+              Navigator.pop(context);
+              await _renameGroup(newName);
+            },
+            child: Text(AppLocalizations.of(context).rename),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _renameGroup(String newName) async {
+    try {
+      final url = '${widget.server.baseUrl}/groups/${widget.group.id}/rename';
+      debugPrint('[rename] POST $url');
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${widget.server.token}',
+        },
+        body: jsonEncode({'name': newName}),
+      ).timeout(const Duration(seconds: 10));
+
+      debugPrint('[rename] Status: ${response.statusCode}, Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).groupRenamed);
+        
+        if (mounted) {
+          setState(() {
+            _groupName = newName;
+          });
+          debugPrint('[rename] Local _groupName updated to: $_groupName');
+        } else {
+          debugPrint('[rename] WARNING: Widget not mounted, cannot update state');
+        }
+
+        final currentGroups = ExternalServerManager.externalGroups.value;
+        final updatedGroups = currentGroups.map((g) {
+          if (g.id == widget.group.id && g.externalServerId == widget.server.id) {
+            return Group(
+              id: g.id,
+              name: newName,
+              isChannel: g.isChannel,
+              owner: g.owner,
+              inviteLink: g.inviteLink,
+              avatarVersion: g.avatarVersion,
+              externalServerId: g.externalServerId,
+              myRole: g.myRole,
+            );
+          }
+          return g;
+        }).toList();
+        ExternalServerManager.externalGroups.value = updatedGroups;
+        debugPrint('[rename] Updated externalGroups list for Groups tab');
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? 'Failed to rename';
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[rename] Exception: $e');
+      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedRename);
+    }
+  }
+
+  Future<void> _changeGroupAvatar() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        withData: true,
+      );
+
+      if (result == null || result.files.isEmpty) return;
+
+      final file = result.files.first;
+      if (file.bytes == null) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedReadFile);
+        return;
+      }
+
+      if (file.bytes!.length > 5 * 1024 * 1024) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).imageTooLarge);
+        return;
+      }
+
+      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadingAvatar);
+
+      final url = '${widget.server.baseUrl}/groups/${widget.group.id}/avatar';
+      debugPrint('[avatar] POST $url');
+
+      final request = http.MultipartRequest('POST', Uri.parse(url));
+      request.headers['Authorization'] = 'Bearer ${widget.server.token}';
+
+      String? contentType;
+      final fileName = file.name.toLowerCase();
+      if (fileName.endsWith('.png')) {
+        contentType = 'image/png';
+      } else if (fileName.endsWith('.jpg') || fileName.endsWith('.jpeg')) {
+        contentType = 'image/jpeg';
+      } else if (fileName.endsWith('.gif')) {
+        contentType = 'image/gif';
+      } else if (fileName.endsWith('.webp')) {
+        contentType = 'image/webp';
+      } else {
+        contentType = 'image/png'; 
+      }
+
+      request.files.add(http.MultipartFile.fromBytes(
+        'avatar',
+        file.bytes!,
+        filename: file.name,
+        contentType: MediaType.parse(contentType),
+      ));
+
+      final response = await request.send().timeout(const Duration(seconds: 30));
+      final responseBody = await response.stream.bytesToString();
+
+      debugPrint('[avatar] Status: ${response.statusCode}, Body: $responseBody');
+
+      if (response.statusCode == 200) {
+        
+        try {
+          final responseData = jsonDecode(responseBody);
+          final newVersion = responseData['avatar_version'];
+          if (newVersion != null && mounted) {
+            setState(() {
+              _avatarVersion = newVersion is int ? newVersion : int.tryParse(newVersion.toString()) ?? _avatarVersion + 1;
+            });
+          }
+        } catch (e) {
+          
+          if (mounted) {
+            setState(() {
+              _avatarVersion++;
+            });
+          }
+        }
+        debugPrint('[avatar] Local _avatarVersion updated to: $_avatarVersion');
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).avatarUpdatedSuccessfully);
+        
+      } else {
+        try {
+          final error = jsonDecode(responseBody)['error'] ?? 'Failed to upload';
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(responseBody));
+        }
+      }
+    } catch (e) {
+      debugPrint('[avatar] Exception: $e');
+      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedUploadAvatar);
+    }
+  }
+
+  Future<void> _uploadGroupAvatar(Uint8List bytes) async {
+    try {
+      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadingAvatar);
+
+      final url = '${widget.server.baseUrl}/groups/${widget.group.id}/avatar';
+      debugPrint('[avatar] POST $url');
+
+      final request = http.MultipartRequest('POST', Uri.parse(url));
+      request.headers['Authorization'] = 'Bearer ${widget.server.token}';
+
+      request.files.add(http.MultipartFile.fromBytes(
+        'avatar',
+        bytes,
+        filename: 'avatar.jpg',
+        contentType: MediaType.parse('image/jpeg'),
+      ));
+
+      final response = await request.send().timeout(const Duration(seconds: 30));
+      final responseBody = await response.stream.bytesToString();
+
+      debugPrint('[avatar] Status: ${response.statusCode}, Body: $responseBody');
+
+      if (response.statusCode == 200) {
+        
+        try {
+          final responseData = jsonDecode(responseBody);
+          final newVersion = responseData['avatar_version'];
+          if (newVersion != null && mounted) {
+            setState(() {
+              _avatarVersion = newVersion is int ? newVersion : int.tryParse(newVersion.toString()) ?? _avatarVersion + 1;
+            });
+          }
+        } catch (e) {
+          
+          if (mounted) {
+            setState(() {
+              _avatarVersion++;
+            });
+          }
+        }
+        debugPrint('[avatar] Local _avatarVersion updated to: $_avatarVersion');
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).avatarUpdatedSuccessfully);
+
+        final currentGroups = ExternalServerManager.externalGroups.value;
+        final updatedGroups = currentGroups.map((g) {
+          if (g.id == widget.group.id && g.externalServerId == widget.server.id) {
+            return Group(
+              id: g.id,
+              name: g.name,
+              isChannel: g.isChannel,
+              owner: g.owner,
+              inviteLink: g.inviteLink,
+              avatarVersion: _avatarVersion,
+              externalServerId: g.externalServerId,
+              myRole: g.myRole,
+            );
+          }
+          return g;
+        }).toList();
+        ExternalServerManager.externalGroups.value = updatedGroups;
+        debugPrint('[avatar] Updated externalGroups list for Groups tab');
+      } else {
+        try {
+          final error = jsonDecode(responseBody)['error'] ?? 'Failed to upload';
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(responseBody));
+        }
+      }
+    } catch (e) {
+      debugPrint('[avatar] Exception: $e');
+      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedUploadAvatar);
+    }
+  }
+
+  Future<void> _deleteGroupAvatar() async {
+    try {
+      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).deletingAvatar);
+
+      final url = '${widget.server.baseUrl}/groups/${widget.group.id}/avatar';
+      debugPrint('[avatar] DELETE $url');
+
+      final response = await http.delete(
+        Uri.parse(url),
+        headers: {
+          'Authorization': 'Bearer ${widget.server.token}',
+        },
+      ).timeout(const Duration(seconds: 30));
+
+      debugPrint('[avatar] Status: ${response.statusCode}, Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        
+        try {
+          final responseData = jsonDecode(response.body);
+          final newVersion = responseData['avatar_version'];
+          if (newVersion != null && mounted) {
+            setState(() {
+              _avatarVersion = newVersion is int ? newVersion : int.tryParse(newVersion.toString()) ?? _avatarVersion + 1;
+            });
+          }
+        } catch (e) {
+          
+          if (mounted) {
+            setState(() {
+              _avatarVersion++;
+            });
+          }
+        }
+        debugPrint('[avatar] Local _avatarVersion updated to: $_avatarVersion (deleted)');
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).avatarDeletedSuccessfully);
+
+        final currentGroups = ExternalServerManager.externalGroups.value;
+        final updatedGroups = currentGroups.map((g) {
+          if (g.id == widget.group.id && g.externalServerId == widget.server.id) {
+            return Group(
+              id: g.id,
+              name: g.name,
+              isChannel: g.isChannel,
+              owner: g.owner,
+              inviteLink: g.inviteLink,
+              avatarVersion: _avatarVersion,
+              externalServerId: g.externalServerId,
+              myRole: g.myRole,
+            );
+          }
+          return g;
+        }).toList();
+        ExternalServerManager.externalGroups.value = updatedGroups;
+        debugPrint('[avatar] Updated externalGroups list for Groups tab (deleted)');
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? 'Failed to delete';
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[avatar] Exception: $e');
+      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedDeleteAvatar);
+    }
+  }
+
+  void _showMembersDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => _MembersManagementDialog(
+        server: widget.server,
+        group: widget.group,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return FadeTransition(
+      opacity: _enterOpacity,
+      child: _isVisible
+          ? Scaffold(
+              extendBodyBehindAppBar: true,
+              backgroundColor: colorScheme.surface,
+              appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        automaticallyImplyLeading: !isDesktop,
+        flexibleSpace: ValueListenableBuilder<double>(
+          valueListenable: SettingsManager.elementOpacity,
+          builder: (_, opacity, __) {
+            return ClipRect(
+              child: Container(
+                color: colorScheme.surface.withValues(alpha: opacity),
+              ),
+            );
+          },
+        ),
+        title: GestureDetector(
+          onTap: _showEditProfileDialog,
+          child: Row(
+            children: [
+              CircleAvatar(
+                key: ValueKey('avatar_${widget.server.id}_${widget.group.id}_${_groupName}_$_avatarVersion'),
+                radius: 20,
+                backgroundColor: colorScheme.primaryContainer,
+                backgroundImage: _avatarVersion > 0
+                    ? NetworkImage(
+                        '${widget.server.baseUrl}/groups/${widget.group.id}/avatar?v=$_avatarVersion&sid=${widget.server.id}',
+                      )
+                    : null,
+                child: _avatarVersion == 0
+                    ? Icon(Icons.dns_outlined,
+                        size: 20, color: colorScheme.onPrimaryContainer)
+                    : null,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            _groupName,
+                            key: ValueKey('group_name_$_groupName'),
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 16),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _isConnected ? Colors.green : Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      '${widget.server.host}:${widget.server.port}',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: colorScheme.onSurface.withValues(alpha: 0.6)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          
+          if (_myRole == null)
+            FilledButton.tonal(
+              onPressed: _joinGroup,
+              child: Text(AppLocalizations.of(context).join),
+            ),
+          ExternalServerBadge(isChannel: widget.group.isChannel),
+          PopupMenuButton<String>(
+            icon: Icon(Icons.more_vert, color: colorScheme.onSurface),
+            onSelected: (value) async {
+              if (value == 'disconnect') {
+                ExternalServerManager.disconnectWebSocket(widget.server.id);
+                if (mounted) {
+                  setState(() {
+                    _isConnected = false;
+                    _isConnecting = false;
+                  });
+                }
+              } else if (value == 'edit_profile') {
+                _showEditProfileDialog();
+              } else if (value == 'members') {
+                _showMembersDialog();
+              }
+            },
+            itemBuilder: (context) {
+              final isOwner = _myRole == 'owner';
+              return [
+                if (isOwner) ...[
+                  PopupMenuItem<String>(
+                    value: 'edit_profile',
+                    child: Row(
+                      children: [
+                        Icon(Icons.edit, size: 18, color: colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Text(AppLocalizations.of(context).editProfile),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem<String>(
+                    value: 'members',
+                    child: Row(
+                      children: [
+                        Icon(Icons.people, size: 18, color: colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Text(AppLocalizations.of(context).manageMembers),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuDivider(),
+                ],
+                PopupMenuItem<String>(
+                  value: 'disconnect',
+                  enabled: _isConnected,
+                  child: Row(
+                    children: [
+                      Icon(Icons.power_settings_new,
+                          size: 18,
+                          color: _isConnected
+                              ? colorScheme.error
+                              : colorScheme.onSurface.withValues(alpha: 0.3)),
+                      const SizedBox(width: 8),
+                      Text(_isConnected ? 'Disconnect' : 'Not connected'),
+                    ],
+                  ),
+                ),
+              ];
+            },
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+      body: DragDropZone(
+        onFilesDropped: _handleDroppedFiles,
+        enabled: !_isReadOnlyChannel && _isConnected,
+        child: Stack(
+        children: [
+          
+          ValueListenableBuilder<String?>(
+            valueListenable: SettingsManager.chatBackground,
+            builder: (_, path, __) {
+              if (path == null) return const SizedBox.shrink();
+              final f = File(path);
+              return ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.blurBackground,
+                builder: (_, blur, __) {
+                  return ValueListenableBuilder<double>(
+                    valueListenable: SettingsManager.blurSigma,
+                    builder: (_, sigma, __) {
+                      final image = Image.file(
+                        f,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      );
+                      return ValueListenableBuilder<bool>(
+                        valueListenable:
+                            SettingsManager.enablePerformanceOptimizations,
+                        builder: (_, perfOptim, __) {
+                          final child = (blur && !perfOptim)
+                              ? ImageFiltered(
+                                  imageFilter: ui.ImageFilter.blur(
+                                      sigmaX: sigma, sigmaY: sigma),
+                                  child: image,
+                                )
+                              : image;
+                          return Positioned.fill(
+                            child: IgnorePointer(
+                              child: Opacity(opacity: 0.95, child: child),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              );
+            },
+          ),
+
+          Builder(
+            builder: (context) {
+              final swapped = SettingsManager.swapMessageAlignment.value;
+              final alignRight = SettingsManager.alignAllMessagesRight.value;
+
+              return Listener(
+                onPointerDown: (_) {
+                  if (!isDesktop) return;
+                  _suppressAutoRefocus = true;
+                  _focusNode.unfocus();
+                },
+                child: ListView.builder(
+                    controller: _scroll,
+                    reverse: true,
+                    itemCount: _displayedMessageCount.clamp(0, _messages.length),
+                    cacheExtent: 400, 
+                    addRepaintBoundaries: true,
+                    addAutomaticKeepAlives: true, 
+                    padding: EdgeInsets.only(
+                      top: MediaQuery.of(context).padding.top +
+                          kToolbarHeight +
+                          12,
+                      bottom: 72 + MediaQuery.of(context).padding.bottom,
+                    ),
+                    itemBuilder: (ctx, i) {
+                      final msg = _messages[_messages.length - 1 - i];
+                      final rawSender = msg['sender']?.toString() ?? '?';
+                      
+                      final isMe = widget.group.isChannel ? false : (rawSender == widget.server.username);
+                      final content = msg['content']?.toString() ?? '';
+
+                      final bubble = Container(
+                        constraints: BoxConstraints(
+                            maxWidth:
+                                MediaQuery.of(context).size.width * 0.7),
+                        child: GestureDetector(
+                          onHorizontalDragEnd: isDesktop ? null : (details) {
+                            final v = details.primaryVelocity;
+                            if (v != null && v > 300) {
+                              HapticFeedback.selectionClick();
+                              _showExternalMessageMenu(msg);
+                            } else if (v != null && v < -300) {
+                              _startReply({
+                                'id': msg['id']?.toString(),
+                                'sender': rawSender,
+                                'content': content,
+                              });
+                              HapticFeedback.selectionClick();
+                            }
+                          },
+                          child: MessageBubble(
+                            key: ValueKey<String>(
+                                'mb_${msg['timestamp']}_${rawSender}_${content.hashCode}'),
+                            text: content,
+                            outgoing: isMe,
+                            rawPreview: null,
+                            serverMessageId: null,
+                            time: (msg['timestamp_ms'] != null &&
+                                    msg['timestamp_ms'] is int &&
+                                    (msg['timestamp_ms'] as int) > 0)
+                                ? DateTime.fromMillisecondsSinceEpoch(
+                                    msg['timestamp_ms'] as int)
+                                : (DateTime.tryParse(
+                                        msg['timestamp']?.toString() ?? '') ??
+                                    DateTime.now()),
+                            onRequestResend: (_) {},
+                            desktopMenuItems: _buildDesktopMenuItems(msg),
+                            peerUsername: rawSender,
+                            replyToId: msg['reply_to_id'] is int
+                                ? msg['reply_to_id'] as int
+                                : (msg['reply_to_id'] != null
+                                    ? int.tryParse(
+                                        msg['reply_to_id'].toString())
+                                    : null),
+                            replyToUsername:
+                                msg['reply_to_sender']?.toString(),
+                            replyToContent:
+                                msg['reply_to_content']?.toString(),
+                            highlighted: (_replyingToMessage != null &&
+                                _replyingToMessage!['id']?.toString() ==
+                                    msg['id']?.toString()),
+                          ),
+                        ),
+                      );
+
+                      final shouldAlignRight = alignRight
+                          ? !swapped
+                          : (swapped ? !isMe : isMe);
+
+                      Widget contentWithSender;
+                      if (!isMe) {
+                        contentWithSender = Column(
+                          crossAxisAlignment: shouldAlignRight
+                              ? CrossAxisAlignment.end
+                              : CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 4.0),
+                              child: Text(
+                                rawSender,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12,
+                                  color: colorScheme.onSurface
+                                      .withValues(alpha: 0.7),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            bubble,
+                          ],
+                        );
+                      } else {
+                        contentWithSender = bubble;
+                      }
+
+                      final msgId = msg['id']?.toString() ?? '';
+                      final timestamp = msg['timestamp']?.toString() ?? '';
+                      final uniqueKey = '${msgId}_${timestamp}_${rawSender}_${content.hashCode}';
+
+                      final isFirstAppearance = !_alreadyRenderedMessageIds.contains(uniqueKey);
+                      if (isFirstAppearance) {
+                        
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) _alreadyRenderedMessageIds.add(uniqueKey);
+                        });
+                      }
+
+                      final messageWidget = RepaintBoundary(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 4),
+                          child: Align(
+                            alignment: shouldAlignRight
+                                ? Alignment.centerRight
+                                : Alignment.centerLeft,
+                            child: contentWithSender,
+                          ),
+                        ),
+                      );
+
+                      if (isFirstAppearance) {
+                        
+                        return _AnimatedMessageBubble(
+                          key: ValueKey<String>('anim_$uniqueKey'),
+                          child: messageWidget,
+                        );
+                      } else {
+                        
+                        return messageWidget;
+                      }
+                    },
+                  ),
+              );
+            },
+          ),
+
+          Positioned(
+            bottom: 12 + MediaQuery.of(context).padding.bottom,
+            left: 16,
+            right: 16,
+            child: AnimatedBuilder(
+              animation: _inputEntryController,
+              builder: (context, child) {
+                return Transform.scale(
+                  scaleX: _inputEntryScaleX.value,
+                  alignment: Alignment.center,
+                  child: Opacity(
+                    opacity: _inputEntryOpacity.value,
+                    child: child,
+                  ),
+                );
+              },
+              child: Center(
+                child: _isReadOnlyChannel
+                  ? ValueListenableBuilder<double>(
+                      valueListenable: SettingsManager.elementOpacity,
+                      builder: (_, opacity, __) {
+                        return ValueListenableBuilder<double>(
+                          valueListenable: SettingsManager.inputBarMaxWidth,
+                          builder: (_, width, __) {
+                            return ValueListenableBuilder<double>(
+                              valueListenable: SettingsManager.elementBrightness,
+                              builder: (_, brightness, ___) {
+                                final baseColor = SettingsManager.getElementColor(
+                                  colorScheme.surfaceContainerHighest,
+                                  brightness,
+                                );
+                                return Container(
+                                  constraints: BoxConstraints(maxWidth: width),
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 12, horizontal: 16),
+                                  decoration: BoxDecoration(
+                                    color: baseColor.withValues(alpha: opacity),
+                                    borderRadius: BorderRadius.circular(28),
+                                    border: Border.all(
+                                      color: colorScheme.outlineVariant
+                                          .withValues(alpha: 0.15),
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'This is a channel. Only owner and moderators can post.',
+                                    style: TextStyle(
+                                      color: colorScheme.onSurface
+                                          .withValues(alpha: 0.6),
+                                      fontSize: 14,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        );
+                      },
+                    )
+                  : !_isConnected
+                      ? ValueListenableBuilder<double>(
+                          valueListenable: SettingsManager.elementOpacity,
+                          builder: (_, opacity, __) {
+                            return ValueListenableBuilder<double>(
+                              valueListenable:
+                                  SettingsManager.inputBarMaxWidth,
+                              builder: (_, width, __) {
+                                return ValueListenableBuilder<double>(
+                                  valueListenable: SettingsManager.elementBrightness,
+                                  builder: (_, brightness, ___) {
+                                    final baseColor = SettingsManager.getElementColor(
+                                      colorScheme.surfaceContainerHighest,
+                                      brightness,
+                                    );
+                                    return Container(
+                                      constraints:
+                                          BoxConstraints(maxWidth: width),
+                                      child: Material(
+                                        color: Colors.transparent,
+                                        child: InkWell(
+                                          onTap: _isConnecting
+                                              ? null
+                                              : _connectToServer,
+                                          borderRadius:
+                                              BorderRadius.circular(28),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 12, horizontal: 16),
+                                            decoration: BoxDecoration(
+                                              color: baseColor.withValues(alpha: opacity),
+                                              borderRadius:
+                                                  BorderRadius.circular(28),
+                                              border: Border.all(
+                                                color: colorScheme.outlineVariant
+                                                    .withValues(alpha: 0.15),
+                                                width: 1,
+                                              ),
+                                            ),
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            if (_isConnecting)
+                                              SizedBox(
+                                                width: 16,
+                                                height: 16,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color:
+                                                      colorScheme.primary,
+                                                ),
+                                              )
+                                            else
+                                              Icon(
+                                                Icons.power_settings_new,
+                                                size: 20,
+                                                color: colorScheme.primary,
+                                              ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              _isConnecting
+                                                  ? 'Connecting...'
+                                                  : 'Connect to Server',
+                                              style: TextStyle(
+                                                color: colorScheme.primary,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            );
+                          },
+                        )
+                      : _isLoadingHistory
+                          ? ValueListenableBuilder<double>(
+                              valueListenable: SettingsManager.elementOpacity,
+                              builder: (_, opacity, __) {
+                                return ValueListenableBuilder<double>(
+                                  valueListenable: SettingsManager.inputBarMaxWidth,
+                                  builder: (_, width, __) {
+                                    return ValueListenableBuilder<double>(
+                                      valueListenable: SettingsManager.elementBrightness,
+                                      builder: (_, brightness, ___) {
+                                        final baseColor = SettingsManager.getElementColor(
+                                          colorScheme.surfaceContainerHighest,
+                                          brightness,
+                                        );
+                                        return Container(
+                                          constraints: BoxConstraints(maxWidth: width),
+                                          padding: const EdgeInsets.symmetric(
+                                              vertical: 12, horizontal: 16),
+                                          decoration: BoxDecoration(
+                                            color: baseColor.withValues(alpha: opacity),
+                                            borderRadius: BorderRadius.circular(28),
+                                            border: Border.all(
+                                              color: colorScheme.outlineVariant
+                                                  .withValues(alpha: 0.15),
+                                              width: 1,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              SizedBox(
+                                                width: 16,
+                                                height: 16,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color: colorScheme.primary,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                'Loading messages...',
+                                                style: TextStyle(
+                                                  color: colorScheme.primary,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      },
+                                    );
+                                  },
+                                );
+                              },
+                            )
+                          : ValueListenableBuilder<double>(
+                              valueListenable: SettingsManager.inputBarMaxWidth,
+                              builder: (_, width, __) {
+                                return Container(
+                                  constraints: BoxConstraints(maxWidth: width),
+                                  child:
+                                      _buildInputBar(context, colorScheme),
+                                );
+                              },
+                            ),
+                ),
+              ),
+            ),
+
+          AnimatedOpacity(
+            opacity: _showScrollDownButton ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 200),
+            child: IgnorePointer(
+              ignoring: !_showScrollDownButton,
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 80),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: ValueListenableBuilder<double>(
+                      valueListenable: SettingsManager.elementBrightness,
+                      builder: (_, brightness, ___) {
+                        final baseColor = SettingsManager.getElementColor(
+                          colorScheme.surfaceContainerHighest,
+                          brightness,
+                        );
+                        return IconButton(
+                          splashRadius: 20,
+                          padding: EdgeInsets.zero,
+                          icon: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: baseColor.withValues(alpha: 0.5),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: colorScheme.outlineVariant
+                                    .withValues(alpha: 0.15),
+                                width: 1,
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.arrow_downward,
+                              size: 18,
+                              color: colorScheme.onSurface
+                                  .withValues(alpha: 0.7),
+                            ),
+                              ),
+                          onPressed: _scrollToBottom,
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+              )
+          : const SizedBox.shrink(), 
+    );
+  }
+}
+
+class _AnimatedMessageBubble extends StatelessWidget {
+  final Widget child;
+
+  const _AnimatedMessageBubble({Key? key, required this.child})
+      : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return child; 
+  }
+}
+
+class _MembersManagementDialog extends StatefulWidget {
+  final ExternalServer server;
+  final Group group;
+
+  const _MembersManagementDialog({
+    required this.server,
+    required this.group,
+  });
+
+  @override
+  State<_MembersManagementDialog> createState() => _MembersManagementDialogState();
+}
+
+class _MembersManagementDialogState extends State<_MembersManagementDialog> {
+  List<Map<String, dynamic>> _members = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMembers();
+  }
+
+  Future<void> _loadMembers() async {
+    try {
+      final url = '${widget.server.baseUrl}/members';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${widget.server.token}'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (mounted) {
+          setState(() {
+            _members = List<Map<String, dynamic>>.from(data);
+            _loading = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() => _loading = false);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _banMember(String username) async {
+    final reasonController = TextEditingController();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(AppLocalizations.of(context).banMemberTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(AppLocalizations.of(context).banConfirm(username)),
+            const SizedBox(height: 16),
+            TextField(
+              controller: reasonController,
+              decoration: InputDecoration(
+                labelText: AppLocalizations.of(context).banReason,
+                border: const OutlineInputBorder(),
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(AppLocalizations.of(context).cancel),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(AppLocalizations.of(context).ban),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final url = '${widget.server.baseUrl}/members/${Uri.encodeComponent(username)}/ban';
+      debugPrint('[ban] POST $url');
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'Authorization': 'Bearer ${widget.server.token}',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'reason': reasonController.text.trim()}),
+      ).timeout(const Duration(seconds: 10));
+
+      debugPrint('[ban] Status: ${response.statusCode}, Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).userBanned(username));
+        _loadMembers();
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? 'Failed to ban';
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[ban] Exception: $e');
+      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedBan);
+    }
+  }
+
+  Future<void> _changeRole(String username, String currentRole) async {
+    
+    final ownerCount = _members.where((m) => m['role'] == 'owner').length;
+    final canPromoteToOwner = currentRole != 'owner' && ownerCount < 3;
+    final canDemoteOwner = currentRole == 'owner' && ownerCount > 1;
+
+    final newRole = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(AppLocalizations.of(context).changeRoleTitle(username)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(AppLocalizations.of(context).currentRoleLabel(currentRole), style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(AppLocalizations.of(context).ownerCount(ownerCount), style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            const SizedBox(height: 16),
+            Text(AppLocalizations.of(context).selectNewRole),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed: (currentRole == 'owner' && !canDemoteOwner) || (!canPromoteToOwner && currentRole != 'owner')
+                  ? null
+                  : () => Navigator.pop(context, 'owner'),
+              icon: const Icon(Icons.admin_panel_settings),
+              label: Text(currentRole == 'owner'
+                  ? AppLocalizations.of(context).ownerCurrent
+                  : ownerCount >= 3
+                      ? AppLocalizations.of(context).ownerLimitReached
+                      : AppLocalizations.of(context).owner),
+              style: FilledButton.styleFrom(
+                alignment: Alignment.centerLeft,
+              ),
+            ),
+            const SizedBox(height: 8),
+            FilledButton.tonalIcon(
+              onPressed: () => Navigator.pop(context, 'moderator'),
+              icon: const Icon(Icons.shield),
+              label: Text(AppLocalizations.of(context).moderator),
+              style: FilledButton.styleFrom(
+                alignment: Alignment.centerLeft,
+              ),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.pop(context, 'member'),
+              icon: const Icon(Icons.person),
+              label: Text(AppLocalizations.of(context).memberRole),
+              style: OutlinedButton.styleFrom(
+                alignment: Alignment.centerLeft,
+              ),
+            ),
+            if (currentRole == 'owner' && !canDemoteOwner) ...[
+              const SizedBox(height: 8),
+              Text(
+                AppLocalizations.of(context).cannotDemoteLastOwner,
+                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(AppLocalizations.of(context).cancel),
+          ),
+        ],
+      ),
+    );
+
+    if (newRole == null || newRole == currentRole) return;
+
+    try {
+      final url = '${widget.server.baseUrl}/members/${Uri.encodeComponent(username)}/role';
+      debugPrint('[role] POST $url with role=$newRole');
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'Authorization': 'Bearer ${widget.server.token}',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'role': newRole}),
+      ).timeout(const Duration(seconds: 10));
+
+      debugPrint('[role] Status: ${response.statusCode}, Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).roleUpdated(newRole));
+        _loadMembers();
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? 'Failed to change role';
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[role] Exception: $e');
+      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedChangeRole);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(AppLocalizations.of(context).manageMembersTitle),
+      content: SizedBox(
+        width: 500,
+        height: 400,
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _members.isEmpty
+                ? Center(child: Text(AppLocalizations.of(context).noMembersYet))
+                : ListView.builder(
+                    itemCount: _members.length,
+                    itemBuilder: (context, index) {
+                      final member = _members[index];
+                      final username = member['username'] ?? '';
+                      final displayName = member['display_name'] ?? username;
+                      final role = member['role'] ?? 'member';
+                      final isOwner = role == 'owner';
+                      final canModerate = widget.group.myRole == 'owner';
+
+                      return ListTile(
+                        leading: CircleAvatar(
+                          child: Text(
+                            displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                          ),
+                        ),
+                        title: Text(displayName),
+                        subtitle: Text('$username • $role'),
+                        trailing: !isOwner && canModerate
+                            ? Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.admin_panel_settings, size: 20),
+                                    tooltip: AppLocalizations.of(context).changeRole,
+                                    onPressed: () => _changeRole(username, role),
+                                  ),
+                                  IconButton(
+                                    icon: Icon(
+                                      Icons.block,
+                                      size: 20,
+                                      color: Theme.of(context).colorScheme.error,
+                                    ),
+                                    tooltip: AppLocalizations.of(context).ban,
+                                    onPressed: () => _banMember(username),
+                                  ),
+                                ],
+                              )
+                            : null,
+                      );
+                    },
+                  ),
+      ),
+      actions: [
+        if (widget.group.myRole == 'owner' || widget.group.myRole == 'moderator')
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(context); 
+              
+              showDialog(
+                context: context,
+                builder: (context) => _BannedUsersDialog(
+                  server: widget.server,
+                  group: widget.group,
+                ),
+              );
+            },
+            icon: const Icon(Icons.block),
+            label: Text(AppLocalizations.of(context).viewBans),
+          ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(AppLocalizations.of(context).close),
+        ),
+      ],
+    );
+  }
+}
+
+class _BannedUsersDialog extends StatefulWidget {
+  final ExternalServer server;
+  final Group group;
+
+  const _BannedUsersDialog({
+    required this.server,
+    required this.group,
+  });
+
+  @override
+  State<_BannedUsersDialog> createState() => _BannedUsersDialogState();
+}
+
+class _BannedUsersDialogState extends State<_BannedUsersDialog> {
+  List<Map<String, dynamic>> _bans = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBans();
+  }
+
+  Future<void> _loadBans() async {
+    try {
+      final url = '${widget.server.baseUrl}/bans';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${widget.server.token}'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (mounted) {
+          setState(() {
+            _bans = List<Map<String, dynamic>>.from(data);
+            _loading = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() => _loading = false);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _unbanUser(String username) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(AppLocalizations.of(context).unbanUserTitle),
+        content: Text(AppLocalizations.of(context).unbanConfirm(username)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(AppLocalizations.of(context).cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(AppLocalizations.of(context).unban),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final url = '${widget.server.baseUrl}/members/${Uri.encodeComponent(username)}/unban';
+      debugPrint('[unban] POST $url');
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${widget.server.token}'},
+      ).timeout(const Duration(seconds: 10));
+
+      debugPrint('[unban] Status: ${response.statusCode}, Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).userUnbanned(username));
+        _loadBans();
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? 'Failed to unban';
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[unban] Exception: $e');
+      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedUnban);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(AppLocalizations.of(context).bannedUsersTitle),
+      content: SizedBox(
+        width: 500,
+        height: 400,
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _bans.isEmpty
+                ? Center(child: Text(AppLocalizations.of(context).noBannedUsers))
+                : ListView.builder(
+                    itemCount: _bans.length,
+                    itemBuilder: (context, index) {
+                      final ban = _bans[index];
+                      final username = ban['username'] ?? '';
+                      final bannedBy = ban['banned_by'] ?? 'Unknown';
+                      final reason = ban['reason']?.toString();
+                      final bannedAt = ban['banned_at'] ?? '';
+
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: Theme.of(context).colorScheme.errorContainer,
+                          child: Icon(
+                            Icons.block,
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                        title: Text(username),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(AppLocalizations.of(context).bannedBy(bannedBy)),
+                            if (reason != null && reason.isNotEmpty)
+                              Text(AppLocalizations.of(context).bannedReason(reason), style: const TextStyle(fontStyle: FontStyle.italic)),
+                            Text(AppLocalizations.of(context).bannedDate(_formatDate(bannedAt)), style: const TextStyle(fontSize: 12)),
+                          ],
+                        ),
+                        isThreeLine: true,
+                        trailing: IconButton(
+                          icon: const Icon(Icons.check_circle_outline),
+                          tooltip: AppLocalizations.of(context).unban,
+                          color: Theme.of(context).colorScheme.primary,
+                          onPressed: () => _unbanUser(username),
+                        ),
+                      );
+                    },
+                  ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(AppLocalizations.of(context).close),
+        ),
+      ],
+    );
+  }
+
+  String _formatDate(String isoDate) {
+    try {
+      final date = DateTime.parse(isoDate);
+      return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    } catch (e) {
+      return isoDate;
+    }
+  }
+}
