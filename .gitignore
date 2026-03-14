@@ -1,0 +1,32 @@
+# === SECURITY ===
+certificates/
+android/local.properties
+android/key.properties
+
+# === FLUTTER CACHES ===
+.dart_tool/
+.flutter-plugins-dependencies
+build/
+
+# === ANDROID ===
+android/.gradle/
+android/build/
+android/.cxx/
+
+# === IOS / MACOS ===
+ios/Pods/
+macos/Pods/
+macos/Podfile.lock
+
+# === IDE ===
+*.iml
+.idea/
+.vscode/
+devtools_options.yaml
+
+# === TRASH ===
+nu_
+.DS_Store
+*.swp
+*~
+.claude/
