@@ -2483,7 +2483,7 @@ class _SettingsTabState extends State<SettingsTab>
           
           Center( 
             child: Text(
-              'open-beta 1.0',
+              'open-beta 1.0a',
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
