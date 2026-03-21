@@ -545,10 +545,15 @@ class ExternalServerManager {
       _wsSubscriptions[serverId] = ws.stream.listen(
         (event) {
           if (!completed) {
-            completed = true;
-            debugPrint('[ext-ws] $serverId connection confirmed via first message');
-            connectedServerIds.value = {...connectedServerIds.value, serverId};
-            connectionEstablished.complete(true);
+            try {
+              final obj = jsonDecode(event as String) as Map<String, dynamic>;
+              if (obj['type'] == 'init_complete') {
+                completed = true;
+                connectedServerIds.value = {...connectedServerIds.value, serverId};
+                debugPrint('[ext-ws] $serverId connection confirmed via init_complete');
+                connectionEstablished.complete(true);
+              }
+            } catch (_) {}
           }
           debugPrint('[ext-ws] $serverId received message');
           _handleWsMessage(serverId, event);
@@ -572,15 +577,11 @@ class ExternalServerManager {
       );
 
       final result = await connectionEstablished.future.timeout(
-        const Duration(seconds: 1),
+        const Duration(seconds: 10),
         onTimeout: () {
-          debugPrint('[ext-ws] $serverId connection timeout');
-          
+          debugPrint('[ext-ws] $serverId connection timeout — no init_complete received');
           if (!completed) {
             completed = true;
-            connectedServerIds.value = {...connectedServerIds.value, serverId};
-            debugPrint('[ext-ws] $serverId assumed connected after timeout (no errors)');
-            return true;
           }
           return false;
         },

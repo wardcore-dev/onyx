@@ -10,6 +10,9 @@ import 'screens/root_screen.dart';
 
 final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<void>>();
 
+/// Maps message filename/key → local cached file path for video/voice/file messages.
+final Map<String, String> mediaFilePathRegistry = {};
+
 final GlobalKey<RootScreenState> rootScreenKey = GlobalKey<RootScreenState>();
 final ValueNotifier<int> chatsVersion = ValueNotifier<int>(0);
 Map<int, List<Map<String, dynamic>>> _groupChats = {};
@@ -63,6 +66,9 @@ double _chatsPanelWidth = 300.0;
 const String serverBase = 'https://api-onyx.wardcore.com';
 const String wsUrl = 'wss://api-onyx.wardcore.com/ws';
 const String publicIpApi = 'https://api.ipify.org';
+
+
+const String kAppVersion = 'v1.1-beta';
 
 bool get isDesktop {
   if (kIsWeb) return false;

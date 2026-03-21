@@ -419,23 +419,31 @@ class AccountManager {
           .toList();
 
       if (entities.isNotEmpty) {
-        for (final entity in entities) {
-          final file = entity as File;
-          final basename = file.path
-              .split(Platform.pathSeparator)
-              .last
-              .replaceAll('.json', '');
-          final chatId = _decodeChatIdFilename(basename);
-          try {
-            final raw = await file.readAsString();
-            final arr = await compute(_parseJsonListInIsolate, raw);
-            result[chatId] = arr
-                .cast<Map<String, dynamic>>()
-                .map(ChatMessage.fromJson)
-                .toList();
-          } catch (e) {
-            debugPrint(
-                '[AccountManager] loadChats: corrupt file $basename: $e');
+        const batchSize = 8;
+        for (var i = 0; i < entities.length; i += batchSize) {
+          final batch = entities.skip(i).take(batchSize);
+          final results = await Future.wait(batch.map((entity) async {
+            final file = entity as File;
+            final basename = file.path
+                .split(Platform.pathSeparator)
+                .last
+                .replaceAll('.json', '');
+            final chatId = _decodeChatIdFilename(basename);
+            try {
+              final raw = await file.readAsString();
+              final arr = await compute(_parseJsonListInIsolate, raw);
+              return MapEntry(chatId, arr
+                  .cast<Map<String, dynamic>>()
+                  .map(ChatMessage.fromJson)
+                  .toList());
+            } catch (e) {
+              debugPrint(
+                  '[AccountManager] loadChats: corrupt file $basename: $e');
+              return null;
+            }
+          }));
+          for (final entry in results) {
+            if (entry != null) result[entry.key] = entry.value;
           }
         }
         debugPrint(

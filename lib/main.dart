@@ -29,7 +29,6 @@ import 'managers/account_manager.dart';
 import 'managers/secure_store.dart';
 import 'managers/onyx_tray_manager.dart';
 import 'models/app_themes.dart';
-import 'models/font_family.dart';
 import 'widgets/debug_overlay_v2.dart';
 import 'screens/call_overlay.dart';
 import 'utils/fps_booster.dart';
@@ -42,6 +41,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'l10n/app_localizations.dart';
 
 import 'globals.dart';
+import 'package:media_kit/media_kit.dart';
 
 late File _logFile;
 final List<String> _logBuffer = [];
@@ -124,14 +124,14 @@ Future<bool> _checkSingleInstance() async {
         await _lockFile!.lock(FileLock.exclusive);
 
         await _lockFile!.writeString('${Platform.executable}\n');
-        await appLog('[single-instance] Lock acquired: $lockFilePath (attempt ${attempt + 1})');
+        appLog('[single-instance] Lock acquired: $lockFilePath (attempt ${attempt + 1})');
 
         _startSignalWatcher(lockDir.path);
 
         return true;
       } catch (e) {
         
-        await appLog('[single-instance] Lock attempt ${attempt + 1} failed: $e');
+        appLog('[single-instance] Lock attempt ${attempt + 1} failed: $e');
 
         if (attempt < 4) {
           await Future.delayed(const Duration(milliseconds: 100));
@@ -139,19 +139,19 @@ Future<bool> _checkSingleInstance() async {
       }
     }
 
-    await appLog('[single-instance] Lock file is held by another instance');
+    appLog('[single-instance] Lock file is held by another instance');
 
     final signalFilePath = '${lockDir.path}${Platform.pathSeparator}onyx_show.signal';
     try {
       await File(signalFilePath).writeAsString('show');
-      await appLog('[single-instance] Signal sent to existing instance');
+      appLog('[single-instance] Signal sent to existing instance');
     } catch (signalError) {
-      await appLog('[single-instance] Failed to send signal: $signalError');
+      appLog('[single-instance] Failed to send signal: $signalError');
     }
 
     return false;
   } catch (e) {
-    await appLog('[single-instance] Error checking single instance: $e');
+    appLog('[single-instance] Error checking single instance: $e');
     
     return true;
   }
@@ -164,7 +164,7 @@ void _startSignalWatcher(String lockDirPath) {
     try {
       final signalFile = File(signalFilePath);
       if (await signalFile.exists()) {
-        await appLog('[single-instance] Signal received - showing window');
+        appLog('[single-instance] Signal received - showing window');
 
         try {
           await signalFile.delete();
@@ -197,64 +197,59 @@ enum MediaProvider {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
 
   await _initLogFile();
 
   if (isDesktop) {
     final isFirstInstance = await _checkSingleInstance();
     if (!isFirstInstance) {
-      await appLog('[single-instance] Another instance is running, exiting...');
+      appLog('[single-instance] Another instance is running, exiting...');
       exit(0);
     }
   }
 
-  await appLog('');
-  await appLog('' * 60);
-  await appLog(' ONYX App Initialization Started');
-  await appLog('' * 60);
-  await appLog('Platform: ${Platform.operatingSystem}');
-  await appLog('Is Desktop: $isDesktop');
-  await appLog('Is Web: $kIsWeb');
-  await appLog('' * 60);
-  await appLog('');
+  appLog('');
+  appLog('' * 60);
+  appLog(' ONYX App Initialization Started');
+  appLog('' * 60);
+  appLog('Platform: ${Platform.operatingSystem}');
+  appLog('Is Desktop: $isDesktop');
+  appLog('Is Web: $kIsWeb');
+  appLog('' * 60);
+  appLog('');
 
-  await appLog('[settings] Loading SettingsManager...');
+  appLog('[settings] Loading SettingsManager...');
   await SettingsManager.init();
 
   await MediaCache.instance.init();
-  
+
   unawaited(MediaCache.instance.clearDisplayCache());
-  
+
   if (SettingsManager.proxyEnabled.value) {
     ProxyManager.deferToFirstConnect();
-    applyCertPinning(); 
-    await appLog('[proxy] Proxy deferred — will apply after first WS connect');
+    applyCertPinning();
+    appLog('[proxy] Proxy deferred — will apply after first WS connect');
   } else {
     ProxyManager.applyFromSettings();
     applyCertPinning();
-    await appLog('[proxy] Proxy settings applied (enabled=false)');
+    appLog('[proxy] Proxy settings applied (enabled=false)');
   }
   try {
     final cur = await AccountManager.getCurrentAccount();
     await SettingsManager.setAccountContext(cur);
-    await appLog(
-        '[settings] SettingsManager loaded (account: ${cur ?? "<none>"})');
+    appLog('[settings] SettingsManager loaded (account: ${cur ?? "<none>"})');
   } catch (e) {
-    await appLog(
-        '[settings] SettingsManager loaded (failed to set account context): $e');
+    appLog('[settings] SettingsManager loaded (failed to set account context): $e');
   }
 
   final initFutures = <Future>[];
 
   final perfOptEnabled = SettingsManager.enablePerformanceOptimizations.value;
-  await appLog('[performance] Performance optimizations setting: $perfOptEnabled');
+  appLog('[performance] Performance optimizations setting: $perfOptEnabled');
 
   if (perfOptEnabled) {
-    
-    await appLog('[performance] Initializing UNLIMITED FPS mode...');
     initFutures.add(PerformanceInitializer.initialize());
-  } else {
-    await appLog('[performance]  Performance optimizations are DISABLED in settings!');
   }
   initFutures.add(_optimizePerformance());
 
@@ -270,7 +265,7 @@ void main() async {
           .then((_) => appLog('[background] Workmanager initialized')),
     );
   } else {
-    await appLog('[background] Workmanager skipped on this platform');
+    appLog('[background] Workmanager skipped on this platform');
   }
 
   initFutures.add(
@@ -280,32 +275,27 @@ void main() async {
 
   await Future.wait(initFutures, eagerError: false);
 
-  await appLog('[debug] Setting up debug print capture...');
   setupDebugPrintCapture();
-  await appLog('[debug] Debug print capture ready');
+  appLog('[debug] Debug print capture ready');
 
-  await appLog('');
-  await appLog('' * 60);
-  await appLog(' ONYX App Initialization Complete');
-  await appLog('' * 60);
-  await appLog('');
-
-  if (await _logFile.exists()) {
-    await appLog('Log file: ${_logFile.path}');
-  }
+  appLog('');
+  appLog('' * 60);
+  appLog(' ONYX App Initialization Complete');
+  appLog('' * 60);
+  appLog('');
 
   runApp(const MyApp());
 }
 
 Future<void> _optimizePerformance() async {
-  await appLog(
+  appLog(
       '[performance] Starting additional performance optimizations...');
 
   if (Platform.isAndroid || Platform.isWindows) {
     
     imageCache.maximumSize = 200;
     imageCache.maximumSizeBytes = 150 * 1024 * 1024;
-    await appLog('[performance] Image cache optimized: 150MB, 200 items');
+    appLog('[performance] Image cache optimized: 150MB, 200 items');
   }
 
   try {
@@ -314,58 +304,58 @@ Future<void> _optimizePerformance() async {
       try {
         final res =
             await platform.invokeMethod<bool>('enableHighPerformanceMode');
-        await appLog('[performance] High performance mode: $res');
+        appLog('[performance] High performance mode: $res');
 
         if (Platform.isWindows) {
           try {
             final vsyncDisabled = await platform.invokeMethod<bool>('disableVSync');
-            await appLog('[performance]  VSync disabled via DWM API: $vsyncDisabled');
+            appLog('[performance]  VSync disabled via DWM API: $vsyncDisabled');
           } catch (e) {
-            await appLog('[performance] Failed to disable VSync via DWM: $e');
+            appLog('[performance] Failed to disable VSync via DWM: $e');
           }
         }
       } catch (e) {
-        await appLog('[performance] High performance mode not available: $e');
+        appLog('[performance] High performance mode not available: $e');
       }
     }
   } catch (e) {
-    await appLog('[performance] Performance optimization error: $e');
+    appLog('[performance] Performance optimization error: $e');
   }
 
-  await appLog('[performance]  Performance optimizations applied');
+  appLog('[performance]  Performance optimizations applied');
 }
 
 Future<void> _initWindowManager() async {
-  await appLog('[desktop] Initializing window manager...');
+  appLog('[desktop] Initializing window manager...');
   await windowManager.ensureInitialized();
-  await appLog('[desktop] Window manager initialized');
+  appLog('[desktop] Window manager initialized');
 
   unawaited(windowManager.waitUntilReadyToShow().then((_) async {
-    await appLog('[desktop] Setting title bar style...');
+    appLog('[desktop] Setting title bar style...');
     await windowManager.setTitleBarStyle(
       TitleBarStyle.hidden,
       windowButtonVisibility: false,
     );
     await windowManager.setResizable(true);
     await windowManager.show();
-    await appLog('[desktop] Window manager ready and visible');
+    appLog('[desktop] Window manager ready and visible');
   }));
 }
 
 Future<void> _initTrayAndSingleInstance() async {
-  await appLog('[desktop] Initializing system tray and single instance...');
+  appLog('[desktop] Initializing system tray and single instance...');
 
   try {
     launchAtStartup.setup(
       appName: 'ONYX',
       appPath: Platform.resolvedExecutable,
     );
-    await appLog('[desktop] Launch at startup configured');
+    appLog('[desktop] Launch at startup configured');
   } catch (e) {
-    await appLog('[desktop] Failed to configure launch at startup: $e');
+    appLog('[desktop] Failed to configure launch at startup: $e');
   }
 
-  await appLog('[desktop] System tray and single instance initialized');
+  appLog('[desktop] System tray and single instance initialized');
 }
 
 class _BouncingScrollBehavior extends MaterialScrollBehavior {
@@ -394,6 +384,15 @@ class _ElegantMessengerState extends State<ElegantMessenger> with WindowListener
   AppTheme _currentTheme = AppTheme.deepPurple;
   bool _isDarkMode = true;
   final OnyxTrayManager _trayManager = OnyxTrayManager();
+
+  // Merges all theme-affecting notifiers so one ListenableBuilder handles them all.
+  late final _themeListenable = Listenable.merge([
+    SettingsManager.elementOpacity,
+    SettingsManager.elementBrightness,
+    SettingsManager.fontSizeMultiplier,
+    SettingsManager.fontFamily,
+    SettingsManager.appLocale,
+  ]);
 
   @override
   void initState() {
@@ -603,68 +602,52 @@ class _ElegantMessengerState extends State<ElegantMessenger> with WindowListener
   @override
   Widget build(BuildContext context) {
     
-    return ValueListenableBuilder<double>(
-      valueListenable: SettingsManager.elementOpacity,
-      builder: (_, elementOpacity, __) {
-        return ValueListenableBuilder<double>(
-          valueListenable: SettingsManager.elementBrightness,
-          builder: (_, elementBrightness, ___) {
-            return ValueListenableBuilder<double>(
-              valueListenable: SettingsManager.fontSizeMultiplier,
-              builder: (_, fontSizeMultiplier, ____) {
-                return ValueListenableBuilder<FontFamilyType>(
-                  valueListenable: SettingsManager.fontFamily,
-                  builder: (_, fontFamily, _____) {
-                    return ValueListenableBuilder<Locale>(
-                      valueListenable: SettingsManager.appLocale,
-                      builder: (_, appLocale, ______) {
-                    return MaterialApp(
-                          scrollBehavior: const _BouncingScrollBehavior(),
-                          title: 'ONYX Messenger',
-                          locale: appLocale,
-                          supportedLocales: const [Locale('en'), Locale('ru')],
-                          localizationsDelegates: const [
-                            AppLocalizations.delegate,
-                            GlobalMaterialLocalizations.delegate,
-                            GlobalWidgetsLocalizations.delegate,
-                            GlobalCupertinoLocalizations.delegate,
-                          ],
-                          theme: _currentTheme.getThemeData(
-                            isDark: false,
-                            fontFamily: fontFamily,
-                            fontSizeMultiplier: fontSizeMultiplier,
-                            elementOpacity: elementOpacity,
-                            elementBrightness: elementBrightness,
-                          ),
-                          darkTheme: _currentTheme.getThemeData(
-                            isDark: true,
-                            fontFamily: fontFamily,
-                            fontSizeMultiplier: fontSizeMultiplier,
-                            elementOpacity: elementOpacity,
-                            elementBrightness: elementBrightness,
-                          ),
-                  themeMode: _isDarkMode ? ThemeMode.dark : ThemeMode.light,
-                  builder: (ctx, child) {
-                    
-                    return DebugOverlayV2(
-                      child: Stack(
-                        children: [
-                          child ?? const SizedBox.shrink(),
-                          const CallOverlay(),
-                        ],
-                      ),
-                    );
-                  },
-                          navigatorObservers: [routeObserver],
-                          home: _buildHome(),
-                        );
-                      },
-                    );
-                  },
-                );
-              },
+    return ListenableBuilder(
+      listenable: _themeListenable,
+      builder: (_, __) {
+        final elementOpacity = SettingsManager.elementOpacity.value;
+        final elementBrightness = SettingsManager.elementBrightness.value;
+        final fontSizeMultiplier = SettingsManager.fontSizeMultiplier.value;
+        final fontFamily = SettingsManager.fontFamily.value;
+        final appLocale = SettingsManager.appLocale.value;
+        return MaterialApp(
+          scrollBehavior: const _BouncingScrollBehavior(),
+          title: 'ONYX Messenger',
+          locale: appLocale,
+          supportedLocales: const [Locale('en'), Locale('ru')],
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          theme: _currentTheme.getThemeData(
+            isDark: false,
+            fontFamily: fontFamily,
+            fontSizeMultiplier: fontSizeMultiplier,
+            elementOpacity: elementOpacity,
+            elementBrightness: elementBrightness,
+          ),
+          darkTheme: _currentTheme.getThemeData(
+            isDark: true,
+            fontFamily: fontFamily,
+            fontSizeMultiplier: fontSizeMultiplier,
+            elementOpacity: elementOpacity,
+            elementBrightness: elementBrightness,
+          ),
+          themeMode: _isDarkMode ? ThemeMode.dark : ThemeMode.light,
+          builder: (ctx, child) {
+            return DebugOverlayV2(
+              child: Stack(
+                children: [
+                  child ?? const SizedBox.shrink(),
+                  const CallOverlay(),
+                ],
+              ),
             );
           },
+          navigatorObservers: [routeObserver],
+          home: _buildHome(),
         );
       },
     );

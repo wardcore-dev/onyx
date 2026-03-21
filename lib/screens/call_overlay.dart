@@ -35,6 +35,9 @@ class _CallOverlayState extends State<CallOverlay> {
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    final dx = (event.position.dx - _dragStartX).abs();
+    final dy = (event.position.dy - _dragStartY).abs();
+    if (dx <= 8 && dy <= 8) return; // ignore tiny movements (finger jitter)
     _hasDragged = true;
 
     final screenWidth = MediaQuery.of(context).size.width;

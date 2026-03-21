@@ -9,13 +9,18 @@ list(APPEND FLUTTER_PLUGIN_LIST
   file_selector_windows
   flutter_secure_storage_windows
   flutter_webrtc
+  irondash_engine_context
   local_auth_windows
   local_notifier
+  media_kit_libs_windows_video
+  media_kit_video
   permission_handler_windows
   record_windows
   screen_retriever_windows
+  super_native_extensions
   tray_manager
   url_launcher_windows
+  volume_controller
   window_manager
   window_to_front
 )

@@ -387,19 +387,38 @@ class _AlbumGallery extends StatefulWidget {
 
 class _AlbumGalleryState extends State<_AlbumGallery> {
   late PageController _ctrl;
+  late ScrollController _stripCtrl;
   late int _current;
+
+  static const double _thumbSize = 60.0;
+  static const double _thumbGap = 4.0;
 
   @override
   void initState() {
     super.initState();
     _current = widget.initialIndex;
     _ctrl = PageController(initialPage: widget.initialIndex);
+    _stripCtrl = ScrollController();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToThumbnail(widget.initialIndex, animate: false));
   }
 
   @override
   void dispose() {
     _ctrl.dispose();
+    _stripCtrl.dispose();
     super.dispose();
+  }
+
+  void _scrollToThumbnail(int index, {bool animate = true}) {
+    if (!_stripCtrl.hasClients) return;
+    final totalItem = _thumbSize + _thumbGap;
+    final offset = index * totalItem - (_stripCtrl.position.viewportDimension / 2 - _thumbSize / 2);
+    final clamped = offset.clamp(0.0, _stripCtrl.position.maxScrollExtent);
+    if (animate) {
+      _stripCtrl.animateTo(clamped, duration: const Duration(milliseconds: 200), curve: Curves.easeInOut);
+    } else {
+      _stripCtrl.jumpTo(clamped);
+    }
   }
 
   void _prevPage() {
@@ -412,6 +431,66 @@ class _AlbumGalleryState extends State<_AlbumGallery> {
     if (_current < widget.allItems.length - 1) {
       _ctrl.nextPage(duration: const Duration(milliseconds: 200), curve: Curves.easeInOut);
     }
+  }
+
+  Widget _buildThumbItem(int i) {
+    final isActive = i == _current;
+    return GestureDetector(
+      onTap: () => _ctrl.animateToPage(
+        i,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
+      ),
+      child: Container(
+        width: _thumbSize,
+        height: _thumbSize,
+        margin: EdgeInsets.only(right: i < widget.allItems.length - 1 ? _thumbGap : 0),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: isActive ? Colors.white : Colors.white24,
+            width: isActive ? 2 : 1,
+          ),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(3),
+          child: _StripThumb(item: widget.allItems[i]),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThumbnailStrip() {
+    final totalContent = widget.allItems.length * _thumbSize +
+        (widget.allItems.length - 1) * _thumbGap;
+
+    return Container(
+      color: Colors.black,
+      height: _thumbSize + 12,
+      child: LayoutBuilder(
+        builder: (_, constraints) {
+          final fits = totalContent <= constraints.maxWidth - 16;
+          if (fits) {
+            return Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (int i = 0; i < widget.allItems.length; i++)
+                    _buildThumbItem(i),
+                ],
+              ),
+            );
+          }
+          return ListView.builder(
+            controller: _stripCtrl,
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+            itemCount: widget.allItems.length,
+            itemBuilder: (_, i) => _buildThumbItem(i),
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -448,42 +527,82 @@ class _AlbumGalleryState extends State<_AlbumGallery> {
             IconButton(
               icon: const Icon(Icons.download, color: Colors.white),
               tooltip: 'Save',
-              onPressed: _saveCurrentImage,
+              onPressed: _showSaveDialog,
             ),
           ],
         ),
-        body: Stack(
+        body: Column(
           children: [
-            PageView.builder(
-              controller: _ctrl,
-              itemCount: widget.allItems.length,
-              onPageChanged: (i) => setState(() => _current = i),
-              itemBuilder: (_, i) => _GalleryPage(
-                item: widget.allItems[i],
-                peerUsername: widget.peerUsername,
-                isOutgoing: widget.isOutgoing,
+            Expanded(
+              child: Stack(
+                children: [
+                  PageView.builder(
+                    controller: _ctrl,
+                    itemCount: widget.allItems.length,
+                    onPageChanged: (i) {
+                      setState(() => _current = i);
+                      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToThumbnail(i));
+                    },
+                    itemBuilder: (_, i) => _GalleryPage(
+                      item: widget.allItems[i],
+                      peerUsername: widget.peerUsername,
+                      isOutgoing: widget.isOutgoing,
+                    ),
+                  ),
+                  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) ...[
+                    if (_current > 0)
+                      Positioned(
+                        left: 12,
+                        top: 0,
+                        bottom: 0,
+                        child: Center(child: _NavArrow(icon: Icons.arrow_back_ios_rounded, onTap: _prevPage)),
+                      ),
+                    if (_current < widget.allItems.length - 1)
+                      Positioned(
+                        right: 12,
+                        top: 0,
+                        bottom: 0,
+                        child: Center(child: _NavArrow(icon: Icons.arrow_forward_ios_rounded, onTap: _nextPage)),
+                      ),
+                  ],
+                ],
               ),
             ),
-            if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) ...[
-              if (_current > 0)
-                Positioned(
-                  left: 12,
-                  top: 0,
-                  bottom: 0,
-                  child: Center(child: _NavArrow(icon: Icons.arrow_back_ios_rounded, onTap: _prevPage)),
-                ),
-              if (_current < widget.allItems.length - 1)
-                Positioned(
-                  right: 12,
-                  top: 0,
-                  bottom: 0,
-                  child: Center(child: _NavArrow(icon: Icons.arrow_forward_ios_rounded, onTap: _nextPage)),
-                ),
-            ],
+            _buildThumbnailStrip(),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _showSaveDialog() async {
+    final result = await showDialog<_SaveChoice>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: const Text('Save image', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Save only the current image or all images in the album?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, _SaveChoice.cancel),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, _SaveChoice.current),
+            child: const Text('Current'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, _SaveChoice.all),
+            child: const Text('All'),
+          ),
+        ],
+      ),
+    );
+    if (result == _SaveChoice.current) await _saveCurrentImage();
+    if (result == _SaveChoice.all) await _saveAllImages();
   }
 
   Future<void> _saveCurrentImage() async {
@@ -549,6 +668,96 @@ class _AlbumGalleryState extends State<_AlbumGallery> {
       rootScreenKey.currentState?.showSnack('Save failed: $e');
     }
   }
+
+  Future<void> _saveAllImages() async {
+    if (kIsWeb) {
+      rootScreenKey.currentState?.showSnack('Save not supported on web');
+      return;
+    }
+
+    final items = widget.allItems;
+    int saved = 0;
+    int failed = 0;
+
+    if (Platform.isAndroid || Platform.isIOS) {
+      for (final item in items) {
+        final cached = imageFileCache[item.filename];
+        if (cached == null) { failed++; continue; }
+        try {
+          final result = await GallerySaver.saveImage(cached.file.path, albumName: 'ONYX');
+          if (result == true) { saved++; } else { failed++; }
+        } catch (_) { failed++; }
+      }
+      rootScreenKey.currentState?.showSnack(
+        failed == 0 ? 'All $saved images saved to gallery' : '$saved saved, $failed failed',
+      );
+      return;
+    }
+
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      final dirPath = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Choose folder to save all images',
+      );
+      if (dirPath == null || dirPath.isEmpty) {
+        rootScreenKey.currentState?.showSnack('Save cancelled');
+        return;
+      }
+      for (final item in items) {
+        final cached = imageFileCache[item.filename];
+        if (cached == null) { failed++; continue; }
+        try {
+          final orig = item.orig.isNotEmpty ? item.orig : p.basename(item.filename);
+          await cached.file.copy(p.join(dirPath, orig));
+          saved++;
+        } catch (_) { failed++; }
+      }
+      rootScreenKey.currentState?.showSnack(
+        failed == 0 ? 'All $saved images saved to: $dirPath' : '$saved saved, $failed failed',
+      );
+      return;
+    }
+
+    rootScreenKey.currentState?.showSnack('Save not supported on this platform');
+  }
+}
+
+class _StripThumb extends StatefulWidget {
+  final AlbumItem item;
+  const _StripThumb({required this.item});
+
+  @override
+  State<_StripThumb> createState() => _StripThumbState();
+}
+
+class _StripThumbState extends State<_StripThumb> {
+  File? _file;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  @override
+  void didUpdateWidget(covariant _StripThumb old) {
+    super.didUpdateWidget(old);
+    if (old.item.filename != widget.item.filename) setState(_refresh);
+  }
+
+  void _refresh() {
+    final cached = imageFileCache[widget.item.filename];
+    if (cached != null && cached.file.existsSync()) {
+      _file = cached.file;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_file != null) {
+      return Image.file(_file!, fit: BoxFit.cover, gaplessPlayback: true);
+    }
+    return Container(color: Colors.grey[850]);
+  }
 }
 
 class _GalleryPage extends StatefulWidget {
@@ -557,11 +766,10 @@ class _GalleryPage extends StatefulWidget {
   final bool isOutgoing;
 
   const _GalleryPage({
-    Key? key,
     required this.item,
     required this.peerUsername,
     required this.isOutgoing,
-  }) : super(key: key);
+  });
 
   @override
   State<_GalleryPage> createState() => _GalleryPageState();
@@ -634,6 +842,8 @@ class _NavArrowState extends State<_NavArrow> {
     );
   }
 }
+
+enum _SaveChoice { cancel, current, all }
 
 String? _guessExt(String url) {
   final lower = url.toLowerCase().split('?').first;

@@ -30,6 +30,9 @@ import '../utils/file_utils.dart';
 import '../globals.dart';
 import 'package:flutter/services.dart';
 import 'chats_tab.dart' show getPreviewText;
+import 'package:gallery_saver_plus/gallery_saver.dart';
+import '../utils/image_file_cache.dart';
+import '../utils/clipboard_image.dart';
 
 const List<String> _randomHints = [
   'Say something!',
@@ -82,6 +85,54 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
   late String? _myRole;
 
   Map<String, dynamic>? _replyingToMessage;
+
+  late final _selectionNotifier = ValueNotifier<({bool active, Map<String, Map<String, dynamic>> selected})>((active: false, selected: {}));
+  Map<String, Map<String, dynamic>> get _selectedExtMessages => _selectionNotifier.value.selected;
+
+  bool _isExtTextMessage(Map<String, dynamic> msg) {
+    final t = msg['content']?.toString() ?? '';
+    return !t.startsWith('IMAGEv1:') && !t.startsWith('ALBUMv1:') &&
+        !t.toUpperCase().startsWith('VIDEOV1:') && !t.startsWith('VOICEv1:') &&
+        !t.startsWith('FILEv1:') && !t.startsWith('FILE:') &&
+        !t.toUpperCase().startsWith('MEDIA_PROXYV1:') &&
+        !t.startsWith('[cannot-decrypt');
+  }
+
+  void _enterExtSelectionMode(Map<String, dynamic> msg, String uniqueKey) {
+    HapticFeedback.mediumImpact();
+    final cur = _selectionNotifier.value;
+    _selectionNotifier.value = (active: true, selected: {...cur.selected, uniqueKey: msg});
+  }
+
+  void _exitExtSelectionMode() {
+    _selectionNotifier.value = (active: false, selected: {});
+  }
+
+  void _toggleExtMsgSelection(Map<String, dynamic> msg, String uniqueKey) {
+    final cur = _selectionNotifier.value;
+    final next = Map<String, Map<String, dynamic>>.from(cur.selected);
+    if (next.containsKey(uniqueKey)) {
+      next.remove(uniqueKey);
+      _selectionNotifier.value = (active: next.isNotEmpty, selected: next);
+    } else {
+      next[uniqueKey] = msg;
+      _selectionNotifier.value = (active: true, selected: next);
+    }
+  }
+
+  void _copySelectedExtMessages() {
+    final texts = _selectedExtMessages.values
+        .where(_isExtTextMessage)
+        .map((m) => m['content']?.toString() ?? '')
+        .where((t) => t.isNotEmpty)
+        .join('\n\n');
+    if (texts.isNotEmpty) {
+      Clipboard.setData(ClipboardData(text: texts));
+      rootScreenKey.currentState?.showSnack(
+          AppLocalizations(SettingsManager.appLocale.value).msgCopied);
+    }
+    _exitExtSelectionMode();
+  }
 
   final List<Map<String, dynamic>> _wsIncomingBuffer = [];
   Timer? _wsFlushTimer;
@@ -226,6 +277,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     _scroll.dispose();
     _enterAnimController.dispose();
     _inputEntryController.dispose();
+    _selectionNotifier.dispose();
     super.dispose();
   }
 
@@ -1043,7 +1095,24 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
   void _showExternalMessageMenu(Map<String, dynamic> msg) {
     _focusNode.unfocus();
     final content = msg['content']?.toString() ?? '';
-    final isMedia = content.toUpperCase().startsWith('MEDIA_PROXYV1:') ||
+    final isImage = content.startsWith('IMAGEv1:');
+    final isAlbum = content.startsWith('ALBUMv1:');
+    final isVideo = content.toUpperCase().startsWith('VIDEOV1:');
+    final isVoice = content.startsWith('VOICEv1:');
+    final isFile = content.startsWith('FILEv1:') || content.startsWith('FILE:');
+    final isProxy = content.toUpperCase().startsWith('MEDIA_PROXYV1:');
+    bool isProxySaveableMobile = false;
+    if (isProxy) {
+      try {
+        final data = jsonDecode(content.substring('MEDIA_PROXYv1:'.length)) as Map<String, dynamic>;
+        final type = data['type'] as String?;
+        final url = (data['url'] as String?)?.trim() ?? '';
+        if (type == 'album' || url.isNotEmpty) isProxySaveableMobile = true;
+      } catch (_) {}
+    }
+    final isSaveable = isImage || isAlbum || isVideo || isVoice || isFile || isProxySaveableMobile;
+    final isMedia = isSaveable ||
+        isProxy ||
         (content.startsWith('http') &&
             (content.contains('/uploads/') ||
                 content.contains('file.io') ||
@@ -1100,6 +1169,11 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                     Navigator.pop(ctx);
                     _startReply(msg);
                   }),
+                  if (isSaveable)
+                    actionTile(Icons.save_alt_rounded, 'Save', () {
+                      Navigator.pop(ctx);
+                      _saveMediaFromMessage(content);
+                    }),
                   if (!isMedia)
                     actionTile(Icons.copy_rounded, 'Copy', () {
                       Navigator.pop(ctx);
@@ -1116,11 +1190,236 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     );
   }
 
-  List<ContextMenuButtonItem>? _buildDesktopMenuItems(Map<String, dynamic> msg) {
-    if (!isDesktop) return null;
+  Future<void> _saveMediaFromMessage(String content) async {
+    if (kIsWeb) { rootScreenKey.currentState?.showSnack('Save not supported on web'); return; }
+    try {
+      if (content.startsWith('IMAGEv1:')) {
+        final data = jsonDecode(content.substring('IMAGEv1:'.length)) as Map<String, dynamic>;
+        final filename = data['url'] as String? ?? data['filename'] as String? ?? '';
+        if (filename.isEmpty) return;
+        final cached = imageFileCache[filename];
+        if (cached == null) { rootScreenKey.currentState?.showSnack('Image not loaded yet'); return; }
+        await _saveFileToDevice(cached.file, p.basename(filename));
+        return;
+      }
+      if (content.startsWith('VOICEv1:')) {
+        final meta = jsonDecode(content.substring('VOICEv1:'.length)) as Map<String, dynamic>;
+        final filename = meta['url'] as String? ?? meta['filename'] as String? ?? '';
+        final orig = meta['orig'] as String? ?? p.basename(filename);
+        if (filename.isEmpty) return;
+        final localPath = mediaFilePathRegistry[filename];
+        if (localPath == null) { rootScreenKey.currentState?.showSnack('Voice not loaded yet'); return; }
+        String saveName = orig.isNotEmpty ? orig : p.basename(localPath);
+        if (p.extension(saveName).isEmpty) saveName = saveName + p.extension(localPath);
+        await _saveFileToDevice(File(localPath), saveName);
+        return;
+      }
+      if (content.toUpperCase().startsWith('VIDEOV1:')) {
+        final meta = jsonDecode(content.substring('VIDEOv1:'.length)) as Map<String, dynamic>;
+        final filename = meta['url'] as String? ?? meta['filename'] as String? ?? '';
+        final orig = meta['orig'] as String? ?? p.basename(filename);
+        if (filename.isEmpty) return;
+        final localPath = mediaFilePathRegistry[filename];
+        if (localPath == null) { rootScreenKey.currentState?.showSnack('Video not loaded yet'); return; }
+        await _saveFileToDevice(File(localPath), orig.isNotEmpty ? orig : p.basename(localPath));
+        return;
+      }
+      if (content.startsWith('FILEv1:') || content.startsWith('FILE:')) {
+        final String filename;
+        final String orig;
+        if (content.startsWith('FILEv1:')) {
+          final meta = jsonDecode(content.substring('FILEv1:'.length)) as Map<String, dynamic>;
+          filename = meta['filename'] as String? ?? '';
+          orig = meta['orig'] as String? ?? p.basename(filename);
+        } else {
+          filename = content.substring('FILE:'.length).trim();
+          orig = p.basename(filename);
+        }
+        if (filename.isEmpty) return;
+        final localPath = mediaFilePathRegistry[filename];
+        if (localPath == null) { rootScreenKey.currentState?.showSnack('File not loaded yet'); return; }
+        await _saveFileToDevice(File(localPath), orig.isNotEmpty ? orig : p.basename(localPath));
+        return;
+      }
+      if (content.startsWith('ALBUMv1:')) {
+        final list = jsonDecode(content.substring('ALBUMv1:'.length)) as List<dynamic>;
+        final items = list.whereType<Map<String, dynamic>>().toList();
+        if (items.isEmpty) return;
+        int saved = 0, failed = 0;
+        if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+          for (final item in items) {
+            final filename = item['filename'] as String? ?? '';
+            final cached = imageFileCache[filename];
+            if (cached == null) { failed++; continue; }
+            try {
+              final ok = await GallerySaver.saveImage(cached.file.path, albumName: 'ONYX');
+              if (ok == true) saved++; else failed++;
+            } catch (_) { failed++; }
+          }
+          rootScreenKey.currentState?.showSnack(
+            failed == 0 ? 'All $saved images saved to gallery' : '$saved saved, $failed failed');
+          return;
+        }
+        if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+          final dirPath = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Choose folder to save all images');
+          if (dirPath == null || dirPath.isEmpty) { rootScreenKey.currentState?.showSnack('Save cancelled'); return; }
+          for (final item in items) {
+            final filename = item['filename'] as String? ?? '';
+            final orig = (item['orig'] as String?)?.isNotEmpty == true ? item['orig'] as String : p.basename(filename);
+            final cached = imageFileCache[filename];
+            if (cached == null) { failed++; continue; }
+            try { await cached.file.copy(p.join(dirPath, orig)); saved++; } catch (_) { failed++; }
+          }
+          rootScreenKey.currentState?.showSnack(
+            failed == 0 ? 'All $saved images saved to: $dirPath' : '$saved saved, $failed failed');
+        }
+      }
+      if (content.toUpperCase().startsWith('MEDIA_PROXYV1:')) {
+        final data = jsonDecode(content.substring('MEDIA_PROXYv1:'.length)) as Map<String, dynamic>;
+        final type = data['type'] as String?;
+        if (type == 'album') {
+          final rawItems = data['items'];
+          final items = (rawItems is List) ? rawItems.whereType<Map<String, dynamic>>().toList() : <Map<String, dynamic>>[];
+          if (items.isEmpty) return;
+          int saved = 0, failed = 0;
+          if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+            for (final item in items) {
+              final url = (item['url'] as String?)?.trim() ?? '';
+              if (url.isEmpty) { failed++; continue; }
+              final authUrl = ExternalServerManager.addTokenToUrl(url);
+              final cached = imageFileCache[authUrl];
+              if (cached == null) { failed++; continue; }
+              try {
+                final ok = await GallerySaver.saveImage(cached.file.path, albumName: 'ONYX');
+                if (ok == true) { saved++; } else { failed++; }
+              } catch (_) { failed++; }
+            }
+            rootScreenKey.currentState?.showSnack(
+              failed == 0 ? 'All $saved images saved to gallery' : '$saved saved, $failed failed');
+            return;
+          }
+          if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+            final dirPath = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Choose folder to save all images');
+            if (dirPath == null || dirPath.isEmpty) { rootScreenKey.currentState?.showSnack('Save cancelled'); return; }
+            for (final item in items) {
+              final url = (item['url'] as String?)?.trim() ?? '';
+              final orig = (item['orig'] as String?)?.isNotEmpty == true ? item['orig'] as String : p.basename(url);
+              if (url.isEmpty) { failed++; continue; }
+              final authUrl = ExternalServerManager.addTokenToUrl(url);
+              final cached = imageFileCache[authUrl];
+              if (cached == null) { failed++; continue; }
+              try { await cached.file.copy(p.join(dirPath, orig)); saved++; } catch (_) { failed++; }
+            }
+            rootScreenKey.currentState?.showSnack(
+              failed == 0 ? 'All $saved images saved to: $dirPath' : '$saved saved, $failed failed');
+          }
+          return;
+        }
+        final url = (data['url'] as String?)?.trim() ?? '';
+        final orig = data['orig'] as String? ?? '';
+        if (url.isEmpty) return;
+        final authUrl = ExternalServerManager.addTokenToUrl(url);
+        final isImg = type == 'image' ||
+            (['.jpg', '.jpeg', '.png', '.gif', '.webp'].any(orig.toLowerCase().endsWith) ||
+             ['.jpg', '.jpeg', '.png', '.gif', '.webp'].any(url.toLowerCase().endsWith));
+        if (isImg) {
+          final cached = imageFileCache[authUrl];
+          if (cached == null) { rootScreenKey.currentState?.showSnack('Image not loaded yet'); return; }
+          await _saveFileToDevice(cached.file, orig.isNotEmpty ? orig : p.basename(url));
+          return;
+        }
+        final localPath = mediaFilePathRegistry[authUrl];
+        if (localPath == null) { rootScreenKey.currentState?.showSnack('Media not loaded yet'); return; }
+        await _saveFileToDevice(File(localPath), orig.isNotEmpty ? orig : p.basename(localPath));
+        return;
+      }
+    } catch (e) {
+      rootScreenKey.currentState?.showSnack('Save failed: $e');
+    }
+  }
+
+  Future<void> _saveFileToDevice(File file, String originalName) async {
+    try {
+      if (Platform.isAndroid || Platform.isIOS) {
+        final ext = p.extension(originalName).toLowerCase();
+        final isImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.heic'].contains(ext);
+        final isVideo = ['.mp4', '.mov', '.avi', '.webm', '.m4v', '.mkv'].contains(ext);
+        if (isImage) {
+          final saved = await GallerySaver.saveImage(file.path, albumName: 'ONYX');
+          rootScreenKey.currentState?.showSnack(saved == true ? 'Saved to gallery' : 'Failed to save to gallery');
+        } else if (isVideo) {
+          final saved = await GallerySaver.saveVideo(file.path, albumName: 'ONYX');
+          rootScreenKey.currentState?.showSnack(saved == true ? 'Saved to gallery' : 'Failed to save to gallery');
+        } else {
+          final dl = await getDownloadsDirectory();
+          if (dl == null) { rootScreenKey.currentState?.showSnack('Cannot access Downloads directory'); return; }
+          final onyxDir = Directory('${dl.path}/ONYX');
+          await onyxDir.create(recursive: true);
+          final destPath = '${onyxDir.path}/$originalName';
+          await file.copy(destPath);
+          rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+        }
+        return;
+      }
+      if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+        final ext = p.extension(originalName).replaceFirst('.', '');
+        String? destPath;
+        try {
+          destPath = await FilePicker.platform.saveFile(
+            dialogTitle: 'Save as',
+            fileName: originalName,
+            type: FileType.custom,
+            allowedExtensions: ext.isNotEmpty ? [ext] : ['bin'],
+          );
+        } catch (_) {
+          final dirPath = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Choose folder to save');
+          if (dirPath == null) { rootScreenKey.currentState?.showSnack('Save cancelled'); return; }
+          destPath = p.join(dirPath, originalName);
+        }
+        if (destPath == null || destPath.isEmpty) { rootScreenKey.currentState?.showSnack('Save cancelled'); return; }
+        await file.copy(destPath);
+        rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+      }
+    } catch (e) {
+      rootScreenKey.currentState?.showSnack('Save failed: $e');
+    }
+  }
+
+  List<ContextMenuButtonItem> _buildExternalDesktopMenuItems(Map<String, dynamic> msg) {
     final content = msg['content']?.toString() ?? '';
     final rawSender = msg['sender']?.toString() ?? '';
-    final isMedia = content.toUpperCase().startsWith('MEDIA_PROXYV1:') ||
+    final isImage = content.startsWith('IMAGEv1:');
+    final isAlbum = content.startsWith('ALBUMv1:');
+    final isVideo = content.toUpperCase().startsWith('VIDEOV1:');
+    final isVoice = content.startsWith('VOICEv1:');
+    final isFile = content.startsWith('FILEv1:') || content.startsWith('FILE:');
+
+    bool isProxyImage = false;
+    bool isProxySaveable = false;
+    if (content.toUpperCase().startsWith('MEDIA_PROXYV1:')) {
+      try {
+        final data = jsonDecode(content.substring('MEDIA_PROXYv1:'.length)) as Map<String, dynamic>;
+        final url = (data['url'] as String?)?.trim() ?? '';
+        final orig = (data['orig'] as String? ?? '').toLowerCase();
+        final type = data['type'] as String?;
+        if (type == 'album') {
+          isProxySaveable = true;
+        } else if (url.isNotEmpty) {
+          isProxySaveable = true;
+          if (type == 'image') {
+            isProxyImage = true;
+          } else if (type == null || type.isEmpty) {
+            final lower = url.toLowerCase();
+            isProxyImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].any(orig.endsWith) ||
+                ['.jpg', '.jpeg', '.png', '.gif', '.webp'].any(lower.endsWith);
+          }
+        }
+      } catch (_) {}
+    }
+
+    final isSaveable = isImage || isAlbum || isVideo || isVoice || isFile || isProxySaveable;
+    final isMedia = isSaveable ||
+        content.toUpperCase().startsWith('MEDIA_PROXYV1:') ||
         (content.startsWith('http') &&
             (content.contains('/uploads/') ||
                 content.contains('file.io') ||
@@ -1134,6 +1433,18 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           'content': content,
         }),
       ),
+      if (isSaveable)
+        ContextMenuButtonItem(
+          label: 'Save',
+          onPressed: () => _saveMediaFromMessage(content),
+        ),
+      if (isImage || isProxyImage)
+        ContextMenuButtonItem(
+          label: 'Copy Image',
+          onPressed: isImage
+              ? () => copyMessageImageToClipboard(content, (m) => rootScreenKey.currentState?.showSnack(m))
+              : () => _copyExternalProxyImage(content),
+        ),
       if (!isMedia)
         ContextMenuButtonItem(
           label: 'Copy',
@@ -1145,6 +1456,23 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           },
         ),
     ];
+  }
+
+  void _copyExternalProxyImage(String content) {
+    try {
+      final data = jsonDecode(content.substring('MEDIA_PROXYv1:'.length)) as Map<String, dynamic>;
+      final url = (data['url'] as String?)?.trim() ?? '';
+      if (url.isEmpty) return;
+      final authUrl = ExternalServerManager.addTokenToUrl(url);
+      final cached = imageFileCache[authUrl];
+      if (cached == null) {
+        rootScreenKey.currentState?.showSnack('Image not loaded yet — open it first');
+        return;
+      }
+      copyFileImageToClipboard(cached.file, (m) => rootScreenKey.currentState?.showSnack(m));
+    } catch (e) {
+      rootScreenKey.currentState?.showSnack('Copy failed: $e');
+    }
   }
 
   bool get _isReadOnlyChannel => !_canPost;
@@ -2540,7 +2868,18 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        automaticallyImplyLeading: !isDesktop,
+        automaticallyImplyLeading: false,
+        leading: isDesktop
+            ? null
+            : ValueListenableBuilder(
+                valueListenable: _selectionNotifier,
+                builder: (_, sel, __) => sel.active
+                    ? IconButton(
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: _exitExtSelectionMode,
+                      )
+                    : const BackButton(),
+              ),
         flexibleSpace: ValueListenableBuilder<double>(
           valueListenable: SettingsManager.elementOpacity,
           builder: (_, opacity, __) {
@@ -2551,7 +2890,24 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
             );
           },
         ),
-        title: GestureDetector(
+        title: ValueListenableBuilder(
+          valueListenable: _selectionNotifier,
+          builder: (_, sel, __) => sel.active
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isDesktop)
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: _exitExtSelectionMode,
+                      ),
+                    Text(
+                      '${sel.selected.length} selected',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                )
+              : GestureDetector(
           onTap: _showEditProfileDialog,
           child: Row(
             children: [
@@ -2608,76 +2964,96 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
             ],
           ),
         ),
+        ),
         actions: [
-          
-          if (_myRole == null)
-            FilledButton.tonal(
-              onPressed: _joinGroup,
-              child: Text(AppLocalizations.of(context).join),
-            ),
-          ExternalServerBadge(isChannel: widget.group.isChannel),
-          PopupMenuButton<String>(
-            icon: Icon(Icons.more_vert, color: colorScheme.onSurface),
-            onSelected: (value) async {
-              if (value == 'disconnect') {
-                ExternalServerManager.disconnectWebSocket(widget.server.id);
-                if (mounted) {
-                  setState(() {
-                    _isConnected = false;
-                    _isConnecting = false;
-                  });
-                }
-              } else if (value == 'edit_profile') {
-                _showEditProfileDialog();
-              } else if (value == 'members') {
-                _showMembersDialog();
-              }
-            },
-            itemBuilder: (context) {
-              final isOwner = _myRole == 'owner';
-              return [
-                if (isOwner) ...[
-                  PopupMenuItem<String>(
-                    value: 'edit_profile',
-                    child: Row(
-                      children: [
-                        Icon(Icons.edit, size: 18, color: colorScheme.primary),
-                        const SizedBox(width: 8),
-                        Text(AppLocalizations.of(context).editProfile),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem<String>(
-                    value: 'members',
-                    child: Row(
-                      children: [
-                        Icon(Icons.people, size: 18, color: colorScheme.primary),
-                        const SizedBox(width: 8),
-                        Text(AppLocalizations.of(context).manageMembers),
-                      ],
-                    ),
-                  ),
-                  const PopupMenuDivider(),
-                ],
-                PopupMenuItem<String>(
-                  value: 'disconnect',
-                  enabled: _isConnected,
-                  child: Row(
+          ValueListenableBuilder(
+            valueListenable: _selectionNotifier,
+            builder: (_, sel, __) => sel.active
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.power_settings_new,
-                          size: 18,
-                          color: _isConnected
-                              ? colorScheme.error
-                              : colorScheme.onSurface.withValues(alpha: 0.3)),
-                      const SizedBox(width: 8),
-                      Text(_isConnected ? 'Disconnect' : 'Not connected'),
+                      if (sel.selected.values.any(_isExtTextMessage))
+                        IconButton(
+                          icon: const Icon(Icons.copy_rounded),
+                          tooltip: 'Copy',
+                          onPressed: _copySelectedExtMessages,
+                        ),
+                    ],
+                  )
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_myRole == null)
+                        FilledButton.tonal(
+                          onPressed: _joinGroup,
+                          child: Text(AppLocalizations.of(context).join),
+                        ),
+                      ExternalServerBadge(isChannel: widget.group.isChannel),
+                      PopupMenuButton<String>(
+                        icon: Icon(Icons.more_vert, color: colorScheme.onSurface),
+                        onSelected: (value) async {
+                          if (value == 'disconnect') {
+                            ExternalServerManager.disconnectWebSocket(widget.server.id);
+                            if (mounted) {
+                              setState(() {
+                                _isConnected = false;
+                                _isConnecting = false;
+                              });
+                            }
+                          } else if (value == 'edit_profile') {
+                            _showEditProfileDialog();
+                          } else if (value == 'members') {
+                            _showMembersDialog();
+                          }
+                        },
+                        itemBuilder: (context) {
+                          final isOwner = _myRole == 'owner';
+                          return [
+                            if (isOwner) ...[
+                              PopupMenuItem<String>(
+                                value: 'edit_profile',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.edit, size: 18, color: colorScheme.primary),
+                                    const SizedBox(width: 8),
+                                    Text(AppLocalizations.of(context).editProfile),
+                                  ],
+                                ),
+                              ),
+                              PopupMenuItem<String>(
+                                value: 'members',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.people, size: 18, color: colorScheme.primary),
+                                    const SizedBox(width: 8),
+                                    Text(AppLocalizations.of(context).manageMembers),
+                                  ],
+                                ),
+                              ),
+                              const PopupMenuDivider(),
+                            ],
+                            PopupMenuItem<String>(
+                              value: 'disconnect',
+                              enabled: _isConnected,
+                              child: Row(
+                                children: [
+                                  Icon(Icons.power_settings_new,
+                                      size: 18,
+                                      color: _isConnected
+                                          ? colorScheme.error
+                                          : colorScheme.onSurface.withValues(alpha: 0.3)),
+                                  const SizedBox(width: 8),
+                                  Text(_isConnected ? 'Disconnect' : 'Not connected'),
+                                ],
+                              ),
+                            ),
+                          ];
+                        },
+                      ),
+                      const SizedBox(width: 4),
                     ],
                   ),
-                ),
-              ];
-            },
           ),
-          const SizedBox(width: 4),
         ],
       ),
       body: DragDropZone(
@@ -2793,7 +3169,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                         msg['timestamp']?.toString() ?? '') ??
                                     DateTime.now()),
                             onRequestResend: (_) {},
-                            desktopMenuItems: _buildDesktopMenuItems(msg),
+                            desktopMenuItems: isDesktop ? _buildExternalDesktopMenuItems(msg) : null,
                             peerUsername: rawSender,
                             replyToId: msg['reply_to_id'] is int
                                 ? msg['reply_to_id'] as int
@@ -2856,29 +3232,87 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                         });
                       }
 
-                      final messageWidget = RepaintBoundary(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 4),
-                          child: Align(
-                            alignment: shouldAlignRight
-                                ? Alignment.centerRight
-                                : Alignment.centerLeft,
-                            child: contentWithSender,
-                          ),
-                        ),
-                      );
+                      final expensiveChild = isFirstAppearance
+                          ? _AnimatedMessageBubble(
+                              key: ValueKey<String>('anim_$uniqueKey'),
+                              child: RepaintBoundary(
+                                child: Align(
+                                  alignment: shouldAlignRight
+                                      ? Alignment.centerRight
+                                      : Alignment.centerLeft,
+                                  child: contentWithSender,
+                                ),
+                              ),
+                            )
+                          : RepaintBoundary(
+                              child: Align(
+                                alignment: shouldAlignRight
+                                    ? Alignment.centerRight
+                                    : Alignment.centerLeft,
+                                child: contentWithSender,
+                              ),
+                            );
 
-                      if (isFirstAppearance) {
-                        
-                        return _AnimatedMessageBubble(
-                          key: ValueKey<String>('anim_$uniqueKey'),
-                          child: messageWidget,
-                        );
-                      } else {
-                        
-                        return messageWidget;
-                      }
+                      return ValueListenableBuilder<({bool active, Map<String, Map<String, dynamic>> selected})>(
+                        valueListenable: _selectionNotifier,
+                        child: expensiveChild,
+                        builder: (_, sel, contentChild) {
+                          final isExtSelected = sel.selected.containsKey(uniqueKey);
+                          final ecs = Theme.of(context).colorScheme;
+                          final extCheckmark = GestureDetector(
+                            onTap: () => _toggleExtMsgSelection(msg, uniqueKey),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 6),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 150),
+                                width: 22,
+                                height: 22,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: isExtSelected ? ecs.primary : Colors.transparent,
+                                  border: Border.all(
+                                    color: isExtSelected
+                                        ? ecs.primary
+                                        : ecs.onSurface.withValues(alpha: 0.35),
+                                    width: 2,
+                                  ),
+                                ),
+                                child: isExtSelected
+                                    ? Icon(Icons.check, size: 14, color: ecs.onPrimary)
+                                    : null,
+                              ),
+                            ),
+                          );
+
+                          return GestureDetector(
+                            behavior: HitTestBehavior.translucent,
+                            onTap: sel.active
+                                ? () => _toggleExtMsgSelection(msg, uniqueKey)
+                                : null,
+                            onDoubleTap: sel.active
+                                ? null
+                                : () => _enterExtSelectionMode(msg, uniqueKey),
+                            onLongPress: sel.active
+                                ? () => _toggleExtMsgSelection(msg, uniqueKey)
+                                : () => _enterExtSelectionMode(msg, uniqueKey),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              color: isExtSelected
+                                  ? ecs.primaryContainer.withValues(alpha: 0.45)
+                                  : Colors.transparent,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 4),
+                              child: Row(
+                                children: [
+                                  if (sel.active && !shouldAlignRight) extCheckmark,
+                                  Expanded(child: contentChild!),
+                                  if (sel.active && shouldAlignRight) extCheckmark,
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      );
                     },
                   ),
               );

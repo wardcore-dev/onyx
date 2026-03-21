@@ -33,6 +33,10 @@ class MessageBubble extends StatelessWidget {
   final bool highlighted; 
   
   final List<ContextMenuButtonItem>? desktopMenuItems;
+  /// Called with the global tap position when the user right-clicks on desktop.
+  /// When provided, the built-in SelectionArea context menu is suppressed and
+  /// this callback is responsible for showing its own menu.
+  final void Function(Offset)? onRightClick;
 
   const MessageBubble({
     Key? key,
@@ -49,24 +53,27 @@ class MessageBubble extends StatelessWidget {
     this.replyToContent,
     this.highlighted = false,
     this.desktopMenuItems,
+    this.onRightClick,
   }) : super(key: key);
 
   bool get isDiagnostic => text.startsWith('[cannot-decrypt');
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<FontFamilyType>(
-      valueListenable: SettingsManager.fontFamily,
-      builder: (_, fontFamily, __) {
-        return ValueListenableBuilder<double>(
-          valueListenable: SettingsManager.fontSizeMultiplier,
-          builder: (_, fontSizeMultiplier, ___) {
-            return _buildMessageBubble(
-              context,
-              fontFamily,
-              fontSizeMultiplier,
-            );
-          },
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        SettingsManager.fontFamily,
+        SettingsManager.fontSizeMultiplier,
+        SettingsManager.elementBrightness,
+        SettingsManager.elementOpacity,
+      ]),
+      builder: (context, _) {
+        return _buildMessageBubble(
+          context,
+          SettingsManager.fontFamily.value,
+          SettingsManager.fontSizeMultiplier.value,
+          SettingsManager.elementBrightness.value,
+          SettingsManager.elementOpacity.value,
         );
       },
     );
@@ -76,6 +83,8 @@ class MessageBubble extends StatelessWidget {
     BuildContext context,
     FontFamilyType fontFamily,
     double fontSizeMultiplier,
+    double brightness,
+    double msgOpacity,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
     const double incomingBaseAlpha = 0.5;
@@ -86,10 +95,6 @@ class MessageBubble extends StatelessWidget {
     Widget primaryContent;
     String? linkPreviewUrl;
 
-    return ValueListenableBuilder<double>(
-      valueListenable: SettingsManager.elementBrightness,
-      builder: (_, brightness, ___) {
-        
         final bool isLight = colorScheme.surface.computeLuminance() > 0.5;
         final Color outgoingBase = isLight
             ? Color.lerp(colorScheme.surface, colorScheme.primary, 0.20)!
@@ -116,9 +121,6 @@ class MessageBubble extends StatelessWidget {
           brightness,
         );
 
-        return ValueListenableBuilder<double>(
-          valueListenable: SettingsManager.elementOpacity,
-          builder: (_, msgOpacity, __) {
         if (replyToContent != null && replyToContent!.isNotEmpty) {
           debugPrint('[MessageBubble] Has reply - replyToId=$replyToId, replyToUsername=$replyToUsername, replyToContent=$replyToContent');
         }
@@ -577,6 +579,14 @@ class MessageBubble extends StatelessWidget {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (chatMessage?.pendingSend == true) ...[
+                    Icon(
+                      Icons.schedule,
+                      size: 10 * fontSizeMultiplier,
+                      color: textColorFinal.withOpacity(0.55),
+                    ),
+                    const SizedBox(width: 3),
+                  ],
                   if (chatMessage?.deliveryMode.isLAN == true) ...[
                     Icon(
                       Icons.wifi,
@@ -651,6 +661,26 @@ class MessageBubble extends StatelessWidget {
           ),        
         );          
         if (isDesktop) {
+          // When onRightClick is supplied, the caller handles the context menu.
+          // We suppress SelectionArea's own context menu (returning an invisible
+          // SizedBox) so only the caller's showMenu popup appears.
+          // A Listener (which bypasses the gesture arena) detects the secondary
+          // button press and invokes the callback.
+          if (onRightClick != null) {
+            return Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (PointerDownEvent event) {
+                if (event.buttons == kSecondaryMouseButton) {
+                  ContextMenuController.removeAny();
+                  onRightClick!(event.position);
+                }
+              },
+              child: SelectionArea(
+                contextMenuBuilder: (_, __) => const SizedBox.shrink(),
+                child: innerBubble,
+              ),
+            );
+          }
           return SelectionArea(
             contextMenuBuilder: (BuildContext menuCtx, SelectableRegionState regionState) {
               final standard = regionState.contextMenuButtonItems;
@@ -677,15 +707,11 @@ class MessageBubble extends StatelessWidget {
             child: innerBubble,
           );
         } else {
-          
+
           return SelectionArea(
             child: innerBubble,
           );
         }
-          },
-        );
-      },
-    );
   }
 
   String _formatMessageTime(DateTime t) {

@@ -54,6 +54,9 @@ class SettingsManager {
   static const _appLocaleKey = 'app_locale';
 
   static String? _accountContext;
+  static SharedPreferences? _prefs;
+  static Future<SharedPreferences> _getPrefs() async =>
+      _prefs ??= await SharedPreferences.getInstance();
 
   static final ValueNotifier<String?> chatBackground =
       ValueNotifier<String?>(null);
@@ -150,7 +153,7 @@ class SettingsManager {
       ValueNotifier<Locale>(const Locale('en'));
 
   static Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     final path = prefs.getString(_chatBgKey);
     final apply = prefs.getBool(_applyGlobKey) ?? false;
     final blur = prefs.getBool(_blurKey) ?? false;
@@ -266,6 +269,7 @@ class SettingsManager {
 
     final localeCode = prefs.getString(_appLocaleKey) ?? 'en';
     SettingsManager.appLocale.value = Locale(localeCode);
+
   }
 
   static String _scopedKey(String baseKey) {
@@ -275,7 +279,7 @@ class SettingsManager {
 
   static Future<void> setAccountContext(String? username) async {
     _accountContext = username;
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
 
     final scopedVisibility = prefs.getString(_scopedKey(_statusVisibilityKey));
     final scopedOnline = prefs.getString(_scopedKey(_statusOnlineKey));
@@ -287,7 +291,7 @@ class SettingsManager {
   }
 
   static Future<void> setChatBackground(String? path) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
 
     try {
       final prev = chatBackground.value;
@@ -312,199 +316,199 @@ class SettingsManager {
   }
 
   static Future<void> setDebugMode(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_debugModeKey, val);
     debugMode.value = val;
   }
 
   static Future<void> setShowFpsOverlay(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_showFpsKey, val);
     showFpsOverlay.value = val;
   }
 
   static Future<void> setApplyGlobally(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_applyGlobKey, val);
     applyGlobally.value = val;
   }
 
   static Future<void> setBlurBackground(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_blurKey, val);
     blurBackground.value = val;
   }
 
   static Future<void> setBlurSigma(double val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setDouble(_blurSigmaKey, val);
     blurSigma.value = val;
   }
 
   static Future<void> setElementOpacity(double val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setDouble(_elementOpacityKey, val);
     elementOpacity.value = val;
   }
 
   static Future<void> setElementBrightness(double val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setDouble(_elementBrightnessKey, val);
     elementBrightness.value = val;
   }
 
   static Future<void> setInputBarMaxWidth(double val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setDouble(_inputBarMaxWidthKey, val);
     inputBarMaxWidth.value = val;
   }
 
   static Future<void> setSwapMessageAlignment(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_swapMessageAlignmentKey, val);
     swapMessageAlignment.value = val;
   }
 
   static Future<void> setAlignAllMessagesRight(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_alignAllMessagesRightKey, val);
     alignAllMessagesRight.value = val;
   }
 
   static Future<void> setShowAvatarInChats(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_showAvatarInChatsKey, val);
     showAvatarInChats.value = val;
   }
 
   static Future<void> setSmoothScroll(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_smoothScrollKey, val);
     smoothScrollEnabled.value = val;
   }
 
   static Future<void> setEnablePerformanceOptimizations(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_enablePerformanceOptimizationsKey, val);
     enablePerformanceOptimizations.value = val;
   }
 
   static Future<void> setUseLiquidGlass(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_useLiquidGlassKey, val);
     useLiquidGlass.value = val;
   }
 
   static Future<void> setMessagePaginationEnabled(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_messagePaginationKey, val);
     messagePaginationEnabled.value = val;
   }
 
   static Future<void> setMinimizeBottomNav(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_minimizeBottomNavKey, val);
     minimizeBottomNav.value = val;
   }
 
   static Future<void> setSwipeTabsEnabled(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_swipeTabsKey, val);
     swipeTabsEnabled.value = val;
   }
 
   static Future<void> setFontFamily(FontFamilyType val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(_fontFamilyKey, val.toString().split('.').last);
     fontFamily.value = val;
   }
 
   static Future<void> setFontSizeMultiplier(double val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setDouble(_fontSizeKey, val);
     fontSizeMultiplier.value = val;
   }
 
   static Future<void> setConfirmFileUpload(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_confirmFileUploadKey, val);
     confirmFileUpload.value = val;
   }
 
   static Future<void> setConfirmVoiceUpload(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_confirmVoiceUploadKey, val);
     confirmVoiceUpload.value = val;
   }
 
   static Future<void> setStatusVisibility(String val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(_scopedKey(_statusVisibilityKey), val);
     statusVisibility.value = val;
   }
 
   static Future<void> setStatusOnline(String val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(_scopedKey(_statusOnlineKey), val);
     statusOnline.value = val;
   }
 
   static Future<void> setStatusOffline(String val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(_scopedKey(_statusOfflineKey), val);
     statusOffline.value = val;
   }
 
   static Future<void> setDesktopNavPosition(String val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(_desktopNavPositionKey, val);
     desktopNavPosition.value = val;
   }
 
   static Future<void> setNotificationsEnabled(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_notificationsEnabledKey, val);
     notificationsEnabled.value = val;
   }
 
   static Future<void> setNotificationPosition(String val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(_notificationPositionKey, val);
     notificationPosition.value = val;
   }
 
   static Future<void> setNotifSoundEnabled(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_notifSoundEnabledKey, val);
     notifSoundEnabled.value = val;
   }
 
   static Future<void> setNotifSound(String val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(_notifSoundKey, val);
     notifSound.value = val;
   }
 
   static Future<void> setProxyEnabled(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_proxyEnabledKey, val);
     proxyEnabled.value = val;
   }
 
   static Future<void> setProxyType(String val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(_proxyTypeKey, val);
     proxyType.value = val;
   }
 
   static Future<void> setProxyHost(String val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(_proxyHostKey, val);
     proxyHost.value = val;
   }
 
   static Future<void> setProxyPort(String val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(_proxyPortKey, val);
     proxyPort.value = val;
   }
@@ -520,19 +524,19 @@ class SettingsManager {
   }
 
   static Future<void> setEnableLogging(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_enableLoggingKey, val);
     enableLogging.value = val;
   }
 
   static Future<void> setShowDisplayNameInGroups(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_showDisplayNameInGroupsKey, val);
     showDisplayNameInGroups.value = val;
   }
 
   static Future<void> setPinEnabled(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_pinEnabledKey, val);
     pinEnabled.value = val;
   }
@@ -550,13 +554,13 @@ class SettingsManager {
   }
 
   static Future<void> setBiometricEnabled(bool val) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setBool(_biometricEnabledKey, val);
     biometricEnabled.value = val;
   }
 
   static Future<void> setAppLocale(Locale locale) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(_appLocaleKey, locale.languageCode);
     appLocale.value = locale;
   }

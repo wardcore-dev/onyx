@@ -75,6 +75,11 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
         .contains(_extension);
   }
 
+  bool _isAudioFile() {
+    return ['.mp3', '.wav', '.aac', '.m4a', '.flac', '.ogg', '.wma']
+        .contains(_extension);
+  }
+
   String _formatFileSize(int bytes) {
     if (bytes <= 0) return '0 B';
     const suffixes = ['B', 'KB', 'MB', 'GB'];
@@ -96,6 +101,172 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
     if (['.txt', '.rtf', '.json', '.xml', '.csv'].contains(_extension))
       return Icons.text_snippet;
     return Icons.attach_file;
+  }
+
+  Widget _buildPreview(ThemeData theme, ColorScheme colorScheme, double elemOpacity, Color surfaceBg) {
+    final border = Border.all(color: colorScheme.outline.withValues(alpha: 0.25 * elemOpacity));
+    final radius = BorderRadius.circular(12);
+
+    // ── Image ──────────────────────────────────────────────────────────────
+    if (_isImageFile() && _previewBytes != null) {
+      return ClipRRect(
+        borderRadius: radius,
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(maxHeight: 320),
+          decoration: BoxDecoration(border: border, borderRadius: radius),
+          child: Image.memory(_previewBytes!, fit: BoxFit.contain),
+        ),
+      );
+    }
+
+    // ── Image loading placeholder ──────────────────────────────────────────
+    if (_isImageFile() && _previewBytes == null) {
+      return Container(
+        width: double.infinity,
+        height: 160,
+        decoration: BoxDecoration(color: surfaceBg, borderRadius: radius, border: border),
+        child: Center(
+          child: CircularProgressIndicator(color: colorScheme.primary, strokeWidth: 2),
+        ),
+      );
+    }
+
+    // ── Video ──────────────────────────────────────────────────────────────
+    if (_isVideoFile()) {
+      return Container(
+        width: double.infinity,
+        height: 180,
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          border: border,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              colorScheme.primary.withValues(alpha: 0.18 * elemOpacity),
+              colorScheme.secondary.withValues(alpha: 0.10 * elemOpacity),
+            ],
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.play_circle_outline_rounded, size: 64, color: colorScheme.primary),
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                _filename,
+                style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _extension.toUpperCase(),
+              style: theme.textTheme.labelSmall?.copyWith(color: colorScheme.primary),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // ── Audio ──────────────────────────────────────────────────────────────
+    if (_isAudioFile()) {
+      return Container(
+        width: double.infinity,
+        height: 140,
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          border: border,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              colorScheme.tertiary.withValues(alpha: 0.18 * elemOpacity),
+              colorScheme.primary.withValues(alpha: 0.08 * elemOpacity),
+            ],
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.audio_file_rounded, size: 56, color: colorScheme.tertiary),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _filename,
+                      style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _extension.toUpperCase(),
+                      style: theme.textTheme.labelSmall?.copyWith(color: colorScheme.tertiary),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // ── Generic file ───────────────────────────────────────────────────────
+    final icon = _getFileIcon();
+    return Container(
+      width: double.infinity,
+      height: 140,
+      decoration: BoxDecoration(color: surfaceBg, borderRadius: radius, border: border),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: colorScheme.primary.withValues(alpha: 0.12 * elemOpacity),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(icon, size: 40, color: colorScheme.primary),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _filename,
+                    style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _extension.toUpperCase(),
+                    style: theme.textTheme.labelSmall?.copyWith(color: colorScheme.primary),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -154,64 +325,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       
-                      if (_isImageFile() && _previewBytes != null)
-                        Container(
-                          constraints: const BoxConstraints(
-                            maxHeight: 300,
-                            maxWidth: 300,
-                          ),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: colorScheme.outline.withOpacity(0.3 * elemOpacity),
-                            ),
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Image.memory(
-                              _previewBytes!,
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                        )
-                      else if (_isVideoFile())
-                        Container(
-                          width: 100,
-                          height: 100,
-                          decoration: BoxDecoration(
-                            color: surfaceHighestColor.withValues(alpha: 1.0),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: colorScheme.outline.withOpacity(0.3 * elemOpacity),
-                            ),
-                          ),
-                          child: Center(
-                            child: Icon(
-                              Icons.play_circle_outline,
-                              size: 48,
-                              color: colorScheme.primary,
-                            ),
-                          ),
-                        )
-                      else
-                        Container(
-                          width: 100,
-                          height: 100,
-                          decoration: BoxDecoration(
-                            color: surfaceHighestColor.withValues(alpha: 1.0),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: colorScheme.outline.withOpacity(0.3 * elemOpacity),
-                            ),
-                          ),
-                          child: Center(
-                            child: Icon(
-                              _getFileIcon(),
-                              size: 48,
-                              color: colorScheme.primary,
-                            ),
-                          ),
-                        ),
+                      _buildPreview(theme, colorScheme, elemOpacity, surfaceHighestColor),
 
                       const SizedBox(height: 24),
 

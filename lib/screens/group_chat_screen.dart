@@ -29,6 +29,9 @@ import '../widgets/file_preview_dialog.dart';
 import '../widgets/album_preview_dialog.dart';
 import '../widgets/voice_confirm_dialog.dart';
 import '../utils/file_utils.dart';
+import '../utils/image_file_cache.dart';
+import '../utils/clipboard_image.dart';
+import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 
@@ -110,6 +113,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
   Map<String, dynamic>? _replyingToMessage;
 
+  late final _selectionNotifier = ValueNotifier<({bool active, Map<String, Map<String, dynamic>> selected})>((active: false, selected: {}));
+  Map<String, Map<String, dynamic>> get _selectedGroupMessages => _selectionNotifier.value.selected;
+
   void _startReplyingToMessage(Map<String, dynamic> msg) {
     setState(() {
       _replyingToMessage = msg;
@@ -126,6 +132,94 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   }
 
   late int _avatarVersion;
+
+  bool _isGroupTextMessage(Map<String, dynamic> msg) {
+    final t = msg['content']?.toString() ?? '';
+    return !t.startsWith('IMAGEv1:') && !t.startsWith('ALBUMv1:') &&
+        !t.toUpperCase().startsWith('VIDEOV1:') && !t.startsWith('VOICEv1:') &&
+        !t.startsWith('FILEv1:') && !t.startsWith('FILE:') &&
+        !t.toUpperCase().startsWith('MEDIA_PROXYV1:') &&
+        !t.startsWith('[cannot-decrypt');
+  }
+
+  bool _isMyGroupMessage(Map<String, dynamic> msg) {
+    final rawSender = msg['sender']?.toString() ?? '';
+    return rawSender == _currentUsername || rawSender == _currentDisplayName;
+  }
+
+  void _enterGroupSelectionMode(Map<String, dynamic> msg, String uniqueKey) {
+    HapticFeedback.mediumImpact();
+    final cur = _selectionNotifier.value;
+    _selectionNotifier.value = (active: true, selected: {...cur.selected, uniqueKey: msg});
+  }
+
+  void _exitGroupSelectionMode() {
+    _selectionNotifier.value = (active: false, selected: {});
+  }
+
+  void _toggleGroupMsgSelection(Map<String, dynamic> msg, String uniqueKey) {
+    final cur = _selectionNotifier.value;
+    final next = Map<String, Map<String, dynamic>>.from(cur.selected);
+    if (next.containsKey(uniqueKey)) {
+      next.remove(uniqueKey);
+      _selectionNotifier.value = (active: next.isNotEmpty, selected: next);
+    } else {
+      next[uniqueKey] = msg;
+      _selectionNotifier.value = (active: true, selected: next);
+    }
+  }
+
+  void _copySelectedGroupMessages() {
+    final texts = _selectedGroupMessages.values
+        .where(_isGroupTextMessage)
+        .map((m) => m['content']?.toString() ?? '')
+        .where((t) => t.isNotEmpty)
+        .join('\n\n');
+    if (texts.isNotEmpty) {
+      Clipboard.setData(ClipboardData(text: texts));
+      rootScreenKey.currentState?.showSnack(
+          AppLocalizations(SettingsManager.appLocale.value).msgCopied);
+    }
+    _exitGroupSelectionMode();
+  }
+
+  Future<void> _confirmDeleteSelectedGroupMessages() async {
+    final toDelete = _selectedGroupMessages.entries
+        .where((e) {
+          final msgId = e.value['id']?.toString();
+          return msgId != null && msgId.isNotEmpty && _isMyGroupMessage(e.value);
+        })
+        .map((e) => e.value['id']!.toString())
+        .toList();
+    if (toDelete.isEmpty) return;
+    final l = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l.deleteMessageTitle),
+        content: Text(toDelete.length == 1
+            ? l.deleteGroupMsgContent
+            : 'Delete ${toDelete.length} messages?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l.cancel),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l.delete, style: const TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      _exitGroupSelectionMode();
+      for (final msgId in toDelete) {
+        await _deleteGroupMessage(msgId);
+      }
+    }
+  }
 
   bool get _canManageGroup {
     final role = widget.group.myRole;
@@ -241,10 +335,24 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   void _onGroupLongPress(Map<String, dynamic> msg) {
     _focusNode.unfocus();
     final content = msg['content']?.toString() ?? '';
-    final isMedia = content.toUpperCase().startsWith('VOICEV1:') ||
-        content.toUpperCase().startsWith('IMAGEV1:') ||
-        content.toUpperCase().startsWith('VIDEOV1:') ||
-        content.toUpperCase().startsWith('MEDIA_PROXYV1:') ||
+    final isImage = content.startsWith('IMAGEv1:');
+    final isAlbum = content.startsWith('ALBUMv1:');
+    final isVideo = content.toUpperCase().startsWith('VIDEOV1:');
+    final isVoice = content.startsWith('VOICEv1:');
+    final isFile = content.startsWith('FILEv1:') || content.startsWith('FILE:');
+    final isProxy = content.toUpperCase().startsWith('MEDIA_PROXYV1:');
+    bool isProxySaveableMobile = false;
+    if (isProxy) {
+      try {
+        final data = jsonDecode(content.substring('MEDIA_PROXYv1:'.length)) as Map<String, dynamic>;
+        final type = data['type'] as String?;
+        final url = (data['url'] as String?)?.trim() ?? '';
+        if (type == 'album' || url.isNotEmpty) isProxySaveableMobile = true;
+      } catch (_) {}
+    }
+    final isSaveable = isImage || isAlbum || isVideo || isVoice || isFile || isProxySaveableMobile;
+    final isMedia = isSaveable ||
+        isProxy ||
         content.startsWith('[cannot-decrypt');
 
     final rawSender = msg['sender']?.toString() ?? '';
@@ -305,6 +413,11 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                       Navigator.pop(ctx);
                       _startReplyingToMessage(msg);
                     }),
+                    if (isSaveable)
+                      actionTile(Icons.save_alt_rounded, 'Save', () {
+                        Navigator.pop(ctx);
+                        _saveMediaFromMessage(content);
+                      }),
                     if (!isMedia)
                       actionTile(Icons.copy_rounded, AppLocalizations.of(context).copy, () {
                         Navigator.pop(ctx);
@@ -368,17 +481,44 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     });
   }
 
-  List<ContextMenuButtonItem>? _buildDesktopMenuItems(Map<String, dynamic> msg) {
-    if (!isDesktop) return null;
+  List<ContextMenuButtonItem> _buildGroupDesktopMenuItems(Map<String, dynamic> msg) {
     final content = msg['content']?.toString() ?? '';
     final rawSender = msg['sender']?.toString() ?? '';
     final isMe = widget.group.isChannel
         ? false
         : (rawSender == _currentUsername || rawSender == _currentDisplayName);
     final msgId = msg['id']?.toString();
-    final isMedia = content.toUpperCase().startsWith('VOICEV1:') ||
-        content.toUpperCase().startsWith('IMAGEV1:') ||
-        content.toUpperCase().startsWith('VIDEOV1:') ||
+    final isImage = content.startsWith('IMAGEv1:');
+    final isAlbum = content.startsWith('ALBUMv1:');
+    final isVideo = content.toUpperCase().startsWith('VIDEOV1:');
+    final isVoice = content.startsWith('VOICEv1:');
+    final isFile = content.startsWith('FILEv1:') || content.startsWith('FILE:');
+
+    bool isProxyImage = false;
+    bool isProxySaveable = false;
+    if (content.toUpperCase().startsWith('MEDIA_PROXYV1:')) {
+      try {
+        final data = jsonDecode(content.substring('MEDIA_PROXYv1:'.length)) as Map<String, dynamic>;
+        final url = (data['url'] as String?)?.trim() ?? '';
+        final orig = (data['orig'] as String? ?? '').toLowerCase();
+        final type = data['type'] as String?;
+        if (type == 'album') {
+          isProxySaveable = true;
+        } else if (url.isNotEmpty) {
+          isProxySaveable = true;
+          if (type == 'image') {
+            isProxyImage = true;
+          } else if (type == null || type.isEmpty) {
+            final lower = url.toLowerCase();
+            isProxyImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].any(orig.endsWith) ||
+                ['.jpg', '.jpeg', '.png', '.gif', '.webp'].any(lower.endsWith);
+          }
+        }
+      } catch (_) {}
+    }
+
+    final isSaveable = isImage || isAlbum || isVideo || isVoice || isFile || isProxySaveable;
+    final isMedia = isSaveable ||
         content.toUpperCase().startsWith('MEDIA_PROXYV1:') ||
         content.startsWith('[cannot-decrypt');
     final l = AppLocalizations.of(context);
@@ -387,6 +527,18 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         label: l.reply,
         onPressed: () => _startReplyingToMessage(msg),
       ),
+      if (isSaveable)
+        ContextMenuButtonItem(
+          label: 'Save',
+          onPressed: () => _saveMediaFromMessage(content),
+        ),
+      if (isImage || isProxyImage)
+        ContextMenuButtonItem(
+          label: 'Copy Image',
+          onPressed: isImage
+              ? () => copyMessageImageToClipboard(content, (m) => rootScreenKey.currentState?.showSnack(m))
+              : () => _copyGroupProxyImage(content),
+        ),
       if (!isMedia)
         ContextMenuButtonItem(
           label: l.copy,
@@ -408,6 +560,255 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           onPressed: () => _desktopDeleteGroupMessage(msg, msgId),
         ),
     ];
+  }
+
+  void _copyGroupProxyImage(String content) {
+    try {
+      final data = jsonDecode(content.substring('MEDIA_PROXYv1:'.length)) as Map<String, dynamic>;
+      final url = (data['url'] as String?)?.trim() ?? '';
+      if (url.isEmpty) return;
+      final cached = imageFileCache[url];
+      if (cached == null) {
+        rootScreenKey.currentState?.showSnack('Image not loaded yet — open it first');
+        return;
+      }
+      copyFileImageToClipboard(cached.file, (m) => rootScreenKey.currentState?.showSnack(m));
+    } catch (e) {
+      rootScreenKey.currentState?.showSnack('Copy failed: $e');
+    }
+  }
+
+  Future<void> _saveMediaFromMessage(String content) async {
+    if (kIsWeb) {
+      rootScreenKey.currentState?.showSnack('Save not supported on web');
+      return;
+    }
+    try {
+      if (content.startsWith('VOICEv1:')) {
+        final meta = jsonDecode(content.substring('VOICEv1:'.length)) as Map<String, dynamic>;
+        final filename = meta['url'] as String? ?? meta['filename'] as String? ?? '';
+        final orig = meta['orig'] as String? ?? p.basename(filename);
+        if (filename.isEmpty) return;
+        final localPath = mediaFilePathRegistry[filename];
+        if (localPath == null) { rootScreenKey.currentState?.showSnack('Voice not loaded yet'); return; }
+        // "orig" may be a display label without extension (e.g. "Voice message");
+        // fall back to the cached file's extension in that case.
+        String saveName = orig.isNotEmpty ? orig : p.basename(localPath);
+        if (p.extension(saveName).isEmpty) {
+          saveName = saveName + p.extension(localPath);
+        }
+        await _saveFileToDevice(File(localPath), saveName);
+        return;
+      }
+
+      if (content.toUpperCase().startsWith('VIDEOV1:')) {
+        final meta = jsonDecode(content.substring('VIDEOv1:'.length)) as Map<String, dynamic>;
+        final filename = meta['url'] as String? ?? meta['filename'] as String? ?? '';
+        final orig = meta['orig'] as String? ?? p.basename(filename);
+        if (filename.isEmpty) return;
+        final localPath = mediaFilePathRegistry[filename];
+        if (localPath == null) { rootScreenKey.currentState?.showSnack('Video not loaded yet'); return; }
+        await _saveFileToDevice(File(localPath), orig.isNotEmpty ? orig : p.basename(localPath));
+        return;
+      }
+
+      if (content.startsWith('FILEv1:') || content.startsWith('FILE:')) {
+        final String filename;
+        final String orig;
+        if (content.startsWith('FILEv1:')) {
+          final meta = jsonDecode(content.substring('FILEv1:'.length)) as Map<String, dynamic>;
+          filename = meta['filename'] as String? ?? '';
+          orig = meta['orig'] as String? ?? p.basename(filename);
+        } else {
+          filename = content.substring('FILE:'.length).trim();
+          orig = p.basename(filename);
+        }
+        if (filename.isEmpty) return;
+        final localPath = mediaFilePathRegistry[filename];
+        if (localPath == null) { rootScreenKey.currentState?.showSnack('File not loaded yet'); return; }
+        await _saveFileToDevice(File(localPath), orig.isNotEmpty ? orig : p.basename(localPath));
+        return;
+      }
+
+      if (content.startsWith('IMAGEv1:')) {
+        final data = jsonDecode(content.substring('IMAGEv1:'.length)) as Map<String, dynamic>;
+        final filename = data['url'] as String? ?? data['filename'] as String? ?? '';
+        if (filename.isEmpty) return;
+        final cached = imageFileCache[filename];
+        if (cached == null) {
+          rootScreenKey.currentState?.showSnack('Image not loaded yet');
+          return;
+        }
+        await _saveFileToDevice(cached.file, p.basename(filename));
+        return;
+      }
+      if (content.startsWith('ALBUMv1:')) {
+        final list = jsonDecode(content.substring('ALBUMv1:'.length)) as List<dynamic>;
+        final items = list.whereType<Map<String, dynamic>>().toList();
+        if (items.isEmpty) return;
+        int saved = 0, failed = 0;
+        if (Platform.isAndroid || Platform.isIOS) {
+          for (final item in items) {
+            final filename = item['filename'] as String? ?? '';
+            final cached = imageFileCache[filename];
+            if (cached == null) { failed++; continue; }
+            try {
+              final ok = await GallerySaver.saveImage(cached.file.path, albumName: 'ONYX');
+              if (ok == true) { saved++; } else { failed++; }
+            } catch (_) { failed++; }
+          }
+          rootScreenKey.currentState?.showSnack(
+            failed == 0 ? 'All $saved images saved to gallery' : '$saved saved, $failed failed',
+          );
+          return;
+        }
+        if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+          final dirPath = await FilePicker.platform.getDirectoryPath(
+            dialogTitle: 'Choose folder to save all images',
+          );
+          if (dirPath == null || dirPath.isEmpty) {
+            rootScreenKey.currentState?.showSnack('Save cancelled');
+            return;
+          }
+          for (final item in items) {
+            final filename = item['filename'] as String? ?? '';
+            final orig = (item['orig'] as String?)?.isNotEmpty == true
+                ? item['orig'] as String
+                : p.basename(filename);
+            final cached = imageFileCache[filename];
+            if (cached == null) { failed++; continue; }
+            try {
+              await cached.file.copy(p.join(dirPath, orig));
+              saved++;
+            } catch (_) { failed++; }
+          }
+          rootScreenKey.currentState?.showSnack(
+            failed == 0 ? 'All $saved images saved to: $dirPath' : '$saved saved, $failed failed',
+          );
+        }
+      }
+      if (content.toUpperCase().startsWith('MEDIA_PROXYV1:')) {
+        final data = jsonDecode(content.substring('MEDIA_PROXYv1:'.length)) as Map<String, dynamic>;
+        final type = data['type'] as String?;
+        if (type == 'album') {
+          final rawItems = data['items'];
+          final items = (rawItems is List) ? rawItems.whereType<Map<String, dynamic>>().toList() : <Map<String, dynamic>>[];
+          if (items.isEmpty) return;
+          int saved = 0, failed = 0;
+          if (Platform.isAndroid || Platform.isIOS) {
+            for (final item in items) {
+              final url = (item['url'] as String?)?.trim() ?? '';
+              if (url.isEmpty) { failed++; continue; }
+              final cached = imageFileCache[url];
+              if (cached == null) { failed++; continue; }
+              try {
+                final ok = await GallerySaver.saveImage(cached.file.path, albumName: 'ONYX');
+                if (ok == true) { saved++; } else { failed++; }
+              } catch (_) { failed++; }
+            }
+            rootScreenKey.currentState?.showSnack(
+              failed == 0 ? 'All $saved images saved to gallery' : '$saved saved, $failed failed');
+            return;
+          }
+          if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+            final dirPath = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Choose folder to save all images');
+            if (dirPath == null || dirPath.isEmpty) { rootScreenKey.currentState?.showSnack('Save cancelled'); return; }
+            for (final item in items) {
+              final url = (item['url'] as String?)?.trim() ?? '';
+              final orig = (item['orig'] as String?)?.isNotEmpty == true ? item['orig'] as String : p.basename(url);
+              if (url.isEmpty) { failed++; continue; }
+              final cached = imageFileCache[url];
+              if (cached == null) { failed++; continue; }
+              try { await cached.file.copy(p.join(dirPath, orig)); saved++; } catch (_) { failed++; }
+            }
+            rootScreenKey.currentState?.showSnack(
+              failed == 0 ? 'All $saved images saved to: $dirPath' : '$saved saved, $failed failed');
+          }
+          return;
+        }
+        final url = (data['url'] as String?)?.trim() ?? '';
+        final orig = data['orig'] as String? ?? '';
+        if (url.isEmpty) return;
+        final isImg = type == 'image' ||
+            (['.jpg', '.jpeg', '.png', '.gif', '.webp'].any(orig.toLowerCase().endsWith) ||
+             ['.jpg', '.jpeg', '.png', '.gif', '.webp'].any(url.toLowerCase().endsWith));
+        if (isImg) {
+          final cached = imageFileCache[url];
+          if (cached == null) { rootScreenKey.currentState?.showSnack('Image not loaded yet'); return; }
+          await _saveFileToDevice(cached.file, orig.isNotEmpty ? orig : p.basename(url));
+          return;
+        }
+        final localPath = mediaFilePathRegistry[url];
+        if (localPath == null) { rootScreenKey.currentState?.showSnack('Media not loaded yet'); return; }
+        await _saveFileToDevice(File(localPath), orig.isNotEmpty ? orig : p.basename(localPath));
+        return;
+      }
+    } catch (e) {
+      rootScreenKey.currentState?.showSnack('Save failed: $e');
+    }
+  }
+
+  Future<void> _saveFileToDevice(File file, String originalName) async {
+    try {
+      if (Platform.isAndroid || Platform.isIOS) {
+        final ext = p.extension(originalName).toLowerCase();
+        final isImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.heic'].contains(ext);
+        final isVideo = ['.mp4', '.mov', '.avi', '.webm', '.m4v', '.mkv'].contains(ext);
+        if (isImage) {
+          final saved = await GallerySaver.saveImage(file.path, albumName: 'ONYX');
+          rootScreenKey.currentState?.showSnack(
+            saved == true ? 'Saved to gallery' : 'Failed to save to gallery',
+          );
+        } else if (isVideo) {
+          final saved = await GallerySaver.saveVideo(file.path, albumName: 'ONYX');
+          rootScreenKey.currentState?.showSnack(
+            saved == true ? 'Saved to gallery' : 'Failed to save to gallery',
+          );
+        } else {
+          // Audio / documents / archives — copy to Downloads/ONYX
+          final dl = await getDownloadsDirectory();
+          if (dl == null) {
+            rootScreenKey.currentState?.showSnack('Cannot access Downloads directory');
+            return;
+          }
+          final onyxDir = Directory('${dl.path}/ONYX');
+          await onyxDir.create(recursive: true);
+          final destPath = '${onyxDir.path}/$originalName';
+          await file.copy(destPath);
+          rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+        }
+        return;
+      }
+      if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+        final ext = p.extension(originalName).replaceFirst('.', '');
+        String? destPath;
+        try {
+          destPath = await FilePicker.platform.saveFile(
+            dialogTitle: 'Save image as',
+            fileName: originalName,
+            type: FileType.custom,
+            allowedExtensions: ext.isNotEmpty ? [ext] : ['jpg'],
+          );
+        } catch (_) {
+          final dirPath = await FilePicker.platform.getDirectoryPath(
+            dialogTitle: 'Choose folder to save image',
+          );
+          if (dirPath == null) {
+            rootScreenKey.currentState?.showSnack('Save cancelled');
+            return;
+          }
+          destPath = p.join(dirPath, originalName);
+        }
+        if (destPath == null || destPath.isEmpty) {
+          rootScreenKey.currentState?.showSnack('Save cancelled');
+          return;
+        }
+        await file.copy(destPath);
+        rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+      }
+    } catch (e) {
+      rootScreenKey.currentState?.showSnack('Save failed: $e');
+    }
   }
 
   Future<void> _desktopDeleteGroupMessage(Map<String, dynamic> msg, String msgId) async {
@@ -519,6 +920,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
   @override
   void dispose() {
+    _selectionNotifier.dispose();
     _isDisposed = true;
     _localRouteObserver.unsubscribe(this);
     _textCtrl.dispose();
@@ -2419,17 +2821,46 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
+        automaticallyImplyLeading: false,
+        leading: isDesktop
+            ? null
+            : ValueListenableBuilder(
+                valueListenable: _selectionNotifier,
+                builder: (_, sel, __) => sel.active
+                    ? IconButton(
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: _exitGroupSelectionMode,
+                      )
+                    : const BackButton(),
+              ),
         flexibleSpace: ValueListenableBuilder<double>(
           valueListenable: SettingsManager.elementOpacity,
           builder: (_, opacity, __) {
             return ClipRect(
               child: Container(
-                color: colorScheme.surface.withOpacity(opacity),
+                color: colorScheme.surface.withValues(alpha: opacity),
               ),
             );
           },
         ),
-        title: Row(
+        title: ValueListenableBuilder(
+          valueListenable: _selectionNotifier,
+          builder: (_, sel, __) => sel.active
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isDesktop)
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: _exitGroupSelectionMode,
+                      ),
+                    Text(
+                      '${sel.selected.length} selected',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                )
+              : Row(
           children: [
             GestureDetector(
               onTap: _canManageGroup
@@ -2486,37 +2917,59 @@ class _GroupChatScreenState extends State<GroupChatScreen>
               ),
             ),
           ],
+            ),
         ),
         actions: [
-          if (_canManageGroup)
-            IconButton(
-              icon: const Icon(Icons.edit),
-              onPressed: _showEditGroupDialog,
-            ),
-          IconButton(
-            icon: const Icon(Icons.link),
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: widget.group.inviteLink.split('/').last));
-              if (mounted) {
-                rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).tokenCopied);
-              }
-            },
-          ),
-          PopupMenuButton<String>(
-            onSelected: (String value) async {
-              if (value == 'leave') {
-                final confirmed = await _showLeaveConfirmation(context);
-                if (confirmed == true) {
-                  await _leaveGroup();
-                }
-              }
-            },
-            itemBuilder: (context) => [
-              PopupMenuItem<String>(
-                value: 'leave',
-                child: Text(AppLocalizations.of(context).leaveGroupTitle(false)),
-              ),
-            ],
+          ValueListenableBuilder(
+            valueListenable: _selectionNotifier,
+            builder: (_, sel, __) => sel.active
+                ? Row(mainAxisSize: MainAxisSize.min, children: [
+                    if (sel.selected.values.any(_isGroupTextMessage))
+                      IconButton(
+                        icon: const Icon(Icons.copy_rounded),
+                        tooltip: 'Copy',
+                        onPressed: _copySelectedGroupMessages,
+                      ),
+                    if (sel.selected.values.any(_isMyGroupMessage))
+                      IconButton(
+                        icon: Icon(Icons.delete_outline_rounded,
+                            color: Colors.red.shade400),
+                        tooltip: 'Delete',
+                        onPressed: _confirmDeleteSelectedGroupMessages,
+                      ),
+                  ])
+                : Row(mainAxisSize: MainAxisSize.min, children: [
+                    if (_canManageGroup)
+                      IconButton(
+                        icon: const Icon(Icons.edit),
+                        onPressed: _showEditGroupDialog,
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.link),
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: widget.group.inviteLink.split('/').last));
+                        if (mounted) {
+                          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).tokenCopied);
+                        }
+                      },
+                    ),
+                    PopupMenuButton<String>(
+                      onSelected: (String value) async {
+                        if (value == 'leave') {
+                          final confirmed = await _showLeaveConfirmation(context);
+                          if (confirmed == true) {
+                            await _leaveGroup();
+                          }
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        PopupMenuItem<String>(
+                          value: 'leave',
+                          child: Text(AppLocalizations.of(context).leaveGroupTitle(false)),
+                        ),
+                      ],
+                    ),
+                  ]),
           ),
         ],
       ),
@@ -2583,7 +3036,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                               controller: _scroll,
                               reverse: true,
                               itemCount: _messages.length,
-                              cacheExtent: 100, 
+                              cacheExtent: 800,
                               addRepaintBoundaries: true,
                               padding: EdgeInsets.only(
                                 top: MediaQuery.of(context).padding.top +
@@ -2654,7 +3107,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                               ? DateTime.fromMillisecondsSinceEpoch(msg['timestamp_ms'] as int)
                                               : (DateTime.tryParse(msg['timestamp']) ?? DateTime.now()),
                                       onRequestResend: (_) {},
-                                      desktopMenuItems: _buildDesktopMenuItems(msg),
+                                      desktopMenuItems: isDesktop ? _buildGroupDesktopMenuItems(msg) : null,
                                       peerUsername: sender,
                                       replyToId: msg['reply_to_id'] is int
                                           ? msg['reply_to_id'] as int
@@ -2791,10 +3244,11 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                 } else {
                                   contentWithSender = bubbleWithContext;
                                 }
-                                return RepaintBoundary(
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 4),
+
+                                final gcs = Theme.of(context).colorScheme;
+                                return ValueListenableBuilder<({bool active, Map<String, Map<String, dynamic>> selected})>(
+                                  valueListenable: _selectionNotifier,
+                                  child: RepaintBoundary(
                                     child: Align(
                                       alignment: shouldAlignRight
                                           ? Alignment.centerRight
@@ -2802,6 +3256,60 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                       child: contentWithSender,
                                     ),
                                   ),
+                                  builder: (_, sel, contentChild) {
+                                    final isGroupSelected = sel.selected.containsKey(uniqueKey);
+                                    final groupCheckmark = GestureDetector(
+                                      onTap: () => _toggleGroupMsgSelection(msg, uniqueKey),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                                        child: AnimatedContainer(
+                                          duration: const Duration(milliseconds: 150),
+                                          width: 22,
+                                          height: 22,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: isGroupSelected ? gcs.primary : Colors.transparent,
+                                            border: Border.all(
+                                              color: isGroupSelected
+                                                  ? gcs.primary
+                                                  : gcs.onSurface.withValues(alpha: 0.35),
+                                              width: 2,
+                                            ),
+                                          ),
+                                          child: isGroupSelected
+                                              ? Icon(Icons.check, size: 14, color: gcs.onPrimary)
+                                              : null,
+                                        ),
+                                      ),
+                                    );
+                                    return GestureDetector(
+                                      behavior: HitTestBehavior.translucent,
+                                      onTap: sel.active
+                                          ? () => _toggleGroupMsgSelection(msg, uniqueKey)
+                                          : null,
+                                      onDoubleTap: sel.active
+                                          ? null
+                                          : () => _enterGroupSelectionMode(msg, uniqueKey),
+                                      onLongPress: sel.active
+                                          ? () => _toggleGroupMsgSelection(msg, uniqueKey)
+                                          : () => _enterGroupSelectionMode(msg, uniqueKey),
+                                      child: AnimatedContainer(
+                                        duration: const Duration(milliseconds: 150),
+                                        color: isGroupSelected
+                                            ? gcs.primaryContainer.withValues(alpha: 0.45)
+                                            : Colors.transparent,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12, vertical: 4),
+                                        child: Row(
+                                          children: [
+                                            if (sel.active && !shouldAlignRight) groupCheckmark,
+                                            Expanded(child: contentChild!),
+                                            if (sel.active && shouldAlignRight) groupCheckmark,
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
                                 );
                               },
                             ),

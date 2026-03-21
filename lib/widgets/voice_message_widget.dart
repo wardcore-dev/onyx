@@ -44,31 +44,6 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
   bool _isLoading = false;
   String? _lastEnsureError;
 
-  Offset? _lastTapPosition;
-
-  void _storeTapPosition(TapDownDetails details) {
-    _lastTapPosition = details.globalPosition;
-  }
-
-  Future<void> _showContextMenu() async {
-    final pos = _lastTapPosition;
-    if (pos == null) return;
-    final selected = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
-      items: [
-        const PopupMenuItem(value: 'open', child: Text('Open')),
-        const PopupMenuItem(value: 'save', child: Text('Save')),
-      ],
-    );
-
-    if (selected == 'open') {
-      await _loadAndPlay();
-    } else if (selected == 'save') {
-      await _saveVoice();
-    }
-  }
-
   @override
   void initState() {
     super.initState();
@@ -282,6 +257,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
         }
 
         _cachedFilePath = playFile.path;
+        mediaFilePathRegistry[widget.filename] = playFile.path;
         final Source source = (!kIsWeb && Platform.isWindows)
             ? UrlSource(Uri.file(playFile.path).toString())
             : DeviceFileSource(playFile.path);
@@ -398,10 +374,13 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
               : '${widget.filename}.m4a';
         }
         final safeName = _sanitizeFilename(outName);
-        
+
         await MediaCache.instance.writeEncrypted(cacheDir, safeName, bytes);
         final displayFile = File('${displayDir.path}/$safeName');
-        await displayFile.writeAsBytes(bytes, flush: true);
+        // Don't overwrite if file already exists — it may be held open by the player
+        if (!await displayFile.exists() || await displayFile.length() == 0) {
+          await displayFile.writeAsBytes(bytes, flush: true);
+        }
         return displayFile;
       } catch (e, st) {
         _lastEnsureError = e.toString();
@@ -436,6 +415,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
         }
       }
       _cachedFilePath = playFile.path;
+      mediaFilePathRegistry[widget.filename] = playFile.path;
       final Source source = (!kIsWeb && Platform.isWindows)
           ? UrlSource(Uri.file(playFile.path).toString())
           : DeviceFileSource(playFile.path);
@@ -551,6 +531,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
         }
 
         _cachedFilePath = found.path;
+        mediaFilePathRegistry[widget.filename] = found.path;
       } catch (e, st) {
         debugPrint(' ensure for save error: $e\n$st');
         rootScreenKey.currentState?.showSnack('Voice not available to save: $e');
@@ -672,13 +653,6 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
       children: [
         
       GestureDetector(
-        onTapDown: _storeTapPosition,
-        onSecondaryTapDown: _storeTapPosition,
-        onLongPressStart: (details) {
-          _lastTapPosition = details.globalPosition;
-          _showContextMenu();
-        },
-        onSecondaryTap: () => _showContextMenu(),
         behavior: HitTestBehavior.opaque,
         child: Row(
           mainAxisSize: MainAxisSize.min,

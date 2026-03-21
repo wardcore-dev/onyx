@@ -124,7 +124,7 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
       if (await avatarDir.exists()) {
         String? chosen;
         DateTime? latest;
-        for (final f in avatarDir.listSync()) {
+        await for (final f in avatarDir.list()) {
           if (f is File && f.path.contains(prefix)) {
             try {
               final stat = await f.stat();
@@ -142,7 +142,7 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
       }
 
       final dir = await getTemporaryDirectory();
-      final list = Directory(dir.path).listSync();
+      final list = await Directory(dir.path).list().toList();
       String? chosenTemp;
       DateTime? latestTemp;
       for (final f in list) {

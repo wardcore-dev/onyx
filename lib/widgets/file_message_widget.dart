@@ -36,9 +36,8 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
   bool _isLoading = false;
   String? _lastEnsureError;
   double? _downloadProgress; 
-  File? _cachedFile; 
-  Offset? _lastTapPosition;
-  http.Client? _activeClient; 
+  File? _cachedFile;
+  http.Client? _activeClient;
   bool _cancelRequested = false;
 
   void _cancelDownload() {
@@ -320,60 +319,11 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
         return;
       }
       _cachedFile = cached;
+      mediaFilePathRegistry[widget.filename] = cached.path;
       if (!mounted) return;
       await action(cached);
     } finally {
       if (mounted) setState(() { _isLoading = false; _downloadProgress = null; });
-    }
-  }
-
-  Future<void> _revealInFileSystem(File f) async {
-    if (kIsWeb) return;
-    try {
-      if (Platform.isWindows) {
-        final dl = await getDownloadsDirectory();
-        if (dl != null) await Process.run('explorer', ['${dl.path}\\ONYX']);
-      } else if (Platform.isMacOS) {
-        final dl = await getDownloadsDirectory();
-        if (dl != null) await Process.run('open', ['${dl.path}/ONYX']);
-      } else if (Platform.isLinux) {
-        final dl = await getDownloadsDirectory();
-        if (dl != null) await Process.run('xdg-open', ['${dl.path}/ONYX']);
-      } else if (Platform.isIOS) {
-        await OpenFilex.open(f.path);
-      }
-    } catch (e) {
-      debugPrint('Error revealing file: $e');
-      rootScreenKey.currentState?.showSnack('Cannot open file location');
-    }
-  }
-
-  Future<void> _showContextMenu() async {
-    final pos = _lastTapPosition;
-    if (pos == null || !mounted) return;
-
-    final items = <PopupMenuEntry<String>>[
-      const PopupMenuItem(value: 'open', child: Text('Open')),
-    ];
-    
-    if (!kIsWeb && !Platform.isAndroid) {
-      items.add(const PopupMenuItem(
-          value: 'reveal', child: Text('Show in file system')));
-    }
-
-    final selected = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
-      items: items,
-    );
-    if (selected == null || !mounted) return;
-
-    if (selected == 'open') {
-      await _downloadThenRun(_openFile);
-    } else if (selected == 'reveal') {
-      await _downloadThenRun(_revealInFileSystem);
-    } else if (selected == 'reveal') {
-      await _downloadThenRun(_revealInFileSystem);
     }
   }
 
@@ -384,10 +334,7 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
     final showProgress = _downloadProgress != null;
 
     return GestureDetector(
-      onTapDown: (d) => _lastTapPosition = d.globalPosition,
-      onSecondaryTapDown: (d) => _lastTapPosition = d.globalPosition,
-      onSecondaryTap: _isLoading ? null : _showContextMenu,
-      onLongPress: _isLoading ? null : _showContextMenu,
+      onTap: _isLoading ? null : () => _downloadThenRun(_openFile),
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -396,35 +343,30 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 32, color: Theme.of(context).colorScheme.primary),
             const SizedBox(width: 12),
-            Column(
+            Flexible(
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(
-                  width: 220,
-                  child: Text(
-                    filename,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
+                Text(
+                  filename,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
-                
+
                 if (showProgress) ...[
                   const SizedBox(height: 6),
-                  SizedBox(
-                    width: 220,
-                    child: LinearProgressIndicator(
-                      value: _downloadProgress,
-                      minHeight: 3,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
+                  LinearProgressIndicator(
+                    value: _downloadProgress,
+                    minHeight: 3,
+                    borderRadius: BorderRadius.circular(2),
                   ),
                   const SizedBox(height: 2),
                   Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
                         '${(_downloadProgress! * 100).toInt()}%',
@@ -444,6 +386,7 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
                 ],
                 const SizedBox(height: 6),
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     ElevatedButton.icon(
                       onPressed: _isLoading
@@ -485,6 +428,7 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
                 ),
               ],
             ),
+            ), // Flexible
           ],
         ),
       ),

@@ -78,6 +78,9 @@ import '../utils/optimized_message_sender.dart';
 import '../utils/media_cache.dart';
 import '../managers/windows_notification_popup.dart';
 import '../l10n/app_localizations.dart';
+import '../utils/update_checker.dart';
+import '../widgets/update_banner.dart';
+import '../widgets/about_onyx_dialog.dart';
 
 final Map<String, List<int>> _pubkeyCache = {};
 
@@ -85,7 +88,7 @@ final Map<String, List<Map<String, dynamic>>> _devicePubkeysCache = {};
 DateTime? _lastPubkeyUploadTime;
 final X25519 _x25519 = X25519();
 final Cipher _xchacha = Xchacha20.poly1305Aead();
-double _chatsPanelWidth = 300.0; 
+final ValueNotifier<double> _chatsPanelWidthNotifier = ValueNotifier<double>(300.0);
 
 bool _pubkeyUploadedToServer = false;
 DateTime? _lastPubkeyUploadAttempt;
@@ -172,6 +175,9 @@ class RootScreenState extends State<RootScreen>
   String? identityPubKeyBase64;
   WebSocketChannel? _ws;
   StreamSubscription? _wsSub;
+
+  // Messages queued when WS was offline — drained on reconnect
+  final List<Map<String, dynamic>> _pendingMsgQueue = [];
   StreamSubscription<String>? _notificationSubscription;
   
   final Set<int> _activeGroupChatIds = {};
@@ -204,6 +210,21 @@ class RootScreenState extends State<RootScreen>
     if (event is! KeyDownEvent) return false;
 
     if (event.logicalKey == LogicalKeyboardKey.escape) {
+      // If a fullscreen page route (album gallery, video fullscreen, etc.)
+      // is on top of our route, skip — it handles its own Escape via
+      // Focus.onKeyEvent. We only act when dialogs (PopupRoutes) or
+      // nothing extra is on top.
+      final myRoute = ModalRoute.of(context);
+      if (myRoute != null && !myRoute.isCurrent) {
+        Route? topRoute;
+        Navigator.of(context).popUntil((route) {
+          topRoute ??= route;
+          return true; // peek only, don't pop
+        });
+        if (topRoute is! PopupRoute) {
+          return false; // page route on top — let it handle Escape
+        }
+      }
       _handleKeyOrMouseBack();
       return true;
     }
@@ -864,7 +885,6 @@ class RootScreenState extends State<RootScreen>
         await persistChats();
         chatsVersion.value++;
         unawaited(_preloadUserProfiles());
-        if (mounted) setState(() {});
       }
 
       _appendLog('[voice.upload] success, filename=$filename, to=$to');
@@ -1779,7 +1799,9 @@ class RootScreenState extends State<RootScreen>
         });
         chatsVersion.value++;
         unawaited(_preloadUserProfiles());
-        Future.microtask(() => _prefetchTopChatsMedia(5));
+        Future.delayed(const Duration(seconds: 4), () {
+          if (mounted) _prefetchTopChatsMedia(3);
+        });
         _appendLog('[chats] quick cache load ${chats.length} chats for $uname');
       }
     } catch (e) {
@@ -1856,10 +1878,16 @@ class RootScreenState extends State<RootScreen>
     super.initState();
     HardwareKeyboard.instance.addHandler(_onGlobalKeyEvent);
     _motivationalHintIndex = Random().nextInt(_motivationalHints.length);
-    
+
     if (!kIsWeb && Platform.isWindows) {
       WindowsNotificationPopup.onNotificationTapped((username) async {
-        
+        // Defer to next event loop turn to avoid Win32 re-entrancy:
+        // ShowWindow (called by windowManager.show) can dispatch synchronous
+        // Win32 messages that trigger a Flutter frame build; calling setState
+        // while a build is in progress causes an assertion crash.
+        await Future.delayed(Duration.zero);
+        if (!mounted) return;
+
         try {
           await windowManager.show();
           await windowManager.focus();
@@ -1867,71 +1895,68 @@ class RootScreenState extends State<RootScreen>
           debugPrint('[WindowNotification] Error focusing window: $e');
         }
 
+        // Ensure any frame triggered by window restoration has completed
+        // before we call setState, to prevent "setState during build" crashes.
+        if (!mounted) return;
+        final completer = Completer<void>();
+        WidgetsBinding.instance.addPostFrameCallback((_) => completer.complete());
+        await completer.future;
+        if (!mounted) return;
+
         final chatId = chatIdForUser(username);
         chats.putIfAbsent(chatId, () => []);
         if (isDesktop) {
-          if (mounted) {
-            NotificationService.clearMessagesForUser(username);
-            setState(() {
-              selectedChatOther = username;
-              selectedGroup = null;
-              selectedExternalGroup = null;
-              selectedExternalServer = null;
-            });
-            _checkKeyChangeOnChatOpen(username);
-          }
+          NotificationService.clearMessagesForUser(username);
+          setState(() {
+            selectedChatOther = username;
+            selectedGroup = null;
+            selectedExternalGroup = null;
+            selectedExternalServer = null;
+          });
+          _checkKeyChangeOnChatOpen(username);
         } else {
-          if (mounted) {
-            NotificationService.clearMessagesForUser(username);
-            setState(() { selectedChatOther = username; });
-            _checkKeyChangeOnChatOpen(username);
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => ChatScreen(
-                  myUsername: currentUsername ?? 'me',
-                  otherUsername: username,
-                  onSend: (t, replyTo) => _sendChatMessage(username, t, replyTo),
-                  onTyping: () => _handleSendTyping(username),
-                  onRequestResend: (id) {
-                    if (id != null) _requestResend(id);
-                  },
-                  onEditMessage: (id, text) => _editChatMessage(username, id, text),
-                  onDeleteMessage: (id) => _deleteChatMessage(id),
-                ),
+          NotificationService.clearMessagesForUser(username);
+          setState(() { selectedChatOther = username; });
+          _checkKeyChangeOnChatOpen(username);
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => ChatScreen(
+                myUsername: currentUsername ?? 'me',
+                otherUsername: username,
+                onSend: (t, replyTo) => _sendChatMessage(username, t, replyTo),
+                onTyping: () => _handleSendTyping(username),
+                onRequestResend: (id) {
+                  if (id != null) _requestResend(id);
+                },
+                onEditMessage: (id, text) => _editChatMessage(username, id, text),
+                onDeleteMessage: (id) => _deleteChatMessage(id),
               ),
-            ).then((_) {
-              if (mounted) setState(() { selectedChatOther = null; });
-            });
-          }
+            ),
+          ).then((_) {
+            if (mounted) setState(() { selectedChatOther = null; });
+          });
         }
       });
     }
 
     _initBackground();
 
-    callManager.isIncomingCall.addListener(() {
-      if (mounted) setState(() {});
-    });
-    
     _configureAudioSession();
-    
+
     _initializeAccountAndConnect();
 
     _audioPlayer.setReleaseMode(ReleaseMode.stop);
     _audioPlayer.setPlayerMode(PlayerMode.mediaPlayer);
-    
+
     _pageController = PageController(initialPage: _index);
     callManager.init(getWs: () => _ws);
 
-    callManager.isInCall.addListener(() {
-      if (mounted) setState(() {});
-    });
-    callManager.isConnecting.addListener(() {
-      if (mounted) setState(() {});
-    });
-    callManager.isRemoteVideoEnabled.addListener(() {
-      if (mounted) setState(() {});
-    });
+    callManager.isIncomingCall.addListener(_onCallStateChanged);
+    callManager.isInCall.addListener(_onCallStateChanged);
+    callManager.isConnecting.addListener(_onCallStateChanged);
+    callManager.isRemoteVideoEnabled.addListener(_onCallStateChanged);
+
+    Future.delayed(const Duration(seconds: 5), _scheduleUpdateCheck);
 
     _notificationSubscription =
         NotificationService.openChatStream.listen((other) {
@@ -1979,6 +2004,13 @@ class RootScreenState extends State<RootScreen>
     });
   }
 
+  Future<void> _scheduleUpdateCheck() async {
+    final info = await UpdateChecker.checkForUpdates(kAppVersion);
+    if (info != null && mounted) {
+      updateInfoNotifier.value = info;
+    }
+  }
+
   Future<void> _initBackground() async {
     
     if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
@@ -2000,12 +2032,20 @@ class RootScreenState extends State<RootScreen>
   void _handleKeyOrMouseBack() {
     if (!isDesktop) return;
 
+    // Check if there are any popup routes (dialogs/image viewers) open.
+    // If yes — close only them, don't close the chat.
+    bool hadPopup = false;
     try {
-      
-      Navigator.of(context).popUntil((route) => route is! PopupRoute);
-    } catch (_) {
-      
-    }
+      Navigator.of(context).popUntil((route) {
+        if (route is PopupRoute) {
+          hadPopup = true;
+          return false; // keep popping
+        }
+        return true; // stop at non-popup
+      });
+    } catch (_) {}
+
+    if (hadPopup) return; // closed a dialog — stay in chat
 
     if (selectedChatOther != null ||
         selectedGroup != null ||
@@ -2046,13 +2086,15 @@ class RootScreenState extends State<RootScreen>
     }
 
     if (state == AppLifecycleState.resumed) {
-      Future.delayed(const Duration(milliseconds: 800), () {
+      // Cancel any running reconnect loop so we don't wait for its backoff.
+      // Then connect immediately with a short delay for the OS to settle.
+      _stopReconnectLoop();
+      Future.delayed(const Duration(milliseconds: 300), () {
         if (!mounted) return;
         if (_ws == null || _ws!.closeCode != null) {
-          _appendLog('[lifecycle] App resumed — WS disconnected, reconnecting');
+          _appendLog('[lifecycle] App resumed — reconnecting immediately');
           _connectWs();
-        } else if (isDesktop) {
-          
+        } else {
           _sendPresence('online');
         }
       });
@@ -2074,10 +2116,18 @@ class RootScreenState extends State<RootScreen>
     ExternalServerManager.reconnectIfNeeded();
   }
 
+  void _onCallStateChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
-    
-    callManager.cleanup(); 
+    callManager.isIncomingCall.removeListener(_onCallStateChanged);
+    callManager.isInCall.removeListener(_onCallStateChanged);
+    callManager.isConnecting.removeListener(_onCallStateChanged);
+    callManager.isRemoteVideoEnabled.removeListener(_onCallStateChanged);
+
+    callManager.cleanup();
 
     _persistChatsTimer?.cancel();
     if (_hasPendingPersist) {
@@ -2490,7 +2540,8 @@ class RootScreenState extends State<RootScreen>
       _pendingUiFlush = false;
       if (mounted) {
         chatsVersion.value++;
-        setState(() {});
+        // No setState needed: chatsVersion VLB rebuilds ChatsTab with fresh `chats`,
+        // and unreadManager has its own ListenableBuilder for badges.
       }
     });
   }
@@ -3057,7 +3108,6 @@ class RootScreenState extends State<RootScreen>
       _appendLog('[ws.connect] already connected — skipping');
       return;
     }
-    wsConnectedNotifier.value = true;
     if (currentUsername == null) {
       _appendLog('[ws] no account');
       return;
@@ -3110,9 +3160,11 @@ class RootScreenState extends State<RootScreen>
               final typ = obj['type'] as String?;
               
               if (typ == 'init_complete') {
+                wsConnectedNotifier.value = true;
                 _appendLog('[ws] server init complete — WS tunnel established (proxy=${SettingsManager.proxyEnabled.value ? "${SettingsManager.proxyType.value.toUpperCase()} ${SettingsManager.proxyHost.value}:${SettingsManager.proxyPort.value}" : "none"})');
                 _appendLog('[ws] sending presence...');
                 _sendPresence('online');
+                _drainPendingMsgQueue();
 
                 try {
                   
@@ -3597,9 +3649,7 @@ class RootScreenState extends State<RootScreen>
                 }
                 if (saved && delivered == true) {
                   _tryMarkDeliveredFromAck(obj);
-                  
                   chatsVersion.value++;
-                  if (mounted) setState(() {});
                   unawaited(_preloadUserProfiles());
                 }
                 return;
@@ -3636,7 +3686,6 @@ class RootScreenState extends State<RootScreen>
                     }
                     if (found) {
                       chatsVersion.value++;
-                      if (mounted) setState(() {});
                       schedulePersistChats(chatId: foundChatId);
                     }
                   }
@@ -3668,7 +3717,6 @@ class RootScreenState extends State<RootScreen>
                     if (updated) {
                       chatsVersion.value++;
                       schedulePersistChats(chatId: updatedChatId);
-                      if (mounted) setState(() {});
                     }
                     _appendLog('[ws.message_edited] id=$mid updated');
                   }
@@ -3696,7 +3744,6 @@ class RootScreenState extends State<RootScreen>
                     if (removed) {
                       chatsVersion.value++;
                       schedulePersistChats(chatId: removedChatId);
-                      if (mounted) setState(() {});
                     }
                     _appendLog('[ws.message_deleted] id=$mid removed');
                   }
@@ -3721,7 +3768,6 @@ class RootScreenState extends State<RootScreen>
                         removed = true;
                         removedChatId = entry.key;
                         chatsVersion.value++;
-                        setState(() {});
                       }
                     }
                     if (removed) schedulePersistChats(chatId: removedChatId);
@@ -4828,7 +4874,16 @@ class RootScreenState extends State<RootScreen>
       } else {
         final wsReady = await _ensurePubkeyAndWsReady();
         if (!wsReady || _ws == null) {
-          _appendLog('[send] ws not ready — queued');
+          _appendLog('[send] ws not ready — adding to pending queue');
+          _pendingMsgQueue.add({
+            'to': to,
+            'text': text,
+            'localId': localId,
+            'replyTo': replyTo,
+            'payloads': payloads,
+            'fallbackEnvelope': fallbackEnvelope,
+          });
+          _markMessagePending(to, localId, pending: true);
           return;
         }
         _sendViaWsNow(to, text, payloads, fallbackEnvelope, localId, replyTo);
@@ -4885,8 +4940,38 @@ class RootScreenState extends State<RootScreen>
     }
   }
 
+  void _markMessagePending(String to, String localId, {required bool pending}) {
+    final chatId = chatIdForUser(to);
+    final msgs = chats[chatId];
+    if (msgs == null) return;
+    for (final m in msgs) {
+      if (m.id == localId) {
+        m.pendingSend = pending;
+        break;
+      }
+    }
+    chatsVersion.value++;
+  }
+
+  void _drainPendingMsgQueue() {
+    if (_pendingMsgQueue.isEmpty) return;
+    _appendLog('[send] draining ${_pendingMsgQueue.length} pending message(s)');
+    final toSend = List<Map<String, dynamic>>.from(_pendingMsgQueue);
+    _pendingMsgQueue.clear();
+    for (final item in toSend) {
+      final to = item['to'] as String;
+      final text = item['text'] as String;
+      final localId = item['localId'] as String;
+      final replyTo = item['replyTo'] as Map<String, dynamic>?;
+      final payloads = item['payloads'] as Map<String, String>?;
+      final fallbackEnvelope = item['fallbackEnvelope'] as String?;
+      _markMessagePending(to, localId, pending: false);
+      _sendViaWsNow(to, text, payloads, fallbackEnvelope, localId, replyTo);
+    }
+  }
+
   void _handleSendTyping(String to) {
-    
+
   }
 
   Future<void> _editChatMessage(String to, int messageId, String newText) async {
@@ -5042,7 +5127,6 @@ class RootScreenState extends State<RootScreen>
       );
       
       chatsVersion.value++;
-      if (mounted) setState(() {});
       schedulePersistChats(chatId: candidateChatId);
     } else {
       _appendLog(
@@ -5302,18 +5386,9 @@ class RootScreenState extends State<RootScreen>
       },
       
       transitionBuilder: (context, animation, secondaryAnimation, child) {
-        
-        final scaleAnimation = Tween<double>(begin: 0.9, end: 1.0).animate(
-          CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutBack,
-            reverseCurve: Curves.easeInBack,
-          ),
-        );
-
         return FadeTransition(
-          opacity: animation, 
-          child: ScaleTransition(scale: scaleAnimation, child: child),
+          opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+          child: child,
         );
       },
     );
@@ -5342,16 +5417,22 @@ class RootScreenState extends State<RootScreen>
                         duration: const Duration(milliseconds: 300),
                         curve: Curves.easeInOut,
                         builder: (_, scale, child) => Transform.scale(scale: scale, child: child),
-                        child: Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Image.asset('assets/onyx-512.png', width: 25, height: 25, fit: BoxFit.contain),
+                        child: GestureDetector(
+                          onTap: () => showAboutOnyxDialog(context),
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Image.asset('assets/onyx-512.png', width: 25, height: 25, fit: BoxFit.contain),
+                          ),
                         ),
                       );
                     },
                   ),
                   const SizedBox(width: 8),
-                  ConnectionTitle(
-                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  GestureDetector(
+                    onTap: () => showAboutOnyxDialog(context),
+                    child: ConnectionTitle(
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
                   ),
                   const SizedBox(width: 6),
                   const ProxyShieldBadge(),
@@ -5408,14 +5489,15 @@ class RootScreenState extends State<RootScreen>
       valueListenable: SettingsManager.desktopNavPosition,
       builder: (context, navPosition, _) {
         final isNavBottom = navPosition == 'bottom';
-        
+
         return Stack(
           children: [
-            
+
             Padding(
               padding: const EdgeInsets.only(top: 42.0),
               child: Column(
                 children: [
+                  const UpdateBanner(),
                   Expanded(
                     child: Row(
                       children: [
@@ -5532,14 +5614,40 @@ class RootScreenState extends State<RootScreen>
                               ],
                             ),
                           ),
-                        SizedBox(
-                      width: _chatsPanelWidth,
-                      child: Column(
+                        ValueListenableBuilder<double>(
+                          valueListenable: _chatsPanelWidthNotifier,
+                          builder: (_, width, child) => SizedBox(width: width, child: child),
+                          child: Column(
                         children: [
                           AppBar(
                             automaticallyImplyLeading: false,
                             centerTitle: isNavBottom,
-                            leading: isNavBottom ? const SizedBox(width: 48) : null, 
+                            leadingWidth: isNavBottom ? 80 : null,
+                            leading: isNavBottom && currentUsername != null
+                                ? Padding(
+                                    padding: const EdgeInsets.only(left: 8),
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          currentDisplayName ?? currentUsername!,
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.grey,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        Text(
+                                          '@$currentUsername',
+                                          style: const TextStyle(fontSize: 10, color: Colors.grey),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                : isNavBottom ? const SizedBox(width: 48) : null,
                             title: isNavBottom 
                               ? Row(
                                   mainAxisSize: MainAxisSize.min,
@@ -5555,18 +5663,24 @@ class RootScreenState extends State<RootScreen>
                                           duration: const Duration(milliseconds: 300),
                                           curve: Curves.easeInOut,
                                           builder: (_, scale, child) => Transform.scale(scale: scale, child: child),
-                                          child: Padding(
-                                            padding: const EdgeInsets.only(top: 2),
-                                            child: Image.asset('assets/onyx-512.png', width: 25, height: 25, fit: BoxFit.contain),
+                                          child: GestureDetector(
+                                            onTap: () => showAboutOnyxDialog(context),
+                                            child: Padding(
+                                              padding: const EdgeInsets.only(top: 2),
+                                              child: Image.asset('assets/onyx-512.png', width: 25, height: 25, fit: BoxFit.contain),
+                                            ),
                                           ),
                                         );
                                       },
                                     ),
                                     const SizedBox(width: 8),
-                                    ConnectionTitle(
-                                      style: TextStyle(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
+                                    GestureDetector(
+                                      onTap: () => showAboutOnyxDialog(context),
+                                      child: ConnectionTitle(
+                                        style: const TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
                                     ),
                                     const SizedBox(width: 6),
@@ -5587,18 +5701,24 @@ class RootScreenState extends State<RootScreen>
                                             duration: const Duration(milliseconds: 300),
                                             curve: Curves.easeInOut,
                                             builder: (_, scale, child) => Transform.scale(scale: scale, child: child),
-                                            child: Padding(
-                                              padding: const EdgeInsets.only(top: 2),
-                                              child: Image.asset('assets/onyx-512.png', width: 25, height: 25, fit: BoxFit.contain),
+                                            child: GestureDetector(
+                                              onTap: () => showAboutOnyxDialog(context),
+                                              child: Padding(
+                                                padding: const EdgeInsets.only(top: 2),
+                                                child: Image.asset('assets/onyx-512.png', width: 25, height: 25, fit: BoxFit.contain),
+                                              ),
                                             ),
                                           );
                                         },
                                       ),
                                       const SizedBox(width: 8),
-                                      ConnectionTitle(
-                                        style: TextStyle(
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.bold,
+                                      GestureDetector(
+                                        onTap: () => showAboutOnyxDialog(context),
+                                        child: ConnectionTitle(
+                                          style: const TextStyle(
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                         ),
                                       ),
                                       const SizedBox(width: 6),
@@ -5624,32 +5744,27 @@ class RootScreenState extends State<RootScreen>
                               builder: (context, navPos, _) {
                                 final tabChild = <Widget>[
                                   
-                                  ValueListenableBuilder<int>(
-                                    valueListenable: chatsVersion,
-                                    builder: (context, _, __) {
-                                      return ChatsTab(
-                                        chats: chats,
-                                        username: currentUsername,
-                                        onOpenChat: (other) async {
-                                          if (_chatsLoadCompleter != null && !_chatsLoadCompleter!.isCompleted) {
-                                            await _chatsLoadCompleter!.future;
-                                          }
-                                          if (!mounted) return;
-                                          final chatId = chatIdForUser(other);
-                                          chats.putIfAbsent(chatId, () => []);
-                                          setState(() {
-                                            selectedChatOther = other;
-                                            selectedGroup = null;
-                                            selectedExternalGroup = null;
-                                            selectedExternalServer = null;
-                                            _selectedFavoriteId = null;
-                                          });
-                                          
-                                          if (!isDesktop) FocusScope.of(context).requestFocus(FocusNode());
-                                        },
-                                        onDeleteChat: _deleteChat,
-                                      );
+                                  ChatsTab(
+                                    chats: chats,
+                                    username: currentUsername,
+                                    onOpenChat: (other) async {
+                                      if (_chatsLoadCompleter != null && !_chatsLoadCompleter!.isCompleted) {
+                                        await _chatsLoadCompleter!.future;
+                                      }
+                                      if (!mounted) return;
+                                      final chatId = chatIdForUser(other);
+                                      chats.putIfAbsent(chatId, () => []);
+                                      setState(() {
+                                        selectedChatOther = other;
+                                        selectedGroup = null;
+                                        selectedExternalGroup = null;
+                                        selectedExternalServer = null;
+                                        _selectedFavoriteId = null;
+                                      });
+
+                                      if (!isDesktop) FocusScope.of(context).requestFocus(FocusNode());
                                     },
+                                    onDeleteChat: _deleteChat,
                                   ),
 
                                   GroupsTab(
@@ -5753,12 +5868,9 @@ class RootScreenState extends State<RootScreen>
                       cursor: SystemMouseCursors.resizeColumn,
                       child: GestureDetector(
                         onHorizontalDragUpdate: (details) {
-                          setState(() {
-                            _chatsPanelWidth =
-                                (_chatsPanelWidth + details.delta.dx).clamp(
-                                    200.0,
-                                    MediaQuery.of(context).size.width * 0.6);
-                          });
+                          _chatsPanelWidthNotifier.value =
+                              (_chatsPanelWidthNotifier.value + details.delta.dx)
+                                  .clamp(200.0, MediaQuery.of(context).size.width * 0.6);
                         },
                         child: Container(
                           width: 6,
@@ -5935,11 +6047,10 @@ class RootScreenState extends State<RootScreen>
           child: SizedBox(height: 42, child: CustomTitleBar()),
         ),
 
-        if (currentUsername != null)
+        if (currentUsername != null && !isNavBottom)
           Positioned(
             left: 8,
-            top: isNavBottom ? 50 : null,
-            bottom: isNavBottom ? null : 8,
+            bottom: 8,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -6059,47 +6170,39 @@ class RootScreenState extends State<RootScreen>
 
     final tabs = <Widget>[
       
-      ValueListenableBuilder<int>(
-        valueListenable: chatsVersion,
-        builder: (context, _, __) {
-          return ChatsTab(
-            chats: chats,
-            username: currentUsername,
-            onOpenChat: (other) async {
-              
-              if (_chatsLoadCompleter != null && !_chatsLoadCompleter!.isCompleted) {
-                await _chatsLoadCompleter!.future;
-              }
-              if (!mounted) return;
+      ChatsTab(
+        chats: chats,
+        username: currentUsername,
+        onOpenChat: (other) async {
+          if (_chatsLoadCompleter != null && !_chatsLoadCompleter!.isCompleted) {
+            await _chatsLoadCompleter!.future;
+          }
+          if (!mounted) return;
 
-              final chatId = chatIdForUser(other);
-              chats.putIfAbsent(chatId, () => []);
-              if (!isDesktop) {
-                
-                if (mounted) setState(() { selectedChatOther = other; });
-                
-                await Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ChatScreen(
-                      myUsername: currentUsername ?? 'me',
-                      otherUsername: other,
-                      onSend: (t, replyTo) => _sendChatMessage(other, t, replyTo),
-                      onTyping: () => _handleSendTyping(other),
-                      onRequestResend: (id) {
-                        if (id != null) _requestResend(id);
-                      },
-                      onEditMessage: (id, text) => _editChatMessage(other, id, text),
-                      onDeleteMessage: (id) => _deleteChatMessage(id),
-                    ),
-                  ),
-                );
-                if (mounted) setState(() { selectedChatOther = null; });
-                _sendPresence('online');
-              }
-            },
-            onDeleteChat: _deleteChat,
-          );
+          final chatId = chatIdForUser(other);
+          chats.putIfAbsent(chatId, () => []);
+          if (!isDesktop) {
+            if (mounted) setState(() { selectedChatOther = other; });
+            await Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => ChatScreen(
+                  myUsername: currentUsername ?? 'me',
+                  otherUsername: other,
+                  onSend: (t, replyTo) => _sendChatMessage(other, t, replyTo),
+                  onTyping: () => _handleSendTyping(other),
+                  onRequestResend: (id) {
+                    if (id != null) _requestResend(id);
+                  },
+                  onEditMessage: (id, text) => _editChatMessage(other, id, text),
+                  onDeleteMessage: (id) => _deleteChatMessage(id),
+                ),
+              ),
+            );
+            if (mounted) setState(() { selectedChatOther = null; });
+            _sendPresence('online');
+          }
         },
+        onDeleteChat: _deleteChat,
       ),
       
       GroupsTab(
@@ -6220,6 +6323,7 @@ class RootScreenState extends State<RootScreen>
             child: Column(
               children: [
                 _buildMobileAppBar(context),
+                const UpdateBanner(),
                 Expanded(
                   
                   child: MediaQuery(
@@ -6304,11 +6408,12 @@ class RootScreenState extends State<RootScreen>
                     valueListenable: SettingsManager.elementOpacity,
                     builder: (_, opacity, __) {
                       
+                      final panelW = _chatsPanelWidthNotifier.value;
                       final navWidth = isDesktop
-                          ? min(_chatsPanelWidth - 24.0, 420.0)
+                          ? min(panelW - 24.0, 420.0)
                           : MediaQuery.of(context).size.width / 1.8;
                       final leftPad = isDesktop
-                          ? max(12.0, (_chatsPanelWidth - navWidth) / 2)
+                          ? max(12.0, (panelW - navWidth) / 2)
                           : 70.0;
 
                       final scheme = Theme.of(context).colorScheme;

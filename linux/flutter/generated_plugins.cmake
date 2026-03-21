@@ -9,11 +9,16 @@ list(APPEND FLUTTER_PLUGIN_LIST
   file_selector_linux
   flutter_secure_storage_linux
   flutter_webrtc
+  irondash_engine_context
   local_notifier
+  media_kit_libs_linux
+  media_kit_video
   record_linux
   screen_retriever_linux
+  super_native_extensions
   tray_manager
   url_launcher_linux
+  volume_controller
   window_manager
   window_to_front
 )

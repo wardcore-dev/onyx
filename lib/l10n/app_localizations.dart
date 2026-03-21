@@ -143,6 +143,12 @@ class AppLocalizations {
   String get swipeTabsSubtitle => _ru ? 'Переключать вкладки горизонтальным свайпом' : 'Switch tabs with horizontal swipe gesture';
   String get smoothScroll => _ru ? 'Плавная прокрутка' : 'Smooth Scrolling';
   String get performanceOptimizations => _ru ? 'Оптимизация производительности' : 'Performance Optimizations';
+  String get macOsWindowStyle => _ru ? 'Стиль окна' : 'Window Style';
+  String get macOsWindowStyleSubtitle => _ru ? 'Кнопки управления окном' : 'Window controls style';
+  String get macOsNativeTitleBar => _ru ? 'Нативный macOS (светофор слева)' : 'Native macOS (traffic lights)';
+  String get macOsCustomTitleBar => _ru ? 'Windows-стиль (справа)' : 'Windows-style (right side)';
+  String get updateAvailableLabel => _ru ? 'Доступно обновление' : 'Update available';
+  String get updateDownload => _ru ? 'Скачать' : 'Download';
 
   String get cacheTitle => _ru ? 'Кэш' : 'Cache';
   String get cacheSubtitle => _ru ? 'Управление локальным и серверным кэшем медиа' : 'Manage local & server media cache';

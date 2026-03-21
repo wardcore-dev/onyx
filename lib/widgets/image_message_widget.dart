@@ -43,24 +43,6 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
   int? _fileSizeBytes;  
   double? _aspectRatio;  
 
-  Offset? _lastTapPosition;
-  void _storeTapPosition(TapDownDetails details) => _lastTapPosition = details.globalPosition;
-
-  Future<void> _showContextMenu() async {
-    final pos = _lastTapPosition;
-    if (pos == null) return;
-    final selected = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
-      items: [
-        const PopupMenuItem(value: 'open', child: Text('Open')),
-        const PopupMenuItem(value: 'save', child: Text('Save')),
-      ],
-    );
-
-    if (selected == 'open') return _showFullscreen(_imageFile!);
-    if (selected == 'save') return _saveImageToGalleryOrFolder();
-  }
 
   @override
   void initState() {
@@ -412,13 +394,6 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
             }
           },
           child: GestureDetector(
-            onTapDown: _storeTapPosition,
-            onSecondaryTapDown: _storeTapPosition,
-            onLongPressStart: (details) {
-              _lastTapPosition = details.globalPosition;
-              _showContextMenu();
-            },
-            onSecondaryTap: () => _showContextMenu(),
             onTap: () => _showFullscreen(_imageFile!),
             child: ConstrainedBox(
               constraints: const BoxConstraints(

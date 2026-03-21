@@ -2483,7 +2483,7 @@ class _SettingsTabState extends State<SettingsTab>
           
           Center( 
             child: Text(
-              'open-beta 1.0a',
+              'open-beta 1.1',
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
@@ -3258,8 +3258,8 @@ class _SettingsTabState extends State<SettingsTab>
     final l = AppLocalizations.of(context);
 
     const languages = [
-      {'code': 'en', 'label': 'English', 'native': 'English', 'flag': ''},
-      {'code': 'ru', 'label': 'Russian', 'native': 'Русский', 'flag': ''},
+      {'code': 'en', 'label': 'English', 'native': 'English', 'flag': '🇺🇸'},
+      {'code': 'ru', 'label': 'Russian', 'native': 'Русский', 'flag': '🇷🇺'},
     ];
 
     return ValueListenableBuilder<Locale>(

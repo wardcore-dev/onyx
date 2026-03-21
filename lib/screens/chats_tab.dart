@@ -215,6 +215,37 @@ class _ChatSumm {
   });
 }
 
+class _UnreadBadge extends StatelessWidget {
+  final String chatId;
+  const _UnreadBadge({required this.chatId});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: unreadManager,
+      builder: (context, _) {
+        final count = unreadManager.getUnreadCount(chatId);
+        if (count == 0) return const SizedBox.shrink();
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primary,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            count.toString(),
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: Theme.of(context).colorScheme.onPrimary,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class ChatsTab extends StatefulWidget {
   final Map<String, List<ChatMessage>> chats;
   final String? username;
@@ -272,6 +303,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
       setState(_rebuildSummaries);
     };
     UserCache.updatedUsers.addListener(_userUpdateListener!);
+    chatsVersion.addListener(_onChatsVersion);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -284,11 +316,18 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
     });
   }
 
+  void _onChatsVersion() {
+    if (!mounted) return;
+    setState(_rebuildSummaries);
+  }
+
   @override
   void didUpdateWidget(covariant ChatsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    
-    setState(_rebuildSummaries);
+    // chatsVersion listener handles data updates; only rebuild if username changed
+    if (widget.username != oldWidget.username) {
+      setState(_rebuildSummaries);
+    }
   }
 
   @override
@@ -298,6 +337,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
     if (_userUpdateListener != null) {
       UserCache.updatedUsers.removeListener(_userUpdateListener!);
     }
+    chatsVersion.removeListener(_onChatsVersion);
     super.dispose();
   }
 
@@ -662,33 +702,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                             ),
                           ),
                         const SizedBox(height: 4),
-                        ListenableBuilder(
-                          listenable: unreadManager,
-                          builder: (context, _) {
-                            final unreadCount =
-                                unreadManager.getUnreadCount(it.chatId);
-                            if (unreadCount == 0) {
-                              return const SizedBox.shrink();
-                            }
-                            return Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.primary,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                unreadCount.toString(),
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                  color:
-                                      Theme.of(context).colorScheme.onPrimary,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+                        _UnreadBadge(chatId: it.chatId),
                       ],
                     ),
                     

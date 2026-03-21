@@ -27,6 +27,9 @@ import '../widgets/file_preview_dialog.dart';
 import '../widgets/album_preview_dialog.dart';
 import '../utils/file_utils.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:gallery_saver_plus/gallery_saver.dart';
+import '../utils/image_file_cache.dart';
+import '../utils/clipboard_image.dart';
 
 abstract class _ListItem {}
 
@@ -181,6 +184,9 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   List<_ListItem>? _cachedDaySeparatorItems;
   List<ChatMessage>? _lastProcessedMessages;
 
+  late final _selectionNotifier = ValueNotifier<({bool active, Map<String, ChatMessage> selected})>((active: false, selected: {}));
+  Map<String, ChatMessage> get _selectedFavMessages => _selectionNotifier.value.selected;
+
   @override
   void initState() {
     super.initState();
@@ -306,6 +312,84 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     _focusNode.requestFocus();
   }
 
+  bool _isFavTextMessage(ChatMessage msg) {
+    final c = msg.content;
+    return !c.startsWith('IMAGEv1:') &&
+        !c.startsWith('ALBUMv1:') &&
+        !c.toUpperCase().startsWith('VIDEOV1:') &&
+        !c.startsWith('VOICEv1:') &&
+        !c.startsWith('FILEv1:') &&
+        !c.startsWith('FILE:') &&
+        !c.startsWith('AUDIOv1:') &&
+        !c.startsWith('DOCUMENTv1:') &&
+        !c.startsWith('ARCHIVEv1:') &&
+        !c.startsWith('DATAv1:') &&
+        !c.startsWith('[cannot-decrypt');
+  }
+
+  void _enterFavSelectionMode(ChatMessage msg, String uniqueKey) {
+    HapticFeedback.mediumImpact();
+    final cur = _selectionNotifier.value;
+    _selectionNotifier.value = (active: true, selected: {...cur.selected, uniqueKey: msg});
+  }
+
+  void _exitFavSelectionMode() {
+    _selectionNotifier.value = (active: false, selected: {});
+  }
+
+  void _toggleFavMessageSelection(ChatMessage msg, String uniqueKey) {
+    final cur = _selectionNotifier.value;
+    final next = Map<String, ChatMessage>.from(cur.selected);
+    if (next.containsKey(uniqueKey)) {
+      next.remove(uniqueKey);
+      _selectionNotifier.value = (active: next.isNotEmpty, selected: next);
+    } else {
+      next[uniqueKey] = msg;
+      _selectionNotifier.value = (active: true, selected: next);
+    }
+  }
+
+  void _copySelectedFavMessages() {
+    final texts = _selectedFavMessages.values
+        .where((m) => _isFavTextMessage(m))
+        .map((m) => m.content)
+        .join('\n');
+    if (texts.isNotEmpty) {
+      Clipboard.setData(ClipboardData(text: texts));
+      rootScreenKey.currentState?.showSnack('Copied');
+    }
+    _exitFavSelectionMode();
+  }
+
+  Future<void> _confirmDeleteSelectedFav() async {
+    final toDelete = _selectedFavMessages.values.toList();
+    if (toDelete.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete ${toDelete.length} message${toDelete.length == 1 ? '' : 's'}?'),
+        content: const Text('Selected messages will be removed from favorites.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      for (final msg in toDelete) {
+        _deleteMessage(msg);
+      }
+      _exitFavSelectionMode();
+    }
+  }
+
   void _deleteMessage(ChatMessage msg) {
     final root = rootScreenKey.currentState;
     if (root == null) return;
@@ -329,6 +413,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
 
   @override
   void dispose() {
+    _selectionNotifier.dispose();
     _textCtrl.dispose();
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
@@ -692,11 +777,13 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   void _onLongPress(ChatMessage msg) {
     _focusNode.unfocus();
     final text = msg.content;
-    final isMedia = text.toUpperCase().startsWith('VOICEV1:') ||
-        text.toUpperCase().startsWith('IMAGEV1:') ||
-        text.toUpperCase().startsWith('VIDEOV1:') ||
-        text.startsWith('ALBUMv1:') ||
-        text.startsWith('[cannot-decrypt');
+    final isImage = text.startsWith('IMAGEv1:');
+    final isAlbum = text.startsWith('ALBUMv1:');
+    final isVideo = text.toUpperCase().startsWith('VIDEOV1:');
+    final isVoice = text.startsWith('VOICEv1:');
+    final isFile = text.startsWith('FILEv1:') || text.startsWith('FILE:');
+    final isSaveable = isImage || isAlbum || isVideo || isVoice || isFile;
+    final isMedia = isSaveable || text.startsWith('[cannot-decrypt');
 
     _shouldPreserveExternalFocus = true;
     final colorScheme = Theme.of(context).colorScheme;
@@ -756,6 +843,16 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                       'content': msg.content,
                     });
                   }),
+                  if (isSaveable)
+                    actionTile(Icons.save_alt_rounded, 'Save', () {
+                      Navigator.pop(ctx);
+                      _saveMediaFromMessage(text);
+                    }),
+                  if (isImage)
+                    actionTile(Icons.copy_all_rounded, 'Copy Image', () {
+                      Navigator.pop(ctx);
+                      copyMessageImageToClipboard(text, (m) => rootScreenKey.currentState?.showSnack(m));
+                    }),
                   if (!isMedia)
                     actionTile(Icons.copy_rounded, 'Copy', () {
                       Navigator.pop(ctx);
@@ -818,11 +915,13 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   List<ContextMenuButtonItem>? _buildDesktopMenuItems(ChatMessage msg) {
     if (!isDesktop) return null;
     final text = msg.content;
-    final isMedia = text.toUpperCase().startsWith('VOICEV1:') ||
-        text.toUpperCase().startsWith('IMAGEV1:') ||
-        text.toUpperCase().startsWith('VIDEOV1:') ||
-        text.startsWith('ALBUMv1:') ||
-        text.startsWith('[cannot-decrypt');
+    final isImage = text.startsWith('IMAGEv1:');
+    final isAlbum = text.startsWith('ALBUMv1:');
+    final isVideo = text.toUpperCase().startsWith('VIDEOV1:');
+    final isVoice = text.startsWith('VOICEv1:');
+    final isFile = text.startsWith('FILEv1:') || text.startsWith('FILE:');
+    final isSaveable = isImage || isAlbum || isVideo || isVoice || isFile;
+    final isMedia = isSaveable || text.startsWith('[cannot-decrypt');
     return [
       ContextMenuButtonItem(
         label: 'Reply',
@@ -833,6 +932,16 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           'content': msg.content,
         }),
       ),
+      if (isSaveable)
+        ContextMenuButtonItem(
+          label: 'Save',
+          onPressed: () => _saveMediaFromMessage(text),
+        ),
+      if (isImage)
+        ContextMenuButtonItem(
+          label: 'Copy Image',
+          onPressed: () => copyMessageImageToClipboard(text, (m) => rootScreenKey.currentState?.showSnack(m)),
+        ),
       if (!isMedia)
         ContextMenuButtonItem(
           label: 'Copy',
@@ -853,6 +962,142 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         onPressed: () => _desktopDeleteFavorite(msg),
       ),
     ];
+  }
+
+  Future<void> _saveMediaFromMessage(String content) async {
+    if (kIsWeb) { rootScreenKey.currentState?.showSnack('Save not supported on web'); return; }
+    try {
+      if (content.startsWith('IMAGEv1:')) {
+        final data = jsonDecode(content.substring('IMAGEv1:'.length)) as Map<String, dynamic>;
+        final filename = data['url'] as String? ?? data['filename'] as String? ?? '';
+        if (filename.isEmpty) return;
+        final cached = imageFileCache[filename];
+        if (cached == null) { rootScreenKey.currentState?.showSnack('Image not loaded yet'); return; }
+        await _saveFileToDevice(cached.file, p.basename(filename));
+        return;
+      }
+      if (content.startsWith('VOICEv1:')) {
+        final meta = jsonDecode(content.substring('VOICEv1:'.length)) as Map<String, dynamic>;
+        final filename = meta['url'] as String? ?? meta['filename'] as String? ?? '';
+        final orig = meta['orig'] as String? ?? p.basename(filename);
+        if (filename.isEmpty) return;
+        final localPath = mediaFilePathRegistry[filename];
+        if (localPath == null) { rootScreenKey.currentState?.showSnack('Voice not loaded yet'); return; }
+        String saveName = orig.isNotEmpty ? orig : p.basename(localPath);
+        if (p.extension(saveName).isEmpty) saveName = saveName + p.extension(localPath);
+        await _saveFileToDevice(File(localPath), saveName);
+        return;
+      }
+      if (content.toUpperCase().startsWith('VIDEOV1:')) {
+        final meta = jsonDecode(content.substring('VIDEOv1:'.length)) as Map<String, dynamic>;
+        final filename = meta['url'] as String? ?? meta['filename'] as String? ?? '';
+        final orig = meta['orig'] as String? ?? p.basename(filename);
+        if (filename.isEmpty) return;
+        final localPath = mediaFilePathRegistry[filename];
+        if (localPath == null) { rootScreenKey.currentState?.showSnack('Video not loaded yet'); return; }
+        await _saveFileToDevice(File(localPath), orig.isNotEmpty ? orig : p.basename(localPath));
+        return;
+      }
+      if (content.startsWith('FILEv1:') || content.startsWith('FILE:')) {
+        final String filename;
+        final String orig;
+        if (content.startsWith('FILEv1:')) {
+          final meta = jsonDecode(content.substring('FILEv1:'.length)) as Map<String, dynamic>;
+          filename = meta['filename'] as String? ?? '';
+          orig = meta['orig'] as String? ?? p.basename(filename);
+        } else {
+          filename = content.substring('FILE:'.length).trim();
+          orig = p.basename(filename);
+        }
+        if (filename.isEmpty) return;
+        final localPath = mediaFilePathRegistry[filename];
+        if (localPath == null) { rootScreenKey.currentState?.showSnack('File not loaded yet'); return; }
+        await _saveFileToDevice(File(localPath), orig.isNotEmpty ? orig : p.basename(localPath));
+        return;
+      }
+      if (content.startsWith('ALBUMv1:')) {
+        final list = jsonDecode(content.substring('ALBUMv1:'.length)) as List<dynamic>;
+        final items = list.whereType<Map<String, dynamic>>().toList();
+        if (items.isEmpty) return;
+        int saved = 0, failed = 0;
+        if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+          for (final item in items) {
+            final filename = item['filename'] as String? ?? '';
+            final cached = imageFileCache[filename];
+            if (cached == null) { failed++; continue; }
+            try {
+              final ok = await GallerySaver.saveImage(cached.file.path, albumName: 'ONYX');
+              if (ok == true) saved++; else failed++;
+            } catch (_) { failed++; }
+          }
+          rootScreenKey.currentState?.showSnack(
+            failed == 0 ? 'All $saved images saved to gallery' : '$saved saved, $failed failed');
+          return;
+        }
+        if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+          final dirPath = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Choose folder to save all images');
+          if (dirPath == null || dirPath.isEmpty) { rootScreenKey.currentState?.showSnack('Save cancelled'); return; }
+          for (final item in items) {
+            final filename = item['filename'] as String? ?? '';
+            final orig = (item['orig'] as String?)?.isNotEmpty == true ? item['orig'] as String : p.basename(filename);
+            final cached = imageFileCache[filename];
+            if (cached == null) { failed++; continue; }
+            try { await cached.file.copy(p.join(dirPath, orig)); saved++; } catch (_) { failed++; }
+          }
+          rootScreenKey.currentState?.showSnack(
+            failed == 0 ? 'All $saved images saved to: $dirPath' : '$saved saved, $failed failed');
+        }
+      }
+    } catch (e) {
+      rootScreenKey.currentState?.showSnack('Save failed: $e');
+    }
+  }
+
+  Future<void> _saveFileToDevice(File file, String originalName) async {
+    try {
+      if (Platform.isAndroid || Platform.isIOS) {
+        final ext = p.extension(originalName).toLowerCase();
+        final isImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.heic'].contains(ext);
+        final isVideo = ['.mp4', '.mov', '.avi', '.webm', '.m4v', '.mkv'].contains(ext);
+        if (isImage) {
+          final saved = await GallerySaver.saveImage(file.path, albumName: 'ONYX');
+          rootScreenKey.currentState?.showSnack(saved == true ? 'Saved to gallery' : 'Failed to save to gallery');
+        } else if (isVideo) {
+          final saved = await GallerySaver.saveVideo(file.path, albumName: 'ONYX');
+          rootScreenKey.currentState?.showSnack(saved == true ? 'Saved to gallery' : 'Failed to save to gallery');
+        } else {
+          final dl = await getDownloadsDirectory();
+          if (dl == null) { rootScreenKey.currentState?.showSnack('Cannot access Downloads directory'); return; }
+          final onyxDir = Directory('${dl.path}/ONYX');
+          await onyxDir.create(recursive: true);
+          final destPath = '${onyxDir.path}/$originalName';
+          await file.copy(destPath);
+          rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+        }
+        return;
+      }
+      if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+        final ext = p.extension(originalName).replaceFirst('.', '');
+        String? destPath;
+        try {
+          destPath = await FilePicker.platform.saveFile(
+            dialogTitle: 'Save as',
+            fileName: originalName,
+            type: FileType.custom,
+            allowedExtensions: ext.isNotEmpty ? [ext] : ['bin'],
+          );
+        } catch (_) {
+          final dirPath = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Choose folder to save');
+          if (dirPath == null) { rootScreenKey.currentState?.showSnack('Save cancelled'); return; }
+          destPath = p.join(dirPath, originalName);
+        }
+        if (destPath == null || destPath.isEmpty) { rootScreenKey.currentState?.showSnack('Save cancelled'); return; }
+        await file.copy(destPath);
+        rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+      }
+    } catch (e) {
+      rootScreenKey.currentState?.showSnack('Save failed: $e');
+    }
   }
 
   Future<void> _desktopDeleteFavorite(ChatMessage msg) async {
@@ -1455,57 +1700,104 @@ class _FavoritesScreenState extends State<FavoritesScreen>
             );
           },
         ),
-        title: Row(
-          children: [
-            ValueListenableBuilder<int>(
-              valueListenable: favoritesVersion,
-              builder: (context, _, __) {
-                final fav = rootScreenKey.currentState?.favorites.firstWhere(
-                  (f) => f.id == widget.favoriteId,
-                  orElse: () => FavoriteChat(
-                      id: widget.favoriteId,
-                      title: widget.title,
-                      createdAt: DateTime.now()),
-                );
-                return _EditableFavoriteAvatar(
-                  id: widget.favoriteId,
-                  currentAvatarPath: fav?.avatarPath,
-                  size: 40,
-                  onTap: _showEditNameDialog,
-                );
-              },
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: ValueListenableBuilder<int>(
-                valueListenable: favoritesVersion,
-                builder: (context, _, __) {
-                  final currentTitle = rootScreenKey.currentState?.favorites
-                          .firstWhere(
-                            (f) => f.id == widget.favoriteId,
-                            orElse: () => FavoriteChat(
-                                id: widget.favoriteId,
-                                title: widget.title,
-                                createdAt: DateTime.now()),
-                          )
-                          .title ??
-                      widget.title;
-                  return GestureDetector(
-                    onTap: _showEditNameDialog,
-                    child: Text(
-                      currentTitle,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 17),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  );
-                },
+        automaticallyImplyLeading: false,
+        leading: isDesktop
+            ? null
+            : ValueListenableBuilder(
+                valueListenable: _selectionNotifier,
+                builder: (_, sel, __) => sel.active
+                    ? IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: _exitFavSelectionMode,
+                      )
+                    : const BackButton(),
               ),
-            ),
-          ],
+        title: ValueListenableBuilder(
+          valueListenable: _selectionNotifier,
+          builder: (_, sel, __) => sel.active
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isDesktop)
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: _exitFavSelectionMode,
+                      ),
+                    Text('${sel.selected.length} selected',
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ],
+                )
+              : Row(
+                  children: [
+                    ValueListenableBuilder<int>(
+                      valueListenable: favoritesVersion,
+                      builder: (context, _, __) {
+                        final fav = rootScreenKey.currentState?.favorites.firstWhere(
+                          (f) => f.id == widget.favoriteId,
+                          orElse: () => FavoriteChat(
+                              id: widget.favoriteId,
+                              title: widget.title,
+                              createdAt: DateTime.now()),
+                        );
+                        return _EditableFavoriteAvatar(
+                          id: widget.favoriteId,
+                          currentAvatarPath: fav?.avatarPath,
+                          size: 40,
+                          onTap: _showEditNameDialog,
+                        );
+                      },
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ValueListenableBuilder<int>(
+                        valueListenable: favoritesVersion,
+                        builder: (context, _, __) {
+                          final currentTitle = rootScreenKey.currentState?.favorites
+                                  .firstWhere(
+                                    (f) => f.id == widget.favoriteId,
+                                    orElse: () => FavoriteChat(
+                                        id: widget.favoriteId,
+                                        title: widget.title,
+                                        createdAt: DateTime.now()),
+                                  )
+                                  .title ??
+                              widget.title;
+                          return GestureDetector(
+                            onTap: _showEditNameDialog,
+                            child: Text(
+                              currentTitle,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 17),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
         ),
-        actions: [],
+        actions: [
+          ValueListenableBuilder(
+            valueListenable: _selectionNotifier,
+            builder: (_, sel, __) => sel.active
+                ? Row(mainAxisSize: MainAxisSize.min, children: [
+                    if (sel.selected.values.any(_isFavTextMessage))
+                      IconButton(
+                        icon: const Icon(Icons.copy_rounded),
+                        tooltip: 'Copy',
+                        onPressed: _copySelectedFavMessages,
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline_rounded),
+                      tooltip: 'Delete',
+                      onPressed: sel.selected.isNotEmpty ? _confirmDeleteSelectedFav : null,
+                    ),
+                  ])
+                : const SizedBox.shrink(),
+          ),
+        ],
       ),
       extendBodyBehindAppBar: true,
       body: DragDropZone(
@@ -1564,7 +1856,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                           valueListenable:
                               SettingsManager.alignAllMessagesRight,
                           builder: (_, alignRight, __) {
-                            
+                            final items = _buildMessagesWithDaySeparators(msgs);
                             return Listener(
                               onPointerDown: (_) {
                                 if (!isDesktop) return;
@@ -1574,22 +1866,17 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                               child: ListView.builder(
                                   controller: _scroll,
                                   reverse: true,
-                                  cacheExtent: 100, 
+                                  cacheExtent: 800,
                                   addRepaintBoundaries: true,
-                                  addAutomaticKeepAlives: false, 
+                                  addAutomaticKeepAlives: true,
                                   padding: EdgeInsets.only(
                                     top: MediaQuery.of(context).padding.top +
                                         kToolbarHeight +
                                         12,
                                     bottom: 72 + MediaQuery.of(context).padding.bottom,
                                   ),
-                                  itemCount: msgs.isEmpty
-                                      ? 0
-                                      : _buildMessagesWithDaySeparators(msgs)
-                                          .length,
+                                  itemCount: items.length,
                                   itemBuilder: (context, i) {
-                                    final items =
-                                        _buildMessagesWithDaySeparators(msgs);
                                     final item = items[i];
                                     if (item is _DaySeparatorItem) {
                                       
@@ -1607,86 +1894,111 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                     if (isFirstAppearance) {
                                       _alreadyRenderedMessageIds.add(uniqueKey);
                                     }
-                                    final bubbleWidget = Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 6, horizontal: 12),
-                                      child: Row(
-                                        mainAxisAlignment: alignRight
-                                            ? (swapped
-                                                ? MainAxisAlignment.start
-                                                : MainAxisAlignment.end)
-                                            : (swapped
-                                                ? MainAxisAlignment.start
-                                                : MainAxisAlignment.end),
-                                        children: [
-                                          Flexible(
-                                            child: GestureDetector(
-                                              onTapDown: (tap) {
-                                                debugPrint(
-                                                    '[favorites_screen::msgTapDown] tapped message id=${msg.serverMessageId ?? msg.id} replying=${_replyingToMessage != null} reply=${_replyingToMessage?.toString()}\n${StackTrace.current}');
-                                              },
-                                              onHorizontalDragEnd: isDesktop ? null : (details) {
-                                                final v = details.primaryVelocity;
-                                                if (v != null && v > 300) {
-                                                  HapticFeedback.selectionClick();
-                                                  _onLongPress(msg);
-                                                } else if (v != null && v < -300) {
-                                                  final preview = {
-                                                    'id': msg.serverMessageId,
-                                                    'localId': msg.id,
-                                                    'sender': msg.from,
-                                                    'senderDisplayName': msg.from,
-                                                    'content': getPreviewText(msg.content),
-                                                  };
-                                                  _startReplyingToMessage(preview);
-                                                  HapticFeedback.selectionClick();
-                                                }
-                                              },
-                                              child: MessageBubble(
-                                                key: ValueKey<String>(
-                                                    'mb_inner_$uniqueKey'),
-                                                text: msg.content,
-                                                outgoing: true,
-                                                time: msg.time,
-                                                peerUsername: '',
-                                                chatMessage: msg,
-                                                replyToId: msg.replyToId,
-                                                replyToUsername:
-                                                    msg.replyToSender,
-                                                replyToContent:
-                                                    msg.replyToContent,
-                                                desktopMenuItems: _buildDesktopMenuItems(msg),
-                                                highlighted: (msg
-                                                                .serverMessageId !=
-                                                            null &&
-                                                        _replyingToMessage !=
-                                                            null &&
-                                                        _replyingToMessage![
-                                                                    'id']
-                                                                ?.toString() ==
-                                                            (msg.serverMessageId
-                                                                ?.toString())) ||
-                                                    (msg.serverMessageId ==
-                                                            null &&
-                                                        _replyingToMessage !=
-                                                            null &&
-                                                        _replyingToMessage![
-                                                                    'localId']
-                                                                ?.toString() ==
-                                                            msg.id?.toString()),
-                                              ),
+                                    final cs = Theme.of(context).colorScheme;
+                                    final msgBubble = MessageBubble(
+                                      key: ValueKey<String>('mb_inner_$uniqueKey'),
+                                      text: msg.content,
+                                      outgoing: true,
+                                      time: msg.time,
+                                      peerUsername: '',
+                                      chatMessage: msg,
+                                      replyToId: msg.replyToId,
+                                      replyToUsername: msg.replyToSender,
+                                      replyToContent: msg.replyToContent,
+                                      desktopMenuItems: _buildDesktopMenuItems(msg),
+                                      highlighted: (msg.serverMessageId != null &&
+                                              _replyingToMessage != null &&
+                                              _replyingToMessage!['id']?.toString() ==
+                                                  (msg.serverMessageId?.toString())) ||
+                                          (msg.serverMessageId == null &&
+                                              _replyingToMessage != null &&
+                                              _replyingToMessage!['localId']?.toString() ==
+                                                  msg.id.toString()),
+                                    );
+                                    final expensiveChild = isFirstAppearance
+                                        ? _AnimatedMessageBubble(
+                                            key: ValueKey<String>(uniqueKey),
+                                            child: RepaintBoundary(child: msgBubble),
+                                          )
+                                        : RepaintBoundary(child: msgBubble);
+                                    return ValueListenableBuilder<({bool active, Map<String, ChatMessage> selected})>(
+                                      valueListenable: _selectionNotifier,
+                                      child: expensiveChild,
+                                      builder: (_, sel, bubbleChild) {
+                                        final isSelected = sel.selected.containsKey(uniqueKey);
+                                        return GestureDetector(
+                                          behavior: HitTestBehavior.translucent,
+                                          onTap: sel.active
+                                              ? () => _toggleFavMessageSelection(msg, uniqueKey)
+                                              : null,
+                                          onDoubleTap: sel.active
+                                              ? null
+                                              : () => _enterFavSelectionMode(msg, uniqueKey),
+                                          onLongPress: sel.active
+                                              ? () => _toggleFavMessageSelection(msg, uniqueKey)
+                                              : () => _enterFavSelectionMode(msg, uniqueKey),
+                                          child: AnimatedContainer(
+                                            duration: const Duration(milliseconds: 150),
+                                            color: isSelected
+                                                ? cs.primaryContainer.withValues(alpha: 0.45)
+                                                : Colors.transparent,
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 6, horizontal: 12),
+                                            child: Row(
+                                              mainAxisAlignment: swapped ? MainAxisAlignment.start : MainAxisAlignment.end,
+                                              children: [
+                                                if (sel.active)
+                                                  AnimatedContainer(
+                                                    duration: const Duration(milliseconds: 150),
+                                                    margin: const EdgeInsets.only(right: 8),
+                                                    width: 22,
+                                                    height: 22,
+                                                    decoration: BoxDecoration(
+                                                      shape: BoxShape.circle,
+                                                      color: isSelected
+                                                          ? cs.primary
+                                                          : Colors.transparent,
+                                                      border: Border.all(
+                                                        color: isSelected
+                                                            ? cs.primary
+                                                            : cs.outline,
+                                                        width: 2,
+                                                      ),
+                                                    ),
+                                                    child: isSelected
+                                                        ? Icon(Icons.check,
+                                                            size: 14, color: cs.onPrimary)
+                                                        : null,
+                                                  ),
+                                                Flexible(
+                                                  child: GestureDetector(
+                                                    onHorizontalDragEnd: isDesktop || sel.active
+                                                        ? null
+                                                        : (details) {
+                                                            final v = details.primaryVelocity;
+                                                            if (v != null && v > 300) {
+                                                              HapticFeedback.selectionClick();
+                                                              _onLongPress(msg);
+                                                            } else if (v != null && v < -300) {
+                                                              final preview = {
+                                                                'id': msg.serverMessageId,
+                                                                'localId': msg.id,
+                                                                'sender': msg.from,
+                                                                'senderDisplayName': msg.from,
+                                                                'content': getPreviewText(msg.content),
+                                                              };
+                                                              _startReplyingToMessage(preview);
+                                                              HapticFeedback.selectionClick();
+                                                            }
+                                                          },
+                                                    child: bubbleChild!,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
-                                        ],
-                                      ),
-                                    );
-                                    return RepaintBoundary(
-                                      child: isFirstAppearance
-                                          ? _AnimatedMessageBubble(
-                                              key: ValueKey<String>(uniqueKey),
-                                              child: bubbleWidget,
-                                            )
-                                          : bubbleWidget,
+                                        );
+                                      },
                                     );
                                   },
                             ),

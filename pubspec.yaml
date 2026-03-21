@@ -51,9 +51,13 @@ dependencies:
 
   gallery_saver_plus: ^3.2.9
   
-  video_player: ^2.10.0    # или последняя
+  video_player: ^2.10.0    # mobile/web
+  media_kit: ^1.1.10                  # cross-platform video (desktop + mobile)
+  media_kit_video: ^1.2.4
+  media_kit_libs_video: ^1.0.4
   visibility_detector: ^0.2.2  # для паузы при прокрутке (опционально)
   
+  super_clipboard: ^0.9.1
   open_filex: ^4.7.0
   flutter_webrtc: ^1.2.1
 

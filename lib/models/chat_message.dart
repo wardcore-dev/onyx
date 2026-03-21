@@ -9,6 +9,7 @@ class ChatMessage {
   bool outgoing;
   bool delivered;
   bool isRead;
+  bool pendingSend = false; // true = WS was offline when sent, queued for retry
   final DateTime time;
   final String? rawEnvelopePreview;
   final String? encryptedForDevice;
