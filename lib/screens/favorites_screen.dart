@@ -2,8 +2,10 @@
 import 'dart:convert';
 
 import 'package:ONYX/screens/chats_tab.dart' show getPreviewText;
+import 'package:ONYX/screens/forward_screen.dart';
 import '../l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:async';
 import 'dart:io';
@@ -30,6 +32,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import '../utils/image_file_cache.dart';
 import '../utils/clipboard_image.dart';
+import '../utils/upload_task.dart';
+import '../widgets/pending_upload_card.dart';
+import '../widgets/chat_search_bar.dart';
+import '../widgets/animated_message_bubble.dart';
 
 abstract class _ListItem {}
 
@@ -169,13 +175,9 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   Timer? _typingDebounce;
   bool _shouldPreserveExternalFocus = false;
   bool _suppressAutoRefocus = false;
-  bool _showScrollDownButton = false;
+  final ValueNotifier<bool> _showScrollDownButton = ValueNotifier<bool>(false);
   final Set<String> _alreadyRenderedMessageIds = {};
   
-  bool _isVisible = false;
-  late final AnimationController _enterAnimController;
-  late final Animation<double> _enterOpacity;
-
   late AnimationController _inputEntryController;
   late Animation<double> _inputEntryScaleX;
   late Animation<double> _inputEntryOpacity;
@@ -184,30 +186,27 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   List<_ListItem>? _cachedDaySeparatorItems;
   List<ChatMessage>? _lastProcessedMessages;
 
+  final List<UploadTask> _pendingUploads = [];
+
   late final _selectionNotifier = ValueNotifier<({bool active, Map<String, ChatMessage> selected})>((active: false, selected: {}));
   Map<String, ChatMessage> get _selectedFavMessages => _selectionNotifier.value.selected;
+
+  // ── in-chat search ──────────────────────────────────────────────────────────
+  bool _showSearch = false;
+  final _searchController = TextEditingController();
+  String _searchQuery = '';
+  int _currentMatchIdx = 0;
+  List<int> _cachedSearchMatches = [];
+  final _searchStats = ValueNotifier<({int current, int total})>((current: 0, total: 0));
+  final _searchFocusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
     _focusNode = FocusNode();
+    HardwareKeyboard.instance.addHandler(_handleGlobalKey);
     _scroll.addListener(_onScroll);
-
-    _enterAnimController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
-    _enterOpacity = CurvedAnimation(
-      parent: _enterAnimController,
-      curve: Curves.easeOut,
-    );
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        setState(() => _isVisible = true);
-        _enterAnimController.forward();
-      }
-    });
+    _loadPinnedMessage();
 
     _inputEntryController = AnimationController(
       duration: const Duration(milliseconds: 600),
@@ -270,16 +269,18 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   void didUpdateWidget(covariant FavoritesScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.favoriteId != widget.favoriteId) {
-      _enterAnimController.reset();
-      _enterAnimController.forward();
       _alreadyRenderedMessageIds.clear();
-      
+      // Reset pinned message immediately so the old chat's banner doesn't flash,
+      // then load the correct one for the new chat.
+      setState(() => _pinnedMessage = null);
+      _loadPinnedMessage();
       Future.microtask(() => rootScreenKey.currentState
           ?.ensureMediaCachedForFavorite(widget.favoriteId));
     }
   }
 
   Map<String, dynamic>? _replyingToMessage;
+  Map<String, dynamic>? _pinnedMessage;
 
   ChatMessage? _editingMessage;
 
@@ -296,6 +297,185 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           '[favorites_screen::_cancelReplying] clearing _replyingToMessage\n${StackTrace.current}');
       _replyingToMessage = null;
     });
+  }
+
+  bool _isFavMsgPinned(ChatMessage msg) {
+    final pinId = _pinnedMessage?['id']?.toString();
+    if (pinId == null) return false;
+    return pinId == (msg.serverMessageId?.toString() ?? msg.id);
+  }
+
+  String get _pinPrefsKey => 'pinned_fav_${widget.favoriteId}';
+
+  Future<void> _loadPinnedMessage() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pinPrefsKey);
+    if (raw != null && mounted) {
+      try {
+        setState(() => _pinnedMessage = Map<String, dynamic>.from(jsonDecode(raw) as Map));
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _savePinnedMessage() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_pinnedMessage == null) {
+      await prefs.remove(_pinPrefsKey);
+    } else {
+      await prefs.setString(_pinPrefsKey, jsonEncode(_pinnedMessage));
+    }
+  }
+
+  void _toggleFavPin(ChatMessage msg) {
+    if (_isFavMsgPinned(msg)) {
+      setState(() => _pinnedMessage = null);
+    } else {
+      setState(() {
+        _pinnedMessage = {
+          'id': msg.serverMessageId?.toString() ?? msg.id,
+          'content': msg.content,
+          'sender': msg.from,
+        };
+      });
+    }
+    _savePinnedMessage();
+  }
+
+  String? _scrollHighlightId;
+  Timer? _highlightTimer;
+  final GlobalKey _scrollTargetKey = GlobalKey();
+  String? _scrollTargetId;
+
+  void _flashHighlight(String id) {
+    _highlightTimer?.cancel();
+    setState(() => _scrollHighlightId = id);
+    _highlightTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _scrollHighlightId = null);
+    });
+  }
+
+  void _scrollToFavMessageById(String? msgId) {
+    if (msgId == null || !_scroll.hasClients) return;
+    final rootState = rootScreenKey.currentState;
+    if (rootState == null) return;
+    final msgs = rootState.chats[_chatId()] ?? [];
+    final items = _buildMessagesWithDaySeparators(msgs);
+    for (int k = 0; k < items.length; k++) {
+      final item = items[k];
+      if (item is! _MessageItem) continue;
+      final m = item.message;
+      final mId = m.serverMessageId?.toString() ?? m.id;
+      if (mId == msgId) {
+        final listviewIdx = k + _pendingUploads.length;
+        final totalItems = items.length + _pendingUploads.length;
+        final maxExt = _scroll.position.maxScrollExtent;
+        final proportional = totalItems > 0
+            ? (listviewIdx / totalItems) * maxExt
+            : 0.0;
+
+        setState(() => _scrollTargetId = mId);
+
+        _scroll
+            .animateTo(proportional.clamp(0.0, maxExt),
+                duration: const Duration(milliseconds: 350),
+                curve: Curves.easeOut)
+            .then((_) {
+          void tryEnsureVisible([int retries = 2]) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final ctx = _scrollTargetKey.currentContext;
+              if (ctx != null) {
+                Scrollable.ensureVisible(ctx,
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeOut,
+                    alignment: 0.5);
+                if (mounted) setState(() => _scrollTargetId = null);
+              } else if (retries > 0) {
+                tryEnsureVisible(retries - 1);
+              } else {
+                if (mounted) setState(() => _scrollTargetId = null);
+              }
+            });
+          }
+
+          tryEnsureVisible();
+        });
+
+        _flashHighlight(mId);
+        return;
+      }
+    }
+  }
+
+  Widget _buildFavPinnedBanner(BuildContext context) {
+    final msg = _pinnedMessage!;
+    final colorScheme = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<double>(
+      valueListenable: SettingsManager.elementOpacity,
+      builder: (_, opacity, __) => ValueListenableBuilder<double>(
+        valueListenable: SettingsManager.elementBrightness,
+        builder: (_, brightness, __) {
+          final bgColor = SettingsManager.getElementColor(
+            colorScheme.surfaceContainerHighest,
+            brightness,
+          );
+          return GestureDetector(
+            onTap: () => _scrollToFavMessageById(_pinnedMessage?['id']?.toString()),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: bgColor.withValues(alpha: opacity),
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.push_pin_rounded, size: 16, color: colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Pinned Message',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          getPreviewText(msg['content']?.toString() ?? ''),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colorScheme.onSurface.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 16),
+                    onPressed: () {
+                      setState(() => _pinnedMessage = null);
+                      _savePinnedMessage();
+                    },
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   void _startEditingMessage(ChatMessage msg) {
@@ -361,6 +541,15 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     _exitFavSelectionMode();
   }
 
+  void _forwardSelectedFavMessages() {
+    final contents = _selectedFavMessages.values
+        .map((m) => m.content)
+        .toList();
+    if (contents.isEmpty) return;
+    _exitFavSelectionMode();
+    ForwardScreen.show(context, contents);
+  }
+
   Future<void> _confirmDeleteSelectedFav() async {
     final toDelete = _selectedFavMessages.values.toList();
     if (toDelete.isEmpty) return;
@@ -403,11 +592,17 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   }
 
   void _onScroll() {
-    final atBottom = _scroll.position.pixels <= 1.0;
-    if (mounted && _showScrollDownButton != !atBottom) {
-      setState(() {
-        _showScrollDownButton = !atBottom;
+    final pixels = _scroll.position.pixels;
+    if (pixels > 0.0 && pixels <= 1.5 && !_scroll.position.isScrollingNotifier.value) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scroll.hasClients && _scroll.position.pixels > 0.0 && _scroll.position.pixels <= 1.5) {
+          _scroll.jumpTo(0.0);
+        }
       });
+    }
+    final atBottom = pixels <= 1.0;
+    if (_showScrollDownButton.value != !atBottom) {
+      _showScrollDownButton.value = !atBottom;
     }
   }
 
@@ -419,9 +614,90 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     _scroll.dispose();
     _focusNode.dispose();
     _typingDebounce?.cancel();
-    _enterAnimController.dispose();
     _inputEntryController.dispose();
+    _searchController.dispose();
+    _searchStats.dispose();
+    _searchFocusNode.dispose();
+    _showScrollDownButton.dispose();
+    HardwareKeyboard.instance.removeHandler(_handleGlobalKey);
     super.dispose();
+  }
+
+  bool _handleGlobalKey(KeyEvent event) {
+    if (!mounted) return false;
+    if (event is! KeyDownEvent) return false;
+    final isCtrl = HardwareKeyboard.instance.isControlPressed || HardwareKeyboard.instance.isMetaPressed;
+    if (isCtrl && event.logicalKey == LogicalKeyboardKey.keyF) {
+      if (_showSearch) { _closeSearch(); } else { _openSearch(); }
+      return true;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.escape && _showSearch) {
+      _closeSearch();
+      return true;
+    }
+    return false;
+  }
+
+  // ── search helpers ───────────────────────────────────────────────────────────
+
+  void _closeSearch() {
+    _searchController.clear();
+    _searchStats.value = (current: 0, total: 0);
+    setState(() {
+      _showSearch = false;
+      _searchQuery = '';
+      _currentMatchIdx = 0;
+      _cachedSearchMatches = [];
+    });
+    _suppressAutoRefocus = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
+  }
+
+  void _onSearchChanged(String value) {
+    setState(() {
+      _searchQuery = value.toLowerCase();
+      _currentMatchIdx = 0;
+    });
+  }
+
+  void _navigateSearchPrev() {
+    if (_cachedSearchMatches.isEmpty) return;
+    setState(() {
+      _currentMatchIdx = (_currentMatchIdx + 1) % _cachedSearchMatches.length;
+    });
+    _scrollToCurrentMatch();
+  }
+
+  void _navigateSearchNext() {
+    if (_cachedSearchMatches.isEmpty) return;
+    setState(() {
+      _currentMatchIdx = (_currentMatchIdx - 1 + _cachedSearchMatches.length) % _cachedSearchMatches.length;
+    });
+    _scrollToCurrentMatch();
+  }
+
+  void _openSearch() {
+    _suppressAutoRefocus = true;
+    setState(() { _showSearch = true; });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) FocusScope.of(context).requestFocus(_searchFocusNode);
+    });
+  }
+
+  void _scrollToCurrentMatch() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients || _cachedSearchMatches.isEmpty) return;
+      final matchItemIdx = _cachedSearchMatches[_currentMatchIdx];
+      final pendingCount = _pendingUploads.length;
+      final totalItems = pendingCount + (_cachedDaySeparatorItems?.length ?? 0);
+      if (totalItems == 0) return;
+      final listIdx = pendingCount + matchItemIdx;
+      final maxExtent = _scroll.position.maxScrollExtent;
+      final target = (maxExtent * listIdx / totalItems).clamp(0.0, maxExtent);
+      _scroll.animateTo(target, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+    });
   }
 
   void _onUserTyping() {
@@ -491,7 +767,23 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         }
       });
     }
-    _scrollToBottom();
+    _scrollToBottomAfterSend();
+  }
+
+  void _scrollToBottomAfterSend() {
+    if (!_scroll.hasClients) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      final pixels = _scroll.position.pixels;
+      if (pixels <= 4.0) {
+        _scroll.jumpTo(56.0);
+      }
+      _scroll.animateTo(
+        0.0,
+        duration: const Duration(milliseconds: 310),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   void _scrollToBottom() {
@@ -504,7 +796,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
       );
     } else {
       final distance = _scroll.position.pixels.abs();
-      if (distance > 200) {
+      if (distance > 200 || distance <= 1.5) {
         _scroll.jumpTo(0.0);
       } else {
         _scroll.animateTo(
@@ -556,21 +848,48 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         context: context,
         builder: (_) => FilePreviewDialog(
           filePath: filePath,
-          onSend: () {
-            _sendFile(filePath, basename, ext, type);
-          },
+          onSend: () => _sendFile(filePath, basename, ext, type),
           onCancel: () {
             rootScreenKey.currentState?.showSnack('File cancelled');
           },
+          onPasteExtra: type == 'IMAGE' ? _pasteImageForAlbum : null,
+          onSendAlbum: type == 'IMAGE' ? (paths) => _sendAlbum(paths, skipConfirm: true) : null,
         ),
       );
     } else {
-      
+
       _sendFile(filePath, basename, ext, type);
     }
   }
 
   static const _clipboardChannel = MethodChannel('onyx/clipboard');
+
+  Future<String?> _pasteImageForAlbum() async {
+    try {
+      List<Object?>? rawPaths;
+      try {
+        rawPaths = await _clipboardChannel.invokeMethod<List<Object?>>('getClipboardFilePaths');
+      } catch (_) {}
+      final filePaths = rawPaths?.whereType<String>().where((s) => s.isNotEmpty).toList();
+      if (filePaths != null && filePaths.isNotEmpty) {
+        final imgPath = filePaths.firstWhere(FileTypeDetector.isImage, orElse: () => '');
+        if (imgPath.isNotEmpty) return imgPath;
+      }
+      Uint8List? imageBytes;
+      try {
+        imageBytes = await _clipboardChannel.invokeMethod<Uint8List>('getClipboardImage');
+      } catch (_) {}
+      if (imageBytes != null && imageBytes.isNotEmpty) {
+        final tempDir = await getTemporaryDirectory();
+        final tempFile = File('${tempDir.path}/clipboard_${DateTime.now().millisecondsSinceEpoch}.png');
+        await tempFile.writeAsBytes(imageBytes);
+        return tempFile.path;
+      }
+    } catch (e) {
+      debugPrint('[clipboard album paste] $e');
+    }
+    return null;
+  }
 
   Future<void> _handlePasteFromClipboard() async {
     try {
@@ -630,10 +949,38 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     }
   }
 
+  Widget _buildPendingUploadWidget(UploadTask task) {
+    return PendingUploadCard(
+      task: task,
+      showProgress: task.type == 'voice', // voice uses S3 presign with real %
+      onCancel: () => setState(() => _pendingUploads.remove(task)),
+    );
+  }
+
   Future<void> _sendFile(
       String filePath, String basename, String ext, String type) async {
+    final task = UploadTask(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      type: type == 'IMAGE'
+          ? 'image'
+          : type == 'VIDEO'
+              ? 'video'
+              : type == 'AUDIO'
+                  ? 'voice'
+                  : 'file',
+      localPath: filePath,
+      basename: basename,
+    );
+    if (type == 'IMAGE') {
+      try {
+        task.previewBytes = await File(filePath).readAsBytes();
+      } catch (_) {}
+    }
+    task.status = UploadStatus.uploading;
+    setState(() => _pendingUploads.add(task));
+
     try {
-      final localId = DateTime.now().microsecondsSinceEpoch.toString();
+      final localId = task.id;
       final contentJson = jsonEncode({'filename': basename, 'orig': basename});
 
       late String content;
@@ -701,6 +1048,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
       });
 
       final root = rootScreenKey.currentState;
+      setState(() => _pendingUploads.remove(task));
       if (root != null) {
         root.chats.putIfAbsent(_chatId(), () => []).add(msg);
         root.persistChats();
@@ -709,16 +1057,17 @@ class _FavoritesScreenState extends State<FavoritesScreen>
             ' ${type.toLowerCase().replaceFirst(type[0], type[0].toUpperCase())} added');
       }
     } catch (e, stack) {
+      setState(() => _pendingUploads.remove(task));
       debugPrint('Error sending file: $e\n$stack');
       rootScreenKey.currentState?.showSnack('Failed to send file');
     }
   }
 
-  Future<void> _sendAlbum(List<String> filePaths) async {
+  Future<void> _sendAlbum(List<String> filePaths, {bool skipConfirm = false}) async {
     final limited = filePaths.take(10).toList();
     if (limited.isEmpty) return;
 
-    if (SettingsManager.confirmFileUpload.value) {
+    if (!skipConfirm && SettingsManager.confirmFileUpload.value) {
       if (!mounted) return;
       var proceed = false;
       await showDialog<void>(
@@ -843,6 +1192,14 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                       'content': msg.content,
                     });
                   }),
+                  actionTile(
+                    _isFavMsgPinned(msg) ? Icons.push_pin_outlined : Icons.push_pin_rounded,
+                    _isFavMsgPinned(msg) ? 'Unpin' : 'Pin',
+                    () {
+                      Navigator.pop(ctx);
+                      _toggleFavPin(msg);
+                    },
+                  ),
                   if (isSaveable)
                     actionTile(Icons.save_alt_rounded, 'Save', () {
                       Navigator.pop(ctx);
@@ -931,6 +1288,10 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           'senderDisplayName': msg.from,
           'content': msg.content,
         }),
+      ),
+      ContextMenuButtonItem(
+        label: _isFavMsgPinned(msg) ? 'Unpin' : 'Pin',
+        onPressed: () => _toggleFavPin(msg),
       ),
       if (isSaveable)
         ContextMenuButtonItem(
@@ -1503,7 +1864,14 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                   onPressed: () {
                     if (isRecording) {
                       rootScreenKey.currentState?.stopRecordingAndUpload(
-                          'fav:${widget.favoriteId}', _replyingToMessage);
+                          'fav:${widget.favoriteId}',
+                          _replyingToMessage,
+                          (task) {
+                        task.onComplete = (_) async {
+                          if (mounted) setState(() => _pendingUploads.remove(task));
+                        };
+                        if (mounted) setState(() => _pendingUploads.add(task));
+                      });
                       setState(() {
                         debugPrint(
                             '[favorites_screen::mic.send] clearing _replyingToMessage\n${StackTrace.current}');
@@ -1576,7 +1944,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           focusNode: FocusNode(),
           onKeyEvent: (event) {
             if (event is KeyDownEvent) {
-              
+
               if (HardwareKeyboard.instance.isLogicalKeyPressed(LogicalKeyboardKey.keyV) &&
                   (HardwareKeyboard.instance.isControlPressed ||
                    HardwareKeyboard.instance.isMetaPressed)) {
@@ -1679,10 +2047,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
 
   @override
   Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _enterOpacity,
-      child: _isVisible
-          ? Scaffold(
+    return Scaffold(
               appBar: AppBar(
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
@@ -1789,13 +2154,23 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                         tooltip: 'Copy',
                         onPressed: _copySelectedFavMessages,
                       ),
+                    if (sel.selected.isNotEmpty)
+                      IconButton(
+                        icon: const Icon(Icons.forward_rounded),
+                        tooltip: 'Forward',
+                        onPressed: _forwardSelectedFavMessages,
+                      ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline_rounded),
                       tooltip: 'Delete',
                       onPressed: sel.selected.isNotEmpty ? _confirmDeleteSelectedFav : null,
                     ),
                   ])
-                : const SizedBox.shrink(),
+                : IconButton(
+                    icon: const Icon(Icons.search),
+                    tooltip: 'Search (Ctrl+F)',
+                    onPressed: () { if (_showSearch) { _closeSearch(); } else { _openSearch(); } },
+                  ),
           ),
         ],
       ),
@@ -1857,6 +2232,35 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                               SettingsManager.alignAllMessagesRight,
                           builder: (_, alignRight, __) {
                             final items = _buildMessagesWithDaySeparators(msgs);
+
+                            // Compute search matches
+                            if (_showSearch && _searchQuery.isNotEmpty) {
+                              _cachedSearchMatches = items.asMap().entries
+                                  .where((e) => e.value is _MessageItem &&
+                                      (e.value as _MessageItem).message.content
+                                          .toLowerCase().contains(_searchQuery))
+                                  .map((e) => e.key)
+                                  .toList();
+                              final clampedIdx = _cachedSearchMatches.isEmpty ? 0
+                                  : _currentMatchIdx.clamp(0, _cachedSearchMatches.length - 1);
+                              final stats = (
+                                current: _cachedSearchMatches.isEmpty ? 0 : clampedIdx + 1,
+                                total: _cachedSearchMatches.length,
+                              );
+                              if (_searchStats.value != stats) {
+                                WidgetsBinding.instance.addPostFrameCallback((_) {
+                                  if (mounted) _searchStats.value = stats;
+                                });
+                              }
+                            } else {
+                              _cachedSearchMatches = [];
+                              if (_searchStats.value.total != 0) {
+                                WidgetsBinding.instance.addPostFrameCallback((_) {
+                                  if (mounted) _searchStats.value = (current: 0, total: 0);
+                                });
+                              }
+                            }
+
                             return Listener(
                               onPointerDown: (_) {
                                 if (!isDesktop) return;
@@ -1872,12 +2276,17 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                   padding: EdgeInsets.only(
                                     top: MediaQuery.of(context).padding.top +
                                         kToolbarHeight +
-                                        12,
+                                        (_showSearch ? 64 : 12),
                                     bottom: 72 + MediaQuery.of(context).padding.bottom,
                                   ),
-                                  itemCount: items.length,
+                                  itemCount: _pendingUploads.length + items.length,
                                   itemBuilder: (context, i) {
-                                    final item = items[i];
+                                    if (i < _pendingUploads.length) {
+                                      final task = _pendingUploads[_pendingUploads.length - 1 - i];
+                                      return _buildPendingUploadWidget(task);
+                                    }
+                                    final adjustedI = i - _pendingUploads.length;
+                                    final item = items[adjustedI];
                                     if (item is _DaySeparatorItem) {
                                       
                                       return RepaintBoundary(
@@ -1888,12 +2297,19 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                     final msg = (item as _MessageItem).message;
                                     final String uniqueKey =
                                         '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
+                                    final String animKey = msg.id;
                                     final isFirstAppearance =
                                         !_alreadyRenderedMessageIds
-                                            .contains(uniqueKey);
+                                            .contains(animKey);
                                     if (isFirstAppearance) {
-                                      _alreadyRenderedMessageIds.add(uniqueKey);
+                                      _alreadyRenderedMessageIds.add(animKey);
                                     }
+                                    final isSearchMatch = _searchQuery.isNotEmpty &&
+                                        msg.content.toLowerCase().contains(_searchQuery);
+                                    final isCurrentSearchMatch = isSearchMatch &&
+                                        _cachedSearchMatches.isNotEmpty &&
+                                        _cachedSearchMatches[_currentMatchIdx] == adjustedI;
+
                                     final cs = Theme.of(context).colorScheme;
                                     final msgBubble = MessageBubble(
                                       key: ValueKey<String>('mb_inner_$uniqueKey'),
@@ -1914,19 +2330,35 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                               _replyingToMessage != null &&
                                               _replyingToMessage!['localId']?.toString() ==
                                                   msg.id.toString()),
+                                      onReplyTap: msg.replyToId != null
+                                          ? () => _scrollToFavMessageById(msg.replyToId.toString())
+                                          : null,
                                     );
-                                    final expensiveChild = isFirstAppearance
-                                        ? _AnimatedMessageBubble(
-                                            key: ValueKey<String>(uniqueKey),
-                                            child: RepaintBoundary(child: msgBubble),
-                                          )
-                                        : RepaintBoundary(child: msgBubble);
+                                    final expensiveChild = AnimatedMessageBubble(
+                                        key: ValueKey<String>(animKey),
+                                        outgoing: msg.outgoing,
+                                        animate: isFirstAppearance &&
+                                            SettingsManager.messageAnimationsEnabled.value,
+                                        child: RepaintBoundary(child: msgBubble),
+                                      );
                                     return ValueListenableBuilder<({bool active, Map<String, ChatMessage> selected})>(
                                       valueListenable: _selectionNotifier,
                                       child: expensiveChild,
                                       builder: (_, sel, bubbleChild) {
                                         final isSelected = sel.selected.containsKey(uniqueKey);
-                                        return GestureDetector(
+                                        return RawGestureDetector(
+                                          behavior: HitTestBehavior.translucent,
+                                          gestures: {
+                                            LongPressGestureRecognizer: GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+                                              () => LongPressGestureRecognizer(duration: const Duration(milliseconds: 250)),
+                                              (instance) {
+                                                instance.onLongPress = sel.active
+                                                    ? () => _toggleFavMessageSelection(msg, uniqueKey)
+                                                    : () => _enterFavSelectionMode(msg, uniqueKey);
+                                              },
+                                            ),
+                                          },
+                                          child: GestureDetector(
                                           behavior: HitTestBehavior.translucent,
                                           onTap: sel.active
                                               ? () => _toggleFavMessageSelection(msg, uniqueKey)
@@ -1934,14 +2366,20 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                           onDoubleTap: sel.active
                                               ? null
                                               : () => _enterFavSelectionMode(msg, uniqueKey),
-                                          onLongPress: sel.active
-                                              ? () => _toggleFavMessageSelection(msg, uniqueKey)
-                                              : () => _enterFavSelectionMode(msg, uniqueKey),
                                           child: AnimatedContainer(
+                                            key: (_scrollTargetId != null && (_scrollTargetId == msg.serverMessageId?.toString() || _scrollTargetId == msg.id)) ? _scrollTargetKey : null,
                                             duration: const Duration(milliseconds: 150),
-                                            color: isSelected
-                                                ? cs.primaryContainer.withValues(alpha: 0.45)
-                                                : Colors.transparent,
+                                            color: isCurrentSearchMatch
+                                                ? cs.primary.withValues(alpha: 0.28)
+                                                : isSearchMatch
+                                                    ? cs.primary.withValues(alpha: 0.12)
+                                                    : isSelected
+                                                        ? cs.primaryContainer.withValues(alpha: 0.45)
+                                                        : (_scrollHighlightId != null &&
+                                                                (_scrollHighlightId == msg.serverMessageId?.toString() ||
+                                                                    _scrollHighlightId == msg.id))
+                                                            ? cs.primary.withValues(alpha: 0.18)
+                                                            : Colors.transparent,
                                             padding: const EdgeInsets.symmetric(
                                                 vertical: 6, horizontal: 12),
                                             child: Row(
@@ -1997,6 +2435,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                               ],
                                             ),
                                           ),
+                                        ),
                                         );
                                       },
                                     );
@@ -2011,6 +2450,28 @@ class _FavoritesScreenState extends State<FavoritesScreen>
               );
               },
             ),
+            if (_pinnedMessage != null)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + kToolbarHeight + 8,
+                left: 16,
+                right: 16,
+                child: _buildFavPinnedBanner(context),
+              ),
+            if (_showSearch)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + kToolbarHeight + (_pinnedMessage != null ? 68.0 : 8.0),
+                left: 16,
+                right: 16,
+                child: ChatSearchBar(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  statsNotifier: _searchStats,
+                  onChanged: _onSearchChanged,
+                  onPrevious: _navigateSearchPrev,
+                  onNext: _navigateSearchNext,
+                  onClose: _closeSearch,
+                ),
+              ),
             Align(
               alignment: Alignment.bottomCenter,
               child: Padding(
@@ -2240,11 +2701,13 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                 ),
               ),
             ),
-            AnimatedOpacity(
-              opacity: _showScrollDownButton ? 1.0 : 0.0,
+            ValueListenableBuilder<bool>(
+              valueListenable: _showScrollDownButton,
+              builder: (_, show, __) => AnimatedOpacity(
+              opacity: show ? 1.0 : 0.0,
               duration: const Duration(milliseconds: 200),
               child: IgnorePointer(
-                ignoring: !_showScrollDownButton,
+                ignoring: !show,
                 child: Align(
                   alignment: Alignment.bottomCenter,
                   child: Padding(
@@ -2293,22 +2756,10 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                 ),
               ),
             ),
+          ),
           ],
         ),
       ),
-              )
-          : const SizedBox.shrink(), 
-    );
-  }
-}
-
-class _AnimatedMessageBubble extends StatelessWidget {
-  final Widget child;
-  const _AnimatedMessageBubble({Key? key, required this.child})
-      : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return child; 
+              );
   }
 }

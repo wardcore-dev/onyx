@@ -11,7 +11,7 @@ import 'package:ONYX/background/notification_service.dart';
 import 'package:ONYX/background/register_sync.dart';
 import 'package:ONYX/models/favorite_chat.dart';
 import 'package:ONYX/screens/favorites_tab.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, compute;
+import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode, compute;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cryptography/cryptography.dart';
@@ -39,8 +39,11 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import '../background/foreground_task_handler.dart';
 
 import '../globals.dart';
+import '../utils/upload_task.dart';
 import '../widgets/adaptive_blur.dart';
 import '../managers/settings_manager.dart';
 import '../managers/unread_manager.dart';
@@ -72,7 +75,6 @@ import '../call/call_manager.dart';
 import '../screens/groups_tab.dart';
 import '../screens/group_chat_screen.dart';
 import '../screens/external_group_chat_screen.dart';
-import 'dart:async';
 import '../managers/user_cache.dart';
 import '../utils/optimized_message_sender.dart';
 import '../utils/media_cache.dart';
@@ -93,6 +95,19 @@ final ValueNotifier<double> _chatsPanelWidthNotifier = ValueNotifier<double>(300
 bool _pubkeyUploadedToServer = false;
 DateTime? _lastPubkeyUploadAttempt;
 final Duration _pubkeyUploadRetryDelay = const Duration(minutes: 30);
+
+Route<T> _chatRoute<T>(Widget Function(BuildContext) builder) {
+  return PageRouteBuilder<T>(
+    pageBuilder: (context, animation, secondaryAnimation) => builder(context),
+    transitionDuration: const Duration(milliseconds: 180),
+    reverseTransitionDuration: const Duration(milliseconds: 150),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      final tween = Tween(begin: const Offset(1.0, 0.0), end: Offset.zero)
+          .chain(CurveTween(curve: Curves.easeOutCubic));
+      return SlideTransition(position: animation.drive(tween), child: child);
+    },
+  );
+}
 
 class RootScreen extends StatefulWidget {
   final AppTheme currentTheme;
@@ -190,6 +205,11 @@ class RootScreenState extends State<RootScreen>
 
   bool _pendingUiFlush = false;
   Timer? _uiFlushTimer;
+  final Set<String> _pendingChatUpdates = {};
+
+  /// serverMessageId → chatId index for O(1) WS event lookups.
+  /// Eliminates nested O(chats × messages) loops in every WS handler.
+  final Map<int, String> _serverMsgIndex = {};
 
   bool _pendingSoundFlush = false;
   Timer? _soundFlushTimer;
@@ -308,6 +328,26 @@ class RootScreenState extends State<RootScreen>
 
   Future<void> openAppSettings() async {
     await launchUrl(Uri.parse('app-settings:'));
+  }
+
+  Future<void> sendChatMessage(String to, String text) async {
+    await _sendChatMessage(to, text, null);
+  }
+
+  void sendMessageToFavorite(String favId, String text) {
+    final chatId = 'fav:$favId';
+    final msg = ChatMessage(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      from: 'me',
+      to: chatId,
+      content: text,
+      outgoing: true,
+      delivered: true,
+      time: DateTime.now(),
+    );
+    chats.putIfAbsent(chatId, () => []).add(msg);
+    persistChats();
+    chatsVersion.value++;
   }
 
   Future<void> cancelRecording() async {
@@ -658,7 +698,11 @@ class RootScreenState extends State<RootScreen>
     }
   }
 
-  Future<void> stopRecordingAndUpload(String to, [Map<String, dynamic>? replyTo]) async {
+  Future<void> stopRecordingAndUpload(
+    String to, [
+    Map<String, dynamic>? replyTo,
+    void Function(UploadTask)? onTaskCreated,
+  ]) async {
     debugPrint(
         '<<stopRecordingAndUpload>> entry (to=$to) _isRecording=$_isRecording replyTo=${replyTo != null}');
     if (!_isRecording) {
@@ -709,7 +753,7 @@ class RootScreenState extends State<RootScreen>
                 builder: (_) => VoiceConfirmDialog(
                   duration: duration,
                   onSend: () {
-                    _performVoiceUpload(to, path!, replyTo);
+                    _performVoiceUpload(to, path!, replyTo, onTaskCreated);
                   },
                   onCancel: () {
                     if (mounted) {
@@ -729,7 +773,7 @@ class RootScreenState extends State<RootScreen>
         }
       } else {
         
-        await _performVoiceUpload(to, path, replyTo);
+        await _performVoiceUpload(to, path, replyTo, onTaskCreated);
       }
     } catch (e, st) {
       _appendLog('[record/upload] error: $e\n$st');
@@ -749,13 +793,24 @@ class RootScreenState extends State<RootScreen>
     }
   }
 
-  Future<void> _performVoiceUpload(String to, String path, [Map<String, dynamic>? replyTo]) async {
+  Future<void> _performVoiceUpload(
+    String to,
+    String path, [
+    Map<String, dynamic>? replyTo,
+    void Function(UploadTask)? onTaskCreated,
+  ]) async {
+    UploadTask? voiceTask;
     try {
-      
+
       final isLANMode = lanModePerChat.value[to] ?? false;
       if (isLANMode) {
-        
+
         return await _performVoiceUploadLAN(to, path, replyTo);
+      }
+
+      // Favorites are local-only — no server upload.
+      if (to.startsWith('fav:')) {
+        return await _performVoiceUploadFavorite(to, path, replyTo, onTaskCreated);
       }
 
       final token = await AccountManager.getToken(currentUsername ?? '');
@@ -788,6 +843,16 @@ class RootScreenState extends State<RootScreen>
       final filenameInReq = _sanitizeFilename(p.basename(path));
       final ext = p.extension(filenameInReq).toLowerCase();
 
+      // Create upload task and hand it to the chat screen for display.
+      voiceTask = UploadTask(
+        id: '${DateTime.now().millisecondsSinceEpoch}',
+        type: 'voice',
+        localPath: path,
+        basename: filenameInReq,
+      );
+      voiceTask.status = UploadStatus.uploading;
+      onTaskCreated?.call(voiceTask);
+
       final presignResp = await http.post(
         Uri.parse('$serverBase/media/presign/upload'),
         headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
@@ -815,18 +880,35 @@ class RootScreenState extends State<RootScreen>
       }
 
       final putClient = http.Client();
+      voiceTask.activeClient = putClient;
       try {
-        final putRequest = http.Request('PUT', Uri.parse(presignedUrl));
+        final putRequest =
+            http.StreamedRequest('PUT', Uri.parse(presignedUrl));
         putRequest.headers['Content-Type'] = 'application/octet-stream';
-        putRequest.bodyBytes = bytesToUpload;
-        final putStreamed = await putClient.send(putRequest);
+        putRequest.contentLength = bytesToUpload.length;
+        final responseFuture = putClient.send(putRequest);
+        const chunkSize = 65536; // 64 KB
+        int offset = 0;
+        while (offset < bytesToUpload.length) {
+          final end = (offset + chunkSize).clamp(0, bytesToUpload.length);
+          putRequest.sink.add(bytesToUpload.sublist(offset, end));
+          offset = end;
+          voiceTask.progress = offset / bytesToUpload.length;
+          await Future.delayed(Duration.zero);
+        }
+        await putRequest.sink.close();
+        final putStreamed = await responseFuture;
+        await putStreamed.stream.drain();
         if (putStreamed.statusCode != 200) {
-          debugPrint('<<_performVoiceUpload>> S3 PUT failed: ${putStreamed.statusCode}');
+          debugPrint(
+              '<<_performVoiceUpload>> S3 PUT failed: ${putStreamed.statusCode}');
+          voiceTask.status = UploadStatus.failed;
           rootScreenKey.currentState?.showSnack('Upload failed');
           return;
         }
       } finally {
         putClient.close();
+        voiceTask.activeClient = null;
       }
 
       final confirmResp = await http.post(
@@ -883,11 +965,12 @@ class RootScreenState extends State<RootScreen>
         );
         chats.putIfAbsent(to, () => []).add(msg);
         await persistChats();
-        chatsVersion.value++;
-        unawaited(_preloadUserProfiles());
+        _bumpForChat(to);
       }
 
       _appendLog('[voice.upload] success, filename=$filename, to=$to');
+      voiceTask.status = UploadStatus.done;
+      await voiceTask.onComplete?.call(filename);
       rootScreenKey.currentState?.showSnack('Voice sent');
 
       try {
@@ -896,6 +979,7 @@ class RootScreenState extends State<RootScreen>
     } catch (e, st) {
       _appendLog('[voice.upload] error: $e\n$st');
       debugPrint('<<_performVoiceUpload>> error: $e\n$st');
+      voiceTask?.status = UploadStatus.failed;
       rootScreenKey.currentState?.showSnack('Upload error: $e');
 
       try {
@@ -980,7 +1064,7 @@ class RootScreenState extends State<RootScreen>
 
       chats.putIfAbsent(chatId, () => []).add(msgLocal);
       messageListNotifier.addMessageOptimized(chatId, msgLocal);
-      chatsVersion.value++;
+      _bumpForChat(chatId);
 
       schedulePersistChats(chatId: chatId);
 
@@ -992,6 +1076,86 @@ class RootScreenState extends State<RootScreen>
     } catch (e, st) {
       _appendLog('[voice.lan] error: $e\n$st');
       showSnack('Failed to send voice via LAN: $e');
+    }
+  }
+
+  Future<void> _performVoiceUploadFavorite(
+    String to,
+    String path, [
+    Map<String, dynamic>? replyTo,
+    void Function(UploadTask)? onTaskCreated,
+  ]) async {
+    UploadTask? voiceTask;
+    try {
+      final file = File(path);
+      if (!await file.exists()) {
+        showSnack('Voice file not found');
+        return;
+      }
+
+      final voiceBytes = await file.readAsBytes();
+      String format = 'ogg';
+      if (_isM4A(voiceBytes)) {
+        format = 'm4a';
+      } else if (_isOgg(voiceBytes)) {
+        format = 'ogg';
+      }
+
+      final filename = 'voice_${DateTime.now().millisecondsSinceEpoch}.$format';
+      final basename = filename;
+
+      voiceTask = UploadTask(
+        id: '${DateTime.now().microsecondsSinceEpoch}',
+        type: 'voice',
+        localPath: path,
+        basename: basename,
+      );
+      voiceTask.status = UploadStatus.uploading;
+      onTaskCreated?.call(voiceTask);
+
+      // Copy to local voice cache — no server involved.
+      final appDocuments = await getApplicationDocumentsDirectory();
+      final cacheDir = '${appDocuments.path}/voice_cache';
+      await Directory(cacheDir).create(recursive: true);
+      final cachedPath = '$cacheDir/$filename';
+      await file.copy(cachedPath);
+
+      // Use fav:// prefix so VoiceMessagePlayer reads from local cache
+      // instead of trying to fetch from the server.
+      final voiceContent = jsonEncode({'filename': 'fav://$filename', 'orig': filename});
+      final content = 'VOICEv1:$voiceContent';
+
+      final localId = voiceTask.id;
+      final msg = ChatMessage(
+        id: localId,
+        from: currentUsername ?? 'me',
+        to: to,
+        content: content,
+        outgoing: true,
+        delivered: true,
+        time: DateTime.now(),
+        replyToId: replyTo != null && replyTo['id'] != null
+            ? int.tryParse(replyTo['id'].toString())
+            : null,
+        replyToSender: replyTo != null
+            ? (replyTo['senderDisplayName'] ?? replyTo['sender'])?.toString()
+            : null,
+        replyToContent: replyTo != null ? replyTo['content']?.toString() : null,
+      );
+      chats.putIfAbsent(to, () => []).add(msg);
+      await persistChats();
+      _bumpForChat(to);
+
+      voiceTask.status = UploadStatus.done;
+      await voiceTask.onComplete?.call(filename);
+
+      try {
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+    } catch (e, st) {
+      _appendLog('[voice.fav] error: $e\n$st');
+      voiceTask?.status = UploadStatus.failed;
+      showSnack('Failed to save voice: $e');
     }
   }
 
@@ -1796,6 +1960,7 @@ class RootScreenState extends State<RootScreen>
             }
           }
           chats = merged;
+          _buildServerMsgIndex();
         });
         chatsVersion.value++;
         unawaited(_preloadUserProfiles());
@@ -1916,11 +2081,14 @@ class RootScreenState extends State<RootScreen>
           _checkKeyChangeOnChatOpen(username);
         } else {
           NotificationService.clearMessagesForUser(username);
-          setState(() { selectedChatOther = username; });
+          // Direct assignment — no setState needed before push on mobile
+          // (selectedChatOther is only read by message-handlers, not build).
+          // Calling setState here would force a full RootScreen rebuild right
+          // before the navigation animation starts, causing jitter.
+          selectedChatOther = username;
           _checkKeyChangeOnChatOpen(username);
           Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => ChatScreen(
+            _chatRoute((_) => ChatScreen(
                 myUsername: currentUsername ?? 'me',
                 otherUsername: username,
                 onSend: (t, replyTo) => _sendChatMessage(username, t, replyTo),
@@ -1930,8 +2098,7 @@ class RootScreenState extends State<RootScreen>
                 },
                 onEditMessage: (id, text) => _editChatMessage(username, id, text),
                 onDeleteMessage: (id) => _deleteChatMessage(id),
-              ),
-            ),
+              )),
           ).then((_) {
             if (mounted) setState(() { selectedChatOther = null; });
           });
@@ -1977,12 +2144,12 @@ class RootScreenState extends State<RootScreen>
         return;
       }
 
-      setState(() { selectedChatOther = other; });
+      // Same: no setState before push on mobile (avoids ChatsTab rebuild during animation).
+      selectedChatOther = other;
       _checkKeyChangeOnChatOpen(other);
       Navigator.of(context)
           .push(
-        MaterialPageRoute(
-          builder: (_) => ChatScreen(
+        _chatRoute((_) => ChatScreen(
             myUsername: currentUsername ?? 'me',
             otherUsername: other,
             onSend: (t, replyTo) => _sendChatMessage(other, t, replyTo),
@@ -1992,8 +2159,7 @@ class RootScreenState extends State<RootScreen>
             },
             onEditMessage: (id, text) => _editChatMessage(other, id, text),
             onDeleteMessage: (id) => _deleteChatMessage(id),
-          ),
-        ),
+          )),
       )
           .then((_) {
         if (mounted) setState(() { selectedChatOther = null; });
@@ -2085,6 +2251,25 @@ class RootScreenState extends State<RootScreen>
       }
     }
 
+    // ── Background keep-alive (Android / iOS) ────────────────────────────────
+    // When the app is backgrounded, start a Foreground Service so the OS does
+    // not kill the process.  The WebSocket lives in this same process and
+    // continues to receive messages and fire local notifications.
+    if (!kIsWeb && !isDesktop) {
+      if (state == AppLifecycleState.paused) {
+        FlutterForegroundTask.startService(
+          serviceId: 1001,
+          notificationTitle: 'Onyx',
+          notificationText: 'Connected — receiving messages',
+          callback: onyxForegroundTaskEntryPoint,
+        );
+        _appendLog('[lifecycle] Foreground service started (background keep-alive)');
+      } else if (state == AppLifecycleState.resumed) {
+        FlutterForegroundTask.stopService();
+        _appendLog('[lifecycle] Foreground service stopped (app foregrounded)');
+      }
+    }
+
     if (state == AppLifecycleState.resumed) {
       // Cancel any running reconnect loop so we don't wait for its backoff.
       // Then connect immediately with a short delay for the OS to settle.
@@ -2097,6 +2282,7 @@ class RootScreenState extends State<RootScreen>
         } else {
           _sendPresence('online');
         }
+        ExternalServerManager.reconnectIfNeeded();
       });
     }
 
@@ -2219,6 +2405,13 @@ class RootScreenState extends State<RootScreen>
         };
         LANMessageManager().onMediaReceived = (mediaType, filename, data, from, to, replyTo) {
           _handleIncomingLANMedia(mediaType, filename, data, from, to, replyTo);
+        };
+        LANMessageManager().onKeyMismatch = (username, fingerprint) {
+          // Key rotation is expected (ephemeral keys change on every launch).
+          // No user-visible notification needed.
+          if (kDebugMode) {
+            debugPrint('[LAN] Key rotated for $username: $fingerprint');
+          }
         };
       }
 
@@ -2351,6 +2544,7 @@ class RootScreenState extends State<RootScreen>
     }
 
     chats = await AccountManager.loadChats(username);
+    _buildServerMsgIndex();
 
     _initializeUnreadCounts();
 
@@ -2396,6 +2590,7 @@ class RootScreenState extends State<RootScreen>
         _favorites.clear();
         _selectedFavoriteId = null;
         chats.clear();
+        _serverMsgIndex.clear();
         selectedChatOther = null;
         _chatScreenCache.clear();
         _groupChatScreenCache.clear();
@@ -2532,16 +2727,48 @@ class RootScreenState extends State<RootScreen>
     });
   }
 
-  void _scheduleUiUpdate() {
+  /// Bumps all three version signals for a single chat change:
+  ///   1. Adds a hint so ChatsTab can do an incremental (not full) rebuild.
+  ///   2. Increments the global chatsVersion (triggers ChatsTab listener).
+  ///   3. Increments the per-chat message version (triggers that ChatScreen only).
+  void _bumpForChat(String chatId) {
+    addChatListHint(chatId);
+    chatsVersion.value++;
+    bumpChatMessageVersion(chatId);
+  }
+
+  /// Rebuilds the serverMessageId → chatId index from scratch.
+  /// Call after loading or replacing the full chats map.
+  void _buildServerMsgIndex() {
+    _serverMsgIndex.clear();
+    for (final entry in chats.entries) {
+      for (final m in entry.value) {
+        if (m.serverMessageId != null) {
+          _serverMsgIndex[m.serverMessageId!] = entry.key;
+        }
+      }
+    }
+  }
+
+  void _scheduleUiUpdate({String? chatId}) {
+    if (chatId != null) _pendingChatUpdates.add(chatId);
     if (_pendingUiFlush) return;
     _pendingUiFlush = true;
     _uiFlushTimer?.cancel();
     _uiFlushTimer = Timer(const Duration(milliseconds: 50), () {
       _pendingUiFlush = false;
       if (mounted) {
+        // Load hints for ChatsTab incremental update BEFORE bumping chatsVersion,
+        // because ValueNotifier listeners fire synchronously.
+        for (final id in _pendingChatUpdates) {
+          addChatListHint(id);
+        }
         chatsVersion.value++;
-        // No setState needed: chatsVersion VLB rebuilds ChatsTab with fresh `chats`,
-        // and unreadManager has its own ListenableBuilder for badges.
+        // Bump per-chat versions so only the affected ChatScreen rebuilds.
+        for (final id in _pendingChatUpdates) {
+          bumpChatMessageVersion(id);
+        }
+        _pendingChatUpdates.clear();
       }
     });
   }
@@ -3081,6 +3308,7 @@ class RootScreenState extends State<RootScreen>
     _identityPublicKey = null;
     identityPubKeyBase64 = null;
     chats.clear();
+    _serverMsgIndex.clear();
     _pubkeyCache.clear();
     _favorites.clear();
     _selectedFavoriteId = null;
@@ -3577,16 +3805,15 @@ class RootScreenState extends State<RootScreen>
                   replyToContent: obj['reply_to_content']?.toString(),
                 );
                 chats.putIfAbsent(chatId, () => []).add(msg);
+                if (msg.serverMessageId != null) _serverMsgIndex[msg.serverMessageId!] = chatId;
 
                 if (!msg.isRead) {
                   unreadManager.incrementUnread(chatId);
                 }
 
-                _scheduleUiUpdate();
+                _scheduleUiUpdate(chatId: chatId);
 
                 schedulePersistChats(chatId: chatId);
-
-                unawaited(_preloadUserProfiles());
 
                 if (!msg.outgoing) {
                   _scheduleNotificationSound();
@@ -3631,14 +3858,17 @@ class RootScreenState extends State<RootScreen>
                   '[ws.ack] ok=$ok saved=$saved delivered=$delivered id=$serverId local=$localId ts=$timestamp',
                 );
                 
+                String? ackChatId;
                 if (saved && serverId != null && localId != null) {
                   final targetServerId = (serverId is int) ? serverId : int.tryParse(serverId.toString());
                   if (targetServerId != null) {
-                    for (final msgs in chats.values) {
+                    for (final entry in chats.entries) {
                       bool matched = false;
-                      for (final m in msgs) {
+                      for (final m in entry.value) {
                         if (m.id == localId && m.outgoing && m.serverMessageId == null) {
                           m.serverMessageId = targetServerId;
+                          _serverMsgIndex[targetServerId] = entry.key;
+                          ackChatId = entry.key;
                           matched = true;
                           break;
                         }
@@ -3649,8 +3879,8 @@ class RootScreenState extends State<RootScreen>
                 }
                 if (saved && delivered == true) {
                   _tryMarkDeliveredFromAck(obj);
+                  if (ackChatId != null) addChatListHint(ackChatId);
                   chatsVersion.value++;
-                  unawaited(_preloadUserProfiles());
                 }
                 return;
               }
@@ -3670,23 +3900,20 @@ class RootScreenState extends State<RootScreen>
                 if (delivered && serverId != null) {
                   final targetId = (serverId is int) ? serverId : int.tryParse(serverId.toString());
                   if (targetId != null) {
-                    bool found = false;
-                    String? foundChatId;
-                    for (final entry in chats.entries) {
-                      for (final m in entry.value) {
-                        if (m.serverMessageId == targetId && m.outgoing) {
-                          m.delivered = true;
-                          m.deliveredAt = DateTime.now(); 
-                          found = true;
-                          foundChatId = entry.key;
-                          break;
+                    final foundChatId = _serverMsgIndex[targetId];
+                    if (foundChatId != null) {
+                      final msgs = chats[foundChatId];
+                      if (msgs != null) {
+                        for (final m in msgs) {
+                          if (m.serverMessageId == targetId && m.outgoing) {
+                            m.delivered = true;
+                            m.deliveredAt = DateTime.now();
+                            _bumpForChat(foundChatId);
+                            schedulePersistChats(chatId: foundChatId);
+                            break;
+                          }
                         }
                       }
-                      if (found) break;
-                    }
-                    if (found) {
-                      chatsVersion.value++;
-                      schedulePersistChats(chatId: foundChatId);
                     }
                   }
                 }
@@ -3701,22 +3928,19 @@ class RootScreenState extends State<RootScreen>
                   final from = obj['from'] as String?;
                   if (mid != null && encContent != null && from != null) {
                     final plain = await _tryDecryptIncoming(encContent, from) ?? encContent;
-                    bool updated = false;
-                    String? updatedChatId;
-                    for (final entry in chats.entries) {
-                      for (final m in entry.value) {
-                        if (m.serverMessageId == mid) {
-                          m.updateContent(plain);
-                          updated = true;
-                          updatedChatId = entry.key;
-                          break;
+                    final updatedChatId = _serverMsgIndex[mid];
+                    if (updatedChatId != null) {
+                      final msgs = chats[updatedChatId];
+                      if (msgs != null) {
+                        for (final m in msgs) {
+                          if (m.serverMessageId == mid) {
+                            m.updateContent(plain);
+                            _bumpForChat(updatedChatId);
+                            schedulePersistChats(chatId: updatedChatId);
+                            break;
+                          }
                         }
                       }
-                      if (updated) break;
-                    }
-                    if (updated) {
-                      chatsVersion.value++;
-                      schedulePersistChats(chatId: updatedChatId);
                     }
                     _appendLog('[ws.message_edited] id=$mid updated');
                   }
@@ -3731,19 +3955,18 @@ class RootScreenState extends State<RootScreen>
                   final midRaw = obj['message_id'];
                   final mid = (midRaw is int) ? midRaw : int.tryParse(midRaw?.toString() ?? '');
                   if (mid != null) {
-                    bool removed = false;
-                    String? removedChatId;
-                    for (final entry in chats.entries) {
-                      final before = entry.value.length;
-                      entry.value.removeWhere((m) => m.serverMessageId == mid);
-                      if (entry.value.length != before) {
-                        removed = true;
-                        removedChatId = entry.key;
+                    final removedChatId = _serverMsgIndex[mid];
+                    if (removedChatId != null) {
+                      final msgs = chats[removedChatId];
+                      if (msgs != null) {
+                        final before = msgs.length;
+                        msgs.removeWhere((m) => m.serverMessageId == mid);
+                        if (msgs.length != before) {
+                          _serverMsgIndex.remove(mid);
+                          _bumpForChat(removedChatId);
+                          schedulePersistChats(chatId: removedChatId);
+                        }
                       }
-                    }
-                    if (removed) {
-                      chatsVersion.value++;
-                      schedulePersistChats(chatId: removedChatId);
                     }
                     _appendLog('[ws.message_deleted] id=$mid removed');
                   }
@@ -3758,21 +3981,19 @@ class RootScreenState extends State<RootScreen>
                   final midRaw = obj['id'];
                   final mid = (midRaw is int) ? midRaw : int.tryParse(midRaw?.toString() ?? '');
                   if (mid != null) {
-                    bool removed = false;
-                    String? removedChatId;
-                    for (final entry in chats.entries) {
-                      final list = entry.value;
-                      final before = list.length;
-                      list.removeWhere((m) => m.serverMessageId == mid);
-                      if (list.length != before) {
-                        removed = true;
-                        removedChatId = entry.key;
-                        chatsVersion.value++;
+                    final removedChatId = _serverMsgIndex[mid];
+                    if (removedChatId != null) {
+                      final list = chats[removedChatId];
+                      if (list != null) {
+                        final before = list.length;
+                        list.removeWhere((m) => m.serverMessageId == mid);
+                        if (list.length != before) {
+                          _serverMsgIndex.remove(mid);
+                          _bumpForChat(removedChatId);
+                          schedulePersistChats(chatId: removedChatId);
+                          _appendLog('[ws.msg_delete] removed server id=$mid from local store');
+                        }
                       }
-                    }
-                    if (removed) schedulePersistChats(chatId: removedChatId);
-                    if (removed) {
-                      _appendLog('[ws.msg_delete] removed server id=$mid from local store');
                     } else {
                       _appendLog('[ws.msg_delete] server id=$mid not found locally');
                     }
@@ -3946,11 +4167,10 @@ class RootScreenState extends State<RootScreen>
       );
       usernames.add(other);
     }
-    
-    for (final u in usernames) {
-      UserCache.invalidate(u);
-    }
-    
+    // Don't invalidate here — invalidating fires updatedUsers.value per user,
+    // which triggers setState(_rebuildSummaries) in ChatsTab n times = O(n²).
+    // UserCache.get() already skips cached entries, so this is a no-op for
+    // users already loaded.
     await Future.wait(
       usernames.map((u) => UserCache.get(u).catchError((_) => null)).toList(),
     );
@@ -4631,16 +4851,16 @@ class RootScreenState extends State<RootScreen>
     );
 
     chats.putIfAbsent(chatId, () => []).add(msgLocal);
+    if (msgLocal.serverMessageId != null) _serverMsgIndex[msgLocal.serverMessageId!] = chatId;
     debugPrint('[RootScreen] Added message to chatId=$chatId, total messages: ${chats[chatId]!.length}');
 
     messageListNotifier.addMessageOptimized(chatId, msgLocal);
 
     final oldVersion = chatsVersion.value;
-    chatsVersion.value++;
+    _bumpForChat(chatId);
     debugPrint('[RootScreen] Updated chatsVersion: $oldVersion -> ${chatsVersion.value}');
 
-    schedulePersistChats(chatId: chatId); 
-    unawaited(_preloadUserProfiles());
+    schedulePersistChats(chatId: chatId);
 
     if (!isLANMode) {
       _sendChatMessageInBackground(to, text, localId, replyTo);
@@ -4669,13 +4889,13 @@ class RootScreenState extends State<RootScreen>
     );
 
     chats.putIfAbsent(chatId, () => []).add(incomingMessage);
+    if (incomingMessage.serverMessageId != null) _serverMsgIndex[incomingMessage.serverMessageId!] = chatId;
 
     messageListNotifier.addMessageOptimized(chatId, incomingMessage);
-    chatsVersion.value++;
+    _bumpForChat(chatId);
 
     schedulePersistChats(chatId: chatId);
     unawaited(_playNotificationSound());
-    unawaited(_preloadUserProfiles());
 
     if (selectedChatOther != message.from) {
       unreadManager.incrementUnread(chatId);
@@ -4756,7 +4976,7 @@ class RootScreenState extends State<RootScreen>
       chats.putIfAbsent(chatId, () => []).add(incomingMessage);
 
       messageListNotifier.addMessageOptimized(chatId, incomingMessage);
-      chatsVersion.value++;
+      _bumpForChat(chatId);
 
       schedulePersistChats(chatId: chatId);
       unawaited(_playNotificationSound());
@@ -4950,7 +5170,7 @@ class RootScreenState extends State<RootScreen>
         break;
       }
     }
-    chatsVersion.value++;
+    _bumpForChat(chatId);
   }
 
   void _drainPendingMsgQueue() {
@@ -4993,7 +5213,7 @@ class RootScreenState extends State<RootScreen>
             break;
           }
         }
-        chatsVersion.value++;
+        _bumpForChat(chatId);
         schedulePersistChats(chatId: chatId);
         if (mounted) setState(() {});
       }
@@ -5011,18 +5231,35 @@ class RootScreenState extends State<RootScreen>
         'message_id': messageId,
       }));
       
+      final removedChatId = _serverMsgIndex[messageId];
       bool removed = false;
-      String? removedChatId;
-      for (final entry in chats.entries) {
-        final before = entry.value.length;
-        entry.value.removeWhere((m) => m.serverMessageId == messageId);
-        if (entry.value.length != before) {
-          removed = true;
-          removedChatId = entry.key;
+      if (removedChatId != null) {
+        final msgs = chats[removedChatId];
+        if (msgs != null) {
+          final before = msgs.length;
+          msgs.removeWhere((m) => m.serverMessageId == messageId);
+          if (msgs.length != before) {
+            _serverMsgIndex.remove(messageId);
+            removed = true;
+          }
+        }
+      } else {
+        // Fallback: index miss, scan all chats
+        for (final entry in chats.entries) {
+          final before = entry.value.length;
+          entry.value.removeWhere((m) => m.serverMessageId == messageId);
+          if (entry.value.length != before) {
+            _serverMsgIndex.remove(messageId);
+            removed = true;
+          }
         }
       }
       if (removed) {
-        chatsVersion.value++;
+        if (removedChatId != null) {
+          _bumpForChat(removedChatId);
+        } else {
+          chatsVersion.value++;
+        }
         schedulePersistChats(chatId: removedChatId);
         if (mounted) setState(() {});
       }
@@ -5125,8 +5362,12 @@ class RootScreenState extends State<RootScreen>
       _appendLog(
         '[deliver-mark] local_id=${candidate.id} marked delivered (server_id=$serverId)',
       );
-      
-      chatsVersion.value++;
+
+      if (candidateChatId != null) {
+        _bumpForChat(candidateChatId);
+      } else {
+        chatsVersion.value++;
+      }
       schedulePersistChats(chatId: candidateChatId);
     } else {
       _appendLog(
@@ -5153,7 +5394,7 @@ class RootScreenState extends State<RootScreen>
 
     if (hasChanges) {
       schedulePersistChats(chatId: chatId);
-      chatsVersion.value++;
+      _bumpForChat(chatId);
     }
 
     unreadManager.markAsRead(chatId);
@@ -5237,12 +5478,11 @@ class RootScreenState extends State<RootScreen>
 
   void _deleteChat(String chatId) {
     chats.remove(chatId);
-    
+
     chatsVersion.value++;
     setState(() {});
-    
+
     schedulePersistChats(chatId: chatId);
-    unawaited(_preloadUserProfiles());
   }
 
   Future<String?> _getLocalIp() async {
@@ -5284,7 +5524,7 @@ class RootScreenState extends State<RootScreen>
       barrierLabel: 'Search',
       barrierColor: Colors.black54, 
       
-      transitionDuration: const Duration(milliseconds: 300),
+      transitionDuration: const Duration(milliseconds: 200),
       pageBuilder: (context, animation, secondaryAnimation) {
         
         final bool isDesktop = MediaQuery.of(context).size.width > 700;
@@ -5348,8 +5588,7 @@ class RootScreenState extends State<RootScreen>
                               } catch (_) {}
                               if (!isDesktop) {
                                 Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => ChatScreen(
+                                  _chatRoute((_) => ChatScreen(
                                       myUsername: currentUsername ?? 'me',
                                       otherUsername: username,
                                       onSend: (t, replyTo) => _sendChatMessage(username, t, replyTo),
@@ -5359,8 +5598,7 @@ class RootScreenState extends State<RootScreen>
                                       },
                                       onEditMessage: (id, text) => _editChatMessage(username, id, text),
                                       onDeleteMessage: (id) => _deleteChatMessage(id),
-                                    ),
-                                  ),
+                                    )),
                                 ).then((_) {
                                   if (mounted) setState(() { selectedChatOther = null; });
                                 });
@@ -6184,8 +6422,7 @@ class RootScreenState extends State<RootScreen>
           if (!isDesktop) {
             if (mounted) setState(() { selectedChatOther = other; });
             await Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => ChatScreen(
+              _chatRoute((_) => ChatScreen(
                   myUsername: currentUsername ?? 'me',
                   otherUsername: other,
                   onSend: (t, replyTo) => _sendChatMessage(other, t, replyTo),
@@ -6195,8 +6432,7 @@ class RootScreenState extends State<RootScreen>
                   },
                   onEditMessage: (id, text) => _editChatMessage(other, id, text),
                   onDeleteMessage: (id) => _deleteChatMessage(id),
-                ),
-              ),
+                )),
             );
             if (mounted) setState(() { selectedChatOther = null; });
             _sendPresence('online');
@@ -6222,17 +6458,13 @@ class RootScreenState extends State<RootScreen>
               });
             } else {
               Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => ExternalGroupChatScreen(group: group, server: server),
-                ),
+                _chatRoute((_) => ExternalGroupChatScreen(group: group, server: server)),
               );
             }
           } else if (!isDesktop) {
             
             Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => GroupChatScreen(group: group),
-              ),
+              _chatRoute((_) => GroupChatScreen(group: group)),
             );
           } else {
             
@@ -6255,9 +6487,7 @@ class RootScreenState extends State<RootScreen>
           } else {
             Navigator.push(
               context,
-              MaterialPageRoute(
-                builder: (_) => getFavoritesScreen(id, fav.title),
-              ),
+              _chatRoute((_) => getFavoritesScreen(id, fav.title)),
             );
           }
         },

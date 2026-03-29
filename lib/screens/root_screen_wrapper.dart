@@ -136,7 +136,7 @@ class _WelcomeOverlayState extends State<_WelcomeOverlay>
       context: context,
       barrierDismissible: true,
       barrierLabel: 'Authentication',
-      transitionDuration: const Duration(milliseconds: 200),
+      transitionDuration: const Duration(milliseconds: 133),
       pageBuilder: (ctx, anim1, anim2) => AuthDialog(
         onLogin: widget.onLogin,
         onRegister: widget.onRegister,

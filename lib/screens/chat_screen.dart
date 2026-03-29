@@ -2,8 +2,8 @@
 import 'package:ONYX/screens/chats_tab.dart' show getPreviewText;
 import '../services/chat_load_optimizer.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -18,12 +18,14 @@ import 'package:path/path.dart' as p;
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import '../globals.dart';
+import 'forward_screen.dart';
 import '../widgets/adaptive_blur.dart';
 import '../models/chat_message.dart';
 import '../managers/account_manager.dart' hide UserInfo;
 import '../managers/settings_manager.dart';
 import '../managers/unread_manager.dart';
 import '../widgets/message_bubble.dart';
+import '../widgets/animated_message_bubble.dart';
 import '../widgets/video_message_widget.dart';
 import '../widgets/avatar_widget.dart';
 import '../call/call_manager.dart';
@@ -36,6 +38,9 @@ import '../widgets/album_preview_dialog.dart';
 import '../utils/file_utils.dart';
 import '../utils/image_file_cache.dart';
 import '../utils/clipboard_image.dart';
+import '../utils/upload_task.dart';
+import '../widgets/pending_upload_card.dart';
+import '../widgets/chat_search_bar.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import '../managers/lan_message_manager.dart';
 import '../enums/delivery_mode.dart';
@@ -79,6 +84,11 @@ class _DaySeparatorItem extends _ListItem {
 
 class _UnreadMarkerItem extends _ListItem {}
 
+class _PendingUploadItem extends _ListItem {
+  final UploadTask task;
+  _PendingUploadItem(this.task);
+}
+
 class ChatScreen extends StatefulWidget {
   final String myUsername;
   final String otherUsername;
@@ -120,15 +130,14 @@ class ChatScreenState extends State<ChatScreen>
   bool _suppressAutoRefocus = false;
   final ValueNotifier<bool> _scrollDownVisible = ValueNotifier<bool>(false);
   
-  bool _isVisible = false;
-  late final AnimationController _enterAnimController;
-  late final Animation<double> _enterOpacity;
+
 
   String? _droppedFilePath;
 
   Map<String, dynamic>? _replyingToMessage;
 
   ChatMessage? _editingMessage;
+  Map<String, dynamic>? _pinnedMessage;
 
   bool _isLANMode = false;
   bool _fastChangeMode = false;
@@ -147,8 +156,18 @@ class ChatScreenState extends State<ChatScreen>
   Map<String, ChatMessage> get _selectedMessages => _selectionNotifier.value.selected;
 
   final List<ChatMessage> _olderMessages = [];
+  final List<UploadTask> _pendingUploads = [];
   bool _isLoadingMore = false;
   bool _hasMoreMessages = true;
+
+  // ── in-chat search ──────────────────────────────────────────────────────────
+  bool _showSearch = false;
+  final _searchController = TextEditingController();
+  String _searchQuery = '';
+  int _currentMatchIdx = 0;
+  List<int> _cachedSearchMatches = [];
+  final _searchStats = ValueNotifier<({int current, int total})>((current: 0, total: 0));
+  final _searchFocusNode = FocusNode();
 
   late final Listenable _combinedHeaderListenable;
 
@@ -183,6 +202,203 @@ class ChatScreenState extends State<ChatScreen>
     setState(() { _editingMessage = null; });
     _textCtrl.clear();
     _focusNode.requestFocus();
+  }
+
+  String get _pinPrefsKey => 'pinned_dm_${widget.otherUsername}';
+
+  Future<void> _loadPinnedMessage() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pinPrefsKey);
+    if (raw != null && mounted) {
+      try {
+        setState(() => _pinnedMessage = Map<String, dynamic>.from(jsonDecode(raw) as Map));
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _savePinnedMessage() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_pinnedMessage == null) {
+      await prefs.remove(_pinPrefsKey);
+    } else {
+      await prefs.setString(_pinPrefsKey, jsonEncode(_pinnedMessage));
+    }
+  }
+
+  bool _isMsgPinned(ChatMessage msg) {
+    final pinId = _pinnedMessage?['id']?.toString();
+    if (pinId == null) return false;
+    return pinId == (msg.serverMessageId?.toString() ?? msg.id);
+  }
+
+  void _togglePin(ChatMessage msg) {
+    if (_isMsgPinned(msg)) {
+      setState(() => _pinnedMessage = null);
+    } else {
+      setState(() {
+        _pinnedMessage = {
+          'id': msg.serverMessageId?.toString() ?? msg.id,
+          'content': msg.content,
+          'sender': msg.from,
+        };
+      });
+    }
+    _savePinnedMessage();
+  }
+
+  String get _chatId {
+    final ids = [widget.myUsername, widget.otherUsername]..sort();
+    return ids.join(':');
+  }
+
+  String? _scrollHighlightId;
+  Timer? _highlightTimer;
+  final GlobalKey _scrollTargetKey = GlobalKey();
+  String? _scrollTargetId;
+
+  void _flashHighlight(String id) {
+    _highlightTimer?.cancel();
+    setState(() => _scrollHighlightId = id);
+    _highlightTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _scrollHighlightId = null);
+    });
+  }
+
+  void _scrollToMessageById(int? serverId, {String? localId}) {
+    if (serverId == null && localId == null) return;
+    final rootState = rootScreenKey.currentState;
+    if (rootState == null) return;
+    final msgs = <ChatMessage>[...(rootState.chats[_chatId] ?? []), ..._olderMessages];
+    final items = _buildMessagesWithDaySeparators(msgs);
+
+    int? foundIdx;
+    String? foundId;
+    for (int i = 0; i < items.length; i++) {
+      final item = items[i];
+      if (item is _MessageItem) {
+        final m = item.message;
+        if (serverId != null && m.serverMessageId == serverId) {
+          foundIdx = i;
+          foundId = m.serverMessageId.toString();
+          break;
+        }
+        if (localId != null && m.id == localId) {
+          foundIdx = i;
+          foundId = m.id;
+          break;
+        }
+      }
+    }
+    if (foundIdx == null || foundId == null) return;
+
+    final listviewIdx = foundIdx + _pendingUploads.length;
+    final totalItems = items.length + _pendingUploads.length;
+    final maxExt = _scroll.position.maxScrollExtent;
+    final proportional = totalItems > 0
+        ? (listviewIdx / totalItems) * maxExt
+        : 0.0;
+
+    setState(() => _scrollTargetId = foundId);
+
+    _scroll
+        .animateTo(proportional.clamp(0.0, maxExt),
+            duration: const Duration(milliseconds: 350), curve: Curves.easeOut)
+        .then((_) {
+      void tryEnsureVisible([int retries = 2]) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final ctx = _scrollTargetKey.currentContext;
+          if (ctx != null) {
+            Scrollable.ensureVisible(ctx,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOut,
+                alignment: 0.5);
+            if (mounted) setState(() => _scrollTargetId = null);
+          } else if (retries > 0) {
+            tryEnsureVisible(retries - 1);
+          } else {
+            if (mounted) setState(() => _scrollTargetId = null);
+          }
+        });
+      }
+
+      tryEnsureVisible();
+    });
+
+    _flashHighlight(foundId);
+  }
+
+  Widget _buildPinnedBanner(BuildContext context) {
+    final msg = _pinnedMessage!;
+    final colorScheme = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<double>(
+      valueListenable: SettingsManager.elementOpacity,
+      builder: (_, opacity, __) => ValueListenableBuilder<double>(
+        valueListenable: SettingsManager.elementBrightness,
+        builder: (_, brightness, __) {
+          final bgColor = SettingsManager.getElementColor(
+            colorScheme.surfaceContainerHighest,
+            brightness,
+          );
+          final pinId = msg['id']?.toString();
+          final serverId = int.tryParse(pinId ?? '');
+          return GestureDetector(
+            onTap: () => _scrollToMessageById(serverId, localId: pinId),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: bgColor.withValues(alpha: opacity),
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.push_pin_rounded, size: 16, color: colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Pinned Message',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          getPreviewText(msg['content']?.toString() ?? ''),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colorScheme.onSurface.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 16),
+                    onPressed: () {
+                      setState(() => _pinnedMessage = null);
+                      _savePinnedMessage();
+                    },
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   bool _isTextMessage(ChatMessage msg) {
@@ -230,6 +446,15 @@ class ChatScreenState extends State<ChatScreen>
           AppLocalizations(SettingsManager.appLocale.value).msgCopied);
     }
     _exitSelectionMode();
+  }
+
+  void _forwardSelectedMessages() {
+    final contents = _selectedMessages.values
+        .map((m) => m.content)
+        .toList();
+    if (contents.isEmpty) return;
+    _exitSelectionMode();
+    ForwardScreen.show(context, contents);
   }
 
   Future<void> _confirmDeleteSelected() async {
@@ -338,6 +563,11 @@ class ChatScreenState extends State<ChatScreen>
           Clipboard.setData(ClipboardData(text: msg.content));
           rootScreenKey.currentState?.showSnack(l.msgCopied);
         },
+        isPinned: _isMsgPinned(msg),
+        onPin: () {
+          Navigator.pop(ctx);
+          _togglePin(msg);
+        },
         onDelete: canDelete
             ? () async {
                 Navigator.pop(ctx);
@@ -434,6 +664,10 @@ class ChatScreenState extends State<ChatScreen>
           label: l.edit,
           onPressed: () => _startEditingMessage(msg),
         ),
+      ContextMenuButtonItem(
+        label: _isMsgPinned(msg) ? 'Unpin' : 'Pin',
+        onPressed: () => _togglePin(msg),
+      ),
       if (msg.outgoing)
         ContextMenuButtonItem(
           label: l.delete,
@@ -660,25 +894,11 @@ class ChatScreenState extends State<ChatScreen>
   @override
   void initState() {
     super.initState();
+    _loadPinnedMessage();
+    HardwareKeyboard.instance.addHandler(_handleGlobalKey);
     final randomIndex = Random().nextInt(_randomHints.length);
     _inputHint = _randomHints[randomIndex];
     _focusNode = FocusNode();
-
-    _enterAnimController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
-    _enterOpacity = CurvedAnimation(
-      parent: _enterAnimController,
-      curve: Curves.easeOut,
-    );
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        setState(() => _isVisible = true);
-        _enterAnimController.forward();
-      }
-    });
 
     _inputEntryController = AnimationController(
       duration: const Duration(milliseconds: 600),
@@ -713,14 +933,24 @@ class ChatScreenState extends State<ChatScreen>
     _loadFastChangeSetting();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !_focusNode.hasFocus) {
-        
-        if (isDesktop) {
-          _focusNode.requestFocus();
+      if (!mounted) return;
+      if (!_focusNode.hasFocus && isDesktop) _focusNode.requestFocus();
+
+      // Delay read-marking until AFTER the navigation animation completes.
+      // Calling it during the animation bumps chatsVersion synchronously,
+      // which triggers a ChatsTab rebuild on every frame → jitter on fat accounts.
+      final animation = ModalRoute.of(context)?.animation;
+      if (animation == null || animation.status == AnimationStatus.completed) {
+        _markMessagesAsRead();
+      } else {
+        void onStatus(AnimationStatus status) {
+          if (status == AnimationStatus.completed) {
+            animation.removeStatusListener(onStatus);
+            if (mounted) _markMessagesAsRead();
+          }
         }
+        animation.addStatusListener(onStatus);
       }
-      
-      _markMessagesAsRead();
     });
 
     _focusNode.addListener(() {
@@ -877,13 +1107,21 @@ class ChatScreenState extends State<ChatScreen>
   }
 
   void _onScroll() {
-    final atBottom = _scroll.position.pixels <= 1.0;
+    final pixels = _scroll.position.pixels;
+    if (pixels > 0.0 && pixels <= 1.5 && !_scroll.position.isScrollingNotifier.value) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scroll.hasClients && _scroll.position.pixels > 0.0 && _scroll.position.pixels <= 1.5) {
+          _scroll.jumpTo(0.0);
+        }
+      });
+    }
+    final atBottom = pixels <= 1.0;
     _scrollDownVisible.value = !atBottom;
     if (SettingsManager.messagePaginationEnabled.value &&
         _hasMoreMessages &&
         !_isLoadingMore &&
         _scroll.hasClients &&
-        _scroll.position.pixels >= _scroll.position.maxScrollExtent - 400) {
+        pixels >= _scroll.position.maxScrollExtent - 400) {
       _loadMoreMessages();
     }
   }
@@ -973,7 +1211,9 @@ class ChatScreenState extends State<ChatScreen>
 
     if (hasChanges) {
       rootState.schedulePersistChats();
+      addChatListHint(chatId);
       chatsVersion.value++;
+      bumpChatMessageVersion(chatId);
     }
 
     unreadManager.markAsRead(chatId);
@@ -988,9 +1228,92 @@ class ChatScreenState extends State<ChatScreen>
     _scrollDownVisible.dispose();
     _focusNode.dispose();
     _typingThrottle?.cancel();
-    _enterAnimController.dispose();
     _inputEntryController.dispose();
+    _searchController.dispose();
+    _searchStats.dispose();
+    _searchFocusNode.dispose();
+    HardwareKeyboard.instance.removeHandler(_handleGlobalKey);
     super.dispose();
+  }
+
+  // ── search helpers ───────────────────────────────────────────────────────────
+
+  bool _handleGlobalKey(KeyEvent event) {
+    if (!mounted) return false;
+    if (event is! KeyDownEvent) return false;
+    final isCtrl = HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+    if (isCtrl && event.logicalKey == LogicalKeyboardKey.keyF) {
+      if (_showSearch) { _closeSearch(); } else { _openSearch(); }
+      return true;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.escape && _showSearch) {
+      _closeSearch();
+      return true;
+    }
+    return false;
+  }
+
+  void _closeSearch() {
+    _searchController.clear();
+    _searchStats.value = (current: 0, total: 0);
+    setState(() {
+      _showSearch = false;
+      _searchQuery = '';
+      _currentMatchIdx = 0;
+      _cachedSearchMatches = [];
+    });
+    _suppressAutoRefocus = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
+  }
+
+  void _onSearchChanged(String value) {
+    setState(() {
+      _searchQuery = value.toLowerCase();
+      _currentMatchIdx = 0;
+    });
+  }
+
+  void _navigateSearchPrev() {
+    // ↑ = older messages (higher adjustedI = toward top of chat)
+    if (_cachedSearchMatches.isEmpty) return;
+    setState(() {
+      _currentMatchIdx = (_currentMatchIdx + 1) % _cachedSearchMatches.length;
+    });
+    _scrollToCurrentMatch();
+  }
+
+  void _navigateSearchNext() {
+    // ↓ = newer messages (lower adjustedI = toward bottom of chat)
+    if (_cachedSearchMatches.isEmpty) return;
+    setState(() {
+      _currentMatchIdx = (_currentMatchIdx - 1 + _cachedSearchMatches.length) % _cachedSearchMatches.length;
+    });
+    _scrollToCurrentMatch();
+  }
+
+  void _openSearch() {
+    _suppressAutoRefocus = true;
+    setState(() { _showSearch = true; });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) FocusScope.of(context).requestFocus(_searchFocusNode);
+    });
+  }
+
+  void _scrollToCurrentMatch() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients || _cachedSearchMatches.isEmpty) return;
+      final matchItemIdx = _cachedSearchMatches[_currentMatchIdx];
+      final pendingCount = _pendingUploads.length;
+      final totalItems = pendingCount + (_cachedItems?.length ?? 0);
+      if (totalItems == 0) return;
+      final listIdx = pendingCount + matchItemIdx;
+      final maxExtent = _scroll.position.maxScrollExtent;
+      final target = (maxExtent * listIdx / totalItems).clamp(0.0, maxExtent);
+      _scroll.animateTo(target, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+    });
   }
 
   void _onUserTyping() {
@@ -1076,12 +1399,8 @@ class ChatScreenState extends State<ChatScreen>
     _shouldPreserveExternalFocus = false;
     _focusNode.requestFocus();
     
-    setState(() {
-      debugPrint(
-          '[chat_screen::submitMessage] clearing _replyingToMessage\n${StackTrace.current}');
-      _replyingToMessage = null;
-    });
-    _scrollToBottom();
+    setState(() { _replyingToMessage = null; });
+    _scrollToBottomAfterSend();
   }
 
   Future<void> _showDeliveryModeDialog() async {
@@ -1294,7 +1613,7 @@ class ChatScreenState extends State<ChatScreen>
         });
       }
 
-      _scrollToBottom();
+      _scrollToBottomAfterSend();
     }
   }
 
@@ -1310,8 +1629,8 @@ class ChatScreenState extends State<ChatScreen>
       );
     } else {
       final distance = _scroll.position.pixels.abs();
-      
-      if (distance > 200) {
+
+      if (distance > 200 || distance <= 1.5) {
         _scroll.jumpTo(0.0);
       } else {
         _scroll.animateTo(
@@ -1321,6 +1640,26 @@ class ChatScreenState extends State<ChatScreen>
         );
       }
     }
+  }
+
+  /// Called specifically after sending a message so the new bubble "slides in"
+  /// instead of appearing statically. Waits one frame for the new item to be
+  /// in the tree, creates a small upward offset, then animates back to 0.
+  void _scrollToBottomAfterSend() {
+    if (!_scroll.hasClients) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      final pixels = _scroll.position.pixels;
+      if (pixels <= 4.0) {
+        // Already at bottom — nudge up so the animate-to-0 is visible
+        _scroll.jumpTo(56.0);
+      }
+      _scroll.animateTo(
+        0.0,
+        duration: const Duration(milliseconds: 310),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   void _onLongPress(ChatMessage msg, [TapDownDetails? details]) {
@@ -1368,7 +1707,10 @@ class ChatScreenState extends State<ChatScreen>
   List<_ListItem> _buildMessagesWithDaySeparators(List<ChatMessage> msgs) {
     if (msgs.isEmpty) return [];
 
-    final currentHash = msgs.length.hashCode ^ (msgs.isNotEmpty ? msgs.last.id.hashCode : 0);
+    final unreadCount = msgs.where((m) => !m.outgoing && !m.isRead).length;
+    final currentHash = msgs.length.hashCode ^
+        (msgs.isNotEmpty ? msgs.last.id.hashCode : 0) ^
+        unreadCount.hashCode;
 
     if (_cachedMessages != null && _cachedMessagesHash == currentHash && _cachedItems != null) {
       debugPrint('[ChatScreen] Using CACHED items (${_cachedItems!.length} items, hash: $currentHash)');
@@ -1512,10 +1854,7 @@ class ChatScreenState extends State<ChatScreen>
 
     return DragDropZone(
       onFilesDropped: _handleDroppedFiles,
-      child: FadeTransition(
-        opacity: _enterOpacity,
-        child: _isVisible
-            ? Scaffold(
+      child: Scaffold(
                 extendBodyBehindAppBar: true,
                 appBar: AppBar(
           backgroundColor: Colors.transparent,
@@ -1697,6 +2036,12 @@ class ChatScreenState extends State<ChatScreen>
                           tooltip: 'Copy',
                           onPressed: _copySelectedMessages,
                         ),
+                      if (sel.selected.isNotEmpty)
+                        IconButton(
+                          icon: const Icon(Icons.forward_rounded),
+                          tooltip: 'Forward',
+                          onPressed: _forwardSelectedMessages,
+                        ),
                       if (sel.selected.values.any((m) => m.outgoing))
                         IconButton(
                           icon: Icon(
@@ -1708,6 +2053,11 @@ class ChatScreenState extends State<ChatScreen>
                         ),
                     ])
                   : Row(mainAxisSize: MainAxisSize.min, children: [
+            IconButton(
+              icon: const Icon(Icons.search),
+              tooltip: 'Search (Ctrl+F)',
+              onPressed: () { if (_showSearch) _closeSearch(); else _openSearch(); },
+            ),
             ValueListenableBuilder<bool>(
               valueListenable: callManager.isInCall,
               builder: (ctx, inCall, _) => inCall
@@ -2141,19 +2491,46 @@ class ChatScreenState extends State<ChatScreen>
               },
             ),
             ValueListenableBuilder<int>(
-              valueListenable: chatsVersion,
-              builder: (_, chatsVer, ___) {
-                debugPrint('[ChatScreen] ValueListenableBuilder rebuild: chatsVersion=$chatsVer, chatId=$chatId');
+              valueListenable: getChatMessageVersion(chatId),
+              builder: (_, __, ___) {
                 final rootState = rootScreenKey.currentState;
                 if (rootState == null) return const SizedBox();
                 final mainMsgs = rootState.chats[chatId] ?? [];
                 final msgs = [...mainMsgs, ..._olderMessages];
-                debugPrint('[ChatScreen] Messages count for $chatId: ${msgs.length}');
                 if (msgs.isEmpty) {
                   return Center(child: Text(AppLocalizations.of(context).noMessagesYet));
                 }
 
                 final items = _buildMessagesWithDaySeparators(msgs);
+
+                // Update search matches (side-effect during build is safe here
+                // because we only assign fields, no setState).
+                if (_showSearch && _searchQuery.isNotEmpty) {
+                  _cachedSearchMatches = items.asMap().entries
+                      .where((e) => e.value is _MessageItem &&
+                          (e.value as _MessageItem).message.content
+                              .toLowerCase().contains(_searchQuery))
+                      .map((e) => e.key)
+                      .toList();
+                  final clampedIdx = _cachedSearchMatches.isEmpty ? 0
+                      : _currentMatchIdx.clamp(0, _cachedSearchMatches.length - 1);
+                  final stats = (
+                    current: _cachedSearchMatches.isEmpty ? 0 : clampedIdx + 1,
+                    total: _cachedSearchMatches.length,
+                  );
+                  if (_searchStats.value != stats) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) _searchStats.value = stats;
+                    });
+                  }
+                } else {
+                  _cachedSearchMatches = [];
+                  if (_searchStats.value.total != 0) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) _searchStats.value = (current: 0, total: 0);
+                    });
+                  }
+                }
 
                 return ValueListenableBuilder<bool>(
                       valueListenable: SettingsManager.showAvatarInChats,
@@ -2183,11 +2560,17 @@ class ChatScreenState extends State<ChatScreen>
                                                   .padding
                                                   .top +
                                               kToolbarHeight +
-                                              12,
+                                              (_showSearch ? 64 : 12),
                                           bottom: 72 + MediaQuery.of(context).padding.bottom),
-                                      itemCount: items.length + (_isLoadingMore || _hasMoreMessages ? 1 : 0),
+                                      itemCount: _pendingUploads.length + items.length + (_isLoadingMore || _hasMoreMessages ? 1 : 0),
                                       itemBuilder: (context, i) {
-                                        if (i == items.length) {
+                                        // Pending uploads sit at the bottom (index 0 in reversed list)
+                                        if (i < _pendingUploads.length) {
+                                          final task = _pendingUploads[_pendingUploads.length - 1 - i];
+                                          return _buildPendingUploadWidget(task);
+                                        }
+                                        final adjustedI = i - _pendingUploads.length;
+                                        if (adjustedI == items.length) {
                                           return Padding(
                                             padding: const EdgeInsets.symmetric(vertical: 12),
                                             child: _isLoadingMore
@@ -2195,7 +2578,7 @@ class ChatScreenState extends State<ChatScreen>
                                                 : const SizedBox.shrink(),
                                           );
                                         }
-                                        final item = items[i];
+                                        final item = items[adjustedI];
 
                                         if (item is _DaySeparatorItem) {
                                           return _buildDaySeparator(
@@ -2206,19 +2589,26 @@ class ChatScreenState extends State<ChatScreen>
                                           final msg = item.message;
                                           final String uniqueKey =
                                               '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
-                                          
+                                          // Use stable local id for animation tracking so that
+                                          // when serverMessageId arrives the key doesn't change
+                                          // and trigger a second animation on the same bubble.
+                                          final String animKey = msg.id;
+
                                           final bool isFirstAppearance =
                                               !_alreadyRenderedMessageIds
-                                                  .contains(uniqueKey);
+                                                  .contains(animKey);
                                           if (isFirstAppearance) {
                                             _alreadyRenderedMessageIds
-                                                .add(uniqueKey);
-                                            
-                                            debugPrint('[Chat Animation] New message detected: outgoing=${msg.outgoing}, isFirstAppearance=true, key=$uniqueKey');
+                                                .add(animKey);
                                           }
 
                                           final isIncoming = !msg.outgoing;
-                                          
+                                          final isSearchMatch = _searchQuery.isNotEmpty &&
+                                              msg.content.toLowerCase().contains(_searchQuery);
+                                          final isCurrentSearchMatch = isSearchMatch &&
+                                              _cachedSearchMatches.isNotEmpty &&
+                                              _cachedSearchMatches[_currentMatchIdx] == adjustedI;
+
                                           final shouldShowRight = alignRight
                                               ? !swapped
                                               : (swapped
@@ -2241,6 +2631,9 @@ class ChatScreenState extends State<ChatScreen>
                                             replyToId: msg.replyToId,
                                             replyToUsername: msg.replyToSender,
                                             replyToContent: msg.replyToContent,
+                                            onReplyTap: msg.replyToId != null
+                                                ? () => _scrollToMessageById(msg.replyToId)
+                                                : null,
                                             highlighted: (msg.serverMessageId != null &&
                                                     _replyingToMessage != null &&
                                                     _replyingToMessage!['id']?.toString() ==
@@ -2251,12 +2644,13 @@ class ChatScreenState extends State<ChatScreen>
                                                         msg.id.toString()),
                                           );
 
-                                          final expensiveChild = isFirstAppearance
-                                              ? _AnimatedMessageBubble(
-                                                  key: ValueKey<String>(uniqueKey),
-                                                  child: RepaintBoundary(child: msgBubble),
-                                                )
-                                              : RepaintBoundary(child: msgBubble);
+                                          final expensiveChild = AnimatedMessageBubble(
+                                              key: ValueKey<String>(animKey),
+                                              outgoing: msg.outgoing,
+                                              animate: isFirstAppearance &&
+                                                  SettingsManager.messageAnimationsEnabled.value,
+                                              child: RepaintBoundary(child: msgBubble),
+                                            );
 
                                           return ValueListenableBuilder<({bool active, Map<String, ChatMessage> selected})>(
                                             valueListenable: _selectionNotifier,
@@ -2282,7 +2676,19 @@ class ChatScreenState extends State<ChatScreen>
                                                     ? Icon(Icons.check, size: 14, color: cs.onPrimary)
                                                     : null,
                                               );
-                                              return GestureDetector(
+                                              return RawGestureDetector(
+                                                behavior: HitTestBehavior.translucent,
+                                                gestures: {
+                                                  LongPressGestureRecognizer: GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+                                                    () => LongPressGestureRecognizer(duration: const Duration(milliseconds: 250)),
+                                                    (instance) {
+                                                      instance.onLongPress = sel.active
+                                                          ? () => _toggleMessageSelection(msg, uniqueKey)
+                                                          : () => _enterSelectionMode(msg, uniqueKey);
+                                                    },
+                                                  ),
+                                                },
+                                                child: GestureDetector(
                                                 behavior: HitTestBehavior.translucent,
                                                 onTap: sel.active
                                                     ? () => _toggleMessageSelection(msg, uniqueKey)
@@ -2290,15 +2696,21 @@ class ChatScreenState extends State<ChatScreen>
                                                 onDoubleTap: sel.active
                                                     ? null
                                                     : () => _enterSelectionMode(msg, uniqueKey),
-                                                onLongPress: sel.active
-                                                    ? () => _toggleMessageSelection(msg, uniqueKey)
-                                                    : () => _enterSelectionMode(msg, uniqueKey),
                                                   child: AnimatedContainer(
+                                                  key: (_scrollTargetId != null && (_scrollTargetId == msg.serverMessageId?.toString() || _scrollTargetId == msg.id)) ? _scrollTargetKey : null,
                                                   duration: const Duration(milliseconds: 150),
                                                   curve: Curves.easeOut,
-                                                  color: isSelected
-                                                      ? cs.primaryContainer.withValues(alpha: 0.45)
-                                                      : Colors.transparent,
+                                                  color: isCurrentSearchMatch
+                                                      ? cs.primary.withValues(alpha: 0.28)
+                                                      : isSearchMatch
+                                                          ? cs.primary.withValues(alpha: 0.12)
+                                                          : isSelected
+                                                              ? cs.primaryContainer.withValues(alpha: 0.45)
+                                                              : (_scrollHighlightId != null &&
+                                                                      (_scrollHighlightId == msg.serverMessageId?.toString() ||
+                                                                          _scrollHighlightId == msg.id))
+                                                                  ? cs.primary.withValues(alpha: 0.18)
+                                                                  : Colors.transparent,
                                                   padding: const EdgeInsets.symmetric(
                                                       vertical: 6, horizontal: 12),
                                                   child: Row(
@@ -2328,6 +2740,9 @@ class ChatScreenState extends State<ChatScreen>
                                                                     HapticFeedback.selectionClick();
                                                                   }
                                                                 },
+                                                          onSecondaryTap: isDesktop && !sel.active
+                                                              ? () => _showMessageMenu(msg)
+                                                              : null,
                                                           child: bubbleChild!,
                                                         ),
                                                       ),
@@ -2335,7 +2750,8 @@ class ChatScreenState extends State<ChatScreen>
                                                     ],
                                                   ),
                                                 ),
-                                              );
+                                              ),
+                                            );
                                             },
                                           );
                                         }
@@ -2352,6 +2768,28 @@ class ChatScreenState extends State<ChatScreen>
                     );
               },
             ),
+            if (_pinnedMessage != null)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + kToolbarHeight + 8,
+                left: 16,
+                right: 16,
+                child: _buildPinnedBanner(context),
+              ),
+            if (_showSearch)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + kToolbarHeight + (_pinnedMessage != null ? 68.0 : 8.0),
+                left: 16,
+                right: 16,
+                child: ChatSearchBar(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  statsNotifier: _searchStats,
+                  onChanged: _onSearchChanged,
+                  onPrevious: _navigateSearchPrev,
+                  onNext: _navigateSearchNext,
+                  onClose: _closeSearch,
+                ),
+              ),
             Align(
               alignment: Alignment.bottomCenter,
               child: Padding(
@@ -2640,7 +3078,13 @@ class ChatScreenState extends State<ChatScreen>
                                                   rootScreenKey.currentState
                                                       ?.stopRecordingAndUpload(
                                                           widget.otherUsername,
-                                                          _replyingToMessage);
+                                                          _replyingToMessage,
+                                                          (task) {
+                                                    task.onComplete = (_) async {
+                                                      if (mounted) setState(() => _pendingUploads.remove(task));
+                                                    };
+                                                    if (mounted) setState(() => _pendingUploads.add(task));
+                                                  });
                                                   
                                                   setState(() {
                                                     debugPrint(
@@ -2990,8 +3434,6 @@ class ChatScreenState extends State<ChatScreen>
             ),
           ],
         ),
-      )
-            : const SizedBox.shrink(), 
       ),
     );
   }
@@ -3118,12 +3560,43 @@ class ChatScreenState extends State<ChatScreen>
           onCancel: () {
             rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileCancelled);
           },
+          onPasteExtra: fileType == 'IMAGE' ? _pasteImageForAlbum : null,
+          onSendAlbum: fileType == 'IMAGE' ? (paths) => _sendAlbum(paths, skipConfirm: true) : null,
         ),
       );
     } else {
-      
+
       _sendFile(filePath, basename, ext, fileType);
     }
+  }
+
+  /// Reads an image from the clipboard and returns its temp file path, or null.
+  Future<String?> _pasteImageForAlbum() async {
+    try {
+      List<Object?>? rawPaths;
+      try {
+        rawPaths = await _clipboardChannel.invokeMethod<List<Object?>>('getClipboardFilePaths');
+      } catch (_) {}
+      final filePaths = rawPaths?.whereType<String>().where((s) => s.isNotEmpty).toList();
+      if (filePaths != null && filePaths.isNotEmpty) {
+        final imgPath = filePaths.firstWhere(FileTypeDetector.isImage, orElse: () => '');
+        if (imgPath.isNotEmpty) return imgPath;
+      }
+
+      Uint8List? imageBytes;
+      try {
+        imageBytes = await _clipboardChannel.invokeMethod<Uint8List>('getClipboardImage');
+      } catch (_) {}
+      if (imageBytes != null && imageBytes.isNotEmpty) {
+        final tempDir = await getTemporaryDirectory();
+        final tempFile = File('${tempDir.path}/clipboard_${DateTime.now().millisecondsSinceEpoch}.png');
+        await tempFile.writeAsBytes(imageBytes);
+        return tempFile.path;
+      }
+    } catch (e) {
+      debugPrint('[clipboard album paste] $e');
+    }
+    return null;
   }
 
   Future<String?> _presignUpload({
@@ -3188,6 +3661,129 @@ class ChatScreenState extends State<ChatScreen>
     return filename;
   }
 
+  // ── Upload with streaming progress, pause/cancel/resume support ────────────
+
+  Future<String?> _presignUploadWithProgress({
+    required String token,
+    required String presignType,
+    required String ext,
+    required String contentType,
+    required Uint8List bytes,
+    required UploadTask task,
+  }) async {
+    // Step 1: Get presigned URL
+    final presignResp = await http.post(
+      Uri.parse('$serverBase/media/presign/upload'),
+      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      body: jsonEncode({'type': presignType, 'ext': ext, 'size': bytes.length, 'contentType': contentType}),
+    );
+    if (presignResp.statusCode == 413) {
+      dynamic body;
+      try { body = jsonDecode(presignResp.body); } catch (_) {}
+      rootScreenKey.currentState?.showSnack(
+        body is Map ? (body['detail'] ?? 'Storage quota exceeded') : 'Storage quota exceeded',
+      );
+      task.status = UploadStatus.failed;
+      if (mounted) setState(() {});
+      return null;
+    }
+    if (presignResp.statusCode != 200) {
+      debugPrint('[presignUpload] presign failed: ${presignResp.statusCode}');
+      task.status = UploadStatus.failed;
+      if (mounted) setState(() {});
+      return null;
+    }
+    final presignData = jsonDecode(presignResp.body) as Map<String, dynamic>;
+    final presignedUrl = presignData['presignedUrl'] as String;
+    final filename = presignData['filename'] as String;
+
+    // Step 2: Stream upload with chunk-level progress tracking
+    final client = http.Client();
+    task.activeClient = client;
+    try {
+      final request = http.StreamedRequest('PUT', Uri.parse(presignedUrl));
+      request.headers['Content-Type'] = contentType;
+      request.contentLength = bytes.length;
+
+      final responseFuture = client.send(request);
+
+      const chunkSize = 65536; // 64 KB
+      int offset = 0;
+      while (offset < bytes.length) {
+        if (task.status == UploadStatus.paused) {
+          await request.sink.close();
+          return null;
+        }
+        final end = (offset + chunkSize).clamp(0, bytes.length);
+        request.sink.add(bytes.sublist(offset, end));
+        offset = end;
+        task.progress = offset / bytes.length;
+        if (mounted) setState(() {});
+        await Future.delayed(Duration.zero); // yield to UI
+      }
+      await request.sink.close();
+
+      final response = await responseFuture;
+      await response.stream.drain();
+      if (response.statusCode != 200) {
+        debugPrint('[presignUpload] S3 PUT failed: ${response.statusCode}');
+        task.status = UploadStatus.failed;
+        if (mounted) setState(() {});
+        return null;
+      }
+    } catch (e) {
+      debugPrint('[presignUpload] upload error: $e');
+      if (task.status != UploadStatus.paused) {
+        task.status = UploadStatus.failed;
+        if (mounted) setState(() {});
+      }
+      return null;
+    } finally {
+      client.close();
+      task.activeClient = null;
+    }
+
+    // Step 3: Confirm upload
+    final confirmResp = await http.post(
+      Uri.parse('$serverBase/media/presign/confirm'),
+      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      body: jsonEncode({'type': presignType, 'filename': filename, 'to': widget.otherUsername, 'no_notify': true}),
+    );
+    if (confirmResp.statusCode != 200) {
+      debugPrint('[presignUpload] confirm failed: ${confirmResp.statusCode}');
+      if (confirmResp.statusCode == 413) {
+        dynamic body;
+        try { body = jsonDecode(confirmResp.body); } catch (_) {}
+        rootScreenKey.currentState?.showSnack(
+          body is Map ? (body['detail'] ?? 'Storage quota exceeded') : 'Storage quota exceeded',
+        );
+      }
+      task.status = UploadStatus.failed;
+      if (mounted) setState(() {});
+      return null;
+    }
+
+    task.status = UploadStatus.done;
+    task.progress = 1.0;
+    if (mounted) setState(() {});
+    return filename;
+  }
+
+  void _cancelUpload(UploadTask task) {
+    task.status = UploadStatus.failed;
+    task.activeClient?.close();
+    task.activeClient = null;
+    if (mounted) setState(() { _pendingUploads.remove(task); });
+  }
+
+  Widget _buildPendingUploadWidget(UploadTask task) {
+    return PendingUploadCard(
+      task: task,
+      showProgress: true, // presign S3 upload — real byte-level progress
+      onCancel: () => _cancelUpload(task),
+    );
+  }
+
   Future<void> _sendFile(
     String filePath,
     String basename,
@@ -3205,7 +3801,7 @@ class ChatScreenState extends State<ChatScreen>
     } else if (fileType == 'VIDEO') {
       await _sendVideo(filePath, basename, ext);
     } else {
-      
+      // Generic file / audio upload with progress tracking
       try {
         final token = await AccountManager.getToken(
             rootScreenKey.currentState?.currentUsername ?? '');
@@ -3219,52 +3815,59 @@ class ChatScreenState extends State<ChatScreen>
           rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
           return;
         }
-
-        final length = await localFile.length();
-        if (length == 0) {
+        if (await localFile.length() == 0) {
           rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileEmpty);
           return;
         }
 
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadingFile(basename));
-
         final plainBytes = await localFile.readAsBytes();
         final root = rootScreenKey.currentState;
-        if (root == null) {
-          rootScreenKey.currentState?.showSnack('RootScreen not ready');
-          return;
-        }
+        if (root == null) { rootScreenKey.currentState?.showSnack('RootScreen not ready'); return; }
 
-        final (encryptedBytes, fileMediaKeyB64) = await root.encryptMediaRandom(
-            plainBytes, kind: 'file');
+        final uploadType = (fileType == 'AUDIO') ? 'voice' : 'file';
+        final fileExt = p.extension(basename).toLowerCase();
 
-        final filename = await _presignUpload(
-          token: token,
-          type: 'file',
-          ext: p.extension(basename).toLowerCase(),
+        // Show pending upload card immediately
+        final task = UploadTask(
+          id: '${DateTime.now().millisecondsSinceEpoch}',
+          type: uploadType, localPath: filePath, basename: basename,
+        );
+        task.presignType = 'file';
+        task.presignExt = fileExt;
+        task.presignContentType = 'application/octet-stream';
+        if (mounted) setState(() { _pendingUploads.add(task); });
+
+        final (encryptedBytes, fileMediaKeyB64) = await root.encryptMediaRandom(plainBytes, kind: 'file');
+        task.encryptedBytes = encryptedBytes;
+        task.mediaKey = fileMediaKeyB64;
+        task.status = UploadStatus.uploading;
+        if (mounted) setState(() {});
+
+        final replyTo = _replyingToMessage;
+        if (mounted) setState(() { _replyingToMessage = null; });
+
+        task.onComplete = (filename) async {
+          final content = 'FILEv1:${jsonEncode({'filename': filename, 'owner': widget.myUsername, 'orig': basename, 'key': fileMediaKeyB64})}';
+          await widget.onSend(content, replyTo);
+          if (mounted) setState(() { _pendingUploads.remove(task); });
+          if (mounted) rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileSent);
+        };
+
+        final filename = await _presignUploadWithProgress(
+          token: token, presignType: 'file', ext: fileExt,
           contentType: 'application/octet-stream',
-          bytes: encryptedBytes,
+          bytes: encryptedBytes, task: task,
         );
         if (filename == null) {
-          if (mounted) rootScreenKey.currentState?.showSnack('Upload failed');
+          if (task.status == UploadStatus.failed) {
+            if (mounted) setState(() { _pendingUploads.remove(task); });
+            rootScreenKey.currentState?.showSnack('Upload failed');
+          }
           return;
         }
-
-        final content = 'FILEv1:${jsonEncode({'filename': filename, 'owner': widget.myUsername, 'orig': basename, 'key': fileMediaKeyB64})}';
-        await widget.onSend(content, _replyingToMessage);
-        
-        if (mounted) {
-          setState(() {
-            debugPrint(
-                '[chat_screen::file.send] clearing _replyingToMessage\n${StackTrace.current}');
-            _replyingToMessage = null;
-          });
-          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileSent);
-        }
+        await task.onComplete!(filename);
       } catch (e) {
-        if (mounted) {
-          rootScreenKey.currentState?.showSnack('Error: $e');
-        }
+        if (mounted) rootScreenKey.currentState?.showSnack('Error: $e');
       }
     }
   }
@@ -3351,17 +3954,11 @@ class ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _sendImage(String filePath, String basename, String ext) async {
-    MediaType? contentType;
-    if (ext == '.jpg' || ext == '.jpeg')
-      contentType = MediaType('image', 'jpeg');
-    else if (ext == '.png')
-      contentType = MediaType('image', 'png');
-    else if (ext == '.webp')
-      contentType = MediaType('image', 'webp');
-    else if (ext == '.gif')
-      contentType = MediaType('image', 'gif');
-    else
-      contentType = MediaType('image', 'jpeg');
+    MediaType contentType;
+    if (ext == '.png')       contentType = MediaType('image', 'png');
+    else if (ext == '.webp') contentType = MediaType('image', 'webp');
+    else if (ext == '.gif')  contentType = MediaType('image', 'gif');
+    else                     contentType = MediaType('image', 'jpeg');
 
     try {
       final token = await AccountManager.getToken(
@@ -3372,9 +3969,7 @@ class ChatScreenState extends State<ChatScreen>
       }
 
       final ok = await (rootScreenKey.currentState?.checkQuotaAndPrompt(
-            limitMb: 10.0,
-            includeImageCache: false,
-          ) ??
+            limitMb: 10.0, includeImageCache: false) ??
           Future.value(true));
       if (!ok) return;
 
@@ -3383,62 +3978,64 @@ class ChatScreenState extends State<ChatScreen>
         rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
         return;
       }
-
-      final length = await localFile.length();
-      if (length == 0) {
+      if (await localFile.length() == 0) {
         rootScreenKey.currentState?.showSnack('File is empty');
         return;
       }
 
-      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadingFile(basename));
-
       final plainBytes = await localFile.readAsBytes();
       final root = rootScreenKey.currentState;
-      if (root == null) {
-        rootScreenKey.currentState?.showSnack('RootScreen not ready');
-        return;
-      }
+      if (root == null) { rootScreenKey.currentState?.showSnack('RootScreen not ready'); return; }
 
-      final (encryptedBytes, imageMediaKeyB64) = await root
-          .encryptMediaRandom(plainBytes, kind: 'image');
-
-      final filename = await _presignUpload(
-        token: token,
-        type: 'image',
-        ext: ext,
-        contentType: '${contentType.type}/${contentType.subtype}',
-        bytes: encryptedBytes,
+      // Create pending upload task — shows blurred preview immediately
+      final task = UploadTask(
+        id: '${DateTime.now().millisecondsSinceEpoch}',
+        type: 'image', localPath: filePath, basename: basename,
       );
-      if (filename == null) {
-        if (mounted) rootScreenKey.currentState?.showSnack('Upload failed');
-        return;
-      }
+      task.previewBytes = plainBytes;
+      task.presignType = 'image';
+      task.presignExt = ext;
+      task.presignContentType = '${contentType.type}/${contentType.subtype}';
+      if (mounted) setState(() { _pendingUploads.add(task); });
 
-      try {
-        final appSupport = await getApplicationSupportDirectory();
-        final cacheDir = Directory('${appSupport.path}/image_cache');
-        await cacheDir.create(recursive: true);
-        final sourceFile = File(filePath);
-        if (await sourceFile.exists()) {
-          await sourceFile.copy('${cacheDir.path}/$filename');
-        }
-      } catch (e) {
-        debugPrint('[chat_screen] Failed to copy image to cache: $e');
-      }
+      final (encryptedBytes, imageMediaKeyB64) = await root.encryptMediaRandom(plainBytes, kind: 'image');
+      task.encryptedBytes = encryptedBytes;
+      task.mediaKey = imageMediaKeyB64;
+      task.status = UploadStatus.uploading;
+      if (mounted) setState(() {});
 
-      final meta = jsonEncode({'filename': filename, 'owner': widget.myUsername, 'orig': basename, 'key': imageMediaKeyB64});
-      final content = 'IMAGEv1:$meta';
       final replyTo = _replyingToMessage;
-
       if (mounted) setState(() { _replyingToMessage = null; });
 
-      await widget.onSend(content, replyTo);
+      task.onComplete = (filename) async {
+        try {
+          final appSupport = await getApplicationSupportDirectory();
+          final cacheDir = Directory('${appSupport.path}/image_cache');
+          await cacheDir.create(recursive: true);
+          if (await localFile.exists()) await localFile.copy('${cacheDir.path}/$filename');
+        } catch (e) { debugPrint('[chat_screen] Failed to copy image to cache: $e'); }
+        final meta = jsonEncode({'filename': filename, 'owner': widget.myUsername, 'orig': basename, 'key': imageMediaKeyB64});
+        await widget.onSend('IMAGEv1:$meta', replyTo);
+        if (mounted) setState(() { _pendingUploads.remove(task); });
+        if (mounted) rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).imageSent);
+      };
 
-      if (mounted) rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).imageSent);
-    } catch (e) {
-      if (mounted) {
-        rootScreenKey.currentState?.showSnack('Error: $e');
+      final filename = await _presignUploadWithProgress(
+        token: token, presignType: 'image', ext: ext,
+        contentType: '${contentType.type}/${contentType.subtype}',
+        bytes: encryptedBytes, task: task,
+      );
+      if (filename == null) {
+        if (task.status == UploadStatus.failed) {
+          if (mounted) setState(() { _pendingUploads.remove(task); });
+          rootScreenKey.currentState?.showSnack('Upload failed');
+        }
+        // If paused, task stays in list so user can resume
+        return;
       }
+      await task.onComplete!(filename);
+    } catch (e) {
+      if (mounted) rootScreenKey.currentState?.showSnack('Error: $e');
     }
   }
 
@@ -3511,11 +4108,11 @@ class ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<void> _sendAlbum(List<String> filePaths) async {
+  Future<void> _sendAlbum(List<String> filePaths, {bool skipConfirm = false}) async {
     final limited = filePaths.take(10).toList();
     if (limited.isEmpty) return;
 
-    if (SettingsManager.confirmFileUpload.value) {
+    if (!skipConfirm && SettingsManager.confirmFileUpload.value) {
       if (!mounted) return;
       var proceed = false;
       await showDialog<void>(
@@ -3619,23 +4216,14 @@ class ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _sendVideo(String filePath, String basename, String ext) async {
-    MediaType? contentType;
-    if (ext == '.mp4')
-      contentType = MediaType('video', 'mp4');
-    else if (ext == '.mov')
-      contentType = MediaType('video', 'quicktime');
-    else if (ext == '.avi')
-      contentType = MediaType('video', 'x-msvideo');
-    else if (ext == '.mkv')
-      contentType = MediaType('video', 'x-matroska');
-    else if (ext == '.webm')
-      contentType = MediaType('video', 'webm');
-    else if (ext == '.flv')
-      contentType = MediaType('video', 'x-flv');
-    else if (ext == '.m4v')
-      contentType = MediaType('video', 'x-m4v');
-    else
-      contentType = MediaType('video', 'mp4');
+    final MediaType contentType;
+    if (ext == '.mov')       contentType = MediaType('video', 'quicktime');
+    else if (ext == '.avi')  contentType = MediaType('video', 'x-msvideo');
+    else if (ext == '.mkv')  contentType = MediaType('video', 'x-matroska');
+    else if (ext == '.webm') contentType = MediaType('video', 'webm');
+    else if (ext == '.flv')  contentType = MediaType('video', 'x-flv');
+    else if (ext == '.m4v')  contentType = MediaType('video', 'x-m4v');
+    else                     contentType = MediaType('video', 'mp4');
 
     try {
       final token = await AccountManager.getToken(
@@ -3646,9 +4234,7 @@ class ChatScreenState extends State<ChatScreen>
       }
 
       final ok = await (rootScreenKey.currentState?.checkQuotaAndPrompt(
-            limitMb: 100.0,
-            includeImageCache: false,
-          ) ??
+            limitMb: 100.0, includeImageCache: false) ??
           Future.value(true));
       if (!ok) return;
 
@@ -3657,50 +4243,56 @@ class ChatScreenState extends State<ChatScreen>
         rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
         return;
       }
-
-      final length = await localFile.length();
-      if (length == 0) {
+      if (await localFile.length() == 0) {
         rootScreenKey.currentState?.showSnack('File is empty');
         return;
       }
 
-      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadingFile(basename));
-
       final plainBytes = await localFile.readAsBytes();
       final root = rootScreenKey.currentState;
-      if (root == null) {
-        rootScreenKey.currentState?.showSnack('RootScreen not ready');
-        return;
-      }
+      if (root == null) { rootScreenKey.currentState?.showSnack('RootScreen not ready'); return; }
 
-      final (encryptedBytes, videoMediaKeyB64) = await root
-          .encryptMediaRandom(plainBytes, kind: 'video');
-
-      final filename = await _presignUpload(
-        token: token,
-        type: 'video',
-        ext: ext,
-        contentType: '${contentType.type}/${contentType.subtype}',
-        bytes: encryptedBytes,
+      // Create pending upload task — shows video placeholder immediately
+      final task = UploadTask(
+        id: '${DateTime.now().millisecondsSinceEpoch}',
+        type: 'video', localPath: filePath, basename: basename,
       );
-      if (filename == null) {
-        if (mounted) rootScreenKey.currentState?.showSnack('Upload failed');
-        return;
-      }
+      task.presignType = 'video';
+      task.presignExt = ext;
+      task.presignContentType = '${contentType.type}/${contentType.subtype}';
+      if (mounted) setState(() { _pendingUploads.add(task); });
 
-      final meta = jsonEncode({'filename': filename, 'owner': widget.myUsername, 'orig': basename, 'key': videoMediaKeyB64});
-      final content = 'VIDEOv1:$meta';
+      final (encryptedBytes, videoMediaKeyB64) = await root.encryptMediaRandom(plainBytes, kind: 'video');
+      task.encryptedBytes = encryptedBytes;
+      task.mediaKey = videoMediaKeyB64;
+      task.status = UploadStatus.uploading;
+      if (mounted) setState(() {});
+
       final replyTo = _replyingToMessage;
-
       if (mounted) setState(() { _replyingToMessage = null; });
 
-      await widget.onSend(content, replyTo);
+      task.onComplete = (filename) async {
+        final meta = jsonEncode({'filename': filename, 'owner': widget.myUsername, 'orig': basename, 'key': videoMediaKeyB64});
+        await widget.onSend('VIDEOv1:$meta', replyTo);
+        if (mounted) setState(() { _pendingUploads.remove(task); });
+        if (mounted) rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).videoSent);
+      };
 
-      if (mounted) rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).videoSent);
-    } catch (e) {
-      if (mounted) {
-        rootScreenKey.currentState?.showSnack('Error: $e');
+      final filename = await _presignUploadWithProgress(
+        token: token, presignType: 'video', ext: ext,
+        contentType: '${contentType.type}/${contentType.subtype}',
+        bytes: encryptedBytes, task: task,
+      );
+      if (filename == null) {
+        if (task.status == UploadStatus.failed) {
+          if (mounted) setState(() { _pendingUploads.remove(task); });
+          rootScreenKey.currentState?.showSnack('Upload failed');
+        }
+        return;
       }
+      await task.onComplete!(filename);
+    } catch (e) {
+      if (mounted) rootScreenKey.currentState?.showSnack('Error: $e');
     }
   }
 }
@@ -3717,6 +4309,8 @@ class _MessageActionsSheet extends StatefulWidget {
   final VoidCallback? onEdit;
   final VoidCallback onCopy;
   final VoidCallback? onDelete;
+  final VoidCallback? onPin;
+  final bool isPinned;
 
   const _MessageActionsSheet({
     required this.msg,
@@ -3729,6 +4323,8 @@ class _MessageActionsSheet extends StatefulWidget {
     this.onEdit,
     required this.onCopy,
     this.onDelete,
+    this.onPin,
+    this.isPinned = false,
   });
 
   @override
@@ -3824,6 +4420,11 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
             ),
             const SizedBox(height: 8),
             actionTile(Icons.reply_rounded, 'Reply', widget.onReply),
+            actionTile(
+              widget.isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
+              widget.isPinned ? 'Unpin' : 'Pin',
+              widget.onPin,
+            ),
             if (widget.onSave != null)
               actionTile(Icons.save_alt_rounded, 'Save', widget.onSave),
             if (widget.onCopyImage != null)
@@ -3927,17 +4528,5 @@ class _EditTimerBadgeState extends State<_EditTimerBadge> {
         ),
       ),
     );
-  }
-}
-
-class _AnimatedMessageBubble extends StatelessWidget {
-  final Widget child;
-
-  const _AnimatedMessageBubble({Key? key, required this.child})
-      : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return child; 
   }
 }

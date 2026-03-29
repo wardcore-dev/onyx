@@ -395,6 +395,7 @@ class AppLocalizations {
   String get tabSwipingSubtitle => _ru ? 'Переключать вкладки свайпом' : 'Swipe between tabs with a bounce effect';
   String get showAvatarsInChats => _ru ? 'Аватары в чатах' : 'Show avatars in chats';
   String get smoothScrollDown => _ru ? 'Плавная прокрутка' : 'Smooth scroll down';
+  String get messageAnimations => _ru ? 'Анимации сообщений' : 'Message animations';
   String get loadOlderMessagesOnScroll => _ru ? 'Загружать старые сообщения' : 'Load older messages on scroll';
   String get chooseBackground => _ru ? 'Выбрать' : 'Choose';
 

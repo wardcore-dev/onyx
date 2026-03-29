@@ -20,6 +20,7 @@ import 'package:launch_at_startup/launch_at_startup.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:workmanager/workmanager.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'widgets/avatar_widget.dart';
 import 'screens/root_screen_wrapper.dart';
 import 'screens/pin_code_screen.dart';
@@ -264,6 +265,32 @@ void main() async {
           .initialize(callbackDispatcher)
           .then((_) => appLog('[background] Workmanager initialized')),
     );
+
+    // Initialise the foreground-task plugin so it's ready when the app is
+    // backgrounded.  The actual service is started/stopped in root_screen.dart.
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'onyx_connection',
+        channelName: 'Onyx',
+        channelDescription: 'Keeps Onyx connected to receive messages',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+        playSound: false,
+        enableVibration: false,
+        onlyAlertOnce: true,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: false,
+        playSound: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.nothing(),
+        autoRunOnBoot: false,
+        allowWakeLock: true,
+        allowWifiLock: true,
+      ),
+    );
+    appLog('[background] FlutterForegroundTask initialized');
   } else {
     appLog('[background] Workmanager skipped on this platform');
   }

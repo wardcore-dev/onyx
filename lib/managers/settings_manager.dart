@@ -22,6 +22,7 @@ class SettingsManager {
   static const _alignAllMessagesRightKey = 'align_all_messages_right';
   static const _showAvatarInChatsKey = 'show_avatar_in_chats';
   static const _smoothScrollKey = 'smooth_scroll_enabled';
+  static const _messageAnimationsKey = 'message_animations_enabled';
   static const _enablePerformanceOptimizationsKey =
       'enable_performance_optimizations';
   static const _useLiquidGlassKey = 'use_liquid_glass_nav';
@@ -93,6 +94,9 @@ class SettingsManager {
 
   static final ValueNotifier<bool> smoothScrollEnabled =
       ValueNotifier<bool>(false);
+
+  static final ValueNotifier<bool> messageAnimationsEnabled =
+      ValueNotifier<bool>(true);
 
   static final ValueNotifier<bool> enablePerformanceOptimizations =
       ValueNotifier<bool>(true);
@@ -170,6 +174,7 @@ class SettingsManager {
     final alignAllRight = prefs.getBool(_alignAllMessagesRightKey) ?? false;
     final showAvatar = prefs.getBool(_showAvatarInChatsKey) ?? true;
     final smoothScroll = prefs.getBool(_smoothScrollKey) ?? false;
+    final messageAnimations = prefs.getBool(_messageAnimationsKey) ?? true;
     final perfOptimizations =
         prefs.getBool(_enablePerformanceOptimizationsKey) ?? true;
     final useLiquidGlass = prefs.getBool(_useLiquidGlassKey) ?? true;
@@ -239,6 +244,7 @@ class SettingsManager {
     alignAllMessagesRight.value = alignAllRight;
     showAvatarInChats.value = showAvatar;
     smoothScrollEnabled.value = smoothScroll;
+    messageAnimationsEnabled.value = messageAnimations;
     enablePerformanceOptimizations.value = perfOptimizations;
     SettingsManager.useLiquidGlass.value = useLiquidGlass;
     SettingsManager.messagePaginationEnabled.value = messagePagination;
@@ -385,6 +391,12 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setBool(_smoothScrollKey, val);
     smoothScrollEnabled.value = val;
+  }
+
+  static Future<void> setMessageAnimationsEnabled(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_messageAnimationsKey, val);
+    messageAnimationsEnabled.value = val;
   }
 
   static Future<void> setEnablePerformanceOptimizations(bool val) async {

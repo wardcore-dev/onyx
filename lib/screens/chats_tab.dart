@@ -318,7 +318,66 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
 
   void _onChatsVersion() {
     if (!mounted) return;
-    setState(_rebuildSummaries);
+    final hints = consumeChatListHints();
+    if (hints.isNotEmpty) {
+      // Incremental path: only rebuild the summaries for chats that changed.
+      setState(() => _rebuildHintedSummaries(hints));
+    } else {
+      // Full rebuild for account-switch, initial load, etc.
+      setState(_rebuildSummaries);
+    }
+  }
+
+  /// Updates only the summaries for [chatIds] and moves them to the front.
+  /// O(k) rebuild + O(n) move-to-front, instead of O(n) rebuild + O(n log n) sort
+  /// for every single incoming message.
+  void _rebuildHintedSummaries(Set<String> chatIds) {
+    final Set<String> usernamesToFetch = <String>{};
+    for (final chatId in chatIds) {
+      if (chatId.startsWith('fav:')) continue;
+      final msgs = widget.chats[chatId];
+      if (msgs == null) {
+        _byChatId.remove(chatId);
+        continue;
+      }
+      final parts = chatId.split(':');
+      final other = parts.firstWhere(
+        (p) => p != (widget.username ?? 'me'),
+        orElse: () => chatId,
+      );
+      usernamesToFetch.add(other);
+      final prev = _byChatId[chatId];
+      final last = msgs.isNotEmpty ? msgs.last : null;
+      final lastTs = last?.time ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final preview = last != null ? getPreviewText(last.content) : '';
+      final cached = UserCache.getSync(other);
+      final displayName = (cached != null &&
+              cached.displayName.isNotEmpty &&
+              cached.displayName != other)
+          ? cached.displayName
+          : (prev?.displayName ?? other);
+      _byChatId[chatId] = _ChatSumm(
+        chatId: chatId,
+        otherUsername: other,
+        displayName: displayName,
+        lastTs: lastTs,
+        preview: preview,
+      );
+    }
+    // O(n) move-to-front: remove hinted chats from their current positions,
+    // then insert them at the front sorted by lastTs (k<<n, usually k=1).
+    // Avoids the O(n log n) full re-sort + O(n) list allocation on every send.
+    _summaries.removeWhere((s) => chatIds.contains(s.chatId));
+    final hinted = <_ChatSumm>[];
+    for (final id in chatIds) {
+      final s = _byChatId[id];
+      if (s != null) hinted.add(s);
+    }
+    if (hinted.length > 1) {
+      hinted.sort((a, b) => b.lastTs.compareTo(a.lastTs));
+    }
+    _summaries.insertAll(0, hinted);
+    _fetchUserProfilesInBackground(usernamesToFetch);
   }
 
   @override

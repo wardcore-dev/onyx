@@ -630,11 +630,11 @@ class _AccountsTabState extends State<AccountsTab>
                   brightness,
                 );
                 return ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(24),
                   child: Container(
                     decoration: BoxDecoration(
                       color: baseColor.withValues(alpha: 0.6),
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(24),
                       border: Border.all(
                         color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
                         width: 0.8,
@@ -666,7 +666,7 @@ class _AccountsTabState extends State<AccountsTab>
                             : Theme.of(context).colorScheme.secondary.withValues(alpha: 0.12),
                         foregroundColor: Theme.of(context).colorScheme.secondary,
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
                         elevation: 0,
                       ),
                     ),
@@ -685,11 +685,11 @@ class _AccountsTabState extends State<AccountsTab>
                 brightness,
               );
               return ClipRRect(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(24),
                 child: Container(
                   decoration: BoxDecoration(
                     color: baseColor.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(24),
                     border: Border.all(
                       color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
                       width: 0.8,
@@ -706,7 +706,7 @@ class _AccountsTabState extends State<AccountsTab>
                     context: context,
                     barrierDismissible: true,
                     barrierLabel: 'Authentication',
-                    transitionDuration: const Duration(milliseconds: 200),
+                    transitionDuration: const Duration(milliseconds: 133),
                     pageBuilder: (ctx, anim1, anim2) => AuthDialog(
                       onLogin: widget.onLogin,
                       onRegister: widget.onRegister,
@@ -742,7 +742,7 @@ class _AccountsTabState extends State<AccountsTab>
                   foregroundColor: Theme.of(context).colorScheme.primary,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(24),
                   ),
                   elevation: 0,
                 ),

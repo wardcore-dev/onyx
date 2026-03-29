@@ -1978,6 +1978,24 @@ class _SettingsTabState extends State<SettingsTab>
                 ),
                 const SizedBox(height: 8),
                 ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.messageAnimationsEnabled,
+                  builder: (_, animationsEnabled, __) {
+                    return Row(
+                      children: [
+                        Text(AppLocalizations.of(context).messageAnimations),
+                        const SizedBox(width: 12),
+                        Switch(
+                          value: animationsEnabled,
+                          onChanged: (val) async {
+                            await SettingsManager.setMessageAnimationsEnabled(val);
+                          },
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+                ValueListenableBuilder<bool>(
                   valueListenable: SettingsManager.messagePaginationEnabled,
                   builder: (_, paginationEnabled, __) {
                     return Row(
@@ -2483,7 +2501,7 @@ class _SettingsTabState extends State<SettingsTab>
           
           Center( 
             child: Text(
-              'open-beta 1.1',
+              'open-beta 1.2',
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),

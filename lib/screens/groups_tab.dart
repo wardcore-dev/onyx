@@ -756,15 +756,27 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                                             crossAxisAlignment: CrossAxisAlignment.start,
                                             mainAxisAlignment: MainAxisAlignment.center,
                                             children: [
-                                              Text(
-                                                g.name,
-                                                style: TextStyle(
-                                                  fontWeight: FontWeight.w500,
-                                                  color: Theme.of(context).colorScheme.onSurface,
-                                                  fontSize: 15,
-                                                ),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
+                                              Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Flexible(
+                                                    child: Text(
+                                                      g.name,
+                                                      style: TextStyle(
+                                                        fontWeight: FontWeight.w500,
+                                                        color: Theme.of(context).colorScheme.onSurface,
+                                                        fontSize: 15,
+                                                      ),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                  if (g.inviteLink == '12e01467-c154-447b-84f8-133ae76684a1')
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(left: 4),
+                                                      child: Icon(Icons.verified_rounded, size: 15, color: Colors.blue.shade400),
+                                                    ),
+                                                ],
                                               ),
                                               const SizedBox(height: 2),
                                               if (g.isExternal)

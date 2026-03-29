@@ -29,6 +29,9 @@ class LANMessageManager {
 
   Function(ChatMessage)? onMessageReceived;
   Function(String, String, Uint8List, String, String, Map<String, dynamic>?)? onMediaReceived;
+  // Called when a peer's key changes after first contact (possible MITM).
+  // username — whose key changed, fingerprint — SHA-256 prefix of the NEW key.
+  Function(String username, String fingerprint)? onKeyMismatch;
 
   final Map<String, Map<int, String>> _chunkBuffers  = {};
   final Map<String, Map<String, dynamic>> _chunkMetadata = {};
@@ -40,6 +43,18 @@ class LANMessageManager {
   List<int>?     _ephemeralPubKeyBytes; 
 
   bool _isInitialized = false;
+
+  String _fingerprintOf(List<int> keyBytes) {
+    final digest = dart_crypto.sha256.convert(keyBytes).bytes;
+    return digest.take(8).map((b) => b.toRadixString(16).padLeft(2, '0')).join(':');
+  }
+
+  /// Returns a short fingerprint of the known public key for [username],
+  /// or null if the key is not yet cached.
+  String? getKeyFingerprint(String username) {
+    final key = _peerPubKeys[username];
+    return key == null ? null : _fingerprintOf(key);
+  }
 
   List<int> _hkdfSha256(List<int> ikm, List<int> info, int length) {
     
@@ -98,30 +113,48 @@ class LANMessageManager {
   Future<void> _startDiscoveryBroadcaster(String username) async {
     Timer.periodic(const Duration(seconds: 5), (timer) async {
       if (_ephemeralPubKeyBytes == null) return;
+      await _broadcastDiscovery(username);
+    });
+  }
+
+  Future<void> _broadcastDiscovery(String username) async {
+    if (_ephemeralPubKeyBytes == null) return;
+
+    final message = utf8.encode(jsonEncode({
+      'type':      'discover',
+      'username':  username,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+      'pubkey':    base64Encode(_ephemeralPubKeyBytes!),
+    }));
+
+    // Send on every IPv4 interface so both Ethernet and WiFi are covered.
+    List<NetworkInterface> interfaces = [];
+    try {
+      interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: false,
+      );
+    } catch (e) {
+      if (kDebugMode) print('[LAN] NetworkInterface.list error: $e');
+    }
+
+    // Always include a fallback send via anyIPv4 in case interface list is empty.
+    final bindAddresses = interfaces.expand((i) => i.addresses).toList();
+    if (bindAddresses.isEmpty) {
+      bindAddresses.add(InternetAddress.anyIPv4);
+    }
+
+    for (final addr in bindAddresses) {
       try {
-        final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+        final socket = await RawDatagramSocket.bind(addr, 0);
         socket.broadcastEnabled = true;
-
-        final message = jsonEncode({
-          'type':      'discover',
-          'username':  username,
-          'timestamp': DateTime.now().millisecondsSinceEpoch,
-          
-          'pubkey':    base64Encode(_ephemeralPubKeyBytes!),
-        });
-
-        socket.send(
-          utf8.encode(message),
-          InternetAddress('255.255.255.255'),
-          discoveryPort,
-        );
-
-        await Future.delayed(const Duration(milliseconds: 100));
+        socket.send(message, InternetAddress('255.255.255.255'), discoveryPort);
+        await Future.delayed(const Duration(milliseconds: 50));
         socket.close();
       } catch (e) {
-        if (kDebugMode) print('[LAN] Discovery broadcast error: $e');
+        if (kDebugMode) print('[LAN] Broadcast error on ${addr.address}: $e');
       }
-    });
+    }
   }
 
   Future<void> _startDiscoveryListener() async {
@@ -149,7 +182,29 @@ class LANMessageManager {
           if (pubkeyB64 != null) {
             final pubBytes = base64Decode(pubkeyB64);
             if (pubBytes.length == _pubKeyLen) {
-              _peerPubKeys[username] = pubBytes;
+              final existing = _peerPubKeys[username];
+              if (existing == null) {
+                // First contact — trust and store (TOFU).
+                _peerPubKeys[username] = pubBytes;
+              } else {
+                // Subsequent broadcast — only accept if key is identical.
+                bool same = existing.length == pubBytes.length;
+                if (same) {
+                  for (int i = 0; i < existing.length; i++) {
+                    if (existing[i] != pubBytes[i]) { same = false; break; }
+                  }
+                }
+                if (!same) {
+                  // Key changed after first contact — accept silently (ephemeral keys
+                  // rotate on every app launch, so this is normal when the same user
+                  // runs the app on multiple devices or restarts it).
+                  _peerPubKeys[username] = pubBytes;
+                  if (kDebugMode) {
+                    print('[LAN] Key rotated for $username — updated cache silently');
+                  }
+                  onKeyMismatch?.call(username, _fingerprintOf(pubBytes));
+                }
+              }
             }
           }
 

@@ -160,7 +160,7 @@ static void UpdateLayeredContent(HWND hwnd, BYTE opacity) {
     {
         Graphics g(&hiBmp);
         g.SetSmoothingMode(SmoothingModeAntiAlias);
-        g.SetTextRenderingHint(TextRenderingHintAntiAlias);
+        g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
         g.Clear(Color(0, 0, 0, 0));
         // Every SF()/S() coordinate is already in DPI-logical pixels;
         // ScaleTransform doubles them into the 2× bitmap space automatically.
@@ -275,7 +275,7 @@ static void UpdateLayeredContent(HWND hwnd, BYTE opacity) {
     Bitmap bmp(W, H, PixelFormat32bppARGB);
     {
         Graphics g2(&bmp);
-        g2.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+        g2.SetInterpolationMode(InterpolationModeHighQualityBilinear);
         g2.SetSmoothingMode(SmoothingModeHighQuality);
         g2.Clear(Color(0, 0, 0, 0));
         g2.DrawImage(&hiBmp, 0, 0, W, H);

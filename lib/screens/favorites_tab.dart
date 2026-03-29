@@ -277,21 +277,26 @@ class _FavoritesTabState extends State<FavoritesTab> with TickerProviderStateMix
           valueListenable: favoritesVersion,
           builder: (context, __, ___) {
             final chats = rootScreenKey.currentState?.chats ?? {};
+            final sortedFavorites = [...widget.favorites]..sort((a, b) {
+              final tsA = _getLastTsForFavorite(a.id, chats);
+              final tsB = _getLastTsForFavorite(b.id, chats);
+              return tsB.compareTo(tsA);
+            });
             return ListView.separated(
               padding: EdgeInsets.fromLTRB(12, 8, 12, 8 + MediaQuery.paddingOf(context).bottom),
-              itemCount: widget.favorites.length + 1,
+              itemCount: sortedFavorites.length + 1,
               cacheExtent: 500,
               physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
               separatorBuilder: (_, __) => const SizedBox(height: 6),
               itemBuilder: (context, i) {
-            if (i == widget.favorites.length) {
+            if (i == sortedFavorites.length) {
               final colorScheme = Theme.of(context).colorScheme;
               return FadeTransition(
                 opacity: Tween<double>(begin: 0, end: 1).animate(
                   CurvedAnimation(
                     parent: _listAnimController,
                     curve: Interval(
-                      widget.favorites.length * _staggerStep,
+                      sortedFavorites.length * _staggerStep,
                       1.0,
                       curve: Curves.easeOut,
                     ),
@@ -335,7 +340,7 @@ class _FavoritesTabState extends State<FavoritesTab> with TickerProviderStateMix
               );
             }
 
-            final fav = widget.favorites[i];
+            final fav = sortedFavorites[i];
             final preview = _getPreviewForFavorite(fav.id, chats);
             final lastTs = _getLastTsForFavorite(fav.id, chats);
 

@@ -12,7 +12,7 @@ void showAboutOnyxDialog(BuildContext context) {
     barrierDismissible: true,
     barrierLabel: 'About ONYX',
     barrierColor: Colors.black.withValues(alpha: 0.55),
-    transitionDuration: const Duration(milliseconds: 280),
+    transitionDuration: const Duration(milliseconds: 187),
     transitionBuilder: (ctx, anim, _, child) {
       final curved =
           CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);

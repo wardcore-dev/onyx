@@ -223,7 +223,7 @@ class _SearchDialogContentState extends State<SearchDialogContent>
                 child: Container(
                   decoration: BoxDecoration(
                     color: bgColor,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(24),
                     border: Border.all(color: borderColor, width: 1.5),
                     boxShadow: [
                       BoxShadow(

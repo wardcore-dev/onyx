@@ -280,13 +280,26 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
 
         if (widget.filename.startsWith('lan://')) {
           debugPrint('[VoiceWidget] LAN file detected: ${widget.filename}');
-          final lanFilename = widget.filename.substring(6); 
+          final lanFilename = widget.filename.substring(6);
           final appDocuments = await getApplicationDocumentsDirectory();
           final lanFile = File('${appDocuments.path}/lan_media/$lanFilename');
           if (await lanFile.exists()) {
             return lanFile;
           } else {
             _lastEnsureError = 'LAN file not found: $lanFilename';
+            return null;
+          }
+        }
+
+        if (widget.filename.startsWith('fav://')) {
+          debugPrint('[VoiceWidget] Favorites local file: ${widget.filename}');
+          final favFilename = widget.filename.substring(6);
+          final appDocuments = await getApplicationDocumentsDirectory();
+          final favFile = File('${appDocuments.path}/voice_cache/$favFilename');
+          if (await favFile.exists()) {
+            return favFile;
+          } else {
+            _lastEnsureError = 'Favorites voice file not found locally';
             return null;
           }
         }

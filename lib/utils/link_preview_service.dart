@@ -22,6 +22,9 @@ class LinkPreviewData {
 class LinkPreviewService {
   static final Map<String, LinkPreviewData?> _cache = {};
 
+  static bool isCached(String url) => _cache.containsKey(url);
+  static LinkPreviewData? getCached(String url) => _cache[url];
+
   static Future<LinkPreviewData?> fetch(String url) async {
     if (_cache.containsKey(url)) return _cache[url];
 

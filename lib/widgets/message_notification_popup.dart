@@ -45,7 +45,7 @@ class _MessageNotificationPopupState extends State<MessageNotificationPopup>
     super.initState();
 
     _animationController = AnimationController(
-      duration: const Duration(milliseconds: 350),
+      duration: const Duration(milliseconds: 233),
       vsync: this,
     );
 

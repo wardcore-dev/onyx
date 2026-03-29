@@ -21,7 +21,7 @@ class NotificationOverlayWidgetState extends State<NotificationOverlayWidget>
     super.initState();
 
     _animationController = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 200),
       vsync: this,
     );
 

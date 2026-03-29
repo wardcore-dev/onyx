@@ -30,8 +30,9 @@ class MessageBubble extends StatelessWidget {
   final int? replyToId;
   final String? replyToUsername;
   final String? replyToContent;
-  final bool highlighted; 
-  
+  final bool highlighted;
+  final VoidCallback? onReplyTap;
+
   final List<ContextMenuButtonItem>? desktopMenuItems;
   /// Called with the global tap position when the user right-clicks on desktop.
   /// When provided, the built-in SelectionArea context menu is suppressed and
@@ -52,6 +53,7 @@ class MessageBubble extends StatelessWidget {
     this.replyToUsername,
     this.replyToContent,
     this.highlighted = false,
+    this.onReplyTap,
     this.desktopMenuItems,
     this.onRightClick,
   }) : super(key: key);
@@ -497,15 +499,7 @@ class MessageBubble extends StatelessWidget {
               ),
             );
           } else {
-            
-            final textSpan = TextSpan(
-              children: _linkify(text, colorScheme),
-              style: TextStyle(color: textColor),
-            );
-            return Text.rich(
-              textSpan,
-              softWrap: true,
-            );
+            return _buildMarkdownWidget(text, colorScheme, textColor);
           }
         },
       );
@@ -536,40 +530,43 @@ class MessageBubble extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (replyToContent != null && (replyToContent ?? '').isNotEmpty) ...[
-                Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: outgoing
-                        ? replyBgOutgoing.withValues(alpha: 0.06)
-                        : replyBgIncoming.withValues(alpha: 0.04),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: colorScheme.outline.withValues(alpha: 0.08), width: 0.6),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (replyToUsername != null)
+                GestureDetector(
+                  onTap: onReplyTap,
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: outgoing
+                          ? replyBgOutgoing.withValues(alpha: 0.06)
+                          : replyBgIncoming.withValues(alpha: 0.04),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: colorScheme.outline.withValues(alpha: 0.08), width: 0.6),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (replyToUsername != null)
+                          Text(
+                            replyToUsername!,
+                            style: fontFamily.getBodyTextStyle(
+                              fontSize: 12 * fontSizeMultiplier,
+                              fontWeight: FontWeight.w600,
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                        if (replyToUsername != null) const SizedBox(height: 4),
                         Text(
-                          replyToUsername!,
+                          (replyToContent ?? '').trim(),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: fontFamily.getBodyTextStyle(
                             fontSize: 12 * fontSizeMultiplier,
-                            fontWeight: FontWeight.w600,
-                            color: colorScheme.primary,
-                          ),
+                            color: textColorFinal.withOpacity(0.85),
+                          ).copyWith(fontStyle: FontStyle.italic),
                         ),
-                      if (replyToUsername != null) const SizedBox(height: 4),
-                      Text(
-                        (replyToContent ?? '').trim(),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: fontFamily.getBodyTextStyle(
-                          fontSize: 12 * fontSizeMultiplier,
-                          color: textColorFinal.withOpacity(0.85),
-                        ).copyWith(fontStyle: FontStyle.italic),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -721,52 +718,159 @@ class MessageBubble extends StatelessWidget {
         '${t.second.toString().padLeft(2, '0')}';
   }
 
-  List<InlineSpan> _linkify(String input, ColorScheme colorScheme) {
+  // Парсит inline-markdown + ссылки и возвращает список InlineSpan.
+  // Поддерживает: **bold**, *italic*, __underline__, ~~strike~~, `code`, URLs.
+  List<InlineSpan> _markdownSpans(String input, ColorScheme colorScheme, Color textColor, {TextStyle? baseStyle}) {
     final parts = <InlineSpan>[];
-    final urlRegex = RegExp(
-      r'\bhttps?://[^\s<>"{}|\\^`[\]]+|\bwww\.[^\s<>"{}|\\^`[\]]+',
+    // Порядок важен: более длинные токены идут раньше.
+    final tokenRx = RegExp(
+      r'\*\*(.+?)\*\*'           // **bold**
+      r'|__(.+?)__'              // __underline__
+      r'|~~(.+?)~~'              // ~~strikethrough~~
+      r'|\*(.+?)\*'              // *italic*
+      r'|`([^`]+)`'              // `inline code`
+      r'|\bhttps?://[^\s<>"{}|\\^`\[\]]+'  // URL
+      r'|\bwww\.[^\s<>"{}|\\^`\[\]]+',     // www URL
       caseSensitive: false,
+      dotAll: false,
     );
     int lastEnd = 0;
-    for (final match in urlRegex.allMatches(input)) {
-      final start = match.start;
-      final end = match.end;
-      if (start > lastEnd) {
-        parts.add(TextSpan(text: input.substring(lastEnd, start)));
+    final base = baseStyle ?? TextStyle(color: textColor);
+    for (final m in tokenRx.allMatches(input)) {
+      if (m.start > lastEnd) {
+        parts.add(TextSpan(text: input.substring(lastEnd, m.start), style: base));
       }
-      final url = input.substring(start, end);
-      final fullUrl = url.startsWith('http') ? url : 'https://$url';
-      parts.add(
-        TextSpan(
-          text: url,
-          style: TextStyle(
+      final raw = m.group(0)!;
+      if (m.group(1) != null) {
+        // **bold**
+        parts.add(TextSpan(
+          text: m.group(1),
+          style: base.copyWith(fontWeight: FontWeight.bold),
+        ));
+      } else if (m.group(2) != null) {
+        // __underline__
+        parts.add(TextSpan(
+          text: m.group(2),
+          style: base.copyWith(decoration: TextDecoration.underline),
+        ));
+      } else if (m.group(3) != null) {
+        // ~~strikethrough~~
+        parts.add(TextSpan(
+          text: m.group(3),
+          style: base.copyWith(decoration: TextDecoration.lineThrough),
+        ));
+      } else if (m.group(4) != null) {
+        // *italic*
+        parts.add(TextSpan(
+          text: m.group(4),
+          style: base.copyWith(fontStyle: FontStyle.italic),
+        ));
+      } else if (m.group(5) != null) {
+        // `inline code`
+        parts.add(TextSpan(
+          text: m.group(5),
+          style: base.copyWith(
+            fontFamily: 'monospace',
+            backgroundColor: colorScheme.onSurface.withValues(alpha: 0.08),
+            fontSize: (base.fontSize ?? 14) * 0.92,
+          ),
+        ));
+      } else {
+        // URL
+        final fullUrl = raw.startsWith('http') ? raw : 'https://$raw';
+        parts.add(TextSpan(
+          text: raw,
+          style: base.copyWith(
             color: colorScheme.primary,
             decoration: TextDecoration.underline,
           ),
           recognizer: TapGestureRecognizer()
             ..onTap = () {
-              launchUrl(
-                Uri.parse(fullUrl),
-                mode: LaunchMode.externalApplication,
-              ).catchError((_) {
+              launchUrl(Uri.parse(fullUrl), mode: LaunchMode.externalApplication)
+                  .catchError((_) {
                 rootScreenKey.currentState?.showSnack('Cannot open link');
                 return false;
               });
             },
-        ),
-      );
-      lastEnd = end;
+        ));
+      }
+      lastEnd = m.end;
     }
     if (lastEnd < input.length) {
-      parts.add(TextSpan(text: input.substring(lastEnd)));
+      parts.add(TextSpan(text: input.substring(lastEnd), style: base));
     }
     return parts;
   }
 
   TextSpan _buildRichText(String input, ColorScheme colorScheme, Color textColor) {
     return TextSpan(
-      children: _linkify(input, colorScheme),
+      children: _markdownSpans(input, colorScheme, textColor),
       style: TextStyle(color: textColor),
+    );
+  }
+
+  // Строит виджет с поддержкой заголовков (## / ###) и inline-markdown.
+  Widget _buildMarkdownWidget(String text, ColorScheme colorScheme, Color textColor) {
+    final lines = text.split('\n');
+    final bool hasHeadings = lines.any((l) => l.startsWith('## ') || l.startsWith('### '));
+    if (!hasHeadings) {
+      return Text.rich(
+        TextSpan(
+          children: _markdownSpans(text, colorScheme, textColor),
+          style: TextStyle(color: textColor),
+        ),
+        softWrap: true,
+      );
+    }
+    // Есть заголовки — собираем построчно, группируя обычные строки.
+    final widgets = <Widget>[];
+    final buffer = StringBuffer();
+    void flushBuffer() {
+      final s = buffer.toString();
+      if (s.isNotEmpty) {
+        widgets.add(Text.rich(
+          TextSpan(
+            children: _markdownSpans(s, colorScheme, textColor),
+            style: TextStyle(color: textColor),
+          ),
+          softWrap: true,
+        ));
+        buffer.clear();
+      }
+    }
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      if (line.startsWith('### ')) {
+        flushBuffer();
+        final content = line.substring(4);
+        widgets.add(Text.rich(
+          TextSpan(
+            children: _markdownSpans(content, colorScheme, textColor,
+                baseStyle: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w600)),
+          ),
+          softWrap: true,
+        ));
+      } else if (line.startsWith('## ')) {
+        flushBuffer();
+        final content = line.substring(3);
+        widgets.add(Text.rich(
+          TextSpan(
+            children: _markdownSpans(content, colorScheme, textColor,
+                baseStyle: TextStyle(color: textColor, fontSize: 17, fontWeight: FontWeight.bold)),
+          ),
+          softWrap: true,
+        ));
+      } else {
+        if (buffer.isNotEmpty) buffer.write('\n');
+        buffer.write(line);
+      }
+    }
+    flushBuffer();
+    if (widgets.length == 1) return widgets.first;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: widgets,
     );
   }
 

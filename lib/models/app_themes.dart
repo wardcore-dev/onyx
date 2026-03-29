@@ -37,7 +37,7 @@ extension AppThemeExtension on AppTheme {
       case AppTheme.teal:
         return 'Teal';
       case AppTheme.grey:
-        return 'Neutral';
+        return 'Graphite';
     }
   }
 

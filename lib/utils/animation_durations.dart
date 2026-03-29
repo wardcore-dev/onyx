@@ -1,11 +1,11 @@
 // lib/utils/animation_durations.dart
 class AnimDurations {
   
-  static const Duration fast = Duration(milliseconds: 150);
-  
-  static const Duration normal = Duration(milliseconds: 250);
-  
-  static const Duration slow = Duration(milliseconds: 350);
-  
-  static const Duration verySlow = Duration(milliseconds: 500);
+  static const Duration fast = Duration(milliseconds: 100);
+
+  static const Duration normal = Duration(milliseconds: 167);
+
+  static const Duration slow = Duration(milliseconds: 233);
+
+  static const Duration verySlow = Duration(milliseconds: 333);
 }

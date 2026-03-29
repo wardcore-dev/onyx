@@ -51,6 +51,32 @@ final ValueNotifier<int> accountSwitchVersion = ValueNotifier<int>(0);
 
 final ValueNotifier<Map<String, bool>> lanModePerChat = ValueNotifier<Map<String, bool>>({});
 
+/// ChatIds whose summaries changed since the last chatsVersion bump.
+/// ChatsTab reads this in _onChatsVersion to decide whether to do an incremental
+/// or full rebuild. Set is consumed (cleared) by ChatsTab after reading.
+final Set<String> _pendingChatListHints = {};
+
+void addChatListHint(String chatId) => _pendingChatListHints.add(chatId);
+
+/// Returns the pending hints and clears them atomically (called from the main isolate).
+Set<String> consumeChatListHints() {
+  if (_pendingChatListHints.isEmpty) return const {};
+  final copy = Set<String>.from(_pendingChatListHints);
+  _pendingChatListHints.clear();
+  return copy;
+}
+
+// Per-chat message version notifiers — each ChatScreen listens only to its own chat.
+final Map<String, ValueNotifier<int>> _chatMessageVersions = {};
+
+ValueNotifier<int> getChatMessageVersion(String chatId) {
+  return _chatMessageVersions.putIfAbsent(chatId, () => ValueNotifier<int>(0));
+}
+
+void bumpChatMessageVersion(String chatId) {
+  getChatMessageVersion(chatId).value++;
+}
+
 final Map<String, Widget> _favoritesScreenCache = {};
 
 Widget getFavoritesScreen(String id, String title) {
@@ -68,7 +94,7 @@ const String wsUrl = 'wss://api-onyx.wardcore.com/ws';
 const String publicIpApi = 'https://api.ipify.org';
 
 
-const String kAppVersion = 'v1.1-beta';
+const String kAppVersion = 'v1.2-beta';
 
 bool get isDesktop {
   if (kIsWeb) return false;
