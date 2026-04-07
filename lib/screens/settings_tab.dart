@@ -24,6 +24,7 @@ import '../widgets/adaptive_blur.dart';
 import '../models/app_themes.dart';
 import '../models/font_family.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../utils/autostart_manager.dart';
 
 void _showStyledSnack(BuildContext context, String text, {Duration duration = const Duration(seconds: 2)}) {
   final colorScheme = Theme.of(context).colorScheme;
@@ -2501,7 +2502,7 @@ class _SettingsTabState extends State<SettingsTab>
           
           Center( 
             child: Text(
-              'open-beta 1.2',
+              'open-beta 1.2a',
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
@@ -2843,6 +2844,78 @@ class _SettingsTabState extends State<SettingsTab>
                         color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                       ),
                     ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+
+        if (Platform.isWindows) ...[
+          const SizedBox(height: 8),
+          const Divider(),
+          const SizedBox(height: 4),
+          ValueListenableBuilder<bool>(
+            valueListenable: SettingsManager.launchAtStartup,
+            builder: (_, autostartEnabled, __) {
+              return Column(
+                children: [
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      AppLocalizations.of(context).launchAtStartupLabel,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      AppLocalizations.of(context).launchAtStartupSubtitle,
+                      style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
+                    ),
+                    value: autostartEnabled,
+                    onChanged: (val) async {
+                      // Pre-capture everything from context before the first await
+                      final l10n = AppLocalizations.of(context);
+                      final scaffold = ScaffoldMessenger.of(context);
+                      final cs = Theme.of(context).colorScheme;
+
+                      void snack(String msg) {
+                        final bg = SettingsManager.getElementColor(
+                          cs.surfaceContainerHighest,
+                          SettingsManager.elementBrightness.value,
+                        ).withValues(alpha: SettingsManager.elementOpacity.value);
+                        scaffold
+                          ..hideCurrentSnackBar()
+                          ..showSnackBar(SnackBar(
+                            content: Text(msg,
+                              style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14, fontWeight: FontWeight.w500),
+                              textAlign: TextAlign.center),
+                            backgroundColor: bg,
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            margin: const EdgeInsets.only(bottom: 16, left: 16, right: 16),
+                            elevation: 4,
+                            duration: const Duration(seconds: 2),
+                          ));
+                      }
+
+                      try {
+                        if (val) {
+                          await AutostartManager.enable();
+                        } else {
+                          await AutostartManager.disable();
+                        }
+                        final actual = await AutostartManager.isEnabled();
+                        if (actual != val) {
+                          snack(l10n.launchAtStartupFailed);
+                          return;
+                        }
+                        await SettingsManager.setLaunchAtStartup(val);
+                        snack(val ? l10n.launchAtStartupEnabled : l10n.launchAtStartupDisabled);
+                      } catch (e) {
+                        debugPrint('[autostart] Failed to toggle: $e');
+                        snack(l10n.launchAtStartupFailed);
+                      }
+                    },
                   ),
                 ],
               );

@@ -12,7 +12,8 @@ build/
 android/.gradle/
 android/build/
 android/.cxx/
-.android/kotlin/errors/
+android/kotlin/errors/
+android/.kotlin/
 
 # === IOS / MACOS ===
 ios/Pods/

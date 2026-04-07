@@ -75,8 +75,6 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
   final ScrollController _scroll = ScrollController();
   List<Map<String, dynamic>> _messages = [];
   final Set<String> _allMessageIds = {};
-  // Animation status optimization: Now tracked directly in message map via msg['_hasAnimated']
-  // This saves memory and improves performance vs per-widget Set tracking
   final Map<String, String> _pendingMessageIds = {};
   final List<UploadTask> _pendingUploads = [];
   final ValueNotifier<bool> _showScrollDownButton = ValueNotifier<bool>(false);
@@ -95,6 +93,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
   Map<String, dynamic>? _replyingToMessage;
   Map<String, dynamic>? _pinnedMessage;
+  String? _editingMsgId;
+  String? _editingOriginalContent;
 
   // ── in-chat search ──────────────────────────────────────────────────────────
   bool _showSearch = false;
@@ -187,6 +187,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
   bool _hasInputAnimated = false;
 
   final Set<String> _newMessageIds = {};
+  final Set<String> _alreadyRenderedMessageIds = {};
 
   static const int _initialMessageLoadCount = 50;
   static const int _messageLoadIncrement = 30;
@@ -444,9 +445,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
     setState(() {
       _historyLoadEpoch++;
-      // Reset animation flags so messages from history can animate again
+      _alreadyRenderedMessageIds.clear();
       for (final m in _messages) {
-        m['_hasAnimated'] = false;
         final msgId = m['id']?.toString() ?? '';
         if (msgId.isNotEmpty) {
           m['animationId'] = '$msgId#$_historyLoadEpoch';
@@ -1004,15 +1004,17 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         }
 
         if (mounted && !_isDisposed) {
+          final preservedAnimIds = <String, String>{
+            for (final m in _messages)
+              if ((m['id']?.toString() ?? '').isNotEmpty)
+                m['id'].toString(): m['animationId']?.toString() ?? m['id'].toString(),
+          };
           setState(() {
-            _historyLoadEpoch++;
             _messages = msgs;
-            // Reset animation flags so loaded messages can animate
             for (final m in _messages) {
-              m['_hasAnimated'] = false;
               final msgId = m['id']?.toString() ?? '';
               if (msgId.isNotEmpty) {
-                m['animationId'] = '$msgId#$_historyLoadEpoch';
+                m['animationId'] = preservedAnimIds[msgId] ?? msgId;
               }
             }
             _allMessageIds.clear();
@@ -1122,15 +1124,17 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         if (id.isNotEmpty) newAllMessageIds.add(id);
       }
 
+      final preservedAnimIds = <String, String>{
+        for (final m in _messages)
+          if ((m['id']?.toString() ?? '').isNotEmpty)
+            m['id'].toString(): m['animationId']?.toString() ?? m['id'].toString(),
+      };
       setState(() {
-        _historyLoadEpoch++;
         _messages = mergedMessages;
-        // Reset animation flags so loaded messages can animate
         for (final m in _messages) {
-          m['_hasAnimated'] = false;
           final msgId = m['id']?.toString() ?? '';
           if (msgId.isNotEmpty) {
-            m['animationId'] = '$msgId#$_historyLoadEpoch';
+            m['animationId'] = preservedAnimIds[msgId] ?? msgId;
           }
         }
         _allMessageIds.clear();
@@ -1138,8 +1142,6 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         _displayedMessageCount =
             _initialMessageLoadCount.clamp(0, _messages.length);
         _isLoadingHistory = false;
-        // Keep _alreadyRenderedMessageIds cleared here so that messages
-        // loaded on screen open can animate as if they are freshly sent.
       });
 
       _debouncedCacheSave();
@@ -1169,6 +1171,13 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
   Future<void> _sendMessage(String text) async {
     if (text.trim().isEmpty) return;
+
+    if (_editingMsgId != null) {
+      final editId = _editingMsgId!;
+      _cancelEditingExtMessage();
+      await _submitExtMessageEdit(editId, text.trim());
+      return;
+    }
 
     if (!_canPost) {
       rootScreenKey.currentState?.showSnack(
@@ -1322,6 +1331,45 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     if (_replyingToMessage == null) return;
     setState(() => _replyingToMessage = null);
   }
+
+  void _cancelEditingExtMessage() {
+    setState(() {
+      _editingMsgId = null;
+      _editingOriginalContent = null;
+    });
+    _textCtrl.clear();
+    _focusNode.requestFocus();
+  }
+
+  Future<void> _submitExtMessageEdit(String msgId, String newContent) async {
+    try {
+      final resp = await http.patch(
+        Uri.parse('${widget.server.baseUrl}/groups/${widget.group.id}/messages/$msgId'),
+        headers: {
+          'authorization': 'Bearer ${widget.server.token}',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode({'content': newContent}),
+      );
+      if (resp.statusCode == 200 && mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m['id']?.toString() == msgId);
+          if (idx >= 0) _messages[idx]['content'] = newContent;
+        });
+        _saveHistoryToCache(_messages);
+      } else if (mounted) {
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value).failedEdit);
+      }
+    } catch (e) {
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value).failedEdit);
+      }
+    }
+  }
+
+
 
   bool _isExtMsgPinned(Map<String, dynamic> msg) {
     final pinId = _pinnedMessage?['id']?.toString();
@@ -2086,6 +2134,30 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                 AppLocalizations(SettingsManager.appLocale.value).msgCopied);
           },
         ),
+      if (isFile)
+        ContextMenuButtonItem(
+          label: 'Show in file system',
+          onPressed: () {
+            String filename = '';
+            try {
+              if (content.startsWith('FILEv1:')) {
+                final meta = jsonDecode(content.substring('FILEv1:'.length))
+                    as Map<String, dynamic>;
+                filename = meta['filename'] as String? ?? '';
+              } else {
+                filename = content.substring('FILE:'.length).trim();
+              }
+            } catch (_) {}
+            final localPath =
+                filename.isNotEmpty ? mediaFilePathRegistry[filename] : null;
+            if (localPath == null) {
+              rootScreenKey.currentState
+                  ?.showSnack('File not loaded yet — open it first');
+              return;
+            }
+            revealInFileSystem(localPath);
+          },
+        ),
     ];
   }
 
@@ -2830,6 +2902,78 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            AnimatedSize(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              child: _editingMsgId != null
+                  ? ValueListenableBuilder<double>(
+                      valueListenable: SettingsManager.elementBrightness,
+                      builder: (_, brightness, ___) {
+                        final baseColor = SettingsManager.getElementColor(
+                          colorScheme.surfaceContainerHighest,
+                          brightness,
+                        );
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: baseColor.withValues(alpha: opacity),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: colorScheme.outlineVariant
+                                  .withValues(alpha: 0.15),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit,
+                                  size: 16, color: colorScheme.primary),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      'Edit message',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: colorScheme.primary,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _editingOriginalContent ?? '',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: colorScheme.onSurface
+                                            .withValues(alpha: 0.7),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: _cancelEditingExtMessage,
+                                visualDensity: VisualDensity.compact,
+                                splashRadius: 18,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                    minWidth: 32, minHeight: 32),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    )
+                  : const SizedBox.shrink(),
+            ),
             AnimatedSize(
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeOut,
@@ -4098,9 +4242,6 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                             HapticFeedback.selectionClick();
                                           }
                                         },
-                                  onSecondaryTap: isDesktop
-                                      ? () => _showExternalMessageMenu(msg)
-                                      : null,
                                   child: MessageBubble(
                                     key: ValueKey<String>(
                                         'mb_${msg['timestamp']}_${rawSender}_${content.hashCode}'),
@@ -4118,8 +4259,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                                     '') ??
                                             DateTime.now()),
                                     onRequestResend: (_) {},
-                                    onRightClick: isDesktop
-                                        ? (_) => _showExternalMessageMenu(msg)
+                                    desktopMenuItems: isDesktop
+                                        ? _buildExternalDesktopMenuItems(msg)
                                         : null,
                                     peerUsername: rawSender,
                                     replyToId: msg['reply_to_id'] is int
@@ -4184,16 +4325,17 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                               final animKey =
                                   msg['animationId']?.toString() ?? msgId;
 
-                              // Check animation status from the message itself (optimized)
-                              final bool isFirstAppearance = (msg['_hasAnimated'] != true);
+                              final bool isFirstAppearance =
+                                  !_alreadyRenderedMessageIds.contains(animKey);
                               if (isFirstAppearance) {
-                                msg['_hasAnimated'] = true;
+                                _alreadyRenderedMessageIds.add(animKey);
                               }
 
                               final animatedBubble = AnimatedMessageBubble(
                                 key: ValueKey<String>(animKey),
                                 outgoing: isMe,
-                                animate: false,
+                                animate: isFirstAppearance &&
+                                    SettingsManager.messageAnimationsEnabled.value,
                                 child: RepaintBoundary(
                                     child: contentWithSender),
                               );

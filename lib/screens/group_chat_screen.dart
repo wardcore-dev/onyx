@@ -791,9 +791,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       Map<String, dynamic> msg) {
     final content = msg['content']?.toString() ?? '';
     final rawSender = msg['sender']?.toString() ?? '';
-    final isMe = widget.group.isChannel
-        ? false
-        : (rawSender == _currentUsername || rawSender == _currentDisplayName);
+    final isMe = rawSender == _currentUsername || rawSender == _currentDisplayName;
     final msgId = msg['id']?.toString();
     final isImage = content.startsWith('IMAGEv1:');
     final isAlbum = content.startsWith('ALBUMv1:');
@@ -873,6 +871,30 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           label: l.delete,
           type: ContextMenuButtonType.delete,
           onPressed: () => _desktopDeleteGroupMessage(msg, msgId),
+        ),
+      if (isFile)
+        ContextMenuButtonItem(
+          label: 'Show in file system',
+          onPressed: () {
+            String filename = '';
+            try {
+              if (content.startsWith('FILEv1:')) {
+                final meta = jsonDecode(content.substring('FILEv1:'.length))
+                    as Map<String, dynamic>;
+                filename = meta['filename'] as String? ?? '';
+              } else {
+                filename = content.substring('FILE:'.length).trim();
+              }
+            } catch (_) {}
+            final localPath =
+                filename.isNotEmpty ? mediaFilePathRegistry[filename] : null;
+            if (localPath == null) {
+              rootScreenKey.currentState
+                  ?.showSnack('File not loaded yet — open it first');
+              return;
+            }
+            revealInFileSystem(localPath);
+          },
         ),
     ];
   }

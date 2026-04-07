@@ -1702,7 +1702,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                       Icons.bookmark,
                                       size: 48,
                                       color:
-                                          const Color.fromARGB(255, 173, 136, 237),
+                                          Theme.of(context).colorScheme.primary,
                                     ),
                                   );
                                 },

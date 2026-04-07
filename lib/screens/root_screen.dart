@@ -269,7 +269,8 @@ class RootScreenState extends State<RootScreen>
   final AudioRecorder _recorder = AudioRecorder();
 
   bool _isRecording = false;
-  String? _lastRecordedPathForUpload; 
+  DateTime? _recordingStartTime;
+  String? _lastRecordedPathForUpload;
 
   String? get lastRecordedPathForUpload => _lastRecordedPathForUpload;
 
@@ -585,7 +586,8 @@ class RootScreenState extends State<RootScreen>
       }
 
       setState(() => _isRecording = true);
-      recordingNotifier.value = true; 
+      _recordingStartTime = DateTime.now();
+      recordingNotifier.value = true;
 
       _appendLog('[record] started -> $path');
       debugPrint('<<_startRecording>> started OK');
@@ -711,9 +713,13 @@ class RootScreenState extends State<RootScreen>
       return;
     }
 
+    final recordedDuration = _recordingStartTime != null
+        ? DateTime.now().difference(_recordingStartTime!)
+        : null;
+
     String? path;
     try {
-      
+
       path = await _recorder.stop();
       debugPrint(
           '<<stopRecordingAndUpload>> recorder.stop() returned path=$path');
@@ -744,8 +750,7 @@ class RootScreenState extends State<RootScreen>
 
       if (SettingsManager.confirmVoiceUpload.value) {
         
-        final durationSeconds = (bytes.length / 16000).ceil();
-        final duration = Duration(seconds: durationSeconds);
+        final duration = recordedDuration ?? Duration(seconds: (bytes.length / 16000).ceil());
 
         if (mounted) {
           final confirmed = await showDialog<bool>(

@@ -16,7 +16,7 @@ import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:tray_manager/tray_manager.dart';
-import 'package:launch_at_startup/launch_at_startup.dart';
+import 'utils/autostart_manager.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:workmanager/workmanager.dart';
@@ -357,29 +357,37 @@ Future<void> _initWindowManager() async {
   await windowManager.ensureInitialized();
   appLog('[desktop] Window manager initialized');
 
-  unawaited(windowManager.waitUntilReadyToShow().then((_) async {
-    appLog('[desktop] Setting title bar style...');
-    await windowManager.setTitleBarStyle(
-      TitleBarStyle.hidden,
-      windowButtonVisibility: false,
-    );
-    await windowManager.setResizable(true);
-    await windowManager.show();
-    appLog('[desktop] Window manager ready and visible');
-  }));
+  unawaited(windowManager.waitUntilReadyToShow(
+    const WindowOptions(skipTaskbar: false),
+    () async {
+      appLog('[desktop] Setting title bar style...');
+      await windowManager.setTitleBarStyle(
+        TitleBarStyle.hidden,
+        windowButtonVisibility: false,
+      );
+      await windowManager.setResizable(true);
+      await windowManager.show();
+      appLog('[desktop] Window manager ready and visible');
+    },
+  ));
 }
 
 Future<void> _initTrayAndSingleInstance() async {
   appLog('[desktop] Initializing system tray and single instance...');
 
-  try {
-    launchAtStartup.setup(
-      appName: 'ONYX',
-      appPath: Platform.resolvedExecutable,
-    );
-    appLog('[desktop] Launch at startup configured');
-  } catch (e) {
-    appLog('[desktop] Failed to configure launch at startup: $e');
+  if (Platform.isWindows) {
+    try {
+      if (SettingsManager.launchAtStartup.value) {
+        await AutostartManager.enable();
+      } else {
+        await AutostartManager.disable();
+      }
+      appLog('[desktop] Launch at startup configured (enabled=${SettingsManager.launchAtStartup.value})');
+    } catch (e) {
+      appLog('[desktop] Failed to configure launch at startup: $e');
+    }
+  } else {
+    appLog('[desktop] Launch at startup skipped (Windows only)');
   }
 
   appLog('[desktop] System tray and single instance initialized');

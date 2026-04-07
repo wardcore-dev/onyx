@@ -462,6 +462,14 @@ class AppLocalizations {
   }
 
   String get resetting => _ru ? 'Сброс...' : 'Resetting...';
+
+  String get launchAtStartupLabel => _ru ? 'Автозапуск' : 'Launch at startup';
+  String get launchAtStartupSubtitle => _ru
+      ? 'Запускать ONYX автоматически при входе в систему'
+      : 'Automatically start ONYX when you log in';
+  String get launchAtStartupEnabled => _ru ? 'Автозапуск включён' : 'Launch at startup enabled';
+  String get launchAtStartupDisabled => _ru ? 'Автозапуск отключён' : 'Launch at startup disabled';
+  String get launchAtStartupFailed => _ru ? 'Не удалось изменить автозапуск' : 'Failed to change startup setting';
   String get avatarUpdated => _ru ? 'Аватар обновлён' : 'Avatar updated';
   String get fileNotFound => _ru ? 'Файл не найден' : 'File not found';
   String get fileSent => _ru ? 'Файл отправлен' : 'File sent';

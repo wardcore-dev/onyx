@@ -3,6 +3,23 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:path/path.dart' as p;
 
+/// Opens the system file manager and selects/reveals [filePath].
+/// Only works on desktop platforms (Windows, macOS, Linux).
+Future<void> revealInFileSystem(String filePath) async {
+  if (kIsWeb) return;
+  try {
+    if (Platform.isWindows) {
+      await Process.run('explorer', ['/select,${filePath.replaceAll('/', '\\')}']);
+    } else if (Platform.isMacOS) {
+      await Process.run('open', ['-R', filePath]);
+    } else if (Platform.isLinux) {
+      await Process.run('xdg-open', [p.dirname(filePath)]);
+    }
+  } catch (e) {
+    debugPrint('revealInFileSystem error: $e');
+  }
+}
+
 class FileTypeDetector {
   static const imageExtensions = {
     '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'

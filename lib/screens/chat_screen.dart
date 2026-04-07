@@ -674,6 +674,30 @@ class ChatScreenState extends State<ChatScreen>
           type: ContextMenuButtonType.delete,
           onPressed: () => _desktopDeleteMessage(msg),
         ),
+      if (isFile)
+        ContextMenuButtonItem(
+          label: 'Show in file system',
+          onPressed: () {
+            String filename = '';
+            try {
+              if (text.startsWith('FILEv1:')) {
+                final meta = jsonDecode(text.substring('FILEv1:'.length))
+                    as Map<String, dynamic>;
+                filename = meta['filename'] as String? ?? '';
+              } else {
+                filename = text.substring('FILE:'.length).trim();
+              }
+            } catch (_) {}
+            final localPath =
+                filename.isNotEmpty ? mediaFilePathRegistry[filename] : null;
+            if (localPath == null) {
+              rootScreenKey.currentState
+                  ?.showSnack('File not loaded yet — open it first');
+              return;
+            }
+            revealInFileSystem(localPath);
+          },
+        ),
     ];
   }
 
