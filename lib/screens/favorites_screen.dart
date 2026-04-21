@@ -36,6 +36,7 @@ import '../utils/upload_task.dart';
 import '../widgets/pending_upload_card.dart';
 import '../widgets/chat_search_bar.dart';
 import '../widgets/animated_message_bubble.dart';
+import '../widgets/message_reaction_bar.dart';
 
 abstract class _ListItem {}
 
@@ -165,7 +166,7 @@ class FavoritesScreen extends StatefulWidget {
 }
 
 class _FavoritesScreenState extends State<FavoritesScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, ReactionStateMixin {
   
   static final Set<String> _sessionInputAnimationsShown = {};
 
@@ -1192,6 +1193,15 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                       'content': msg.content,
                     });
                   }),
+                  actionTile(Icons.add_reaction_outlined, 'React', () {
+                    Navigator.pop(ctx);
+                    final favKey =
+                        '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
+                    final me = rootScreenKey.currentState?.currentUsername ?? msg.from;
+                    openEmojiPicker(context, favKey, me, onAfterToggle: (_, __) {
+                      _persistReactionForFav(favKey, msg);
+                    });
+                  }),
                   actionTile(
                     _isFavMsgPinned(msg) ? Icons.push_pin_outlined : Icons.push_pin_rounded,
                     _isFavMsgPinned(msg) ? 'Unpin' : 'Pin',
@@ -1288,6 +1298,17 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           'senderDisplayName': msg.from,
           'content': msg.content,
         }),
+      ),
+      ContextMenuButtonItem(
+        label: 'React',
+        onPressed: () {
+          final favKey =
+              '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
+          final me = rootScreenKey.currentState?.currentUsername ?? msg.from;
+          openEmojiPicker(context, favKey, me, onAfterToggle: (_, __) {
+            _persistReactionForFav(favKey, msg);
+          });
+        },
       ),
       ContextMenuButtonItem(
         label: _isFavMsgPinned(msg) ? 'Unpin' : 'Pin',
@@ -1809,9 +1830,19 @@ class _FavoritesScreenState extends State<FavoritesScreen>
 
   String _chatId() => 'fav:${widget.favoriteId}';
 
+  void _persistReactionForFav(String key, ChatMessage msg) {
+    final current = reactionsFor(key);
+    msg.reactions
+      ..clear()
+      ..addAll(current.map((k, v) => MapEntry(k, List<String>.from(v))));
+    rootScreenKey.currentState?.schedulePersistChats(chatId: _chatId());
+  }
+
   List<Widget> _buildFavoritesInputChildren() {
     return [
-      ValueListenableBuilder<bool>(
+      Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: ValueListenableBuilder<bool>(
         valueListenable: recordingNotifier,
         builder: (context, isRecording, _) {
           return Column(
@@ -1889,54 +1920,58 @@ class _FavoritesScreenState extends State<FavoritesScreen>
             ],
           );
         },
+        ),
       ),
 
-      IconButton(
-        icon: Icon(
-          Icons.attach_file,
-          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-          size: 20,
+      Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: IconButton(
+          icon: Icon(
+            Icons.attach_file,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+            size: 20,
+          ),
+          onPressed: () async {
+            if (!kIsWeb) {
+              try {
+              final picker = FilePicker.platform;
+              final result = await picker.pickFiles(
+                  type: FileType.any, allowMultiple: true);
+              if (result == null || result.files.isEmpty) return;
+
+              final paths = result.files
+                  .map((f) => f.path)
+                  .whereType<String>()
+                  .toList();
+              if (paths.isEmpty) return;
+
+              if (paths.length > 1 &&
+                  paths.every(FileTypeDetector.isImage)) {
+                await _sendAlbum(paths);
+                return;
+              }
+
+              final path = paths.first;
+              if (!FileTypeDetector.isAllowed(path)) {
+                final ext = p.extension(path).toLowerCase();
+                rootScreenKey.currentState
+                    ?.showSnack('Unsupported file type: $ext');
+                return;
+              }
+              final basename = p.basename(path);
+              final ext = p.extension(basename).toLowerCase();
+              final type = FileTypeDetector.getFileType(path);
+              _showFilePreviewAndSend(path, basename, ext, type);
+              } catch (e) {
+                debugPrint('[Attach] FilePicker error: $e');
+                rootScreenKey.currentState?.showSnack('File picker error: $e');
+              }
+            }
+          },
+          visualDensity: VisualDensity.compact,
+          splashRadius: 20,
+          padding: EdgeInsets.zero,
         ),
-        onPressed: () async {
-          if (!kIsWeb) {
-            try {
-            final picker = FilePicker.platform;
-            final result = await picker.pickFiles(
-                type: FileType.any, allowMultiple: true);
-            if (result == null || result.files.isEmpty) return;
-
-            final paths = result.files
-                .map((f) => f.path)
-                .whereType<String>()
-                .toList();
-            if (paths.isEmpty) return;
-
-            if (paths.length > 1 &&
-                paths.every(FileTypeDetector.isImage)) {
-              await _sendAlbum(paths);
-              return;
-            }
-
-            final path = paths.first;
-            if (!FileTypeDetector.isAllowed(path)) {
-              final ext = p.extension(path).toLowerCase();
-              rootScreenKey.currentState
-                  ?.showSnack('Unsupported file type: $ext');
-              return;
-            }
-            final basename = p.basename(path);
-            final ext = p.extension(basename).toLowerCase();
-            final type = FileTypeDetector.getFileType(path);
-            _showFilePreviewAndSend(path, basename, ext, type);
-            } catch (e) {
-              debugPrint('[Attach] FilePicker error: $e');
-              rootScreenKey.currentState?.showSnack('File picker error: $e');
-            }
-          }
-        },
-        visualDensity: VisualDensity.compact,
-        splashRadius: 20,
-        padding: EdgeInsets.zero,
       ),
 
       Expanded(
@@ -1976,7 +2011,8 @@ class _FavoritesScreenState extends State<FavoritesScreen>
             focusNode: _focusNode,
             controller: _textCtrl,
             onTap: () => _suppressAutoRefocus = false,
-            maxLines: null,
+            minLines: 1,
+            maxLines: 5,
             style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
             decoration: InputDecoration(
               hintText: AppLocalizations.of(context).localizeHint('Type something...'),
@@ -2031,16 +2067,19 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           ),
         ),
       ),
-      IconButton(
-        icon: Icon(
-          Icons.send,
-          color: Theme.of(context).colorScheme.primary,
-          size: 20,
+      Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: IconButton(
+          icon: Icon(
+            Icons.send,
+            color: Theme.of(context).colorScheme.primary,
+            size: 20,
+          ),
+          onPressed: () => _submitMessage(_textCtrl.text),
+          visualDensity: VisualDensity.compact,
+          splashRadius: 20,
+          padding: EdgeInsets.zero,
         ),
-        onPressed: () => _submitMessage(_textCtrl.text),
-        visualDensity: VisualDensity.compact,
-        splashRadius: 20,
-        padding: EdgeInsets.zero,
       ),
     ];
   }
@@ -2297,6 +2336,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                     final msg = (item as _MessageItem).message;
                                     final String uniqueKey =
                                         '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
+                                    seedReactions(uniqueKey, msg.reactions);
                                     final String animKey = msg.id;
                                     final isFirstAppearance =
                                         !_alreadyRenderedMessageIds
@@ -2429,7 +2469,31 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                                               HapticFeedback.selectionClick();
                                                             }
                                                           },
-                                                    child: bubbleChild!,
+                                                    child: Column(
+                                                      crossAxisAlignment: swapped
+                                                          ? CrossAxisAlignment.start
+                                                          : CrossAxisAlignment.end,
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        bubbleChild!,
+                                                        MessageReactionBar(
+                                                          reactions: reactionsFor(uniqueKey),
+                                                          myUsername: rootScreenKey.currentState?.currentUsername ?? msg.from,
+                                                          outgoing: !swapped,
+                                                          onToggle: (emoji) {
+                                                            final me = rootScreenKey.currentState?.currentUsername ?? msg.from;
+                                                            toggleReaction(uniqueKey, emoji, me);
+                                                            _persistReactionForFav(uniqueKey, msg);
+                                                          },
+                                                          onAddReaction: (ctx2) {
+                                                            final me = rootScreenKey.currentState?.currentUsername ?? msg.from;
+                                                            openEmojiPicker(ctx2, uniqueKey, me, onAfterToggle: (_, __) {
+                                                              _persistReactionForFav(uniqueKey, msg);
+                                                            });
+                                                          },
+                                                        ),
+                                                      ],
+                                                    ),
                                                   ),
                                                 ),
                                               ],
@@ -2687,6 +2751,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                       ),
                                     ),
                                     child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.end,
                                       children: _buildFavoritesInputChildren(),
                                     ),
                                   );

@@ -37,6 +37,7 @@ import '../utils/upload_task.dart';
 import '../widgets/pending_upload_card.dart';
 import '../widgets/chat_search_bar.dart';
 import '../widgets/animated_message_bubble.dart';
+import '../widgets/message_reaction_bar.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
@@ -66,7 +67,7 @@ class GroupChatScreen extends StatefulWidget {
 }
 
 class _GroupChatScreenState extends State<GroupChatScreen>
-    with RouteAware, SingleTickerProviderStateMixin {
+    with RouteAware, SingleTickerProviderStateMixin, ReactionStateMixin {
   static final Set<String> _sessionInputAnimationsShown = {};
 
   late final RouteObserver<Route<void>> _localRouteObserver;
@@ -75,6 +76,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   List<Map<String, dynamic>> _messages = [];
   final ScrollController _scroll = ScrollController();
   String? _currentUsername;
+  // msgId → reaction mixin key ('gm_<id>'), populated during rendering
+  final Map<int, String> _msgIdToReactionKey = {};
   String? _currentDisplayName;
   int? _memberCount;
   late final String _inputHint;
@@ -702,6 +705,14 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                       Navigator.pop(ctx);
                       _startReplyingToMessage(msg);
                     }),
+                    actionTile(Icons.add_reaction_outlined, 'React', () {
+                      Navigator.pop(ctx);
+                      final rMsgId = int.tryParse(msg['id']?.toString() ?? '');
+                      final reactionKey = 'gm_${msg['id']}';
+                      openEmojiPicker(context, reactionKey, _currentUsername ?? '', onAfterToggle: (emoji, wasReacted) {
+                        if (rMsgId != null) _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
+                      });
+                    }),
                     actionTile(
                       _isGroupMsgPinned(msg)
                           ? Icons.push_pin_outlined
@@ -834,6 +845,16 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       ContextMenuButtonItem(
         label: l.reply,
         onPressed: () => _startReplyingToMessage(msg),
+      ),
+      ContextMenuButtonItem(
+        label: 'React',
+        onPressed: () {
+          final rMsgId = int.tryParse(msg['id']?.toString() ?? '');
+          final reactionKey = 'gm_${msg['id']}';
+          openEmojiPicker(context, reactionKey, _currentUsername ?? '', onAfterToggle: (emoji, wasReacted) {
+            if (rMsgId != null) _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
+          });
+        },
       ),
       if (isSaveable)
         ContextMenuButtonItem(
@@ -1507,6 +1528,41 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     }
   }
 
+  Future<void> _serverToggleGroupReaction(int msgId, String emoji, bool remove) async {
+    // Prefer root-screen username (always fresh) over cached _currentUsername
+    final username = rootScreenKey.currentState?.currentUsername ?? _currentUsername ?? '';
+    if (username.isEmpty) {
+      debugPrint('[reaction.group] username empty, skipping server call');
+      return;
+    }
+    if (_isDisposed) return;
+    final token = await AccountManager.getToken(username);
+    if (token == null) {
+      debugPrint('[reaction.group] token null for $username, skipping server call');
+      return;
+    }
+    try {
+      final groupId = widget.group.id;
+      debugPrint('[reaction.group] ${remove ? "DELETE" : "POST"} groupId=$groupId msgId=$msgId emoji=$emoji user=$username');
+      http.Response resp;
+      if (remove) {
+        resp = await http.delete(
+          Uri.parse('$serverBase/group/$groupId/messages/$msgId/reactions/${Uri.encodeComponent(emoji)}'),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+      } else {
+        resp = await http.post(
+          Uri.parse('$serverBase/group/$groupId/messages/$msgId/reactions'),
+          headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+          body: jsonEncode({'emoji': emoji}),
+        );
+      }
+      debugPrint('[reaction.group] server responded ${resp.statusCode}: ${resp.body}');
+    } catch (e) {
+      debugPrint('[reaction.group] server error: $e');
+    }
+  }
+
   Future<void> _loadHistoryFromCache() async {
     final username = _currentUsername ?? '';
     if (username.isEmpty) return;
@@ -1544,6 +1600,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
               'reply_to_sender': item['reply_to_sender']?.toString(),
             if (item['reply_to_content'] != null)
               'reply_to_content': item['reply_to_content']?.toString(),
+            if (item['reactions'] != null) 'reactions': item['reactions'],
           };
           newMessages.add(msg);
         }
@@ -1554,6 +1611,15 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           _allMessageIds.addAll(seenIds);
           _loadedFromCache = true;
         });
+        final reactionBatch = <String, Map<String, dynamic>>{};
+        for (final m in newMessages) {
+          final mid = int.tryParse(m['id']?.toString() ?? '');
+          final reactions = m['reactions'];
+          if (mid != null && reactions is Map && reactions.isNotEmpty) {
+            reactionBatch['gm_$mid'] = Map<String, dynamic>.from(reactions);
+          }
+        }
+        if (reactionBatch.isNotEmpty) applyReactionBatch(reactionBatch);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _scrollToBottom();
         });
@@ -1601,6 +1667,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                 'reply_to_sender': item['reply_to_sender']?.toString(),
               if (item['reply_to_content'] != null)
                 'reply_to_content': item['reply_to_content']?.toString(),
+              if (item['reactions'] != null)
+                'reactions': item['reactions'],
             });
           }
         }
@@ -1665,6 +1733,16 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                   .where((id) => id.isNotEmpty));
             }
           });
+          // Populate reaction mixin state from server history in one setState
+          final reactionBatch = <String, Map<String, dynamic>>{};
+          for (final m in newMessages) {
+            final mid = int.tryParse(m['id']?.toString() ?? '');
+            final reactions = m['reactions'];
+            if (mid != null && reactions is Map && reactions.isNotEmpty) {
+              reactionBatch['gm_$mid'] = Map<String, dynamic>.from(reactions);
+            }
+          }
+          if (reactionBatch.isNotEmpty) applyReactionBatch(reactionBatch);
           WidgetsBinding.instance.addPostFrameCallback((_) {
             _scrollToBottom();
           });
@@ -2321,6 +2399,25 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     if (_isDisposed) return;
 
     final typ = msg['type'] as String?;
+
+    if (typ == 'reaction_update') {
+      final msgIdRaw = msg['message_id'];
+      final msgId = msgIdRaw is int ? msgIdRaw : int.tryParse(msgIdRaw?.toString() ?? '');
+      if (msgId != null && mounted) {
+        final reactions = (msg['reactions'] as Map<String, dynamic>?) ?? {};
+        // Update stored message data so it's correct when scrolled into view
+        setState(() {
+          final idx = _messages.indexWhere((m) => m['id']?.toString() == msgId.toString());
+          if (idx >= 0) _messages[idx]['reactions'] = reactions;
+        });
+        // Update mixin state if message is currently rendered
+        final key = _msgIdToReactionKey[msgId];
+        if (key != null) applyReactionUpdate(key, reactions);
+        unawaited(_saveHistoryToCache(_messages));
+      }
+      return;
+    }
+
     if (typ == 'group_msg_edited') {
       final editedId = (msg['message_id'] ?? '').toString();
       final newContent = msg['new_content'] as String?;
@@ -3267,8 +3364,11 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        ValueListenableBuilder<bool>(
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: ValueListenableBuilder<bool>(
                           valueListenable: recordingNotifier,
                           builder: (context, isRecording, _) {
                             return Column(
@@ -3339,16 +3439,20 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                             );
                           },
                         ),
-                        IconButton(
-                          icon: Icon(
-                            Icons.attach_file,
-                            color: colorScheme.onSurface.withValues(alpha: 0.6),
-                            size: 20,
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: IconButton(
+                            icon: Icon(
+                              Icons.attach_file,
+                              color: colorScheme.onSurface.withValues(alpha: 0.6),
+                              size: 20,
+                            ),
+                            onPressed: _pickAndUploadMedia,
+                            visualDensity: VisualDensity.compact,
+                            splashRadius: 20,
+                            padding: EdgeInsets.zero,
                           ),
-                          onPressed: _pickAndUploadMedia,
-                          visualDensity: VisualDensity.compact,
-                          splashRadius: 20,
-                          padding: EdgeInsets.zero,
                         ),
                         Expanded(
                           child: KeyboardListener(
@@ -3394,7 +3498,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                               focusNode: _focusNode,
                               controller: _textCtrl,
                               onTap: () => _suppressAutoRefocus = false,
-                              maxLines: null,
+                              minLines: 1,
+                              maxLines: 5,
                               style: TextStyle(color: colorScheme.onSurface),
                               decoration: InputDecoration(
                                 hintText: AppLocalizations.of(context)
@@ -3454,16 +3559,19 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                             ),
                           ),
                         ),
-                        IconButton(
-                          icon: Icon(
-                            Icons.send,
-                            color: colorScheme.primary,
-                            size: 20,
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: IconButton(
+                            icon: Icon(
+                              Icons.send,
+                              color: colorScheme.primary,
+                              size: 20,
+                            ),
+                            onPressed: () => _sendMessage(_textCtrl.text),
+                            visualDensity: VisualDensity.compact,
+                            splashRadius: 20,
+                            padding: EdgeInsets.zero,
                           ),
-                          onPressed: () => _sendMessage(_textCtrl.text),
-                          visualDensity: VisualDensity.compact,
-                          splashRadius: 20,
-                          padding: EdgeInsets.zero,
                         ),
                       ],
                     ),
@@ -3963,6 +4071,10 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                       );
                                       final uniqueKey =
                                           '${msg['timestamp']}_${sender}_${content.hashCode}';
+                                      // Stable server-based key for reactions
+                                      final rMsgId = int.tryParse(msg['id']?.toString() ?? '');
+                                      final reactionKey = 'gm_${msg['id']}';
+                                      if (rMsgId != null) _msgIdToReactionKey[rMsgId] = reactionKey;
                                       final animKey =
                                           msg['animationId']?.toString() ??
                                               msg['id']?.toString() ??
@@ -4083,10 +4195,44 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                               ),
                                             ),
                                             bubbleWithContext,
+                                            MessageReactionBar(
+                                              reactions: reactionsFor(reactionKey),
+                                              myUsername: _currentUsername ?? '',
+                                              outgoing: isMe,
+                                              onToggle: (emoji) {
+                                                final wasReacted = hasReaction(reactionKey, emoji, _currentUsername ?? '');
+                                                toggleReaction(reactionKey, emoji, _currentUsername ?? '');
+                                                if (rMsgId != null) _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
+                                              },
+                                              onAddReaction: (ctx2) => openEmojiPicker(ctx2, reactionKey, _currentUsername ?? '', onAfterToggle: (emoji, wasReacted) {
+                                                if (rMsgId != null) _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
+                                              }),
+                                            ),
                                           ],
                                         );
                                       } else {
-                                        contentWithSender = bubbleWithContext;
+                                        contentWithSender = Column(
+                                          crossAxisAlignment: shouldAlignRight
+                                              ? CrossAxisAlignment.end
+                                              : CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            bubbleWithContext,
+                                            MessageReactionBar(
+                                              reactions: reactionsFor(reactionKey),
+                                              myUsername: _currentUsername ?? '',
+                                              outgoing: isMe,
+                                              onToggle: (emoji) {
+                                                final wasReacted = hasReaction(reactionKey, emoji, _currentUsername ?? '');
+                                                toggleReaction(reactionKey, emoji, _currentUsername ?? '');
+                                                if (rMsgId != null) _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
+                                              },
+                                              onAddReaction: (ctx2) => openEmojiPicker(ctx2, reactionKey, _currentUsername ?? '', onAfterToggle: (emoji, wasReacted) {
+                                                if (rMsgId != null) _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
+                                              }),
+                                            ),
+                                          ],
+                                        );
                                       }
 
                                       final gcs = Theme.of(context).colorScheme;

@@ -21,8 +21,12 @@ class ChatMessage {
   final DeliveryMode deliveryMode;
   
   DateTime? deliveredAt;
-  
+
+  /// emoji → [usernames], cached from server
+  Map<String, List<String>> reactions;
+
   String _content;
+
 
   String get content => _content;
 
@@ -43,7 +47,9 @@ class ChatMessage {
     this.replyToContent,
     DeliveryMode? deliveryMode,
     this.deliveredAt,
-  })  : _content = content,
+    Map<String, List<String>>? reactions,
+  })  : reactions = reactions ?? {},
+        _content = content,
         deliveryMode = deliveryMode ?? DeliveryMode.internet,
         time = time ?? DateTime.now();
 
@@ -87,6 +93,8 @@ class ChatMessage {
     'replyToContent': replyToContent,
     'deliveryMode': deliveryMode.name,
     'deliveredAt': deliveredAt?.toIso8601String(),
+    if (reactions.isNotEmpty)
+      'reactions': reactions.map((e, u) => MapEntry(e, u)),
   };
 
   static ChatMessage fromJson(Map<String, dynamic> j) {
@@ -113,7 +121,16 @@ class ChatMessage {
       deliveredAt: j['deliveredAt'] != null
           ? DateTime.tryParse(j['deliveredAt'].toString())
           : null,
+      reactions: _parseReactions(j['reactions']),
     );
+  }
+
+  static Map<String, List<String>> _parseReactions(dynamic raw) {
+    if (raw is! Map) return {};
+    return raw.map((k, v) => MapEntry(
+          k.toString(),
+          (v is List) ? v.map((e) => e.toString()).toList() : <String>[],
+        ));
   }
 
   static DeliveryMode _parseDeliveryMode(dynamic value) {

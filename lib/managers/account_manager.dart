@@ -268,10 +268,24 @@ class AccountManager {
 
   static Future<void> saveToken(String username, String token) async {
     await SecureStore.write(_key('token', username), token);
+    await SecureStore.write(
+      _key('token_created_at', username),
+      DateTime.now().toIso8601String(),
+    );
   }
 
   static Future<String?> getToken(String username) async {
     return SecureStore.read(_key('token', username));
+  }
+
+  static Future<DateTime?> getTokenCreatedAt(String username) async {
+    final raw = await SecureStore.read(_key('token_created_at', username));
+    if (raw == null) return null;
+    try {
+      return DateTime.parse(raw);
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<void> saveUsername(String username) async {

@@ -37,6 +37,7 @@ import '../utils/upload_task.dart';
 import '../widgets/pending_upload_card.dart';
 import '../widgets/chat_search_bar.dart';
 import '../widgets/animated_message_bubble.dart';
+import '../widgets/message_reaction_bar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const List<String> _randomHints = [
@@ -67,7 +68,7 @@ class ExternalGroupChatScreen extends StatefulWidget {
 }
 
 class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, ReactionStateMixin {
   static final Set<String> _sessionInputAnimationsShown = {};
 
   final TextEditingController _textCtrl = TextEditingController();
@@ -722,6 +723,21 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       return;
     }
 
+    if (type == 'reaction_update') {
+      final messageId = (obj['message_id'] ?? '').toString();
+      final reactions = obj['reactions'];
+      if (messageId.isNotEmpty && reactions is Map && mounted) {
+        final reactionsMap = Map<String, dynamic>.from(reactions);
+        setState(() {
+          final idx = _messages.indexWhere((m) => m['id']?.toString() == messageId);
+          if (idx >= 0) _messages[idx]['reactions'] = reactionsMap;
+        });
+        applyReactionUpdate('ext_$messageId', reactionsMap);
+        _debouncedCacheSave();
+      }
+      return;
+    }
+
     if (type == 'group_avatar_updated') {
       final newVersion = obj['avatar_version'];
       debugPrint('[ws] group_avatar_updated: newVersion=$newVersion');
@@ -1022,6 +1038,15 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
             _displayedMessageCount =
                 _initialMessageLoadCount.clamp(0, _messages.length);
           });
+          final cachedReactions = <String, Map<String, dynamic>>{};
+          for (final m in msgs) {
+            final id = m['id']?.toString() ?? '';
+            final r = m['reactions'];
+            if (id.isNotEmpty && r is Map && r.isNotEmpty) {
+              cachedReactions['ext_$id'] = Map<String, dynamic>.from(r);
+            }
+          }
+          if (cachedReactions.isNotEmpty) applyReactionBatch(cachedReactions);
           WidgetsBinding.instance.addPostFrameCallback((_) {
             _scrollToBottom();
           });
@@ -1073,19 +1098,31 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       if (!mounted || _isDisposed) return;
 
       final newMessages = <Map<String, dynamic>>[];
+      final reactionBatch = <String, Map<String, dynamic>>{};
       for (final m in messages) {
         final id = m['id']?.toString() ??
             '${m['timestamp_ms'] ?? DateTime.now().millisecondsSinceEpoch}';
+        final sender = (m['sender'] ?? '').toString();
+        final content = (m['content'] ?? '').toString();
+        final ts = (m['timestamp'] ?? DateTime.now().toIso8601String()).toString();
+        final reactionsRaw = m['reactions'];
+        final reactionsMap = (reactionsRaw is Map && reactionsRaw.isNotEmpty)
+            ? Map<String, dynamic>.from(reactionsRaw)
+            : null;
         newMessages.add({
           'id': id,
-          'sender': m['sender'] ?? '',
-          'content': m['content'] ?? '',
-          'timestamp': m['timestamp'] ?? DateTime.now().toIso8601String(),
+          'sender': sender,
+          'content': content,
+          'timestamp': ts,
           'timestamp_ms': m['timestamp_ms'] ?? 0,
           'reply_to_id': m['reply_to_id'],
           'reply_to_sender': m['reply_to_sender'],
           'reply_to_content': m['reply_to_content'],
+          if (reactionsMap != null) 'reactions': reactionsMap,
         });
+        if (reactionsMap != null) {
+          reactionBatch['ext_$id'] = reactionsMap;
+        }
       }
 
       final pendingMessages = _messages.where((msg) {
@@ -1144,6 +1181,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         _isLoadingHistory = false;
       });
 
+      if (reactionBatch.isNotEmpty) applyReactionBatch(reactionBatch);
       _debouncedCacheSave();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _scrollToBottom();
@@ -1339,6 +1377,51 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     });
     _textCtrl.clear();
     _focusNode.requestFocus();
+  }
+
+  Future<void> _serverToggleReaction(
+      int messageId, String emoji, bool wasReacted) async {
+    try {
+      final base = widget.server.baseUrl;
+      final token = widget.server.token;
+      final gid = widget.group.id;
+      final http.Response resp;
+      if (wasReacted) {
+        final url = '$base/groups/$gid/messages/$messageId/reactions/${Uri.encodeComponent(emoji)}';
+        debugPrint('[ext-reaction] DELETE $url');
+        resp = await http.delete(
+          Uri.parse(url),
+          headers: {'authorization': 'Bearer $token'},
+        );
+      } else {
+        final url = '$base/groups/$gid/messages/$messageId/reactions';
+        debugPrint('[ext-reaction] POST $url emoji=$emoji');
+        resp = await http.post(
+          Uri.parse(url),
+          headers: {
+            'authorization': 'Bearer $token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode({'emoji': emoji}),
+        );
+      }
+      debugPrint('[ext-reaction] status=${resp.statusCode} body=${resp.body}');
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>?;
+        final reactions = data?['reactions'];
+        if (reactions is Map && mounted) {
+          final reactionsMap = Map<String, dynamic>.from(reactions);
+          setState(() {
+            final idx = _messages.indexWhere((m) => m['id']?.toString() == messageId.toString());
+            if (idx >= 0) _messages[idx]['reactions'] = reactionsMap;
+          });
+          applyReactionUpdate('ext_$messageId', reactionsMap);
+          _debouncedCacheSave();
+        }
+      }
+    } catch (e) {
+      debugPrint('[ext-reaction] error: $e');
+    }
   }
 
   Future<void> _submitExtMessageEdit(String msgId, String newContent) async {
@@ -1708,6 +1791,17 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                   actionTile(Icons.reply_rounded, 'Reply', () {
                     Navigator.pop(ctx);
                     _startReply(msg);
+                  }),
+                  actionTile(Icons.add_reaction_outlined, 'React', () {
+                    Navigator.pop(ctx);
+                    final extMsgId = msg['id']?.toString() ?? '';
+                    final msgIdInt = int.tryParse(extMsgId);
+                    openEmojiPicker(context, 'ext_$extMsgId', widget.server.username,
+                        onAfterToggle: (emoji, wasReacted) {
+                      if (msgIdInt != null) {
+                        _serverToggleReaction(msgIdInt, emoji, wasReacted);
+                      }
+                    });
                   }),
                   actionTile(
                     _isExtMsgPinned(msg)
@@ -2110,6 +2204,19 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           'sender': rawSender,
           'content': content,
         }),
+      ),
+      ContextMenuButtonItem(
+        label: 'React',
+        onPressed: () {
+          final extMsgId = msg['id']?.toString() ?? '';
+          final msgIdInt = int.tryParse(extMsgId);
+          openEmojiPicker(context, 'ext_$extMsgId', widget.server.username,
+              onAfterToggle: (emoji, wasReacted) {
+            if (msgIdInt != null) {
+              _serverToggleReaction(msgIdInt, emoji, wasReacted);
+            }
+          });
+        },
       ),
       if (isSaveable)
         ContextMenuButtonItem(
@@ -3069,8 +3176,11 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                     ),
                   ),
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      ValueListenableBuilder<bool>(
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: ValueListenableBuilder<bool>(
                         valueListenable: recordingNotifier,
                         builder: (context, isRecording, _) {
                           return Column(
@@ -3135,18 +3245,22 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                             ],
                           );
                         },
-                      ),
-                      IconButton(
-                        icon: Icon(
-                          Icons.attach_file,
-                          color: colorScheme.onSurface.withValues(alpha: 0.6),
-                          size: 20,
                         ),
-                        onPressed: _pickAndUploadMedia,
-                        visualDensity: VisualDensity.compact,
-                        splashRadius: 20,
-                        padding: EdgeInsets.zero,
-                      ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: IconButton(
+                            icon: Icon(
+                              Icons.attach_file,
+                              color: colorScheme.onSurface.withValues(alpha: 0.6),
+                              size: 20,
+                            ),
+                            onPressed: _pickAndUploadMedia,
+                            visualDensity: VisualDensity.compact,
+                            splashRadius: 20,
+                            padding: EdgeInsets.zero,
+                          ),
+                        ),
                       Expanded(
                         child: KeyboardListener(
                           focusNode: FocusNode(),
@@ -3186,7 +3300,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                             focusNode: _focusNode,
                             controller: _textCtrl,
                             onTap: () => _suppressAutoRefocus = false,
-                            maxLines: null,
+                            minLines: 1,
+                            maxLines: 5,
                             style: TextStyle(color: colorScheme.onSurface),
                             decoration: InputDecoration(
                               hintText: AppLocalizations.of(context)
@@ -3246,16 +3361,19 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                           ),
                         ),
                       ),
-                      IconButton(
-                        icon: Icon(
-                          Icons.send,
-                          color: colorScheme.primary,
-                          size: 20,
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: IconButton(
+                          icon: Icon(
+                            Icons.send,
+                            color: colorScheme.primary,
+                            size: 20,
+                          ),
+                          onPressed: () => _sendMessage(_textCtrl.text),
+                          visualDensity: VisualDensity.compact,
+                          splashRadius: 20,
+                          padding: EdgeInsets.zero,
                         ),
-                        onPressed: () => _sendMessage(_textCtrl.text),
-                        visualDensity: VisualDensity.compact,
-                        splashRadius: 20,
-                        padding: EdgeInsets.zero,
                       ),
                     ],
                   ),
@@ -4344,7 +4462,33 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                 alignment: shouldAlignRight
                                     ? Alignment.centerRight
                                     : Alignment.centerLeft,
-                                child: animatedBubble,
+                                child: Column(
+                                  crossAxisAlignment: shouldAlignRight
+                                      ? CrossAxisAlignment.end
+                                      : CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    animatedBubble,
+                                    MessageReactionBar(
+                                      reactions: reactionsFor('ext_$msgId'),
+                                      myUsername: widget.server.username,
+                                      outgoing: isMe,
+                                      onToggle: (emoji) {
+                                        final msgIdInt = int.tryParse(msgId);
+                                        final wasReacted = hasReaction('ext_$msgId', emoji, widget.server.username);
+                                        toggleReaction('ext_$msgId', emoji, widget.server.username);
+                                        if (msgIdInt != null) _serverToggleReaction(msgIdInt, emoji, wasReacted);
+                                      },
+                                      onAddReaction: (ctx2) {
+                                        final msgIdInt = int.tryParse(msgId);
+                                        openEmojiPicker(ctx2, 'ext_$msgId', widget.server.username,
+                                            onAfterToggle: (emoji, wasReacted) {
+                                          if (msgIdInt != null) _serverToggleReaction(msgIdInt, emoji, wasReacted);
+                                        });
+                                      },
+                                    ),
+                                  ],
+                                ),
                               );
 
                               return ValueListenableBuilder<

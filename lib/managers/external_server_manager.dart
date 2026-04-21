@@ -682,8 +682,9 @@ class ExternalServerManager {
         }
       } else if (type == 'group_msg' ||
                  type == 'group_msg_edited' ||
-                 type == 'group_msg_deleted') {
-        final groupId = obj['group_id'] as int;
+                 type == 'group_msg_deleted' ||
+                 type == 'reaction_update') {
+        final groupId = (obj['group_id'] as num).toInt();
         final key = '$serverId:$groupId';
         debugPrint('[ext-ws] Received $type for $key');
         final listener = _groupListeners[key];

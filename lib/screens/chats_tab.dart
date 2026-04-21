@@ -11,6 +11,7 @@ import '../globals.dart';
 import '../widgets/avatar_widget.dart';
 import '../managers/user_cache.dart';
 import '../l10n/app_localizations.dart';
+import '../managers/blocklist_manager.dart';
 
 String _getFileTypeLabel(String filename) {
   final ext = filename.toLowerCase();
@@ -251,6 +252,8 @@ class ChatsTab extends StatefulWidget {
   final String? username;
   final void Function(String other) onOpenChat;
   final void Function(String chatId) onDeleteChat;
+  final void Function(String username, String displayName) onBlockUser;
+  final void Function(String username) onUnblockUser;
 
   const ChatsTab({
     super.key,
@@ -258,6 +261,8 @@ class ChatsTab extends StatefulWidget {
     required this.username,
     required this.onOpenChat,
     required this.onDeleteChat,
+    required this.onBlockUser,
+    required this.onUnblockUser,
   });
 
   @override
@@ -441,6 +446,11 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
     _fetchUserProfilesInBackground(usernamesToFetch);
   }
 
+  bool get _isDesktop =>
+      defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.macOS ||
+      defaultTargetPlatform == TargetPlatform.linux;
+
   void _showDeleteConfirmationDialog(BuildContext context, _ChatSumm summary) {
     showDialog(
       context: context,
@@ -465,6 +475,180 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
         ],
       ),
     );
+  }
+
+  void _showBlockConfirmationDialog(BuildContext context, _ChatSumm summary) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(AppLocalizations.of(context).blockUserLabel),
+        content: Text(AppLocalizations.of(context).blockUserConfirmContent(summary.displayName)),
+        actions: [
+          TextButton(
+            onPressed: Navigator.of(ctx).pop,
+            child: Text(AppLocalizations.of(context).cancel),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              widget.onBlockUser(summary.otherUsername, summary.displayName);
+            },
+            child: Text(
+              AppLocalizations.of(context).blockUserLabel,
+              style: const TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showUnblockConfirmationDialog(BuildContext context, _ChatSumm summary) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(AppLocalizations.of(context).unblockUserLabel),
+        content: Text(AppLocalizations.of(context).unblockUserConfirmContent(summary.displayName)),
+        actions: [
+          TextButton(
+            onPressed: Navigator.of(ctx).pop,
+            child: Text(AppLocalizations.of(context).cancel),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              widget.onUnblockUser(summary.otherUsername);
+            },
+            child: Text(AppLocalizations.of(context).unblockUserLabel),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showChatActionsSheet(BuildContext context, _ChatSumm summary) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isBlocked = BlocklistManager.isBlocked(summary.otherUsername);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => ValueListenableBuilder<double>(
+        valueListenable: SettingsManager.elementBrightness,
+        builder: (_, brightness, __) {
+          final sheetColor = SettingsManager.getElementColor(
+            colorScheme.surfaceContainerHighest, brightness);
+          return SafeArea(
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              decoration: BoxDecoration(
+                color: sheetColor,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 8),
+                  Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: colorScheme.onSurface.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  if (isBlocked)
+                    ListTile(
+                      leading: Icon(Icons.lock_open_rounded, color: colorScheme.primary),
+                      title: Text(AppLocalizations.of(context).unblockUserLabel),
+                      onTap: () {
+                        Navigator.of(sheetCtx).pop();
+                        _showUnblockConfirmationDialog(context, summary);
+                      },
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    )
+                  else
+                    ListTile(
+                      leading: Icon(Icons.block, color: colorScheme.error),
+                      title: Text(AppLocalizations.of(context).blockUserLabel),
+                      onTap: () {
+                        Navigator.of(sheetCtx).pop();
+                        _showBlockConfirmationDialog(context, summary);
+                      },
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ListTile(
+                    leading: Icon(Icons.delete_outline, color: colorScheme.error),
+                    title: Text(AppLocalizations.of(context).delete),
+                    onTap: () {
+                      Navigator.of(sheetCtx).pop();
+                      _showDeleteConfirmationDialog(context, summary);
+                    },
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showDesktopContextMenu(BuildContext context, Offset globalPosition, _ChatSumm summary) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isBlocked = BlocklistManager.isBlocked(summary.otherUsername);
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        globalPosition.dx, globalPosition.dy,
+        globalPosition.dx, globalPosition.dy,
+      ),
+      items: [
+        if (isBlocked)
+          PopupMenuItem<String>(
+            value: 'unblock',
+            child: Row(
+              children: [
+                Icon(Icons.lock_open_rounded, size: 18, color: colorScheme.primary),
+                const SizedBox(width: 10),
+                Text(AppLocalizations.of(context).unblockUserLabel),
+              ],
+            ),
+          )
+        else
+          PopupMenuItem<String>(
+            value: 'block',
+            child: Row(
+              children: [
+                Icon(Icons.block, size: 18, color: colorScheme.error),
+                const SizedBox(width: 10),
+                Text(AppLocalizations.of(context).blockUserLabel),
+              ],
+            ),
+          ),
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 18, color: colorScheme.error),
+              const SizedBox(width: 10),
+              Text(AppLocalizations.of(context).delete),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (!context.mounted) return;
+      if (value == 'block') {
+        _showBlockConfirmationDialog(context, summary);
+      } else if (value == 'unblock') {
+        _showUnblockConfirmationDialog(context, summary);
+      } else if (value == 'delete') {
+        _showDeleteConfirmationDialog(context, summary);
+      }
+    });
   }
 
   Future<void> _fetchUserProfilesInBackground(Set<String> usernames) async {
@@ -659,11 +843,13 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
           final it = _summaries[i];
           
           return RepaintBoundary(
-            child: InkWell(
+            child: GestureDetector(
+              onSecondaryTapUp: _isDesktop
+                  ? (details) => _showDesktopContextMenu(context, details.globalPosition, it)
+                  : null,
+              child: InkWell(
               borderRadius: BorderRadius.circular(16),
-              onLongPress: () {
-                _showDeleteConfirmationDialog(context, it);
-              },
+              onLongPress: () => _showChatActionsSheet(context, it),
               onTap: () => widget.onOpenChat(it.otherUsername),
               child: _glassCard(
               context: context,
@@ -769,6 +955,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                 ),
               ),
             ),
+          ),
           ),
         );
       },

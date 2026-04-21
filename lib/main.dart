@@ -26,6 +26,7 @@ import 'screens/root_screen_wrapper.dart';
 import 'screens/pin_code_screen.dart';
 import 'package:local_auth/local_auth.dart';
 import 'managers/settings_manager.dart';
+import 'managers/blocklist_manager.dart';
 import 'managers/account_manager.dart';
 import 'managers/secure_store.dart';
 import 'managers/onyx_tray_manager.dart';
@@ -222,6 +223,7 @@ void main() async {
 
   appLog('[settings] Loading SettingsManager...');
   await SettingsManager.init();
+  await BlocklistManager.init();
 
   await MediaCache.instance.init();
 

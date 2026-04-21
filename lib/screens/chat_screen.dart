@@ -46,6 +46,8 @@ import '../managers/lan_message_manager.dart';
 import '../enums/delivery_mode.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../l10n/app_localizations.dart';
+import '../managers/blocklist_manager.dart';
+import '../widgets/message_reaction_bar.dart';
 
 const List<String> _randomHints = [
   'Say hi!',
@@ -115,7 +117,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class ChatScreenState extends State<ChatScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, ReactionStateMixin {
   
   static final Set<String> _sessionInputAnimationsShown = {};
 
@@ -607,6 +609,14 @@ class ChatScreenState extends State<ChatScreen>
                 }
               }
             : null,
+        onReact: () {
+          Navigator.pop(ctx);
+          final msgKey =
+              '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
+          openEmojiPicker(context, msgKey, widget.myUsername, onAfterToggle: (emoji, wasReacted) {
+            if (msg.serverMessageId != null) _serverTogglePrivateReaction(msgKey, msg.serverMessageId!, emoji, wasReacted);
+          });
+        },
       ),
     ).whenComplete(() {
       Future.delayed(const Duration(milliseconds: 300), () {
@@ -639,6 +649,16 @@ class ChatScreenState extends State<ChatScreen>
           'senderDisplayName': msg.from,
           'content': getPreviewText(msg.content),
         }),
+      ),
+      ContextMenuButtonItem(
+        label: 'React',
+        onPressed: () {
+          final msgKey =
+              '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
+          openEmojiPicker(context, msgKey, widget.myUsername, onAfterToggle: (emoji, wasReacted) {
+            if (msg.serverMessageId != null) _serverTogglePrivateReaction(msgKey, msg.serverMessageId!, emoji, wasReacted);
+          });
+        },
       ),
       if (isImage || isAlbum || isVideo || isVoice || isFile)
         ContextMenuButtonItem(
@@ -919,7 +939,9 @@ class ChatScreenState extends State<ChatScreen>
   void initState() {
     super.initState();
     _loadPinnedMessage();
+    _loadPrivateReactions();
     HardwareKeyboard.instance.addHandler(_handleGlobalKey);
+    rootScreenKey.currentState?.subscribeToPrivateReactions(widget.otherUsername, _onPrivateReactionUpdate);
     final randomIndex = Random().nextInt(_randomHints.length);
     _inputHint = _randomHints[randomIndex];
     _focusNode = FocusNode();
@@ -1257,7 +1279,114 @@ class ChatScreenState extends State<ChatScreen>
     _searchStats.dispose();
     _searchFocusNode.dispose();
     HardwareKeyboard.instance.removeHandler(_handleGlobalKey);
+    rootScreenKey.currentState?.unsubscribeFromPrivateReactions();
     super.dispose();
+  }
+
+  Future<void> _loadPrivateReactions() async {
+    final root = rootScreenKey.currentState;
+    if (root == null || !mounted) return;
+    final chatId = root.chatIdForUser(widget.otherUsername);
+    final messages = root.chats[chatId] ?? [];
+
+    // Apply cached reactions immediately (instant, no network needed)
+    final cachedBatch = <String, Map<String, dynamic>>{};
+    for (final msg in messages) {
+      if (msg.reactions.isNotEmpty) {
+        final key = '${msg.id}_${msg.serverMessageId}_${msg.time.millisecondsSinceEpoch}';
+        cachedBatch[key] = msg.reactions.map((e, u) => MapEntry(e, u));
+      }
+    }
+    if (cachedBatch.isNotEmpty && mounted) applyReactionBatch(cachedBatch);
+
+    // Then refresh from server
+    final ids = messages
+        .where((m) => m.serverMessageId != null)
+        .map((m) => m.serverMessageId!.toString())
+        .toList();
+    if (ids.isEmpty) return;
+    final token = await AccountManager.getToken(widget.myUsername);
+    if (token == null || !mounted) return;
+    try {
+      final resp = await http.get(
+        Uri.parse('$serverBase/messages/reactions?ids=${ids.join(",")}'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (resp.statusCode == 200 && mounted) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final reactionsData = (data['reactions'] as Map<String, dynamic>?) ?? {};
+        final batch = <String, Map<String, dynamic>>{};
+        for (final msg in messages) {
+          if (msg.serverMessageId == null) continue;
+          final r = reactionsData[msg.serverMessageId.toString()];
+          final key = '${msg.id}_${msg.serverMessageId}_${msg.time.millisecondsSinceEpoch}';
+          if (r is Map) {
+            final reactionMap = Map<String, dynamic>.from(r);
+            batch[key] = reactionMap;
+            // Persist into the message so it's available next time
+            msg.reactions = reactionMap.map(
+              (e, u) => MapEntry(e, (u is List) ? u.map((x) => x.toString()).toList() : <String>[]),
+            );
+          } else {
+            msg.reactions = {};
+          }
+        }
+        if (batch.isNotEmpty) applyReactionBatch(batch);
+      }
+    } catch (e) {
+      debugPrint('[reactions.private.load] error: $e');
+    }
+  }
+
+  void _onPrivateReactionUpdate(Map<String, dynamic> obj) {
+    if (!mounted) return;
+    final msgIdRaw = obj['message_id'];
+    final msgId = msgIdRaw is int ? msgIdRaw : int.tryParse(msgIdRaw?.toString() ?? '');
+    if (msgId == null) return;
+    final reactions = (obj['reactions'] as Map<String, dynamic>?) ?? {};
+    final root = rootScreenKey.currentState;
+    if (root == null) return;
+    final chatId = root.chatIdForUser(widget.otherUsername);
+    final messages = root.chats[chatId] ?? [];
+    for (final msg in messages) {
+      if (msg.serverMessageId == msgId) {
+        final key = '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
+        applyReactionUpdate(key, reactions);
+        // Persist into the message for next open
+        msg.reactions = reactions.map(
+          (e, u) => MapEntry(e, (u is List) ? u.map((x) => x.toString()).toList() : <String>[]),
+        );
+        break;
+      }
+    }
+  }
+
+  Future<void> _serverTogglePrivateReaction(String uniqueKey, int serverMsgId, String emoji, bool remove) async {
+    if (!mounted) return;
+    final token = await AccountManager.getToken(widget.myUsername);
+    if (token == null) {
+      debugPrint('[reaction.private] token null for ${widget.myUsername}, skipping');
+      return;
+    }
+    try {
+      debugPrint('[reaction.private] ${remove ? "DELETE" : "POST"} msgId=$serverMsgId emoji=$emoji other=${widget.otherUsername}');
+      http.Response resp;
+      if (remove) {
+        resp = await http.delete(
+          Uri.parse('$serverBase/messages/$serverMsgId/reactions/${Uri.encodeComponent(emoji)}?other_username=${Uri.encodeComponent(widget.otherUsername)}'),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+      } else {
+        resp = await http.post(
+          Uri.parse('$serverBase/messages/$serverMsgId/reactions'),
+          headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+          body: jsonEncode({'emoji': emoji, 'other_username': widget.otherUsername}),
+        );
+      }
+      debugPrint('[reaction.private] server responded ${resp.statusCode}: ${resp.body}');
+    } catch (e) {
+      debugPrint('[reaction.private] server error: $e');
+    }
   }
 
   // ── search helpers ───────────────────────────────────────────────────────────
@@ -2130,9 +2259,53 @@ class ChatScreenState extends State<ChatScreen>
                         },
                     ),
             ),
-            IconButton(
-              icon: const Icon(Icons.shield, size: 20),
-              onPressed: () async {
+            ValueListenableBuilder<Set<String>>(
+              valueListenable: BlocklistManager.blockedUsers,
+              builder: (_, blocked, __) {
+                final isBlocked = widget.otherUsername != null &&
+                    blocked.contains(widget.otherUsername!);
+                return IconButton(
+                  tooltip: isBlocked
+                      ? AppLocalizations.of(context).unblockUserLabel
+                      : null,
+                  icon: Icon(
+                    isBlocked ? Icons.lock_open_rounded : Icons.shield,
+                    size: 20,
+                  ),
+                  onPressed: () async {
+                    if (BlocklistManager.isBlocked(widget.otherUsername ?? '')) {
+                      final other = widget.otherUsername ?? '';
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (dCtx) => AlertDialog(
+                          title: Text(AppLocalizations.of(context).unblockUserLabel),
+                          content: Text(AppLocalizations.of(context).unblockUserConfirmContent(other)),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(dCtx).pop(false),
+                              child: Text(AppLocalizations.of(context).cancel),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.of(dCtx).pop(true),
+                              child: Text(AppLocalizations.of(context).unblockUserLabel),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirmed != true) return;
+                      await BlocklistManager.unblock(other);
+                      try {
+                        final token =
+                            await AccountManager.getToken(widget.myUsername);
+                        await http.delete(
+                          Uri.parse('$serverBase/block/$other'),
+                          headers: {'authorization': 'Bearer $token'},
+                        );
+                      } catch (e) {
+                        debugPrint('[unblock] failed: $e');
+                      }
+                      return;
+                    }
                 final recipient = widget.otherUsername;
                 final secTitle = AppLocalizations.of(context).securityCheckTitle;
                 final secContent = AppLocalizations.of(context).securityCheckContent(recipient);
@@ -2477,6 +2650,8 @@ class ChatScreenState extends State<ChatScreen>
                   ),
                 );
               },
+                );
+              },
             ),
           ]),
           ),
@@ -2767,7 +2942,28 @@ class ChatScreenState extends State<ChatScreen>
                                                           onSecondaryTap: isDesktop && !sel.active
                                                               ? () => _showMessageMenu(msg)
                                                               : null,
-                                                          child: bubbleChild!,
+                                                          child: Column(
+                                                            crossAxisAlignment: shouldShowRight
+                                                                ? CrossAxisAlignment.end
+                                                                : CrossAxisAlignment.start,
+                                                            mainAxisSize: MainAxisSize.min,
+                                                            children: [
+                                                              bubbleChild!,
+                                                              MessageReactionBar(
+                                                                reactions: reactionsFor(uniqueKey),
+                                                                myUsername: widget.myUsername,
+                                                                outgoing: msg.outgoing,
+                                                                onToggle: (emoji) {
+                                                                  final wasReacted = hasReaction(uniqueKey, emoji, widget.myUsername);
+                                                                  toggleReaction(uniqueKey, emoji, widget.myUsername);
+                                                                  if (msg.serverMessageId != null) _serverTogglePrivateReaction(uniqueKey, msg.serverMessageId!, emoji, wasReacted);
+                                                                },
+                                                                onAddReaction: (ctx) => openEmojiPicker(ctx, uniqueKey, widget.myUsername, onAfterToggle: (emoji, wasReacted) {
+                                                                  if (msg.serverMessageId != null) _serverTogglePrivateReaction(uniqueKey, msg.serverMessageId!, emoji, wasReacted);
+                                                                }),
+                                                              ),
+                                                            ],
+                                                          ),
                                                         ),
                                                       ),
                                                       if (sel.active && shouldShowRight) checkmark,
@@ -3023,8 +3219,11 @@ class ChatScreenState extends State<ChatScreen>
                                       ),
                                     ),
                               child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
-                                  ValueListenableBuilder<bool>(
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: ValueListenableBuilder<bool>(
                                     valueListenable: recordingNotifier,
                                     builder: (context, isRecording, _) {
                                       return Column(
@@ -3130,8 +3329,11 @@ class ChatScreenState extends State<ChatScreen>
                                       );
                                     },
                                   ),
+                                  ),
 
-                                  IconButton(
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: IconButton(
                                     icon: Icon(
                                       Icons.attach_file,
                                       color: Theme.of(context)
@@ -3204,6 +3406,7 @@ class ChatScreenState extends State<ChatScreen>
                                     splashRadius: 20,
                                     padding: EdgeInsets.zero,
                                   ),
+                                  ),
 
                                   Expanded(
                                     child: RawKeyboardListener(
@@ -3251,7 +3454,8 @@ class ChatScreenState extends State<ChatScreen>
                                         focusNode: _focusNode,
                                         controller: _textCtrl,
                                         onTap: () => _suppressAutoRefocus = false,
-                                        maxLines: null,
+                                        minLines: 1,
+                                        maxLines: 5,
                                         style: TextStyle(
                                           color: Theme.of(context)
                                               .colorScheme
@@ -3316,24 +3520,27 @@ class ChatScreenState extends State<ChatScreen>
                                       ),
                                     ),
                                   ),
-                                  MouseRegion(
-                                    cursor: SystemMouseCursors.click,
-                                    child: Material(
-                                      color: Colors.transparent,
-                                      child: InkWell(
-                                        onTap: () => _submitMessage(_textCtrl.text),
-                                        onLongPress: () => _showDeliveryModeDialog(),
-                                        customBorder: const CircleBorder(),
-                                        child: Container(
-                                          width: 36,
-                                          height: 36,
-                                          alignment: Alignment.center,
-                                          child: Icon(
-                                            _isLANMode ? Icons.router : Icons.send,
-                                            color: _isLANMode
-                                                ? Colors.green
-                                                : Theme.of(context).colorScheme.primary,
-                                            size: 20,
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: MouseRegion(
+                                      cursor: SystemMouseCursors.click,
+                                      child: Material(
+                                        color: Colors.transparent,
+                                        child: InkWell(
+                                          onTap: () => _submitMessage(_textCtrl.text),
+                                          onLongPress: () => _showDeliveryModeDialog(),
+                                          customBorder: const CircleBorder(),
+                                          child: Container(
+                                            width: 36,
+                                            height: 36,
+                                            alignment: Alignment.center,
+                                            child: Icon(
+                                              _isLANMode ? Icons.router : Icons.send,
+                                              color: _isLANMode
+                                                  ? Colors.green
+                                                  : Theme.of(context).colorScheme.primary,
+                                              size: 20,
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -4335,6 +4542,7 @@ class _MessageActionsSheet extends StatefulWidget {
   final VoidCallback? onDelete;
   final VoidCallback? onPin;
   final bool isPinned;
+  final VoidCallback? onReact;
 
   const _MessageActionsSheet({
     required this.msg,
@@ -4349,6 +4557,7 @@ class _MessageActionsSheet extends StatefulWidget {
     this.onDelete,
     this.onPin,
     this.isPinned = false,
+    this.onReact,
   });
 
   @override
@@ -4444,6 +4653,7 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
             ),
             const SizedBox(height: 8),
             actionTile(Icons.reply_rounded, 'Reply', widget.onReply),
+            actionTile(Icons.add_reaction_outlined, 'React', widget.onReact),
             actionTile(
               widget.isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
               widget.isPinned ? 'Unpin' : 'Pin',

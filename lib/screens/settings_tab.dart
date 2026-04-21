@@ -25,6 +25,7 @@ import '../models/app_themes.dart';
 import '../models/font_family.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../utils/autostart_manager.dart';
+import '../managers/blocklist_manager.dart';
 
 void _showStyledSnack(BuildContext context, String text, {Duration duration = const Duration(seconds: 2)}) {
   final colorScheme = Theme.of(context).colorScheme;
@@ -285,6 +286,7 @@ class SettingsTab extends StatefulWidget {
   final VoidCallback onShowPassphrase;
   final Future<void> Function(String passphrase, String oldPassword, String newPassword) onChangePassword;
   final VoidCallback onOpenSessions;
+  final void Function(String username) onOpenChat;
 
   const SettingsTab({
     Key? key,
@@ -303,6 +305,7 @@ class SettingsTab extends StatefulWidget {
     required this.onShowPassphrase,
     required this.onChangePassword,
     required this.onOpenSessions,
+    required this.onOpenChat,
   }) : super(key: key);
 
   @override
@@ -1305,147 +1308,7 @@ class _SettingsTabState extends State<SettingsTab>
             title: AppLocalizations.of(context).securityTitle,
             subtitle: AppLocalizations.of(context).securitySubtitle,
             section: SectionType.security,
-            expandedContent: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.lightbulb_outline_rounded, size: 16, color: Colors.amber),
-                    const SizedBox(width: 6),
-                    Text(AppLocalizations.of(context).tipOfTheDay, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  AppLocalizations.of(context).securityTips[_randomTipIndex],
-                  style: const TextStyle(fontSize: 14, color: Colors.grey),
-                ),
-                const SizedBox(height: 16),
-                _buildLiquidGlassButton(
-                  icon: Icons.manage_accounts_rounded,
-                  label: AppLocalizations.of(context).statusSettings,
-                  fontSize: 15,
-                  onPressed: () => _showStatusDialog(),
-                ),
-
-                const SizedBox(height: 8),
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.showDisplayNameInGroups,
-                  builder: (context, showDN, _) => SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(AppLocalizations.of(context).showDisplayNameInGroups,
-                        style: const TextStyle(fontSize: 14)),
-                    subtitle: Text(
-                      AppLocalizations.of(context).showDisplayNameSubtitle,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                    value: showDN,
-                    onChanged: (val) =>
-                        SettingsManager.setShowDisplayNameInGroups(val),
-                  ),
-                ),
-
-                const SizedBox(height: 8),
-                const Divider(),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    const Icon(Icons.pin_rounded, size: 16),
-                    const SizedBox(width: 6),
-                    Text(AppLocalizations.of(context).pinLock, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.pinEnabled,
-                  builder: (context, pinOn, _) => SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(AppLocalizations.of(context).enablePinLock,
-                        style: const TextStyle(fontSize: 14)),
-                    subtitle: Text(
-                      AppLocalizations.of(context).enablePinSubtitle,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                    value: pinOn,
-                    onChanged: (val) async {
-                      if (val) {
-                        
-                        final pinEnabledMsg = AppLocalizations.of(context).pinLockEnabled;
-                        final result = await Navigator.push<String>(
-                          context,
-                          MaterialPageRoute(
-                            fullscreenDialog: true,
-                            builder: (_) => PinCodeScreen.setup(
-                              onPinSet: (pin) => Navigator.pop(context, pin),
-                              onCancel: () => Navigator.pop(context),
-                            ),
-                          ),
-                        );
-                        if (result != null && result.length == 4) {
-                          await SettingsManager.setPin(result);
-                          await SettingsManager.setPinEnabled(true);
-                          _showSnack(pinEnabledMsg);
-                        }
-                      } else {
-                        
-                        final pinDisabledMsg = AppLocalizations.of(context).pinLockDisabled;
-                        final confirmed = await Navigator.push<bool>(
-                          context,
-                          MaterialPageRoute(
-                            fullscreenDialog: true,
-                            builder: (_) => PinCodeScreen.disable(
-                              onSuccess: () => Navigator.pop(context, true),
-                              onCancel: () => Navigator.pop(context, false),
-                            ),
-                          ),
-                        );
-                        if (confirmed == true) {
-                          await SettingsManager.setPinEnabled(false);
-                          await SettingsManager.clearPin();
-                          await SettingsManager.setBiometricEnabled(false);
-                          _showSnack(pinDisabledMsg);
-                        }
-                      }
-                    },
-                  ),
-                ),
-
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.pinEnabled,
-                  builder: (context, pinOn, _) {
-                    if (!pinOn) return const SizedBox.shrink();
-                    return ValueListenableBuilder<bool>(
-                      valueListenable: SettingsManager.biometricEnabled,
-                      builder: (context, bioOn, _) => SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(AppLocalizations.of(context).useBiometrics,
-                            style: const TextStyle(fontSize: 14)),
-                        subtitle: Text(
-                          AppLocalizations.of(context).useBiometricsSubtitle,
-                          style: const TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                        secondary: const Icon(Icons.fingerprint_rounded),
-                        value: bioOn,
-                        onChanged: (val) async {
-                          if (val) {
-                            final unavailMsg = AppLocalizations.of(context).biometricsUnavailable;
-                            final auth = LocalAuthentication();
-                            final supported = await auth.isDeviceSupported();
-                            final canCheck = await auth.canCheckBiometrics;
-                            if (!supported || !canCheck) {
-                              _showSnack(unavailMsg);
-                              return;
-                            }
-                          }
-                          await SettingsManager.setBiometricEnabled(val);
-                        },
-                      ),
-                    );
-                  },
-                ),
-
-              ],
-            ),
+            expandedContent: _buildSecurityContent(),
           ),
           const SizedBox(height: 16),
           _buildLiquidGlassSection(
@@ -1453,57 +1316,7 @@ class _SettingsTabState extends State<SettingsTab>
             title: AppLocalizations.of(context).keyMgmtTitle,
             subtitle: AppLocalizations.of(context).keyMgmtSubtitle,
             section: SectionType.keyManagement,
-            expandedContent: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  AppLocalizations.of(context).keyMgmtDescription,
-                  style: const TextStyle(fontSize: 13, color: Colors.grey),
-                ),
-                const SizedBox(height: 16),
-
-                Opacity(
-                  opacity: widget.isPrimaryDevice ? 1.0 : 0.4,
-                  child: _buildLiquidGlassButton(
-                    icon: Icons.devices_rounded,
-                    label: widget.isPrimaryDevice
-                        ? AppLocalizations.of(context).activeDevices
-                        : AppLocalizations.of(context).activeDevicesPrimaryOnly,
-                    fontSize: 14,
-                    onPressed: widget.isPrimaryDevice ? widget.onOpenSessions : null,
-                  ),
-                ),
-                const SizedBox(height: 10),
-
-                Opacity(
-                  opacity: widget.isPrimaryDevice ? 1.0 : 0.4,
-                  child: _buildLiquidGlassButton(
-                    icon: Icons.visibility_rounded,
-                    label: widget.isPrimaryDevice
-                        ? AppLocalizations.of(context).showPassphrase
-                        : AppLocalizations.of(context).showPassphrasePrimaryOnly,
-                    fontSize: 14,
-                    onPressed: widget.isPrimaryDevice ? widget.onShowPassphrase : null,
-                  ),
-                ),
-                const SizedBox(height: 10),
-
-                Opacity(
-                  opacity: widget.isPrimaryDevice ? 1.0 : 0.4,
-                  child: _buildLiquidGlassButton(
-                    icon: Icons.password_rounded,
-                    label: widget.isPrimaryDevice
-                        ? AppLocalizations.of(context).changePassword
-                        : AppLocalizations.of(context).changePasswordPrimaryOnly,
-                    fontSize: 14,
-                    color: widget.isPrimaryDevice ? null : Colors.grey,
-                    onPressed: widget.isPrimaryDevice
-                        ? () => _showChangePasswordDialog(context)
-                        : null,
-                  ),
-                ),
-              ],
-            ),
+            expandedContent: _buildKeyManagementContent(),
           ),
           const SizedBox(height: 16),
           _buildLiquidGlassSection(
@@ -2321,61 +2134,7 @@ class _SettingsTabState extends State<SettingsTab>
             title: AppLocalizations.of(context).cacheTitle,
             subtitle: AppLocalizations.of(context).cacheSubtitle,
             section: SectionType.cache,
-            expandedContent: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${AppLocalizations.of(context).mediaCacheSize}${_cacheSizeMb != null ? '${_cacheSizeMb!.toStringAsFixed(1)} MB' : AppLocalizations.of(context).loading}',
-                  style: const TextStyle(color: Colors.grey),
-                ),
-                const SizedBox(height: 12),
-                _buildLiquidGlassButton(
-                  icon: Icons.delete_outline,
-                  label: AppLocalizations.of(context).clearLocalCache,
-                  fontSize: 14,
-                  onPressed: _clearCache,
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    const Icon(Icons.cloud_rounded, size: 16),
-                    const SizedBox(width: 6),
-                    Text(AppLocalizations.of(context).serverMediaCache, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                Text(
-                  AppLocalizations.of(context).serverMediaCacheSubtitle,
-                  style: const TextStyle(color: Colors.grey, fontSize: 13),
-                ),
-                const SizedBox(height: 8),
-                _buildLiquidGlassButton(
-                  icon: Icons.delete_forever,
-                  label: AppLocalizations.of(context).clearServerCache,
-                  fontSize: 14,
-                  onPressed: _clearServerCache,
-                ),
-                
-                const SizedBox(height: 16),
-                const Divider(),
-                const SizedBox(height: 12),
-                Text(
-                  AppLocalizations.of(context).dangerZone,
-                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  AppLocalizations.of(context).dangerZoneSubtitle,
-                  style: const TextStyle(color: Colors.grey, fontSize: 13),
-                ),
-                const SizedBox(height: 8),
-                _buildLiquidGlassButton(
-                  icon: Icons.restore,
-                  label: AppLocalizations.of(context).factoryReset,
-                  fontSize: 14,
-                  onPressed: _factoryReset,
-                ),
-              ],
-            ),
+            expandedContent: _buildCacheContent(),
           ),
           const SizedBox(height: 16),
           _buildLiquidGlassSection(
@@ -2383,24 +2142,7 @@ class _SettingsTabState extends State<SettingsTab>
             title: AppLocalizations.of(context).connectionTitle,
             subtitle: AppLocalizations.of(context).connectionSubtitle,
             section: SectionType.connection,
-            expandedContent: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                _buildLiquidGlassButton(
-                  icon: Icons.wifi,
-                  label: AppLocalizations.of(context).connect,
-                  fontSize: 14,
-                  onPressed: widget.onConnectWs,
-                ),
-                _buildLiquidGlassButton(
-                  icon: Icons.wifi_off,
-                  label: AppLocalizations.of(context).disconnect,
-                  fontSize: 14,
-                  onPressed: widget.onDisconnectWs,
-                ),
-              ],
-            ),
+            expandedContent: _buildConnectionContent(),
           ),
           const SizedBox(height: 16),
           _buildLiquidGlassSection(
@@ -2416,36 +2158,7 @@ class _SettingsTabState extends State<SettingsTab>
             title: AppLocalizations.of(context).interactTitle,
             subtitle: AppLocalizations.of(context).interactSubtitle,
             section: SectionType.interact,
-            expandedContent: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.confirmFileUpload,
-                  builder: (_, confirmFile, __) {
-                    return SwitchListTile(
-                      title: Text(AppLocalizations.of(context).confirmFileUpload),
-                      subtitle: Text(AppLocalizations.of(context).confirmFileUploadSubtitle),
-                      value: confirmFile,
-                      onChanged: (val) async =>
-                          await SettingsManager.setConfirmFileUpload(val),
-                    );
-                  },
-                ),
-                const SizedBox(height: 8),
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.confirmVoiceUpload,
-                  builder: (_, confirmVoice, __) {
-                    return SwitchListTile(
-                      title: Text(AppLocalizations.of(context).confirmVoiceMessage),
-                      subtitle: Text(AppLocalizations.of(context).confirmVoiceSubtitle),
-                      value: confirmVoice,
-                      onChanged: (val) async =>
-                          await SettingsManager.setConfirmVoiceUpload(val),
-                    );
-                  },
-                ),
-              ],
-            ),
+            expandedContent: _buildInteractContent(),
           ),
           const SizedBox(height: 16),
           _buildLiquidGlassSection(
@@ -2453,42 +2166,7 @@ class _SettingsTabState extends State<SettingsTab>
             title: AppLocalizations.of(context).debugTitle,
             subtitle: AppLocalizations.of(context).debugSubtitle,
             section: SectionType.debug,
-            expandedContent: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.debugMode,
-                  builder: (_, debugEnabled, __) {
-                    return SwitchListTile(
-                      title: Text(AppLocalizations.of(context).debugMode),
-                      subtitle: Text(AppLocalizations.of(context).debugModeSubtitle),
-                      value: debugEnabled,
-                      onChanged: (val) async =>
-                          await SettingsManager.setDebugMode(val),
-                    );
-                  },
-                ),
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.enableLogging,
-                  builder: (_, loggingEnabled, __) {
-                    return SwitchListTile(
-                      title: Text(AppLocalizations.of(context).enableFileLogging),
-                      subtitle: Text(AppLocalizations.of(context).enableFileLoggingSubtitle),
-                      value: loggingEnabled,
-                      onChanged: (val) async =>
-                          await SettingsManager.setEnableLogging(val),
-                    );
-                  },
-                ),
-                const SizedBox(height: 8),
-                _buildLiquidGlassButton(
-                  icon: Icons.delete_outline,
-                  label: AppLocalizations.of(context).deleteAllLogs,
-                  fontSize: 14,
-                  onPressed: _deleteAllLogs,
-                ),
-              ],
-            ),
+            expandedContent: _buildDebugContent(),
           ),
           const SizedBox(height: 8),
           _buildLiquidGlassSection(
@@ -2498,11 +2176,19 @@ class _SettingsTabState extends State<SettingsTab>
             section: SectionType.contact,
             expandedContent: _buildContactContent(),
           ),
+          const SizedBox(height: 16),
+          _buildLiquidGlassSection(
+            icon: Icons.block_rounded,
+            title: AppLocalizations.of(context).blockedUsersTitle,
+            subtitle: AppLocalizations.of(context).blockedUsersSubtitle,
+            section: SectionType.blockedUsers,
+            expandedContent: _buildBlockedUsersContent(),
+          ),
           const SizedBox(height: 20),
           
           Center( 
             child: Text(
-              'open-beta 1.2a',
+              'open-beta 1.3',
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
@@ -2603,6 +2289,84 @@ class _SettingsTabState extends State<SettingsTab>
     );
   }
 
+
+  Widget _buildBlockedUsersContent() {
+    final l = AppLocalizations.of(context);
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return ValueListenableBuilder<Set<String>>(
+      valueListenable: BlocklistManager.blockedUsers,
+      builder: (_, blocked, __) {
+        if (blocked.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              children: [
+                Icon(Icons.check_circle_outline_rounded, size: 18,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+                const SizedBox(width: 10),
+                Text(
+                  l.blockedUsersEmpty,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return Column(
+          children: blocked.map((username) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      username,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: colorScheme.onSurface,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => widget.onOpenChat(username),
+                    icon: const Icon(Icons.chat_bubble_outline_rounded, size: 20),
+                    tooltip: l.writeMessage,
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                  ),
+                  IconButton(
+                    onPressed: () async {
+                      final username0 = await AccountManager.getCurrentAccount();
+                      if (username0 == null) return;
+                      final token = await AccountManager.getToken(username0);
+                      if (token == null) return;
+                      await http.delete(
+                        Uri.parse('$serverBase/block/$username'),
+                        headers: {'Authorization': 'Bearer $token'},
+                      );
+                      await BlocklistManager.unblock(username);
+                    },
+                    icon: Icon(Icons.lock_open_rounded, size: 20, color: colorScheme.primary),
+                    tooltip: l.unblockAction,
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+
   Widget _buildNotificationsContent() {
     final colorScheme = Theme.of(context).colorScheme;
     final isDesktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
@@ -2662,6 +2426,30 @@ class _SettingsTabState extends State<SettingsTab>
             );
           },
         ),
+
+        if (!isDesktop) ...[
+          const SizedBox(height: 8),
+          const Divider(),
+          const SizedBox(height: 4),
+          ValueListenableBuilder<bool>(
+            valueListenable: SettingsManager.notifHideContent,
+            builder: (_, hidden, __) {
+              return SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  AppLocalizations.of(context).notifHideContentLabel,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(
+                  AppLocalizations.of(context).notifHideContentSubtitle(hidden),
+                  style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
+                ),
+                value: hidden,
+                onChanged: (v) => SettingsManager.setNotifHideContent(v),
+              );
+            },
+          ),
+        ],
 
         if (isDesktop) ...[
           const SizedBox(height: 8),
@@ -3528,6 +3316,270 @@ class _SettingsTabState extends State<SettingsTab>
     );
   }
 
+  Widget _buildSecurityContent() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.lightbulb_outline_rounded, size: 16, color: Colors.amber),
+            const SizedBox(width: 6),
+            Text(AppLocalizations.of(context).tipOfTheDay, style: const TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          AppLocalizations.of(context).securityTips[_randomTipIndex],
+          style: const TextStyle(fontSize: 14, color: Colors.grey),
+        ),
+        const SizedBox(height: 16),
+        _buildLiquidGlassButton(
+          icon: Icons.manage_accounts_rounded,
+          label: AppLocalizations.of(context).statusSettings,
+          fontSize: 15,
+          onPressed: () => _showStatusDialog(),
+        ),
+        const SizedBox(height: 8),
+        ValueListenableBuilder<bool>(
+          valueListenable: SettingsManager.showDisplayNameInGroups,
+          builder: (context, showDN, _) => SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(AppLocalizations.of(context).showDisplayNameInGroups, style: const TextStyle(fontSize: 14)),
+            subtitle: Text(AppLocalizations.of(context).showDisplayNameSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            value: showDN,
+            onChanged: (val) => SettingsManager.setShowDisplayNameInGroups(val),
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Divider(),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            const Icon(Icons.pin_rounded, size: 16),
+            const SizedBox(width: 6),
+            Text(AppLocalizations.of(context).pinLock, style: const TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        ValueListenableBuilder<bool>(
+          valueListenable: SettingsManager.pinEnabled,
+          builder: (context, pinOn, _) => SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(AppLocalizations.of(context).enablePinLock, style: const TextStyle(fontSize: 14)),
+            subtitle: Text(AppLocalizations.of(context).enablePinSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            value: pinOn,
+            onChanged: (val) async {
+              if (val) {
+                final pinEnabledMsg = AppLocalizations.of(context).pinLockEnabled;
+                final result = await Navigator.push<String>(
+                  context,
+                  MaterialPageRoute(
+                    fullscreenDialog: true,
+                    builder: (_) => PinCodeScreen.setup(
+                      onPinSet: (pin) => Navigator.pop(context, pin),
+                      onCancel: () => Navigator.pop(context),
+                    ),
+                  ),
+                );
+                if (result != null && result.length == 4) {
+                  await SettingsManager.setPin(result);
+                  await SettingsManager.setPinEnabled(true);
+                  _showSnack(pinEnabledMsg);
+                }
+              } else {
+                final pinDisabledMsg = AppLocalizations.of(context).pinLockDisabled;
+                final confirmed = await Navigator.push<bool>(
+                  context,
+                  MaterialPageRoute(
+                    fullscreenDialog: true,
+                    builder: (_) => PinCodeScreen.disable(
+                      onSuccess: () => Navigator.pop(context, true),
+                      onCancel: () => Navigator.pop(context, false),
+                    ),
+                  ),
+                );
+                if (confirmed == true) {
+                  await SettingsManager.setPinEnabled(false);
+                  await SettingsManager.clearPin();
+                  await SettingsManager.setBiometricEnabled(false);
+                  _showSnack(pinDisabledMsg);
+                }
+              }
+            },
+          ),
+        ),
+        ValueListenableBuilder<bool>(
+          valueListenable: SettingsManager.pinEnabled,
+          builder: (context, pinOn, _) {
+            if (!pinOn) return const SizedBox.shrink();
+            return ValueListenableBuilder<bool>(
+              valueListenable: SettingsManager.biometricEnabled,
+              builder: (context, bioOn, _) => SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(AppLocalizations.of(context).useBiometrics, style: const TextStyle(fontSize: 14)),
+                subtitle: Text(AppLocalizations.of(context).useBiometricsSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                secondary: const Icon(Icons.fingerprint_rounded),
+                value: bioOn,
+                onChanged: (val) async {
+                  if (val) {
+                    final unavailMsg = AppLocalizations.of(context).biometricsUnavailable;
+                    final auth = LocalAuthentication();
+                    final supported = await auth.isDeviceSupported();
+                    final canCheck = await auth.canCheckBiometrics;
+                    if (!supported || !canCheck) {
+                      _showSnack(unavailMsg);
+                      return;
+                    }
+                  }
+                  await SettingsManager.setBiometricEnabled(val);
+                },
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildKeyManagementContent() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(AppLocalizations.of(context).keyMgmtDescription, style: const TextStyle(fontSize: 13, color: Colors.grey)),
+        const SizedBox(height: 16),
+        Opacity(
+          opacity: widget.isPrimaryDevice ? 1.0 : 0.4,
+          child: _buildLiquidGlassButton(
+            icon: Icons.devices_rounded,
+            label: widget.isPrimaryDevice ? AppLocalizations.of(context).activeDevices : AppLocalizations.of(context).activeDevicesPrimaryOnly,
+            fontSize: 14,
+            onPressed: widget.isPrimaryDevice ? widget.onOpenSessions : null,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Opacity(
+          opacity: widget.isPrimaryDevice ? 1.0 : 0.4,
+          child: _buildLiquidGlassButton(
+            icon: Icons.visibility_rounded,
+            label: widget.isPrimaryDevice ? AppLocalizations.of(context).showPassphrase : AppLocalizations.of(context).showPassphrasePrimaryOnly,
+            fontSize: 14,
+            onPressed: widget.isPrimaryDevice ? widget.onShowPassphrase : null,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Opacity(
+          opacity: widget.isPrimaryDevice ? 1.0 : 0.4,
+          child: _buildLiquidGlassButton(
+            icon: Icons.password_rounded,
+            label: widget.isPrimaryDevice ? AppLocalizations.of(context).changePassword : AppLocalizations.of(context).changePasswordPrimaryOnly,
+            fontSize: 14,
+            color: widget.isPrimaryDevice ? null : Colors.grey,
+            onPressed: widget.isPrimaryDevice ? () => _showChangePasswordDialog(context) : null,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCacheContent() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${AppLocalizations.of(context).mediaCacheSize}${_cacheSizeMb != null ? '${_cacheSizeMb!.toStringAsFixed(1)} MB' : AppLocalizations.of(context).loading}',
+          style: const TextStyle(color: Colors.grey),
+        ),
+        const SizedBox(height: 12),
+        _buildLiquidGlassButton(icon: Icons.delete_outline, label: AppLocalizations.of(context).clearLocalCache, fontSize: 14, onPressed: _clearCache),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            const Icon(Icons.cloud_rounded, size: 16),
+            const SizedBox(width: 6),
+            Text(AppLocalizations.of(context).serverMediaCache, style: const TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        Text(AppLocalizations.of(context).serverMediaCacheSubtitle, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+        const SizedBox(height: 8),
+        _buildLiquidGlassButton(icon: Icons.delete_forever, label: AppLocalizations.of(context).clearServerCache, fontSize: 14, onPressed: _clearServerCache),
+        const SizedBox(height: 16),
+        const Divider(),
+        const SizedBox(height: 12),
+        Text(AppLocalizations.of(context).dangerZone, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+        const SizedBox(height: 4),
+        Text(AppLocalizations.of(context).dangerZoneSubtitle, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+        const SizedBox(height: 8),
+        _buildLiquidGlassButton(icon: Icons.restore, label: AppLocalizations.of(context).factoryReset, fontSize: 14, onPressed: _factoryReset),
+      ],
+    );
+  }
+
+  Widget _buildConnectionContent() {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        _buildLiquidGlassButton(icon: Icons.wifi, label: AppLocalizations.of(context).connect, fontSize: 14, onPressed: widget.onConnectWs),
+        _buildLiquidGlassButton(icon: Icons.wifi_off, label: AppLocalizations.of(context).disconnect, fontSize: 14, onPressed: widget.onDisconnectWs),
+      ],
+    );
+  }
+
+  Widget _buildInteractContent() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ValueListenableBuilder<bool>(
+          valueListenable: SettingsManager.confirmFileUpload,
+          builder: (_, confirmFile, __) => SwitchListTile(
+            title: Text(AppLocalizations.of(context).confirmFileUpload),
+            subtitle: Text(AppLocalizations.of(context).confirmFileUploadSubtitle),
+            value: confirmFile,
+            onChanged: (val) async => await SettingsManager.setConfirmFileUpload(val),
+          ),
+        ),
+        const SizedBox(height: 8),
+        ValueListenableBuilder<bool>(
+          valueListenable: SettingsManager.confirmVoiceUpload,
+          builder: (_, confirmVoice, __) => SwitchListTile(
+            title: Text(AppLocalizations.of(context).confirmVoiceMessage),
+            subtitle: Text(AppLocalizations.of(context).confirmVoiceSubtitle),
+            value: confirmVoice,
+            onChanged: (val) async => await SettingsManager.setConfirmVoiceUpload(val),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDebugContent() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ValueListenableBuilder<bool>(
+          valueListenable: SettingsManager.debugMode,
+          builder: (_, debugEnabled, __) => SwitchListTile(
+            title: Text(AppLocalizations.of(context).debugMode),
+            subtitle: Text(AppLocalizations.of(context).debugModeSubtitle),
+            value: debugEnabled,
+            onChanged: (val) async => await SettingsManager.setDebugMode(val),
+          ),
+        ),
+        ValueListenableBuilder<bool>(
+          valueListenable: SettingsManager.enableLogging,
+          builder: (_, loggingEnabled, __) => SwitchListTile(
+            title: Text(AppLocalizations.of(context).enableFileLogging),
+            subtitle: Text(AppLocalizations.of(context).enableFileLoggingSubtitle),
+            value: loggingEnabled,
+            onChanged: (val) async => await SettingsManager.setEnableLogging(val),
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildLiquidGlassButton(icon: Icons.delete_outline, label: AppLocalizations.of(context).deleteAllLogs, fontSize: 14, onPressed: _deleteAllLogs),
+      ],
+    );
+  }
+
   Widget _buildLiquidGlassSection({
     required String title,
     required String subtitle,
@@ -3731,4 +3783,4 @@ class _SettingsTabState extends State<SettingsTab>
   }
 }
 
-enum SectionType { security, keyManagement, notifications, appearance, language, cache, connection, proxy, interact, debug, contact }
+enum SectionType { security, keyManagement, notifications, appearance, language, cache, connection, proxy, interact, debug, contact, blockedUsers }

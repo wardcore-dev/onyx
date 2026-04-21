@@ -1,5 +1,6 @@
 // lib/widgets/video_message_widget.dart
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemChrome, SystemUiMode, SystemUiOverlay;
 import 'dart:io' show File, Directory, Platform;
@@ -74,6 +75,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
   bool _loading = false;
   bool _error = false;
   File? _cachedFile;
+  double? _downloadProgress; // 0.0–1.0, null = no progress info
 
   Player? _player;
   VideoController? _videoController;
@@ -224,11 +226,26 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
                   '$url?token=${Uri.encodeComponent(matching.first.token)}';
             }
           }
-          final res = await http.get(Uri.parse(url));
-          if (res.statusCode == 200) {
-            await cachedFile.writeAsBytes(res.bodyBytes);
-          } else {
-            throw Exception('HTTP ${res.statusCode}');
+          final client = http.Client();
+          try {
+            final req = http.Request('GET', Uri.parse(url));
+            final streamedRes = await client.send(req);
+            if (streamedRes.statusCode != 200) {
+              throw Exception('HTTP ${streamedRes.statusCode}');
+            }
+            final total = streamedRes.contentLength ?? 0;
+            var received = 0;
+            final bytes = <int>[];
+            await for (final chunk in streamedRes.stream) {
+              bytes.addAll(chunk);
+              received += chunk.length;
+              if (total > 0 && mounted) {
+                setState(() => _downloadProgress = received / total);
+              }
+            }
+            await cachedFile.writeAsBytes(bytes);
+          } finally {
+            client.close();
           }
         }
       } else {
@@ -260,21 +277,37 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
               (widget.owner != null && widget.owner!.isNotEmpty)
                   ? '$serverBase/video/${widget.owner}/${widget.filename}'
                   : '$serverBase/video/${widget.filename}';
-          final res = await http.get(
-            Uri.parse(videoUrl),
-            headers: {'authorization': 'Bearer $token'},
-          );
-          if (res.statusCode != 200) {
-            throw Exception('HTTP ${res.statusCode}');
+          final client = http.Client();
+          final Uint8List encryptedBytes;
+          try {
+            final req = http.Request('GET', Uri.parse(videoUrl));
+            req.headers['authorization'] = 'Bearer $token';
+            final streamedRes = await client.send(req);
+            if (streamedRes.statusCode != 200) {
+              throw Exception('HTTP ${streamedRes.statusCode}');
+            }
+            final total = streamedRes.contentLength ?? 0;
+            var received = 0;
+            final bytes = <int>[];
+            await for (final chunk in streamedRes.stream) {
+              bytes.addAll(chunk);
+              received += chunk.length;
+              if (total > 0 && mounted) {
+                setState(() => _downloadProgress = received / total);
+              }
+            }
+            if (bytes.isEmpty) throw Exception('Empty response');
+            encryptedBytes = Uint8List.fromList(bytes);
+          } finally {
+            client.close();
           }
-          if (res.bodyBytes.isEmpty) throw Exception('Empty response');
 
           final root = rootScreenKey.currentState;
           if (root == null) throw Exception('RootScreen not ready');
 
           final plainBytes = await root.decryptMediaFromPeer(
             widget.peerUsername,
-            res.bodyBytes,
+            encryptedBytes,
             kind: 'video',
             mediaKeyB64: widget.mediaKeyB64,
           );
@@ -423,6 +456,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
       _player = null;
       _videoController = null;
       _aspectRatio = 16 / 9;
+      _downloadProgress = null;
     });
     _loadOrDownload();
   }
@@ -463,7 +497,35 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
     if (_loading) {
       return _sizedBox(
         context,
-        child: const Center(child: CircularProgressIndicator()),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_downloadProgress != null) ...[
+                SizedBox(
+                  width: 120,
+                  child: LinearProgressIndicator(
+                    value: _downloadProgress,
+                    backgroundColor: Colors.white24,
+                    color: Colors.white,
+                    minHeight: 3,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${(_downloadProgress! * 100).toStringAsFixed(0)}%',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ] else
+                const CircularProgressIndicator(color: Colors.white),
+            ],
+          ),
+        ),
         color: Colors.black,
       );
     }

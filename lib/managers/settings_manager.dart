@@ -41,6 +41,7 @@ class SettingsManager {
   static const _notificationPositionKey = 'notification_position';
   static const _notifSoundEnabledKey = 'notif_sound_enabled';
   static const _notifSoundKey = 'notif_sound';
+  static const _notifHideContentKey = 'notif_hide_content';
   static const _proxyEnabledKey = 'proxy_enabled';
   static const _proxyTypeKey = 'proxy_type';
   static const _proxyHostKey = 'proxy_host';
@@ -147,6 +148,9 @@ class SettingsManager {
   static final ValueNotifier<String> notifSound =
       ValueNotifier<String>('notification0');
 
+  static final ValueNotifier<bool> notifHideContent =
+      ValueNotifier<bool>(true);
+
   static final ValueNotifier<bool> proxyEnabled = ValueNotifier<bool>(false);
   static final ValueNotifier<String> proxyType = ValueNotifier<String>('http');
   static final ValueNotifier<String> proxyHost = ValueNotifier<String>('');
@@ -209,6 +213,8 @@ class SettingsManager {
         prefs.getBool(_notifSoundEnabledKey) ?? true;
     final notifSound_ =
         prefs.getString(_notifSoundKey) ?? 'notification0';
+    final notifHideContent_ =
+        prefs.getBool(_notifHideContentKey) ?? true;
 
     final proxyEnabled_ = prefs.getBool(_proxyEnabledKey) ?? false;
     final proxyType_ = prefs.getString(_proxyTypeKey) ?? 'http';
@@ -265,6 +271,7 @@ class SettingsManager {
     SettingsManager.notificationPosition.value = notificationPosition_;
     SettingsManager.notifSoundEnabled.value = notifSoundEnabled_;
     SettingsManager.notifSound.value = notifSound_;
+    SettingsManager.notifHideContent.value = notifHideContent_;
     SettingsManager.proxyEnabled.value = proxyEnabled_;
     SettingsManager.proxyType.value = proxyType_;
     SettingsManager.proxyHost.value = proxyHost_;
@@ -503,6 +510,12 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setString(_notifSoundKey, val);
     notifSound.value = val;
+  }
+
+  static Future<void> setNotifHideContent(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_notifHideContentKey, val);
+    notifHideContent.value = val;
   }
 
   static Future<void> setProxyEnabled(bool val) async {

@@ -231,6 +231,17 @@ class AppLocalizations {
 
   String get noChatsYet => _ru ? 'Чатов пока нет' : 'No chats yet';
   String get deleteChatTitle => _ru ? 'Удалить чат?' : 'Delete chat?';
+  String get blockUserLabel => _ru ? 'Заблокировать' : 'Block user';
+  String get unblockUserLabel => _ru ? 'Разблокировать' : 'Unblock';
+  String get blockedByUserMessage => _ru
+      ? 'Этот пользователь ограничил получение сообщений от вас.'
+      : 'This user has restricted incoming messages from you.';
+  String unblockUserConfirmContent(String name) => _ru
+      ? 'Разблокировать $name?'
+      : 'Unblock $name?';
+  String blockUserConfirmContent(String name) => _ru
+      ? 'Заблокировать $name? Они не смогут отправлять вам сообщения.'
+      : 'Block $name? They won\'t be able to send you messages.';
   String deleteChatContent(String name) => _ru
       ? 'Удалить чат с "$name"? Это действие необратимо.'
       : 'Are you sure you want to delete the chat with "$name"? This action cannot be undone.';
@@ -426,6 +437,11 @@ class AppLocalizations {
     return map[pos] ?? pos;
   }
   String get notifEnableLabel => _ru ? 'Включить уведомления' : 'Enable notifications';
+
+  String get notifHideContentLabel => _ru ? 'Скрывать содержимое' : 'Hide message content';
+  String notifHideContentSubtitle(bool hidden) => _ru
+      ? (hidden ? 'Уведомления без текста сообщения' : 'Показывать текст сообщения')
+      : (hidden ? 'Notifications without message text' : 'Show message text in notifications');
 
   String get notifSoundEnableLabel => _ru ? 'Звук уведомлений' : 'Notification sound';
   String notifSoundEnabledSubtitle(bool enabled) => _ru
@@ -739,6 +755,32 @@ class AppLocalizations {
     };
     return map[s] ?? s;
   }
+
+  // ── Token / session expiry ────────────────────────────────────────────────
+  String get sessionExpiredTitle =>
+      _ru ? 'Сессия истекла' : 'Session expired';
+  String get sessionExpiredSubtitle =>
+      _ru ? 'Войдите заново' : 'Please sign in again';
+  String get sessionSignIn => _ru ? 'Войти' : 'Sign in';
+  String sessionExpiresInDays(int n) => _ru
+      ? 'Сессия истекает через $n д.'
+      : 'Session expires in $n day${n == 1 ? '' : 's'}';
+  String sessionExpiresInHours(int n) => _ru
+      ? 'Сессия истекает через $n ч.'
+      : 'Session expires in $n hour${n == 1 ? '' : 's'}';
+  String sessionActiveForDays(int n) => _ru
+      ? 'Сессия активна ещё $n д.'
+      : 'Session valid for $n more day${n == 1 ? '' : 's'}';
+  String get sessionRenewSoon =>
+      _ru ? 'Скоро потребуется повторный вход' : 'Re-login will be required soon';
+  String get sessionStillValid =>
+      _ru ? 'Токен авторизации действителен' : 'Authorization token is valid';
+
+  String get blockedUsersTitle => _ru ? 'Заблокированные' : 'Blocked Users';
+  String get blockedUsersSubtitle => _ru ? 'Управление блокировками' : 'Manage blocked users';
+  String get blockedUsersEmpty => _ru ? 'Список заблокированных пуст' : 'No blocked users';
+  String get unblockAction => _ru ? 'Разблокировать' : 'Unblock';
+  String get writeMessage => _ru ? 'Написать' : 'Write';
 }
 
 class _AppLocalizationsDelegate

@@ -87,13 +87,19 @@ class _AccountsTabState extends State<AccountsTab>
 
   List<String> _accounts = [];
   Map<String, String?> _pubFingerprints = {};
-  
+
   Map<String, String?> _displayNames = {};
-  
+
   Map<String, DateTime?> _lastUsed = {};
   late final AnimationController _fadeController;
   late final Animation<double> _fadeAnimation;
   bool _isVisible = false;
+
+  // Token expiry
+  DateTime? _tokenExpiresAt;
+  static const Duration _tokenLifetime = Duration(days: 30);
+  // ── Set to false to hide banner when session is healthy ──────────────────
+  static const bool _debugAlwaysShowTokenBanner = false;
 
   Future<void> _refreshMetaAndSort() async {
     final meta = await AccountManager.getAccountsMeta();
@@ -153,14 +159,27 @@ class _AccountsTabState extends State<AccountsTab>
         _fadeController.forward();
       }
     });
+
+    _loadTokenExpiry();
+  }
+
+  Future<void> _loadTokenExpiry() async {
+    final username = widget.currentUsername;
+    if (username == null) return;
+    final createdAt = await AccountManager.getTokenCreatedAt(username);
+    if (!mounted) return;
+    setState(() {
+      _tokenExpiresAt = createdAt?.add(_tokenLifetime);
+    });
   }
 
   @override
   void didUpdateWidget(AccountsTab old) {
     super.didUpdateWidget(old);
-    
+
     if (old.currentUsername != widget.currentUsername) {
       _refreshMetaAndSort();
+      _loadTokenExpiry();
     }
   }
 
@@ -517,6 +536,145 @@ class _AccountsTabState extends State<AccountsTab>
     }
   }
 
+  // ── Token expiry banner ────────────────────────────────────────────────────
+
+  Widget? _buildTokenExpiryBanner(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
+    final now = DateTime.now();
+
+    // Debug preview: treat as if token expires in 2 days
+    final expiresAt = _debugAlwaysShowTokenBanner
+        ? now.add(const Duration(days: 2))
+        : _tokenExpiresAt;
+
+    if (expiresAt == null) return null;
+
+    final diff = expiresAt.difference(now);
+    final expired = diff.isNegative;
+    final daysLeft = diff.inDays;
+    final hoursLeft = diff.inHours;
+
+    // Production: only show when ≤7 days left or expired
+    if (!_debugAlwaysShowTokenBanner && !expired && daysLeft > 7) return null;
+
+    final Color bgColor;
+    final Color fgColor;
+    final Color borderColor;
+    final IconData icon;
+    final String title;
+    final String subtitle;
+    final bool showButton;
+
+    if (expired) {
+      bgColor = cs.errorContainer;
+      fgColor = cs.onErrorContainer;
+      borderColor = cs.error.withValues(alpha: 0.4);
+      icon = Icons.lock_outline_rounded;
+      title = l.sessionExpiredTitle;
+      subtitle = l.sessionExpiredSubtitle;
+      showButton = true;
+    } else if (daysLeft < 1) {
+      bgColor = cs.errorContainer.withValues(alpha: 0.85);
+      fgColor = cs.onErrorContainer;
+      borderColor = cs.error.withValues(alpha: 0.35);
+      icon = Icons.timer_outlined;
+      title = l.sessionExpiresInHours(hoursLeft);
+      subtitle = l.sessionRenewSoon;
+      showButton = true;
+    } else if (daysLeft <= 7) {
+      bgColor = cs.tertiaryContainer.withValues(alpha: 0.85);
+      fgColor = cs.onTertiaryContainer;
+      borderColor = cs.tertiary.withValues(alpha: 0.35);
+      icon = Icons.timer_outlined;
+      title = l.sessionExpiresInDays(daysLeft);
+      subtitle = l.sessionRenewSoon;
+      showButton = true;
+    } else {
+      // Debug only — healthy session
+      bgColor = cs.primaryContainer.withValues(alpha: 0.75);
+      fgColor = cs.onPrimaryContainer;
+      borderColor = cs.primary.withValues(alpha: 0.3);
+      icon = Icons.verified_user_outlined;
+      title = l.sessionActiveForDays(daysLeft);
+      subtitle = l.sessionStillValid;
+      showButton = false;
+    }
+
+    return ValueListenableBuilder<double>(
+      valueListenable: SettingsManager.elementOpacity,
+      builder: (_, opacity, __) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: bgColor.withValues(alpha: opacity.clamp(0.55, 1.0)),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: borderColor, width: 1.0),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: fgColor, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: fgColor,
+                        height: 1.2,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: fgColor.withValues(alpha: 0.72),
+                        height: 1.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (showButton) ...[
+                const SizedBox(width: 6),
+                TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: fgColor,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    textStyle: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                  onPressed: () async {
+                    await showGeneralDialog(
+                      context: context,
+                      barrierDismissible: true,
+                      barrierLabel: 'Authentication',
+                      transitionDuration: const Duration(milliseconds: 133),
+                      pageBuilder: (ctx, anim1, anim2) => AuthDialog(
+                        onLogin: widget.onLogin,
+                        onRegister: widget.onRegister,
+                      ),
+                    );
+                    if (mounted) _loadTokenExpiry();
+                  },
+                  child: Text(l.sessionSignIn),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _showSnack(String text) {
     if (!mounted) return;
     final colorScheme = Theme.of(context).colorScheme;
@@ -620,6 +778,15 @@ class _AccountsTabState extends State<AccountsTab>
             ),
 
           const SizedBox(height: 12),
+
+          // Token expiry banner
+          if (widget.currentUsername != null) ...[
+            Builder(builder: (ctx) {
+              final banner = _buildTokenExpiryBanner(ctx);
+              if (banner == null) return const SizedBox.shrink();
+              return Column(children: [banner, const SizedBox(height: 12)]);
+            }),
+          ],
 
           if (widget.currentUsername != null)
             ValueListenableBuilder<double>(
@@ -852,8 +1019,7 @@ class _AccountsTabState extends State<AccountsTab>
                           ),
                         ),
                       );
-                    })
-                    .toList(),
+                    }),
               ],
             ),
         ],

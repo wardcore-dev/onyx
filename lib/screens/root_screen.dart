@@ -54,6 +54,7 @@ import '../widgets/auth_dialog.dart';
 import '../widgets/voice_confirm_dialog.dart';
 import '../widgets/search_dialog_content.dart';
 import '../screens/chats_tab.dart';
+import '../managers/blocklist_manager.dart';
 import '../screens/accounts_tab.dart';
 import '../screens/active_sessions_screen.dart';
 import '../utils/optimized_state_manager.dart';
@@ -83,6 +84,8 @@ import '../l10n/app_localizations.dart';
 import '../utils/update_checker.dart';
 import '../widgets/update_banner.dart';
 import '../widgets/about_onyx_dialog.dart';
+import '../screens/pin_code_screen.dart';
+import 'package:local_auth/local_auth.dart';
 
 final Map<String, List<int>> _pubkeyCache = {};
 
@@ -198,6 +201,12 @@ class RootScreenState extends State<RootScreen>
   final Set<int> _activeGroupChatIds = {};
   final Map<int, void Function(Map<String, dynamic>)> _groupMessageListeners =
       {};
+
+  // Private (1:1) reaction updates — one active chat at a time
+  void Function(Map<String, dynamic>)? _privateReactionCallback;
+  // Buffered reaction updates for DMs that arrive when the chat screen is closed.
+  // Keyed by the other user's username; flushed when that chat opens.
+  final Map<String, List<Map<String, dynamic>>> _pendingPrivateReactions = {};
 
   final List<String> _log = [];
   Timer? _wsHeartbeat;
@@ -2560,8 +2569,67 @@ class RootScreenState extends State<RootScreen>
     _appendLog('[chats] loaded ${chats.length} chats for $username');
   }
 
+  Future<void> _switchToAccountWithAuth(String username) async {
+    if (!SettingsManager.pinEnabled.value) {
+      _switchToAccount(username);
+      return;
+    }
+    if (!mounted) return;
+
+    final localAuth = LocalAuthentication();
+
+    // Сначала пробуем биометрию если включена
+    if (SettingsManager.biometricEnabled.value) {
+      try {
+        final supported = await localAuth.isDeviceSupported();
+        if (supported) {
+          final didAuth = await localAuth.authenticate(
+            localizedReason: 'Confirm account switch',
+            options: const AuthenticationOptions(biometricOnly: false),
+          );
+          if (didAuth) {
+            _switchToAccount(username);
+            return;
+          }
+        }
+      } catch (e) {
+        debugPrint('[biometric] account switch auth error: $e');
+      }
+    }
+
+    // Если биометрия не прошла или не включена — показываем PIN-экран
+    if (!mounted) return;
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      fullscreenDialog: true,
+      builder: (routeCtx) => PinCodeScreen.verify(
+        onSuccess: () {
+          Navigator.of(routeCtx).pop();
+          _switchToAccount(username);
+        },
+        onBiometric: SettingsManager.biometricEnabled.value
+            ? () async {
+                try {
+                  final supported = await localAuth.isDeviceSupported();
+                  if (!supported) return;
+                  final didAuth = await localAuth.authenticate(
+                    localizedReason: 'Confirm account switch',
+                    options: const AuthenticationOptions(biometricOnly: false),
+                  );
+                  if (didAuth && routeCtx.mounted) {
+                    Navigator.of(routeCtx).pop();
+                    _switchToAccount(username);
+                  }
+                } catch (e) {
+                  debugPrint('[biometric] account switch auth error: $e');
+                }
+              }
+            : null,
+      ),
+    ));
+  }
+
   Future<void> _switchToAccount(String username) async {
-    
+
     if (_isSwitchingAccount) {
       _appendLog('[account] switch to $username queued (switch in progress)');
       _pendingAccountSwitch = username;
@@ -2851,17 +2919,20 @@ class RootScreenState extends State<RootScreen>
         final chatIsOpen = selectedChatOther == sender && count == 1;
         if (!chatIsOpen) {
           unawaited(() async {
-            final avatarBytes = await getAvatarCachedBytes(sender);
+            final hideContent = SettingsManager.notifHideContent.value;
+            final notifTitle = hideContent ? 'ONYX' : senderDisplayName;
+            final notifBody = hideContent ? 'New message' : finalPreview;
+            final avatarBytes = hideContent ? null : await getAvatarCachedBytes(sender);
             await NotificationService.showMessageNotification(
-              title: senderDisplayName,
-              body: finalPreview,
+              title: notifTitle,
+              body: notifBody,
               username: sender,
               avatarBytes: avatarBytes,
               accentColor: colorScheme.primary,
               avatarBgColor: colorScheme.primaryContainer,
               avatarLetterColor: colorScheme.onPrimaryContainer,
               timestamp: DateTime.now(),
-              conversationTitle: senderDisplayName,
+              conversationTitle: notifTitle,
             );
           }());
         }
@@ -3402,6 +3473,7 @@ class RootScreenState extends State<RootScreen>
                 try {
                   
                   unawaited(_requestStatusSnapshotForKnownUsers());
+                  unawaited(_syncBlocklistFromServer());
 
                   final known = Set<String>.from(chats.keys);
                   if (selectedChatOther != null) known.add(selectedChatOther!);
@@ -3898,6 +3970,28 @@ class RootScreenState extends State<RootScreen>
                 return;
               }
 
+              if (typ == 'blocked') {
+                final localId = obj['local_id'] as String?;
+                final blockedTo = obj['to'] as String?;
+                _appendLog('[ws] blocked: to=$blockedTo local_id=$localId');
+                // Remove the optimistically-added message from the chat
+                if (localId != null && blockedTo != null) {
+                  final chatId = chatIdForUser(blockedTo);
+                  final msgs = chats[chatId];
+                  if (msgs != null) {
+                    msgs.removeWhere((m) => m.id == localId);
+                    addChatListHint(chatId);
+                    chatsVersion.value++;
+                    schedulePersistChats(chatId: chatId);
+                  }
+                }
+                if (!mounted) return;
+                showSnack(
+                  AppLocalizations(SettingsManager.appLocale.value).blockedByUserMessage,
+                );
+                return;
+              }
+
               if (typ == 'msg_delivered') {
                 final serverId = obj['id'];
                 final delivered = obj['delivered'] == true;
@@ -4013,6 +4107,33 @@ class RootScreenState extends State<RootScreen>
                 _appendLog('[ws] session_revoked — logging out immediately');
                 _disconnectWs(manual: true);
                 await _logout();
+                return;
+              }
+
+              if (typ == 'reaction_update') {
+                final msgType = obj['message_type'] as String?;
+                final groupId = obj['group_id'] as int?;
+                if (msgType == 'group' && groupId != null &&
+                    _groupMessageListeners.containsKey(groupId)) {
+                  _groupMessageListeners[groupId]!(obj);
+                } else if (msgType == 'private') {
+                  if (_privateReactionCallback != null) {
+                    _privateReactionCallback!(obj);
+                  } else {
+                    // Chat screen is closed — buffer for when it opens.
+                    final actor = obj['actor'] as String?;
+                    final otherInPacket = obj['other_username'] as String?;
+                    final me = currentUsername;
+                    final partner = (actor != null && actor != me)
+                        ? actor
+                        : (otherInPacket ?? actor);
+                    if (partner != null) {
+                      _pendingPrivateReactions
+                          .putIfAbsent(partner, () => [])
+                          .add(obj);
+                    }
+                  }
+                }
                 return;
               }
 
@@ -4160,6 +4281,24 @@ class RootScreenState extends State<RootScreen>
   void unsubscribeFromGroup(int groupId) {
     _groupMessageListeners.remove(groupId);
     _activeGroupChatIds.remove(groupId);
+  }
+
+  void subscribeToPrivateReactions(
+    String otherUsername,
+    void Function(Map<String, dynamic>) cb,
+  ) {
+    _privateReactionCallback = cb;
+    // Flush any buffered updates that arrived while the chat was closed.
+    final pending = _pendingPrivateReactions.remove(otherUsername);
+    if (pending != null) {
+      for (final update in pending) {
+        cb(update);
+      }
+    }
+  }
+
+  void unsubscribeFromPrivateReactions() {
+    _privateReactionCallback = null;
   }
 
   Future<void> _preloadUserProfiles() async {
@@ -5490,6 +5629,61 @@ class RootScreenState extends State<RootScreen>
     schedulePersistChats(chatId: chatId);
   }
 
+  Future<void> _syncBlocklistFromServer() async {
+    try {
+      final me = await AccountManager.getCurrentAccount();
+      if (me == null) return;
+      final token = await AccountManager.getToken(me);
+      if (token == null) return;
+      final res = await http.get(
+        Uri.parse('$serverBase/blocks'),
+        headers: {'authorization': 'Bearer $token'},
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        final list = (data['blocked'] as List?)?.cast<String>() ?? [];
+        await BlocklistManager.syncFromServer(list);
+        debugPrint('[blocklist] synced from server: $list');
+      }
+    } catch (e) {
+      debugPrint('[blocklist] sync failed: $e');
+    }
+  }
+
+  Future<void> _blockUser(String username, String displayName) async {
+    await BlocklistManager.block(username);
+    try {
+      final me = await AccountManager.getCurrentAccount();
+      if (me == null) return;
+      final token = await AccountManager.getToken(me);
+      if (token == null) return;
+      final res = await http.post(
+        Uri.parse('$serverBase/block/$username'),
+        headers: {'authorization': 'Bearer $token'},
+      );
+      debugPrint('[block] server response: ${res.statusCode}');
+    } catch (e) {
+      debugPrint('[block] server call failed: $e');
+    }
+  }
+
+  Future<void> _unblockUser(String username) async {
+    await BlocklistManager.unblock(username);
+    try {
+      final me = await AccountManager.getCurrentAccount();
+      if (me == null) return;
+      final token = await AccountManager.getToken(me);
+      if (token == null) return;
+      final res = await http.delete(
+        Uri.parse('$serverBase/block/$username'),
+        headers: {'authorization': 'Bearer $token'},
+      );
+      debugPrint('[unblock] server response: ${res.statusCode}');
+    } catch (e) {
+      debugPrint('[unblock] server call failed: $e');
+    }
+  }
+
   Future<String?> _getLocalIp() async {
     try {
       final info = NetworkInfo();
@@ -6008,6 +6202,8 @@ class RootScreenState extends State<RootScreen>
                                       if (!isDesktop) FocusScope.of(context).requestFocus(FocusNode());
                                     },
                                     onDeleteChat: _deleteChat,
+                                    onBlockUser: _blockUser,
+                                    onUnblockUser: _unblockUser,
                                   ),
 
                                   GroupsTab(
@@ -6059,7 +6255,7 @@ class RootScreenState extends State<RootScreen>
                                         : null,
                                     onLogin: _login,
                                     onRegister: _register,
-                                    onSwitchAccount: _switchToAccount,
+                                    onSwitchAccount: _switchToAccountWithAuth,
                                     onDeleteAccount: _deleteAccount,
                                     logs: _log,
                                     currentTheme: widget.currentTheme,
@@ -6081,6 +6277,18 @@ class RootScreenState extends State<RootScreen>
                                     onShowPassphrase: _showPassphrase,
                                     onChangePassword: _changePassword,
                                     onOpenSessions: _openSessions,
+                                    onOpenChat: (username) {
+                                      _onTabSelected(0);
+                                      final chatId = chatIdForUser(username);
+                                      chats.putIfAbsent(chatId, () => []);
+                                      setState(() {
+                                        selectedChatOther = username;
+                                        selectedGroup = null;
+                                        selectedExternalGroup = null;
+                                        selectedExternalServer = null;
+                                        _selectedFavoriteId = null;
+                                      });
+                                    },
                                   ),
 
                                   if (_isPrimaryDevice)
@@ -6191,14 +6399,11 @@ class RootScreenState extends State<RootScreen>
                                                         MainAxisAlignment
                                                             .center,
                                                     children: [
-                                                      Icon(
-                                                        Icons
-                                                            .chat_bubble_outline,
-                                                        size: 56,
-                                                        color: Theme.of(context)
-                                                            .colorScheme
-                                                            .outline
-                                                            .withOpacity(0.7),
+                                                      Image.asset(
+                                                        'assets/onyx_icon.png',
+                                                        width: 56,
+                                                        height: 56,
+                                                        opacity: const AlwaysStoppedAnimation(0.85),
                                                       ),
                                                       const SizedBox(
                                                           height: 16),
@@ -6392,7 +6597,7 @@ class RootScreenState extends State<RootScreen>
                   identityPubFp: null,
                   onLogin: _login,
                   onRegister: _register,
-                  onSwitchAccount: _switchToAccount,
+                  onSwitchAccount: _switchToAccountWithAuth,
                   onDeleteAccount: _deleteAccount,
                   logs: _log,
                   currentTheme: widget.currentTheme,
@@ -6444,8 +6649,10 @@ class RootScreenState extends State<RootScreen>
           }
         },
         onDeleteChat: _deleteChat,
+        onBlockUser: _blockUser,
+        onUnblockUser: _unblockUser,
       ),
-      
+
       GroupsTab(
         onOpenGroup: (group) {
           if (group.isExternal) {
@@ -6508,7 +6715,7 @@ class RootScreenState extends State<RootScreen>
             : null,
         onLogin: _login,
         onRegister: _register,
-        onSwitchAccount: _switchToAccount,
+        onSwitchAccount: _switchToAccountWithAuth,
         onDeleteAccount: _deleteAccount,
         logs: _log,
         currentTheme: widget.currentTheme,
@@ -6530,6 +6737,18 @@ class RootScreenState extends State<RootScreen>
         onShowPassphrase: _showPassphrase,
         onChangePassword: _changePassword,
         onOpenSessions: _openSessions,
+        onOpenChat: (username) {
+          _onTabSelected(0);
+          final chatId = chatIdForUser(username);
+          chats.putIfAbsent(chatId, () => []);
+          setState(() {
+            selectedChatOther = username;
+            selectedGroup = null;
+            selectedExternalGroup = null;
+            selectedExternalServer = null;
+            _selectedFavoriteId = null;
+          });
+        },
       ),
 
       if (_isPrimaryDevice)
