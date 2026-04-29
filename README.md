@@ -2,6 +2,8 @@
 
 Private and anonymous self-hosted messenger.
 
+![ONYX Messenger](screenshots/screenshot2.png)
+
 ## Features
 
 - End-to-end encrypted messaging
