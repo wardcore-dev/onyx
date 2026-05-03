@@ -36,6 +36,7 @@ dependencies:
   record: ^6.1.2
   url_launcher: ^6.3.0
   just_audio: ^0.9.37
+  just_audio_windows: ^0.2.0
   shared_preferences: ^2.1.0
   window_manager: ^0.4.0
   tray_manager: ^0.2.3
@@ -47,15 +48,15 @@ dependencies:
 
 
 
-  flutter_cache_manager: ^3.3.1 # Для кэширования файлов
+  flutter_cache_manager: ^3.3.1 
 
   gallery_saver_plus: ^3.2.9
   
-  video_player: ^2.10.0    # mobile/web
-  media_kit: ^1.1.10                  # cross-platform video (desktop + mobile)
+  video_player: ^2.10.0    
+  media_kit: ^1.1.10                  
   media_kit_video: ^1.2.4
   media_kit_libs_video: ^1.0.4
-  visibility_detector: ^0.2.2  # для паузы при прокрутке (опционально)
+  visibility_detector: ^0.2.2 
   
   super_clipboard: ^0.9.1
   open_filex: ^4.7.0
@@ -86,6 +87,8 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
   flutter_launcher_icons: ^0.13.1
+
+
 
 flutter:
   uses-material-design: true

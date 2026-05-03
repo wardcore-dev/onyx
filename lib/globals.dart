@@ -10,6 +10,10 @@ import 'screens/root_screen.dart';
 
 final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<void>>();
 
+/// Root navigator key — used by widgets that live above the Navigator in the
+/// widget tree (e.g. VinylPlayerButton in MaterialApp.builder) to open modals.
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 /// Maps message filename/key → local cached file path for video/voice/file messages.
 final Map<String, String> mediaFilePathRegistry = {};
 
@@ -94,7 +98,7 @@ const String wsUrl = 'wss://api-onyx.wardcore.com/ws';
 const String publicIpApi = 'https://api.ipify.org';
 
 
-const String kAppVersion = 'v1.3-beta';
+const String kAppVersion = 'v1.4-beta';
 
 bool get isDesktop {
   if (kIsWeb) return false;

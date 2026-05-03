@@ -12,6 +12,7 @@ import '../widgets/avatar_widget.dart';
 import '../managers/user_cache.dart';
 import '../l10n/app_localizations.dart';
 import '../managers/blocklist_manager.dart';
+import '../managers/mute_manager.dart';
 
 String _getFileTypeLabel(String filename) {
   final ext = filename.toLowerCase();
@@ -529,6 +530,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
   void _showChatActionsSheet(BuildContext context, _ChatSumm summary) {
     final colorScheme = Theme.of(context).colorScheme;
     final isBlocked = BlocklistManager.isBlocked(summary.otherUsername);
+    final isMuted = MuteManager.isMuted(summary.otherUsername);
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -557,6 +559,26 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                     ),
                   ),
                   const SizedBox(height: 4),
+                  ListTile(
+                    leading: Icon(
+                      isMuted ? Icons.notifications_active_outlined : Icons.notifications_off_outlined,
+                      color: colorScheme.onSurface,
+                    ),
+                    title: Text(
+                      isMuted
+                          ? AppLocalizations.of(context).unmuteUserLabel
+                          : AppLocalizations.of(context).muteUserLabel,
+                    ),
+                    onTap: () {
+                      Navigator.of(sheetCtx).pop();
+                      if (isMuted) {
+                        MuteManager.unmute(summary.otherUsername);
+                      } else {
+                        MuteManager.mute(summary.otherUsername);
+                      }
+                    },
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
                   if (isBlocked)
                     ListTile(
                       leading: Icon(Icons.lock_open_rounded, color: colorScheme.primary),
@@ -599,6 +621,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
   void _showDesktopContextMenu(BuildContext context, Offset globalPosition, _ChatSumm summary) {
     final colorScheme = Theme.of(context).colorScheme;
     final isBlocked = BlocklistManager.isBlocked(summary.otherUsername);
+    final isMuted = MuteManager.isMuted(summary.otherUsername);
     showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -606,6 +629,24 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
         globalPosition.dx, globalPosition.dy,
       ),
       items: [
+        PopupMenuItem<String>(
+          value: isMuted ? 'unmute' : 'mute',
+          child: Row(
+            children: [
+              Icon(
+                isMuted ? Icons.notifications_active_outlined : Icons.notifications_off_outlined,
+                size: 18,
+                color: colorScheme.onSurface,
+              ),
+              const SizedBox(width: 10),
+              Text(
+                isMuted
+                    ? AppLocalizations.of(context).unmuteUserLabel
+                    : AppLocalizations.of(context).muteUserLabel,
+              ),
+            ],
+          ),
+        ),
         if (isBlocked)
           PopupMenuItem<String>(
             value: 'unblock',
@@ -641,7 +682,11 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
       ],
     ).then((value) {
       if (!context.mounted) return;
-      if (value == 'block') {
+      if (value == 'mute') {
+        MuteManager.mute(summary.otherUsername);
+      } else if (value == 'unmute') {
+        MuteManager.unmute(summary.otherUsername);
+      } else if (value == 'block') {
         _showBlockConfirmationDialog(context, summary);
       } else if (value == 'unblock') {
         _showUnblockConfirmationDialog(context, summary);
@@ -931,24 +976,47 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                         ],
                       ),
                     ),
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        if (it.lastTs.millisecondsSinceEpoch > 0)
-                          Text(
-                            _formatTime(it.lastTs),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurface
-                                  .withValues(alpha: 0.6),
+                    ValueListenableBuilder<Set<String>>(
+                      valueListenable: MuteManager.mutedUsers,
+                      builder: (_, muted, __) {
+                        final isMuted = muted.contains(it.otherUsername);
+                        return Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            if (it.lastTs.millisecondsSinceEpoch > 0)
+                              Text(
+                                _formatTime(it.lastTs),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.6),
+                                ),
+                              ),
+                            const SizedBox(height: 4),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (isMuted)
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 4),
+                                    child: Icon(
+                                      Icons.notifications_off_outlined,
+                                      size: 14,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurface
+                                          .withValues(alpha: 0.4),
+                                    ),
+                                  ),
+                                _UnreadBadge(chatId: it.chatId),
+                              ],
                             ),
-                          ),
-                        const SizedBox(height: 4),
-                        _UnreadBadge(chatId: it.chatId),
-                      ],
+                          ],
+                        );
+                      },
                     ),
                     
                   ],

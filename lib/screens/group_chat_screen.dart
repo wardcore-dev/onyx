@@ -38,9 +38,9 @@ import '../widgets/pending_upload_card.dart';
 import '../widgets/chat_search_bar.dart';
 import '../widgets/animated_message_bubble.dart';
 import '../widgets/message_reaction_bar.dart';
+import '../widgets/media_picker_sheet.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/services.dart';
 
 const List<String> _randomHints = [
   'Say something!',
@@ -2044,26 +2044,24 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       }
       return;
     }
-    FilePickerResult? result;
-    try {
-      result = await FilePicker.platform
-          .pickFiles(type: FileType.any, allowMultiple: true);
-    } catch (e) {
-      debugPrint('[Attach] FilePicker error: $e');
-      if (mounted)
-        rootScreenKey.currentState?.showSnack('File picker error: $e');
-      return;
-    }
-    if (result?.files.isEmpty ?? true) return;
 
-    final paths = result!.files.map((f) => f.path).whereType<String>().toList();
-    if (paths.isEmpty) {
-      if (mounted)
-        rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
-                .localFileRequired);
-      return;
+    List<String>? paths;
+    if (Platform.isAndroid || Platform.isIOS) {
+      paths = await showMediaPickerSheet(context);
+    } else {
+      try {
+        final result = await FilePicker.platform
+            .pickFiles(type: FileType.any, allowMultiple: true);
+        paths = result?.files.map((f) => f.path).whereType<String>().toList();
+      } catch (e) {
+        debugPrint('[Attach] FilePicker error: $e');
+        if (mounted) {
+          rootScreenKey.currentState?.showSnack('File picker error: $e');
+        }
+        return;
+      }
     }
+    if (paths == null || paths.isEmpty) return;
 
     if (paths.length > 1 && paths.every(FileTypeDetector.isImage)) {
       if (SettingsManager.confirmFileUpload.value) {
@@ -2071,8 +2069,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         showDialog(
           context: context,
           builder: (_) => AlbumPreviewDialog(
-            filePaths: paths,
-            onSend: () => _processAndUploadAlbum(paths),
+            filePaths: paths!,
+            onSend: () => _processAndUploadAlbum(paths!),
             onCancel: () {},
           ),
         );

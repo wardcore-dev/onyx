@@ -37,6 +37,7 @@ import '../widgets/pending_upload_card.dart';
 import '../widgets/chat_search_bar.dart';
 import '../widgets/animated_message_bubble.dart';
 import '../widgets/message_reaction_bar.dart';
+import '../widgets/media_picker_sheet.dart';
 
 abstract class _ListItem {}
 
@@ -1932,41 +1933,41 @@ class _FavoritesScreenState extends State<FavoritesScreen>
             size: 20,
           ),
           onPressed: () async {
-            if (!kIsWeb) {
+            if (kIsWeb) return;
+
+            List<String>? paths;
+            if (Platform.isAndroid || Platform.isIOS) {
+              paths = await showMediaPickerSheet(context);
+            } else {
               try {
-              final picker = FilePicker.platform;
-              final result = await picker.pickFiles(
-                  type: FileType.any, allowMultiple: true);
-              if (result == null || result.files.isEmpty) return;
-
-              final paths = result.files
-                  .map((f) => f.path)
-                  .whereType<String>()
-                  .toList();
-              if (paths.isEmpty) return;
-
-              if (paths.length > 1 &&
-                  paths.every(FileTypeDetector.isImage)) {
-                await _sendAlbum(paths);
-                return;
-              }
-
-              final path = paths.first;
-              if (!FileTypeDetector.isAllowed(path)) {
-                final ext = p.extension(path).toLowerCase();
-                rootScreenKey.currentState
-                    ?.showSnack('Unsupported file type: $ext');
-                return;
-              }
-              final basename = p.basename(path);
-              final ext = p.extension(basename).toLowerCase();
-              final type = FileTypeDetector.getFileType(path);
-              _showFilePreviewAndSend(path, basename, ext, type);
+                final result = await FilePicker.platform
+                    .pickFiles(type: FileType.any, allowMultiple: true);
+                paths = result?.files
+                    .map((f) => f.path)
+                    .whereType<String>()
+                    .toList();
               } catch (e) {
                 debugPrint('[Attach] FilePicker error: $e');
                 rootScreenKey.currentState?.showSnack('File picker error: $e');
               }
             }
+            if (paths == null || paths.isEmpty) return;
+
+            if (paths.length > 1 && paths.every(FileTypeDetector.isImage)) {
+              await _sendAlbum(paths);
+              return;
+            }
+
+            final path = paths.first;
+            if (!FileTypeDetector.isAllowed(path)) {
+              final ext = p.extension(path).toLowerCase();
+              rootScreenKey.currentState?.showSnack('Unsupported file type: $ext');
+              return;
+            }
+            final basename = p.basename(path);
+            final ext = p.extension(basename).toLowerCase();
+            final type = FileTypeDetector.getFileType(path);
+            _showFilePreviewAndSend(path, basename, ext, type);
           },
           visualDensity: VisualDensity.compact,
           splashRadius: 20,

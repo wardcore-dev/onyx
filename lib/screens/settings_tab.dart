@@ -26,6 +26,7 @@ import '../models/font_family.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../utils/autostart_manager.dart';
 import '../managers/blocklist_manager.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' show MediaDeviceInfo, navigator;
 
 void _showStyledSnack(BuildContext context, String text, {Duration duration = const Duration(seconds: 2)}) {
   final colorScheme = Theme.of(context).colorScheme;
@@ -325,6 +326,8 @@ class _SettingsTabState extends State<SettingsTab>
   late final Animation<double> _fadeAnimation;
   bool _isVisible = false;
 
+  List<MediaDeviceInfo>? _audioDevices;
+
   SectionType? _expandedSection;
 
   late TextEditingController _statusOnlineController;
@@ -371,6 +374,12 @@ class _SettingsTabState extends State<SettingsTab>
 
     SettingsManager.statusOnline.addListener(_updateStatusOnlineController);
     SettingsManager.statusOffline.addListener(_updateStatusOfflineController);
+
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      navigator.mediaDevices.enumerateDevices().then((devices) {
+        if (mounted) setState(() => _audioDevices = devices);
+      });
+    }
 
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 300),
@@ -1318,6 +1327,16 @@ class _SettingsTabState extends State<SettingsTab>
             section: SectionType.keyManagement,
             expandedContent: _buildKeyManagementContent(),
           ),
+          if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) ...[
+            const SizedBox(height: 16),
+            _buildLiquidGlassSection(
+              icon: Icons.headset_mic_rounded,
+              title: 'Audio',
+              subtitle: 'Microphone and speaker device selection',
+              section: SectionType.audio,
+              expandedContent: _buildAudioContent(),
+            ),
+          ],
           const SizedBox(height: 16),
           _buildLiquidGlassSection(
             icon: Icons.notifications_rounded,
@@ -2188,7 +2207,7 @@ class _SettingsTabState extends State<SettingsTab>
           
           Center( 
             child: Text(
-              'open-beta 1.3',
+              'open-beta 1.4',
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
@@ -3580,6 +3599,114 @@ class _SettingsTabState extends State<SettingsTab>
     );
   }
 
+  Widget _buildAudioContent() {
+    final colorScheme = Theme.of(context).colorScheme;
+    if (_audioDevices == null) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    final devices = _audioDevices!;
+    final inputs = devices.where((d) => d.kind == 'audioinput').toList();
+    final outputs = devices.where((d) => d.kind == 'audiooutput').toList();
+
+    Widget deviceDropdown({
+      required String label,
+      required IconData icon,
+      required List<MediaDeviceInfo> deviceList,
+      required ValueNotifier<String> notifier,
+      required Future<void> Function(String) onChanged,
+    }) {
+      return ValueListenableBuilder<String>(
+        valueListenable: notifier,
+        builder: (_, selected, __) {
+          final validId = deviceList.any((d) => d.deviceId == selected) ? selected : '';
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(icon, size: 16, color: colorScheme.primary),
+                const SizedBox(width: 6),
+                Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              ]),
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: DropdownButton<String>(
+                    value: validId,
+                    isExpanded: true,
+                    isDense: false,
+                    underline: const SizedBox.shrink(),
+                    borderRadius: BorderRadius.circular(14),
+                    icon: Icon(Icons.expand_more_rounded, size: 20, color: colorScheme.onSurface.withValues(alpha: 0.5)),
+                    style: TextStyle(fontSize: 13, color: colorScheme.onSurface),
+                    dropdownColor: colorScheme.surfaceContainerHigh,
+                    items: [
+                      DropdownMenuItem(
+                        value: '',
+                        child: Text(
+                          'System default',
+                          style: TextStyle(fontSize: 13, color: colorScheme.onSurface.withValues(alpha: 0.55)),
+                        ),
+                      ),
+                      ...deviceList.map((d) => DropdownMenuItem(
+                        value: d.deviceId,
+                        child: Text(
+                          d.label.isNotEmpty ? d.label : d.deviceId,
+                          style: const TextStyle(fontSize: 13),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      )),
+                    ],
+                    onChanged: (id) => onChanged(id ?? ''),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        deviceDropdown(
+          label: 'Microphone (input)',
+          icon: Icons.mic_rounded,
+          deviceList: inputs,
+          notifier: SettingsManager.audioInputDeviceId,
+          onChanged: SettingsManager.setAudioInputDevice,
+        ),
+        if (outputs.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          deviceDropdown(
+            label: 'Speaker (output)',
+            icon: Icons.volume_up_rounded,
+            deviceList: outputs,
+            notifier: SettingsManager.audioOutputDeviceId,
+            onChanged: SettingsManager.setAudioOutputDevice,
+          ),
+        ],
+        const SizedBox(height: 8),
+        Text(
+          'Changes take effect on the next voice channel join.',
+          style: TextStyle(fontSize: 12, color: colorScheme.onSurface.withValues(alpha: 0.5)),
+        ),
+      ],
+    );
+  }
+
   Widget _buildLiquidGlassSection({
     required String title,
     required String subtitle,
@@ -3783,4 +3910,4 @@ class _SettingsTabState extends State<SettingsTab>
   }
 }
 
-enum SectionType { security, keyManagement, notifications, appearance, language, cache, connection, proxy, interact, debug, contact, blockedUsers }
+enum SectionType { security, keyManagement, notifications, appearance, language, cache, connection, proxy, interact, debug, contact, blockedUsers, audio }

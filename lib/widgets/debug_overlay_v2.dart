@@ -12,9 +12,7 @@ void setupDebugPrintCapture() {
     originalPrint(message, wrapWidth: wrapWidth);
     if (message != null) {
       _globalDebugLogs.add('[${DateTime.now().toIso8601String()}] $message');
-      if (_globalDebugLogs.length > 500) {
-        _globalDebugLogs.removeAt(0);
-      }
+      if (_globalDebugLogs.length > 500) _globalDebugLogs.removeAt(0);
     }
   };
 }
@@ -28,8 +26,11 @@ class DebugOverlayV2 extends StatefulWidget {
   State<DebugOverlayV2> createState() => _DebugOverlayV2State();
 }
 
-class _DebugOverlayV2State extends State<DebugOverlayV2> with WidgetsBindingObserver {
+class _DebugOverlayV2State extends State<DebugOverlayV2>
+    with WidgetsBindingObserver {
   bool _showOverlay = false;
+  bool _showLogWindow = false;
+
   late Timer _updateTimer;
   int _frameCount = 0;
   int _fps = 0;
@@ -43,82 +44,81 @@ class _DebugOverlayV2State extends State<DebugOverlayV2> with WidgetsBindingObse
   double _pointOnePercentLow = 0.0;
   final Stopwatch _stopwatch = Stopwatch();
   double _smoothedFps = 60.0;
-  final double _smoothingAlpha = 0.25;
+  static const double _smoothingAlpha = 0.25;
 
-  Offset _position = const Offset(20, 20);
-  Size _size = const Size(160, 120);
+  // Draggable panel positions
+  Offset _fpsPos = const Offset(20, 20);
+  Size _fpsSize = const Size(160, 120);
 
-  final _monitor = PerformanceMonitor();
+  Offset _logPos = const Offset(200, 100);
+  Size _logSize = const Size(250, 350);
+
+  Offset? _buttonsPos; // null = lazy-init to top-right on first build
 
   List<String> _logs = [];
 
-  bool _showLogWindow = false;
-  Offset _logWindowPosition = const Offset(100, 100);
-  Size _logWindowSize = const Size(250, 350);
+  final _monitor = PerformanceMonitor();
 
   @override
   void initState() {
     super.initState();
     _stopwatch.start();
     _updateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (mounted) {
-        setState(() {
-          final elapsed = _stopwatch.elapsedMilliseconds / 1000.0;
-          final measuredFps = elapsed > 0 ? (_frameCount / elapsed) : 0.0;
-          
-          _smoothedFps = _smoothedFps * (1 - _smoothingAlpha) + measuredFps * _smoothingAlpha;
-          _fps = _smoothedFps.round();
+      if (!mounted) return;
+      setState(() {
+        final elapsed = _stopwatch.elapsedMilliseconds / 1000.0;
+        final measured = elapsed > 0 ? (_frameCount / elapsed) : 0.0;
+        _smoothedFps =
+            _smoothedFps * (1 - _smoothingAlpha) + measured * _smoothingAlpha;
+        _fps = _smoothedFps.round();
 
-          _fpsHistory.add(_fps);
-          if (_fpsHistory.length > 120) _fpsHistory.removeAt(0);
+        _fpsHistory.add(_fps);
+        if (_fpsHistory.length > 120) _fpsHistory.removeAt(0);
 
-          _minFps = _fpsHistory.isEmpty ? _fps : _fpsHistory.reduce((a, b) => a < b ? a : b);
-          _maxFps = _fpsHistory.isEmpty ? _fps : _fpsHistory.reduce((a, b) => a > b ? a : b);
-          _avgFps = _fpsHistory.isEmpty
-              ? _fps
-              : (_fpsHistory.reduce((a, b) => a + b) ~/ _fpsHistory.length);
+        _minFps = _fpsHistory.isEmpty
+            ? _fps
+            : _fpsHistory.reduce((a, b) => a < b ? a : b);
+        _maxFps = _fpsHistory.isEmpty
+            ? _fps
+            : _fpsHistory.reduce((a, b) => a > b ? a : b);
+        _avgFps = _fpsHistory.isEmpty
+            ? _fps
+            : (_fpsHistory.reduce((a, b) => a + b) ~/ _fpsHistory.length);
 
-          if (_perFrameFps.isNotEmpty) {
-            final sorted = List<double>.from(_perFrameFps)..sort();
-            final oneIdx = (sorted.length * 0.01).ceil() - 1;
-            final pOneIdx = (sorted.length * 0.001).ceil() - 1;
-            _onePercentLow = sorted[oneIdx.clamp(0, sorted.length - 1)];
-            _pointOnePercentLow = sorted[pOneIdx.clamp(0, sorted.length - 1)];
-            
-            if (_perFrameFps.length > 5000) {
-              _perFrameFps.removeRange(0, _perFrameFps.length - 5000);
-            }
-          } else {
-            _onePercentLow = _fps.toDouble();
-            _pointOnePercentLow = _fps.toDouble();
+        if (_perFrameFps.isNotEmpty) {
+          final sorted = List<double>.from(_perFrameFps)..sort();
+          final oneIdx = (sorted.length * 0.01).ceil() - 1;
+          final pOneIdx = (sorted.length * 0.001).ceil() - 1;
+          _onePercentLow = sorted[oneIdx.clamp(0, sorted.length - 1)];
+          _pointOnePercentLow =
+              sorted[pOneIdx.clamp(0, sorted.length - 1)];
+          if (_perFrameFps.length > 5000) {
+            _perFrameFps.removeRange(0, _perFrameFps.length - 5000);
           }
+        } else {
+          _onePercentLow = _fps.toDouble();
+          _pointOnePercentLow = _fps.toDouble();
+        }
 
-          _frameCount = 0;
-          _stopwatch.reset();
-          _stopwatch.start();
-          
-          _logs = List.from(_globalDebugLogs);
-        });
-      }
+        _frameCount = 0;
+        _stopwatch.reset();
+        _stopwatch.start();
+        _logs = List.from(_globalDebugLogs);
+      });
     });
 
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback(_onFrame);
   }
 
-  void _onFrame(Duration duration) {
+  void _onFrame(Duration _) {
     _frameCount++;
-    final nowMicros = DateTime.now().microsecondsSinceEpoch;
+    final now = DateTime.now().microsecondsSinceEpoch;
     if (_lastFrameTimestampMicros != null) {
-      final deltaSec = (nowMicros - _lastFrameTimestampMicros!) / 1e6;
-      if (deltaSec > 0) {
-        final frameFps = 1.0 / deltaSec;
-        _perFrameFps.add(frameFps);
-        
-        if (_perFrameFps.length > 5000) _perFrameFps.removeAt(0);
-      }
+      final delta = (now - _lastFrameTimestampMicros!) / 1e6;
+      if (delta > 0) _perFrameFps.add(1.0 / delta);
     }
-    _lastFrameTimestampMicros = nowMicros;
+    _lastFrameTimestampMicros = now;
     WidgetsBinding.instance.addPostFrameCallback(_onFrame);
   }
 
@@ -136,17 +136,13 @@ class _DebugOverlayV2State extends State<DebugOverlayV2> with WidgetsBindingObse
     return Colors.red;
   }
 
-  void addLog(String log) {
-    setState(() {
-      _logs.add(log);
-      if (_logs.length > 50) {
-        _logs.removeAt(0);
-      }
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    final scheme = Theme.of(context).colorScheme;
+
+    _buttonsPos ??= Offset(mq.size.width - 52, 100);
+
     return ValueListenableBuilder<bool>(
       valueListenable: SettingsManager.debugMode,
       builder: (_, isDebugMode, __) {
@@ -154,120 +150,52 @@ class _DebugOverlayV2State extends State<DebugOverlayV2> with WidgetsBindingObse
           children: [
             widget.child,
             if (isDebugMode && _showOverlay)
-              Positioned(
-                left: _position.dx,
-                top: _position.dy,
-                child: GestureDetector(
-                  onPanUpdate: (details) {
-                    setState(() {
-                      _position = Offset(
-                        _position.dx + details.delta.dx,
-                        _position.dy + details.delta.dy,
-                      );
-                    });
-                  },
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.grab,
-                    child: _buildFpsPanel(),
-                  ),
-                ),
+              _Draggable(
+                position: _fpsPos,
+                onDrag: (d) => setState(() => _fpsPos += d),
+                child: _buildFpsPanel(scheme),
               ),
             if (isDebugMode && _showLogWindow)
-              Positioned(
-                left: _logWindowPosition.dx,
-                top: _logWindowPosition.dy,
-                child: GestureDetector(
-                  onPanUpdate: (details) {
-                    setState(() {
-                      _logWindowPosition = Offset(
-                        _logWindowPosition.dx + details.delta.dx,
-                        _logWindowPosition.dy + details.delta.dy,
-                      );
-                    });
-                  },
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.grab,
-                    child: _buildLogWindow(),
-                  ),
-                ),
+              _Draggable(
+                position: _logPos,
+                onDrag: (d) => setState(() => _logPos += d),
+                child: _buildLogWindow(scheme),
               ),
-            
             if (isDebugMode)
               Positioned(
-                top: 100,
-                right: 16,
-                child: Column(
-                  children: [
-                    FloatingActionButton(
-                      mini: true,
-                      backgroundColor: _fpsColor(_fps),
-                      onPressed: () => setState(() => _showOverlay = !_showOverlay),
-                      child: const Icon(Icons.speed, size: 16),
-                    ),
-                    const SizedBox(height: 8),
-                    FloatingActionButton(
-                      mini: true,
-                      backgroundColor: Colors.blue,
-                      onPressed: () => setState(() => _showLogWindow = !_showLogWindow),
-                      child: const Icon(Icons.list, size: 16),
-                    ),
-                  ],
-                ),
+                left: _buttonsPos!.dx,
+                top: _buttonsPos!.dy,
+                child: _buildButtonsPanel(scheme, mq),
               ),
-            
+            // FPS panel resize handle
             if (isDebugMode && _showOverlay)
-              Positioned(
-                left: _position.dx + _size.width - 12,
-                top: _position.dy + _size.height - 12,
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.resizeColumn,
-                  child: GestureDetector(
-                    onPanUpdate: (details) {
-                      setState(() {
-                        _size = Size(
-                          (_size.width + details.delta.dx).clamp(100, 400),
-                          (_size.height + details.delta.dy).clamp(80, 300),
-                        );
-                      });
-                    },
-                    child: Container(
-                      width: 20,
-                      height: 20,
-                      decoration: BoxDecoration(
-                        color: _fpsColor(_fps),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.zoom_out_map, size: 12, color: Colors.white),
-                    ),
-                  ),
+              _ResizeHandle(
+                position: Offset(
+                  _fpsPos.dx + _fpsSize.width - 10,
+                  _fpsPos.dy + _fpsSize.height - 10,
                 ),
+                color: _fpsColor(_fps),
+                onDrag: (d) => setState(() {
+                  _fpsSize = Size(
+                    (_fpsSize.width + d.dx).clamp(100, 400),
+                    (_fpsSize.height + d.dy).clamp(80, 300),
+                  );
+                }),
               ),
+            // Log window resize handle
             if (isDebugMode && _showLogWindow)
-              Positioned(
-                left: _logWindowPosition.dx + _logWindowSize.width - 12,
-                top: _logWindowPosition.dy + _logWindowSize.height - 12,
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.resizeColumn,
-                  child: GestureDetector(
-                    onPanUpdate: (details) {
-                      setState(() {
-                        _logWindowSize = Size(
-                          (_logWindowSize.width + details.delta.dx).clamp(150, 600),
-                          (_logWindowSize.height + details.delta.dy).clamp(100, 600),
-                        );
-                      });
-                    },
-                    child: Container(
-                      width: 20,
-                      height: 20,
-                      decoration: const BoxDecoration(
-                        color: Colors.blue,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.zoom_out_map, size: 12, color: Colors.white),
-                    ),
-                  ),
+              _ResizeHandle(
+                position: Offset(
+                  _logPos.dx + _logSize.width - 10,
+                  _logPos.dy + _logSize.height - 10,
                 ),
+                color: scheme.primary,
+                onDrag: (d) => setState(() {
+                  _logSize = Size(
+                    (_logSize.width + d.dx).clamp(150, 600),
+                    (_logSize.height + d.dy).clamp(100, 600),
+                  );
+                }),
               ),
           ],
         );
@@ -275,26 +203,92 @@ class _DebugOverlayV2State extends State<DebugOverlayV2> with WidgetsBindingObse
     );
   }
 
-  Widget _buildFpsPanel() {
+  Widget _buildButtonsPanel(ColorScheme scheme, MediaQueryData mq) {
     return Container(
-      width: _size.width,
-      height: _size.height,
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
       decoration: BoxDecoration(
-        color: Colors.black87,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _fpsColor(_fps), width: 2),
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: scheme.outlineVariant),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          
+          // Only the handle is draggable — buttons are independent tap targets.
+          GestureDetector(
+            onPanUpdate: (d) => setState(() {
+              _buttonsPos = Offset(
+                (_buttonsPos!.dx + d.delta.dx).clamp(0, mq.size.width - 44),
+                (_buttonsPos!.dy + d.delta.dy).clamp(0, mq.size.height - 120),
+              );
+            }),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.grab,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 6),
+                child: Icon(
+                  Icons.drag_indicator_rounded,
+                  size: 14,
+                  color: scheme.onSurface.withValues(alpha: 0.35),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          _PanelButton(
+            icon: Icons.speed_rounded,
+            color: _fpsColor(_fps),
+            active: _showOverlay,
+            tooltip: 'FPS overlay',
+            onTap: () => setState(() => _showOverlay = !_showOverlay),
+          ),
+          const SizedBox(height: 6),
+          _PanelButton(
+            icon: Icons.list_alt_rounded,
+            color: scheme.primary,
+            active: _showLogWindow,
+            tooltip: 'Logs',
+            onTap: () => setState(() => _showLogWindow = !_showLogWindow),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFpsPanel(ColorScheme scheme) {
+    final fpsColor = _fpsColor(_fps);
+    return Container(
+      width: _fpsSize.width,
+      height: _fpsSize.height,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: fpsColor, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: _fpsColor(_fps).withOpacity(0.8),
+              color: fpsColor.withValues(alpha: 0.18),
               borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(6),
-                topRight: Radius.circular(6),
+                topLeft: Radius.circular(8),
+                topRight: Radius.circular(8),
               ),
             ),
             child: Row(
@@ -302,41 +296,41 @@ class _DebugOverlayV2State extends State<DebugOverlayV2> with WidgetsBindingObse
               children: [
                 Text(
                   '$_fps FPS',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: fpsColor,
                     fontWeight: FontWeight.bold,
                     fontSize: 12,
                   ),
                 ),
                 GestureDetector(
                   onTap: () => setState(() => _showOverlay = false),
-                  child: const Icon(Icons.close, size: 14, color: Colors.white),
+                  child: Icon(
+                    Icons.close_rounded,
+                    size: 14,
+                    color: scheme.onSurface.withValues(alpha: 0.55),
+                  ),
                 ),
               ],
             ),
           ),
-          
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(6),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Min: $_minFps',
-                      style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                  Text('Max: $_maxFps',
-                      style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                  Text('Avg: $_avgFps',
-                      style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                  const SizedBox(height: 4),
-                  Text('1% low: ${_onePercentLow.round()}',
-                      style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                  Text('0.1% low: ${_pointOnePercentLow.round()}',
-                      style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                  const SizedBox(height: 4),
+                  _statRow('Min', '$_minFps', scheme),
+                  _statRow('Max', '$_maxFps', scheme),
+                  _statRow('Avg', '$_avgFps', scheme),
+                  const SizedBox(height: 3),
+                  _statRow('1% low', '${_onePercentLow.round()}', scheme),
+                  _statRow(
+                      '0.1% low', '${_pointOnePercentLow.round()}', scheme),
+                  const SizedBox(height: 3),
                   Expanded(
                     child: CustomPaint(
-                      painter: FpsGraphPainter(_fpsHistory),
+                      painter:
+                          FpsGraphPainter(_fpsHistory, scheme.onSurface),
                       size: Size.infinite,
                     ),
                   ),
@@ -349,65 +343,80 @@ class _DebugOverlayV2State extends State<DebugOverlayV2> with WidgetsBindingObse
     );
   }
 
-  Widget _buildLogWindow() {
+  Widget _buildLogWindow(ColorScheme scheme) {
     return Container(
-      width: _logWindowSize.width,
-      height: _logWindowSize.height,
+      width: _logSize.width,
+      height: _logSize.height,
       decoration: BoxDecoration(
-        color: Colors.black87,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.blue, width: 2),
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: scheme.primary, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         children: [
-          
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: Colors.blue.withOpacity(0.8),
+              color: scheme.primary.withValues(alpha: 0.15),
               borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(6),
-                topRight: Radius.circular(6),
+                topLeft: Radius.circular(8),
+                topRight: Radius.circular(8),
               ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
+                Text(
                   'debugPrint Logs',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: scheme.primary,
                     fontWeight: FontWeight.bold,
                     fontSize: 12,
                   ),
                 ),
                 GestureDetector(
                   onTap: () => setState(() => _showLogWindow = false),
-                  child: const Icon(Icons.close, size: 14, color: Colors.white),
+                  child: Icon(
+                    Icons.close_rounded,
+                    size: 14,
+                    color: scheme.onSurface.withValues(alpha: 0.55),
+                  ),
                 ),
               ],
             ),
           ),
-          
           Expanded(
             child: _logs.isEmpty
-                ? const Center(
+                ? Center(
                     child: Text(
-                      'No logs',
-                      style: TextStyle(color: Colors.white54),
+                      'No logs yet',
+                      style: TextStyle(
+                        color: scheme.onSurface.withValues(alpha: 0.38),
+                        fontSize: 12,
+                      ),
                     ),
                   )
                 : ListView.builder(
                     reverse: true,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 4),
                     itemCount: _logs.length,
-                    itemBuilder: (context, index) {
+                    itemBuilder: (_, index) {
                       final log = _logs[_logs.length - 1 - index];
                       return Padding(
-                        padding: const EdgeInsets.all(4),
+                        padding: const EdgeInsets.symmetric(vertical: 1),
                         child: Text(
                           log,
-                          style: const TextStyle(
-                            color: Colors.white70,
+                          style: TextStyle(
+                            color:
+                                scheme.onSurface.withValues(alpha: 0.75),
                             fontSize: 9,
                             fontFamily: 'monospace',
                           ),
@@ -424,48 +433,168 @@ class _DebugOverlayV2State extends State<DebugOverlayV2> with WidgetsBindingObse
   }
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+class _Draggable extends StatelessWidget {
+  const _Draggable({
+    required this.position,
+    required this.onDrag,
+    required this.child,
+  });
+
+  final Offset position;
+  final void Function(Offset delta) onDrag;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      left: position.dx,
+      top: position.dy,
+      child: GestureDetector(
+        onPanUpdate: (d) => onDrag(d.delta),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.grab,
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+class _ResizeHandle extends StatelessWidget {
+  const _ResizeHandle({
+    required this.position,
+    required this.color,
+    required this.onDrag,
+  });
+
+  final Offset position;
+  final Color color;
+  final void Function(Offset delta) onDrag;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      left: position.dx,
+      top: position.dy,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.resizeDownRight,
+        child: GestureDetector(
+          onPanUpdate: (d) => onDrag(d.delta),
+          child: Container(
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.zoom_out_map_rounded,
+              size: 12,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PanelButton extends StatelessWidget {
+  const _PanelButton({
+    required this.icon,
+    required this.color,
+    required this.active,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final bool active;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 36,
+      height: 36,
+      child: Material(
+        color: active ? color.withValues(alpha: 0.22) : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          hoverColor: color.withValues(alpha: 0.12),
+          splashColor: color.withValues(alpha: 0.2),
+          highlightColor: Colors.transparent,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: active
+                  ? Border.all(color: color.withValues(alpha: 0.5), width: 1)
+                  : null,
+            ),
+            child: Icon(icon, size: 18, color: color),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Widget _statRow(String label, String value, ColorScheme scheme) {
+  return Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      Text(label,
+          style: TextStyle(
+              color: scheme.onSurface.withValues(alpha: 0.5), fontSize: 10)),
+      Text(value,
+          style: TextStyle(
+              color: scheme.onSurface.withValues(alpha: 0.85),
+              fontSize: 10,
+              fontWeight: FontWeight.w500)),
+    ],
+  );
+}
+
 class FpsGraphPainter extends CustomPainter {
   final List<int> fpsHistory;
+  final Color lineColor;
 
-  FpsGraphPainter(this.fpsHistory);
+  FpsGraphPainter(this.fpsHistory, this.lineColor);
 
   @override
   void paint(Canvas canvas, Size size) {
     if (fpsHistory.isEmpty) return;
 
-    final paint = Paint()
-      ..color = Colors.white70
+    final linePaint = Paint()
+      ..color = lineColor.withValues(alpha: 0.55)
       ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke;
 
     final path = Path();
-    final width = size.width;
-    final height = size.height;
-
     for (int i = 0; i < fpsHistory.length; i++) {
-      final x = (i / fpsHistory.length) * width;
-      final y = height - (fpsHistory[i] / 120) * height;
-
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
+      final x = (i / fpsHistory.length) * size.width;
+      final y = size.height - (fpsHistory[i] / 120) * size.height;
+      i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
     }
+    canvas.drawPath(path, linePaint);
 
-    canvas.drawPath(path, paint);
-
-    final y60 = height - (60 / 120) * height;
+    final y60 = size.height - (60 / 120) * size.height;
     canvas.drawLine(
       Offset(0, y60),
-      Offset(width, y60),
+      Offset(size.width, y60),
       Paint()
-        ..color = Colors.white30
+        ..color = lineColor.withValues(alpha: 0.18)
         ..strokeWidth = 0.5
         ..strokeCap = StrokeCap.round,
     );
   }
 
   @override
-  bool shouldRepaint(FpsGraphPainter oldDelegate) => true;
+  bool shouldRepaint(FpsGraphPainter old) => true;
 }

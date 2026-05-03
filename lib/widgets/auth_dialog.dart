@@ -27,6 +27,23 @@ class AuthDialogState extends State<AuthDialog> {
   final TextEditingController _userCtrl = TextEditingController();
   final TextEditingController _passCtrl = TextEditingController();
   bool _obscure = true;
+  bool _passNotEmpty = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _passCtrl.addListener(() {
+      final notEmpty = _passCtrl.text.isNotEmpty;
+      if (notEmpty != _passNotEmpty) setState(() => _passNotEmpty = notEmpty);
+    });
+  }
+
+  @override
+  void dispose() {
+    _userCtrl.dispose();
+    _passCtrl.dispose();
+    super.dispose();
+  }
 
   String _generatePassword16() {
     const chars =
@@ -222,7 +239,47 @@ class AuthDialogState extends State<AuthDialog> {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 20),
+                          AnimatedSize(
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeInOut,
+                            child: AnimatedOpacity(
+                              opacity: _passNotEmpty ? 1.0 : 0.0,
+                              duration: const Duration(milliseconds: 220),
+                              curve: Curves.easeInOut,
+                              child: _passNotEmpty
+                                  ? Padding(
+                                      padding: const EdgeInsets.only(top: 8),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                        decoration: BoxDecoration(
+                                          color: Colors.orange.withValues(alpha: 0.12),
+                                          borderRadius: BorderRadius.circular(12),
+                                          border: Border.all(color: Colors.orange.withValues(alpha: 0.35)),
+                                        ),
+                                        child: Row(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 16),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: Text(
+                                                l.savePasswordWarning,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w500,
+                                                  color: Colors.orange,
+                                                  height: 1.4,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
                           Wrap(
                             spacing: 12,
                             runSpacing: 8,

@@ -10,6 +10,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   flutter_secure_storage_windows
   flutter_webrtc
   irondash_engine_context
+  just_audio_windows
   local_auth_windows
   local_notifier
   media_kit_libs_windows_video

@@ -73,6 +73,17 @@ class NotificationService {
             importance: Importance.max,
           );
           await androidPlugin.createNotificationChannel(channel);
+
+          const mediaChannel = AndroidNotificationChannel(
+            'media_player',
+            'Media Player',
+            description: 'Audio playback controls',
+            importance: Importance.low,
+            playSound: false,
+            enableVibration: false,
+            showBadge: false,
+          );
+          await androidPlugin.createNotificationChannel(mediaChannel);
         } catch (e) {
           debugPrint('createNotificationChannel failed: $e');
         }
@@ -80,6 +91,52 @@ class NotificationService {
     }
 
     _initialized = true;
+  }
+
+  static const int _mediaNotifId = 88888;
+
+  static Future<void> showMediaNotification({
+    required String trackName,
+    required bool isPlaying,
+  }) async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      final androidDetails = AndroidNotificationDetails(
+        'media_player',
+        'Media Player',
+        channelDescription: 'Audio playback controls',
+        importance: Importance.low,
+        priority: Priority.low,
+        ongoing: true,
+        autoCancel: false,
+        playSound: false,
+        enableVibration: false,
+        showWhen: false,
+        category: AndroidNotificationCategory.transport,
+        styleInformation: const MediaStyleInformation(
+          htmlFormatTitle: false,
+          htmlFormatContent: false,
+        ),
+        color: const Color(0xFF7C4DFF),
+      );
+      await _plugin.show(
+        _mediaNotifId,
+        isPlaying ? 'Playing' : 'Paused',
+        trackName,
+        NotificationDetails(android: androidDetails),
+      );
+    } catch (e) {
+      debugPrint('showMediaNotification failed: $e');
+    }
+  }
+
+  static Future<void> cancelMediaNotification() async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      await _plugin.cancel(_mediaNotifId);
+    } catch (e) {
+      debugPrint('cancelMediaNotification failed: $e');
+    }
   }
 
   static final StreamController<String> _openChatController =

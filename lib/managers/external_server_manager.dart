@@ -27,6 +27,74 @@ class ExternalServerManager {
 
   static final Map<String, void Function(Map<String, dynamic>)> _groupListeners = {};
 
+  /// Global voice message callback — set once by VoiceChannelManager at startup.
+  static void Function(Map<String, dynamic> msg, String serverId)? _voiceListener;
+
+  static void setVoiceListener(
+      void Function(Map<String, dynamic>, String) cb) {
+    _voiceListener = cb;
+  }
+
+  static void clearVoiceListener() {
+    _voiceListener = null;
+  }
+
+  /// Send a WebSocket message to the given external server.
+  static void sendVoiceSignal(String serverId, Map<String, dynamic> payload) {
+    final ws = _wsConnections[serverId];
+    if (ws != null) {
+      ws.sink.add(jsonEncode(payload));
+    } else {
+      debugPrint('[ext-ws] sendVoiceSignal: no connection for $serverId');
+    }
+  }
+
+  /// GET /voice-channels — returns current voice channel state.
+  static Future<List<Map<String, dynamic>>> getVoiceChannels(
+      String serverId) async {
+    try {
+      final resp = await _authRequest(
+        serverId,
+        (token) => http.get(
+          Uri.parse('${_getServer(serverId)!.baseUrl}/voice-channels'),
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+      if (resp.statusCode == 200) {
+        final list = jsonDecode(resp.body) as List<dynamic>;
+        return list.cast<Map<String, dynamic>>();
+      }
+    } catch (e) {
+      debugPrint('[ext-voice] getVoiceChannels error: $e');
+    }
+    return [];
+  }
+
+  static final Map<String, Map<String, dynamic>> _voiceConfigCache = {};
+
+  /// GET /info and return the voice_config sub-map. Cached per serverId.
+  static Future<Map<String, dynamic>> getVoiceConfig(String serverId) async {
+    if (_voiceConfigCache.containsKey(serverId)) {
+      return _voiceConfigCache[serverId]!;
+    }
+    try {
+      final server = _getServer(serverId);
+      if (server == null) return {};
+      final resp = await http
+          .get(Uri.parse('${server.baseUrl}/info'))
+          .timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        final body = jsonDecode(resp.body) as Map<String, dynamic>;
+        final vc = body['voice_config'] as Map<String, dynamic>? ?? {};
+        _voiceConfigCache[serverId] = vc;
+        return vc;
+      }
+    } catch (e) {
+      debugPrint('[ext-voice] getVoiceConfig error: $e');
+    }
+    return {};
+  }
+
   static final ValueNotifier<List<Group>> externalGroups = ValueNotifier([]);
 
   static final ValueNotifier<Set<String>> connectedServerIds = ValueNotifier({});
@@ -715,6 +783,8 @@ class ExternalServerManager {
         debugPrint('[ext-ws] $serverId: pong received');
       } else if (type == 'error') {
         debugPrint('[ext-ws] $serverId: Error from server: ${obj['message']}');
+      } else if (type != null && type.startsWith('voice_')) {
+        _voiceListener?.call(obj, serverId);
       }
     } catch (e) {
       debugPrint('[ext-ws] parse error: $e');
@@ -744,6 +814,7 @@ class ExternalServerManager {
 
   static void _cleanupWs(String serverId) {
     debugPrint('[ext-ws] Cleaning up WebSocket for $serverId');
+    _voiceConfigCache.remove(serverId);
 
     final keysToRemove = _groupListeners.keys.where((key) => key.startsWith('$serverId:')).toList();
     for (final key in keysToRemove) {

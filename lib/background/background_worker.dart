@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:workmanager/workmanager.dart';
 import '../services/message_sync_service.dart';
+import '../managers/mute_manager.dart';
 import 'notification_service.dart';
 
 const String syncTaskName = 'syncMessagesTask';
@@ -13,10 +14,11 @@ Future<void> syncMessagesTask() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await NotificationService.init();
+  await MuteManager.init();
 
   final result = await MessageSyncService.checkForNewMessages();
 
-  if (result.hasNewMessages && result.sender != null) {
+  if (result.hasNewMessages && result.sender != null && !MuteManager.isMuted(result.sender!)) {
     await NotificationService.showMessageNotification(
       title: result.sender!,
       username: result.sender!,

@@ -20,7 +20,6 @@ import '../models/group.dart';
 import '../models/external_server.dart';
 import '../managers/external_server_manager.dart';
 import '../enums/media_provider.dart';
-import '../widgets/external_server_badge.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/drag_drop_zone.dart';
 import '../widgets/file_preview_dialog.dart';
@@ -37,7 +36,10 @@ import '../utils/upload_task.dart';
 import '../widgets/pending_upload_card.dart';
 import '../widgets/chat_search_bar.dart';
 import '../widgets/animated_message_bubble.dart';
+import '../widgets/voice_channel_popup.dart';
+import '../voice/voice_channel_manager.dart';
 import '../widgets/message_reaction_bar.dart';
+import '../widgets/media_picker_sheet.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const List<String> _randomHints = [
@@ -218,10 +220,17 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     _loadHistoryFromCache();
 
     if (_isConnected) {
-      debugPrint(
-          '[ext-chat] Server connected, disconnecting for fresh reconnection');
-      ExternalServerManager.disconnectWebSocket(widget.server.id);
-      _isConnected = false;
+      final voiceActive = VoiceChannelManager.instance.isInChannel.value &&
+          VoiceChannelManager.instance.currentServerId.value == widget.server.id;
+      if (voiceActive) {
+        // Keep the WS alive — _connectToServer will reuse it (just subscribes).
+        debugPrint('[ext-chat] Voice call active, reusing existing WS connection');
+        _isConnected = false;
+      } else {
+        debugPrint('[ext-chat] Server connected, disconnecting for fresh reconnection');
+        ExternalServerManager.disconnectWebSocket(widget.server.id);
+        _isConnected = false;
+      }
     }
 
     _isConnecting = true;
@@ -288,8 +297,16 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     ExternalServerManager.unsubscribeFromGroup(
         widget.server.id, widget.group.id);
 
-    debugPrint('[ext-chat] Disconnecting from server on screen close');
-    ExternalServerManager.disconnectWebSocket(widget.server.id);
+    // Keep the WS alive if the user is currently in a voice channel on this
+    // server — they want to continue talking while browsing other screens.
+    final voiceActive = VoiceChannelManager.instance.isInChannel.value &&
+        VoiceChannelManager.instance.currentServerId.value == widget.server.id;
+    if (!voiceActive) {
+      debugPrint('[ext-chat] Disconnecting from server on screen close');
+      ExternalServerManager.disconnectWebSocket(widget.server.id);
+    } else {
+      debugPrint('[ext-chat] Keeping WS alive — voice call in progress');
+    }
 
     _wsFlushTimer?.cancel();
     _cacheSaveTimer?.cancel();
@@ -2622,26 +2639,24 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       }
       return;
     }
-    FilePickerResult? result;
-    try {
-      result = await FilePicker.platform
-          .pickFiles(type: FileType.any, allowMultiple: true);
-    } catch (e) {
-      debugPrint('[Attach] FilePicker error: $e');
-      if (mounted)
-        rootScreenKey.currentState?.showSnack('File picker error: $e');
-      return;
-    }
-    if (result?.files.isEmpty ?? true) return;
 
-    final paths = result!.files.map((f) => f.path).whereType<String>().toList();
-    if (paths.isEmpty) {
-      if (mounted)
-        rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
-                .localFileRequired);
-      return;
+    List<String>? paths;
+    if (Platform.isAndroid || Platform.isIOS) {
+      paths = await showMediaPickerSheet(context);
+    } else {
+      try {
+        final result = await FilePicker.platform
+            .pickFiles(type: FileType.any, allowMultiple: true);
+        paths = result?.files.map((f) => f.path).whereType<String>().toList();
+      } catch (e) {
+        debugPrint('[Attach] FilePicker error: $e');
+        if (mounted) {
+          rootScreenKey.currentState?.showSnack('File picker error: $e');
+        }
+        return;
+      }
     }
+    if (paths == null || paths.isEmpty) return;
 
     if (paths.length > 1 && paths.every(FileTypeDetector.isImage)) {
       if (SettingsManager.confirmFileUpload.value) {
@@ -2649,8 +2664,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         showDialog(
           context: context,
           builder: (_) => AlbumPreviewDialog(
-            filePaths: paths,
-            onSend: () => _processAndUploadAlbum(paths),
+            filePaths: paths!,
+            onSend: () => _processAndUploadAlbum(paths!),
             onCancel: () {},
           ),
         );
@@ -4101,6 +4116,12 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
+                                icon: const Icon(Icons.headset_mic_rounded),
+                                tooltip: 'Voice channels',
+                                onPressed: () => showVoiceChannelPopup(
+                                    context, widget.server.id),
+                              ),
+                              IconButton(
                                 icon: const Icon(Icons.search),
                                 tooltip: 'Search (Ctrl+F)',
                                 onPressed: () {
@@ -4117,8 +4138,6 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                   child:
                                       Text(AppLocalizations.of(context).join),
                                 ),
-                              ExternalServerBadge(
-                                  isChannel: widget.group.isChannel),
                               PopupMenuButton<String>(
                                 icon: Icon(Icons.more_vert,
                                     color: colorScheme.onSurface),

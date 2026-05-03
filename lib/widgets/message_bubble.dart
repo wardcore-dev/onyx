@@ -152,18 +152,24 @@ class MessageBubble extends StatelessWidget {
             ),
           );
         } else if (text.startsWith('AUDIOv1:')) {
-          
           try {
             final meta = jsonDecode(text.substring('AUDIOv1:'.length)) as Map<String, dynamic>;
             final filename = (meta['filename'] ?? meta['orig'] ?? 'audio') as String;
-            primaryContent = FileMessageWidget(
-              filename: filename,
-              peerUsername: peerUsername,
-              isOutgoing: outgoing,
-              senderUsername: chatMessage?.from,
+            final orig = (meta['orig'] ?? meta['filename'] ?? '') as String;
+            final owner = meta['owner'] as String?;
+            final audioKeyB64 = meta['key'] as String?;
+            primaryContent = IntrinsicWidth(
+              child: VoiceMessagePlayer(
+                filename: filename,
+                owner: owner,
+                label: '',
+                peerUsername: peerUsername,
+                mediaKeyB64: audioKeyB64,
+                isFile: true,
+                origName: orig.isNotEmpty ? orig : null,
+              ),
             );
           } catch (e) {
-            
             primaryContent = FileMessageWidget(
               filename: text,
               peerUsername: peerUsername,
@@ -277,20 +283,39 @@ class MessageBubble extends StatelessWidget {
         );
       }
     } else if (text.startsWith('FILEv1:') || text.startsWith('FILE:')) {
-      
+
       String filename = '';
       String? owner;
       String? fileMediaKeyB64;
       try {
+        String origName = '';
         if (text.startsWith('FILEv1:')) {
           final meta = jsonDecode(text.substring('FILEv1:'.length)) as Map<String, dynamic>;
           filename = meta['filename'] as String? ?? '';
           owner = meta['owner'] as String?;
           fileMediaKeyB64 = meta['key'] as String?;
+          origName = meta['orig'] as String? ?? '';
         } else {
           filename = text.substring('FILE:'.length).trim();
         }
         if (filename.isNotEmpty) {
+          const audioExts = {'.mp3', '.wav', '.aac', '.m4a', '.flac', '.ogg', '.wma', '.opus', '.aiff', '.aif'};
+          final audioName = origName.isNotEmpty ? origName : filename;
+          final dot = audioName.lastIndexOf('.');
+          final ext = dot >= 0 ? audioName.substring(dot).toLowerCase() : '';
+          if (audioExts.contains(ext) && !filename.startsWith('lan://')) {
+            primaryContent = IntrinsicWidth(
+              child: VoiceMessagePlayer(
+                filename: filename,
+                owner: owner,
+                label: '',
+                peerUsername: peerUsername,
+                mediaKeyB64: fileMediaKeyB64,
+                isFile: true,
+                origName: origName.isNotEmpty ? origName : null,
+              ),
+            );
+          } else {
           primaryContent = FileMessageWidget(
             filename: filename,
             owner: owner,
@@ -299,6 +324,7 @@ class MessageBubble extends StatelessWidget {
             senderUsername: chatMessage?.from,
             mediaKeyB64: fileMediaKeyB64,
           );
+          }
         } else {
           primaryContent = Container(
             padding: const EdgeInsets.all(8),
@@ -370,8 +396,16 @@ class MessageBubble extends StatelessWidget {
                 peerUsername: '<external>', 
               ),
             );
-          } else if (type == 'audio' || type == 'document' || type == 'archive' || type == 'data' || type == 'file') {
-            
+          } else if (type == 'audio') {
+            primaryContent = IntrinsicWidth(
+              child: VoiceMessagePlayer(
+                filename: authUrl,
+                label: '',
+                peerUsername: '<external>',
+                origName: orig.isNotEmpty ? orig : null,
+              ),
+            );
+          } else if (type == 'document' || type == 'archive' || type == 'data' || type == 'file') {
             primaryContent = FileMessageWidget(
               filename: orig,
               peerUsername: '<external>',

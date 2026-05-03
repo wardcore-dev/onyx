@@ -6,15 +6,17 @@ import 'dart:math' show min;
 import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
-import 'package:audioplayers/audioplayers.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../managers/account_manager.dart';
 import '../managers/external_server_manager.dart';
+import 'package:audio_session/audio_session.dart';
 import '../globals.dart';
 import '../utils/media_cache.dart';
+import '../utils/global_audio_controller.dart';
 
 class VoiceMessagePlayer extends StatefulWidget {
   final String filename;
@@ -22,6 +24,8 @@ class VoiceMessagePlayer extends StatefulWidget {
   final String label;
   final String peerUsername;
   final String? mediaKeyB64;
+  final bool isFile;
+  final String? origName;
   const VoiceMessagePlayer({
     Key? key,
     required this.filename,
@@ -29,6 +33,8 @@ class VoiceMessagePlayer extends StatefulWidget {
     required this.label,
     required this.peerUsername,
     this.mediaKeyB64,
+    this.isFile = false,
+    this.origName,
   }) : super(key: key);
 
   @override
@@ -37,43 +43,140 @@ class VoiceMessagePlayer extends StatefulWidget {
 
 class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
   String? _cachedFilePath;
-  late final AudioPlayer _player;
+  AudioPlayer? _player; // created lazily on first play — avoids spawning N ExoPlayers at screen-open
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
   bool _isPlaying = false;
   bool _isLoading = false;
+  bool _playerReady = false; // true = source loaded, player can resume without reload
   String? _lastEnsureError;
+  int? _activeSessionId;
+  final List<StreamSubscription> _subs = [];
+
+  static bool _bgConfigured = false;
+
+  static Future<void> _configureBackground() async {
+    if (_bgConfigured) return;
+    _bgConfigured = true;
+    try {
+      if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+        final session = await AudioSession.instance;
+        await session.configure(const AudioSessionConfiguration.music());
+      }
+    } catch (e) {
+      debugPrint('[VoiceWidget] Audio session config error: $e');
+      _bgConfigured = false;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
-    _player = AudioPlayer()
-      ..onPlayerStateChanged.listen((state) {
-        if (mounted) {
-          setState(() {
-            _isPlaying = state == PlayerState.playing;
-          });
-        }
-      })
-      ..onDurationChanged.listen((duration) {
-        if (mounted) setState(() => _duration = duration);
-      })
-      ..onPositionChanged.listen((position) {
-        if (mounted) setState(() => _position = position);
-      })
-      ..onPlayerComplete.listen((_) {
-        if (mounted) {
-          setState(() {
-            _isPlaying = false;
-            _position = Duration.zero;
-          });
-        }
+    // Pre-populate cache from global registry — rebuilt widgets skip download.
+    final cached = mediaFilePathRegistry[widget.filename];
+    if (cached != null) {
+      if (!kIsWeb && File(cached).existsSync()) {
+        _cachedFilePath = cached;
+      } else {
+        mediaFilePathRegistry.remove(widget.filename);
+      }
+    }
+
+    // Register in the chat playlist for prev/next navigation.
+    globalAudioController.registerTrack(
+      widget.peerUsername,
+      widget.filename,
+      () { _loadAndPlay(); },
+    );
+
+    _configureBackground();
+    // AudioPlayer is created lazily on first play tap — see _initPlayer().
+  }
+
+  // Creates the AudioPlayer and wires its streams. Called once, on first play.
+  void _initPlayer() {
+    if (_player != null) return;
+    final p = AudioPlayer();
+    _player = p;
+
+    _subs.add(p.playerStateStream.listen((state) {
+      if (!mounted) return;
+      final playing = state.playing;
+      final ps = state.processingState;
+      final buffering = ps == ProcessingState.loading || ps == ProcessingState.buffering;
+      setState(() {
+        _isPlaying = playing;
+        if (_playerReady) _isLoading = buffering && !playing;
       });
+      if (_activeSessionId != null) {
+        globalAudioController.updateState(
+          sessionId: _activeSessionId!,
+          position: _position,
+          duration: _duration,
+          isPlaying: playing,
+        );
+      }
+      if (ps == ProcessingState.completed) {
+        setState(() { _isPlaying = false; _position = Duration.zero; });
+        if (_activeSessionId != null) {
+          globalAudioController.updateState(
+            sessionId: _activeSessionId!,
+            position: Duration.zero,
+            duration: _duration,
+            isPlaying: false,
+          );
+          if (globalAudioController.autoPlay) globalAudioController.playNext();
+        }
+      }
+    }));
+    _subs.add(p.durationStream.listen((duration) {
+      if (!mounted) return;
+      final d = duration ?? Duration.zero;
+      setState(() => _duration = d);
+      if (_activeSessionId != null) {
+        globalAudioController.updateState(
+          sessionId: _activeSessionId!,
+          position: _position,
+          duration: d,
+          isPlaying: _isPlaying,
+        );
+      }
+    }));
+    _subs.add(p.positionStream.listen((position) {
+      if (!mounted) return;
+      setState(() => _position = position);
+      if (_activeSessionId != null) {
+        globalAudioController.updateState(
+          sessionId: _activeSessionId!,
+          position: position,
+          duration: _duration,
+          isPlaying: _isPlaying,
+        );
+      }
+    }));
   }
 
   @override
   void dispose() {
-    _player.dispose();
+    // Cancel widget-level subscriptions so callbacks stop calling setState.
+    for (final s in _subs) { s.cancel(); }
+    _subs.clear();
+
+    if (_activeSessionId != null && _playerReady && _player != null) {
+      // Hand ownership of the player to the global controller so audio
+      // keeps playing (or can be resumed) after this widget is removed from
+      // the tree. Adopt on any loaded state — not just _isPlaying — so a
+      // transient buffering/paused moment doesn't accidentally kill the session.
+      globalAudioController.adoptPlayer(
+          _player!, _activeSessionId!, _position, _duration);
+      _activeSessionId = null;
+    } else {
+      if (_activeSessionId != null) {
+        globalAudioController.deactivate(_activeSessionId!);
+        _activeSessionId = null;
+      }
+      _player?.dispose();
+    }
     super.dispose();
   }
 
@@ -187,9 +290,81 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
     return out;
   }
 
+  // Sets the source, starts playback, registers with the global controller.
+  Future<void> _startPlayback(String filePath) async {
+    _initPlayer(); // no-op if already created
+    final p = _player!;
+
+    await p.setAudioSource(AudioSource.uri(Uri.file(filePath)));
+    _playerReady = true;
+
+    // Activate BEFORE play() so ExoPlayer's initial state events (playing,
+    // duration, position) are forwarded to the global controller immediately.
+    _activeSessionId = globalAudioController.activate(
+      trackName: widget.origName?.isNotEmpty == true
+          ? widget.origName!
+          : (widget.label.isNotEmpty ? widget.label : widget.filename),
+      isFile: widget.isFile,
+      onPlayPause: () {
+        if (_isPlaying) { p.pause(); } else { p.play(); }
+      },
+      onStop: () {
+        p.stop();
+        _playerReady = false;
+        _activeSessionId = null;
+        if (mounted) setState(() { _isPlaying = false; _position = Duration.zero; });
+      },
+      onSeek: (d) => p.seek(d),
+      onSetSpeed: (s) async {
+        try {
+          await p.setSpeed(s);
+          await p.setPitch(s);
+        } catch (_) {}
+      },
+      chatId: widget.peerUsername,
+      filename: widget.filename,
+    );
+
+    await p.play();
+    final speed = globalAudioController.playbackSpeed;
+    if (speed != 1.0) {
+      try {
+        await p.setSpeed(speed);
+        await p.setPitch(speed);
+      } catch (_) {}
+    }
+  }
+
   Future<void> _loadAndPlay() async {
     if (_isPlaying) {
-      await _player.pause();
+      // _isPlaying is only true after _initPlayer() has run.
+      await _player!.pause();
+      return;
+    }
+
+    // Source already loaded and session live — just resume (no reload).
+    if (_playerReady) {
+      // _playerReady is only true after _initPlayer() has run.
+      final p = _player!;
+      if (p.processingState == ProcessingState.completed) {
+        await p.seek(Duration.zero);
+      }
+      await p.play();
+      return;
+    }
+
+    // Fast path: file already cached — skip all download/decrypt logic.
+    if (_cachedFilePath != null && File(_cachedFilePath!).existsSync()) {
+      setState(() => _isLoading = true);
+      try {
+        await _startPlayback(_cachedFilePath!);
+      } catch (e) {
+        debugPrint('[VoiceWidget] Fast-path replay error: $e');
+        _cachedFilePath = null; // force re-download on next tap
+        rootScreenKey.currentState?.showSnack('Play error: $e');
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
       return;
     }
 
@@ -258,13 +433,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
 
         _cachedFilePath = playFile.path;
         mediaFilePathRegistry[widget.filename] = playFile.path;
-        final Source source = (!kIsWeb && Platform.isWindows)
-            ? UrlSource(Uri.file(playFile.path).toString())
-            : DeviceFileSource(playFile.path);
-        debugPrint('[VoiceWidget] Source: $source');
-        await _player.setReleaseMode(ReleaseMode.stop);
-        await _player.setSource(source);
-        await _player.resume();
+        await _startPlayback(playFile.path);
       } catch (e) {
         debugPrint('[VoiceWidget] Error: $e');
         rootScreenKey.currentState?.showSnack('Play error: $e');
@@ -277,6 +446,22 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
     Future<File?> _ensureVoiceCached() async {
       try {
         debugPrint('[VoiceWidget] Loading voice: "${widget.filename}"');
+
+        if (widget.isFile) {
+          final root = rootScreenKey.currentState;
+          if (root == null) {
+            _lastEnsureError = 'RootScreen not ready';
+            return null;
+          }
+          final f = await root.downloadFileToCache(
+            widget.filename,
+            peerUsername: widget.peerUsername,
+            owner: widget.owner,
+            mediaKeyB64: widget.mediaKeyB64,
+          );
+          if (f == null) _lastEnsureError = _lastEnsureError ?? 'File not found';
+          return f;
+        }
 
         if (widget.filename.startsWith('lan://')) {
           debugPrint('[VoiceWidget] LAN file detected: ${widget.filename}');
@@ -429,12 +614,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
       }
       _cachedFilePath = playFile.path;
       mediaFilePathRegistry[widget.filename] = playFile.path;
-      final Source source = (!kIsWeb && Platform.isWindows)
-          ? UrlSource(Uri.file(playFile.path).toString())
-          : DeviceFileSource(playFile.path);
-      await _player.setReleaseMode(ReleaseMode.stop);
-      await _player.setSource(source);
-      await _player.resume();
+      await _startPlayback(playFile.path);
     } catch (e) {
       rootScreenKey.currentState?.showSnack('Play error: $e');
     } finally {
@@ -451,13 +631,26 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
         File? found; 
 
         if (widget.filename.startsWith('lan://')) {
-          final lanFilename = widget.filename.substring(6); 
+          final lanFilename = widget.filename.substring(6);
           final appDocuments = await getApplicationDocumentsDirectory();
           final lanFile = File('${appDocuments.path}/lan_media/$lanFilename');
           if (await lanFile.exists()) {
             found = lanFile;
           } else {
             _lastEnsureError = 'LAN file not found: $lanFilename';
+          }
+        } else if (widget.isFile) {
+          final root = rootScreenKey.currentState;
+          if (root != null) {
+            found = await root.downloadFileToCache(
+              widget.filename,
+              peerUsername: widget.peerUsername,
+              owner: widget.owner,
+              mediaKeyB64: widget.mediaKeyB64,
+            );
+            if (found == null) _lastEnsureError = _lastEnsureError ?? 'File not available';
+          } else {
+            _lastEnsureError = 'RootScreen not ready';
           }
         } else {
           final appSupport = await getApplicationDocumentsDirectory();
@@ -664,7 +857,23 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        
+        if (widget.origName != null && widget.origName!.isNotEmpty) ...[
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.music_note, size: 12, color: fg.withValues(alpha: 0.5)),
+              const SizedBox(width: 3),
+              Flexible(
+                child: Text(
+                  widget.origName!,
+                  style: TextStyle(fontSize: 11, color: fg.withValues(alpha: 0.6)),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+        ],
       GestureDetector(
         behavior: HitTestBehavior.opaque,
         child: Row(
@@ -700,17 +909,11 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
                   max: _duration.inMilliseconds.toDouble(),
                   onChanged: (value) async {
                     final newPosition = Duration(milliseconds: value.toInt());
-                    if (_duration == Duration.zero) return;
-                    if (!_isPlaying &&
-                        _position >= _duration &&
-                        _duration.inMilliseconds > 0) {
-                      await _player.play(DeviceFileSource(_cachedFilePath!));
-                      await Future.delayed(const Duration(milliseconds: 50));
-                    }
-                    await _player.seek(newPosition);
+                    if (_duration == Duration.zero || _player == null) return;
+                    await _player!.seek(newPosition);
                     if (!_isPlaying) {
                       await Future.delayed(const Duration(milliseconds: 10));
-                      await _player.pause();
+                      await _player!.pause();
                     }
                   },
                 ),

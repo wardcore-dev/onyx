@@ -55,6 +55,8 @@ class SettingsManager {
   static const _biometricEnabledKey = 'biometric_lock_enabled';
   static const _appLocaleKey = 'app_locale';
   static const _launchAtStartupKey = 'launch_at_startup';
+  static const _audioInputDeviceKey = 'audio_input_device_id';
+  static const _audioOutputDeviceKey = 'audio_output_device_id';
 
   static String? _accountContext;
   static SharedPreferences? _prefs;
@@ -162,6 +164,9 @@ class SettingsManager {
       ValueNotifier<Locale>(const Locale('en'));
 
   static final ValueNotifier<bool> launchAtStartup = ValueNotifier<bool>(false);
+
+  static final ValueNotifier<String> audioInputDeviceId = ValueNotifier<String>('');
+  static final ValueNotifier<String> audioOutputDeviceId = ValueNotifier<String>('');
 
   static Future<void> init() async {
     final prefs = await _getPrefs();
@@ -287,6 +292,9 @@ class SettingsManager {
     SettingsManager.appLocale.value = Locale(localeCode);
 
     SettingsManager.launchAtStartup.value = prefs.getBool(_launchAtStartupKey) ?? false;
+
+    SettingsManager.audioInputDeviceId.value = prefs.getString(_audioInputDeviceKey) ?? '';
+    SettingsManager.audioOutputDeviceId.value = prefs.getString(_audioOutputDeviceKey) ?? '';
   }
 
   static String _scopedKey(String baseKey) {
@@ -598,6 +606,18 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setBool(_launchAtStartupKey, val);
     launchAtStartup.value = val;
+  }
+
+  static Future<void> setAudioInputDevice(String id) async {
+    final prefs = await _getPrefs();
+    await prefs.setString(_audioInputDeviceKey, id);
+    audioInputDeviceId.value = id;
+  }
+
+  static Future<void> setAudioOutputDevice(String id) async {
+    final prefs = await _getPrefs();
+    await prefs.setString(_audioOutputDeviceKey, id);
+    audioOutputDeviceId.value = id;
   }
 
   static Color getElementColor(

@@ -48,6 +48,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../l10n/app_localizations.dart';
 import '../managers/blocklist_manager.dart';
 import '../widgets/message_reaction_bar.dart';
+import '../widgets/media_picker_sheet.dart';
 
 const List<String> _randomHints = [
   'Say hi!',
@@ -3343,64 +3344,57 @@ class ChatScreenState extends State<ChatScreen>
                                       size: 20,
                                     ),
                                     onPressed: () async {
-                                      if (!kIsWeb) {
-                                        try {
-                                        final picker = FilePicker.platform;
-                                        final result = await picker.pickFiles(
-                                            type: FileType.any,
-                                            allowMultiple: true);
-                                        if (result == null ||
-                                            result.files.isEmpty) return;
-
-                                        final paths = result.files
-                                            .map((f) => f.path)
-                                            .whereType<String>()
-                                            .toList();
-                                        if (paths.isEmpty) {
-                                          rootScreenKey.currentState?.showSnack(
-                                              'Web upload not supported');
-                                          return;
-                                        }
-
-                                        if (paths.length > 1 &&
-                                            paths.every(FileTypeDetector.isImage)) {
-                                          await _sendAlbum(paths);
-                                          return;
-                                        }
-
-                                        final path = paths.first;
-                                        final basename = p.basename(path);
-                                        final ext =
-                                            p.extension(basename).toLowerCase();
-
-                                        String fileType;
-                                        if (FileTypeDetector.isImage(path)) {
-                                          fileType = 'IMAGE';
-                                        } else if (FileTypeDetector.isVideo(path)) {
-                                          fileType = 'VIDEO';
-                                        } else if (FileTypeDetector.isAudio(path)) {
-                                          fileType = 'AUDIO';
-                                        } else if (FileTypeDetector.isDocument(path)) {
-                                          fileType = 'DOCUMENT';
-                                        } else if (FileTypeDetector.isCompress(path)) {
-                                          fileType = 'COMPRESS';
-                                        } else if (FileTypeDetector.isData(path)) {
-                                          fileType = 'DATA';
-                                        } else {
-                                          fileType = 'FILE';
-                                        }
-
-                                        _showFilePreviewAndSend(
-                                            path, basename, ext, fileType);
-                                        } catch (e) {
-                                          debugPrint('[Attach] FilePicker error: $e');
-                                          rootScreenKey.currentState?.showSnack(
-                                              'File picker error: $e');
-                                        }
-                                      } else {
+                                      if (kIsWeb) {
                                         rootScreenKey.currentState?.showSnack(
                                             'Attachment upload: desktop/mobile only');
+                                        return;
                                       }
+                                      List<String>? paths;
+                                      if (Platform.isAndroid || Platform.isIOS) {
+                                        paths = await showMediaPickerSheet(context);
+                                      } else {
+                                        try {
+                                          final result = await FilePicker.platform
+                                              .pickFiles(type: FileType.any, allowMultiple: true);
+                                          paths = result?.files
+                                              .map((f) => f.path)
+                                              .whereType<String>()
+                                              .toList();
+                                        } catch (e) {
+                                          debugPrint('[Attach] FilePicker error: $e');
+                                          rootScreenKey.currentState?.showSnack('File picker error: $e');
+                                        }
+                                      }
+                                      if (paths == null || paths.isEmpty) return;
+
+                                      if (paths.length > 1 &&
+                                          paths.every(FileTypeDetector.isImage)) {
+                                        await _sendAlbum(paths);
+                                        return;
+                                      }
+
+                                      final path = paths.first;
+                                      final basename = p.basename(path);
+                                      final ext = p.extension(basename).toLowerCase();
+
+                                      String fileType;
+                                      if (FileTypeDetector.isImage(path)) {
+                                        fileType = 'IMAGE';
+                                      } else if (FileTypeDetector.isVideo(path)) {
+                                        fileType = 'VIDEO';
+                                      } else if (FileTypeDetector.isAudio(path)) {
+                                        fileType = 'AUDIO';
+                                      } else if (FileTypeDetector.isDocument(path)) {
+                                        fileType = 'DOCUMENT';
+                                      } else if (FileTypeDetector.isCompress(path)) {
+                                        fileType = 'COMPRESS';
+                                      } else if (FileTypeDetector.isData(path)) {
+                                        fileType = 'DATA';
+                                      } else {
+                                        fileType = 'FILE';
+                                      }
+
+                                      _showFilePreviewAndSend(path, basename, ext, fileType);
                                     },
                                     visualDensity: VisualDensity.compact,
                                     splashRadius: 20,

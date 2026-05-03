@@ -233,6 +233,8 @@ class AppLocalizations {
   String get deleteChatTitle => _ru ? 'Удалить чат?' : 'Delete chat?';
   String get blockUserLabel => _ru ? 'Заблокировать' : 'Block user';
   String get unblockUserLabel => _ru ? 'Разблокировать' : 'Unblock';
+  String get muteUserLabel => _ru ? 'Отключить уведомления' : 'Mute notifications';
+  String get unmuteUserLabel => _ru ? 'Включить уведомления' : 'Unmute notifications';
   String get blockedByUserMessage => _ru
       ? 'Этот пользователь ограничил получение сообщений от вас.'
       : 'This user has restricted incoming messages from you.';
@@ -293,6 +295,9 @@ class AppLocalizations {
   String get usernameInvalidMsg => _ru ? 'Юзернейм: 3–16 симв., только буквы, цифры, _ . -' : 'Username: 3-16 chars, only letters, digits, _ . -';
   String get passwordTooShortMsg => _ru ? 'Пароль слишком короткий (мин. 16)' : 'Password too short (min 16)';
   String get generatePasswordTooltip => _ru ? 'Сгенерировать надёжный пароль' : 'Generate strong password';
+  String get savePasswordWarning => _ru
+      ? 'Обязательно сохраните пароль в надёжном месте — запишите его. Восстановление без пароля невозможно.'
+      : 'Make sure to save your password in a safe place — write it down. Recovery without a password is impossible.';
 
   String get passphraseWriteDown => _ru
       ? 'Запишите эти 12 слов и храните их в надёжном месте. Они нужны для смены пароля.'

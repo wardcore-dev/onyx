@@ -19,6 +19,7 @@ import 'package:tray_manager/tray_manager.dart';
 import 'utils/autostart_manager.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:just_audio/just_audio.dart' as ja;
 import 'package:workmanager/workmanager.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'widgets/avatar_widget.dart';
@@ -27,11 +28,15 @@ import 'screens/pin_code_screen.dart';
 import 'package:local_auth/local_auth.dart';
 import 'managers/settings_manager.dart';
 import 'managers/blocklist_manager.dart';
+import 'managers/mute_manager.dart';
 import 'managers/account_manager.dart';
 import 'managers/secure_store.dart';
 import 'managers/onyx_tray_manager.dart';
 import 'models/app_themes.dart';
 import 'widgets/debug_overlay_v2.dart';
+import 'widgets/vinyl_player_button.dart';
+import 'widgets/voice_channel_bar.dart';
+import 'voice/voice_channel_manager.dart';
 import 'screens/call_overlay.dart';
 import 'utils/fps_booster.dart';
 import 'utils/performance_initializer.dart';
@@ -43,6 +48,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'l10n/app_localizations.dart';
 
 import 'globals.dart';
+import 'utils/global_audio_controller.dart';
 import 'package:media_kit/media_kit.dart';
 
 late File _logFile;
@@ -224,6 +230,7 @@ void main() async {
   appLog('[settings] Loading SettingsManager...');
   await SettingsManager.init();
   await BlocklistManager.init();
+  await MuteManager.init();
 
   await MediaCache.instance.init();
 
@@ -304,6 +311,8 @@ void main() async {
 
   await Future.wait(initFutures, eagerError: false);
 
+  _initMediaNotificationListener();
+
   setupDebugPrintCapture();
   appLog('[debug] Debug print capture ready');
 
@@ -314,6 +323,33 @@ void main() async {
   appLog('');
 
   runApp(const MyApp());
+}
+
+void _initMediaNotificationListener() {
+  String? lastTrack;
+  bool? lastPlaying;
+  bool lastActive = false;
+
+  globalAudioController.addListener(() {
+    final ctrl = globalAudioController;
+    if (ctrl.isActive == lastActive &&
+        ctrl.isPlaying == lastPlaying &&
+        ctrl.trackName == lastTrack) {
+      return;
+    }
+    lastActive = ctrl.isActive;
+    lastPlaying = ctrl.isPlaying;
+    lastTrack = ctrl.trackName;
+
+    if (!ctrl.isActive) {
+      NotificationService.cancelMediaNotification();
+    } else {
+      NotificationService.showMediaNotification(
+        trackName: ctrl.trackName ?? 'Audio',
+        isPlaying: ctrl.isPlaying,
+      );
+    }
+  });
 }
 
 Future<void> _optimizePerformance() async {
@@ -438,6 +474,25 @@ class _ElegantMessengerState extends State<ElegantMessenger> with WindowListener
     if (isDesktop) {
       _initDesktopFeatures();
     }
+    // Pre-warm just_audio / ExoPlayer so first voice/music play is instant.
+    // Delayed 6 s so it doesn't compete with chat loading on app start.
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await Future.delayed(const Duration(seconds: 6));
+        _preWarmAudio();
+      });
+    }
+  }
+
+  // Creates a throwaway AudioPlayer and prepares a bundled asset to force
+  // ExoPlayer's codec pipeline to initialise in the background. After this
+  // runs, the first real play() call is fast.
+  static Future<void> _preWarmAudio() async {
+    try {
+      final p = ja.AudioPlayer();
+      await p.setAudioSource(ja.AudioSource.asset('assets/notification0.wav'));
+      await p.dispose();
+    } catch (_) {}
   }
 
   Future<void> _initDesktopFeatures() async {
@@ -648,6 +703,7 @@ class _ElegantMessengerState extends State<ElegantMessenger> with WindowListener
         final fontFamily = SettingsManager.fontFamily.value;
         final appLocale = SettingsManager.appLocale.value;
         return MaterialApp(
+          navigatorKey: navigatorKey,
           scrollBehavior: const _BouncingScrollBehavior(),
           title: 'ONYX Messenger',
           locale: appLocale,
@@ -679,6 +735,8 @@ class _ElegantMessengerState extends State<ElegantMessenger> with WindowListener
                 children: [
                   child ?? const SizedBox.shrink(),
                   const CallOverlay(),
+                  const VinylPlayerButton(),
+                  const _GlobalVoiceBar(),
                 ],
               ),
             );
@@ -755,6 +813,59 @@ class _PinGateWidgetState extends State<_PinGateWidget> {
       currentTheme: widget.currentTheme,
       isDarkMode: widget.isDarkMode,
       onThemeChanged: widget.onThemeChanged,
+    );
+  }
+}
+
+// ── Global draggable voice bar – renders above ALL routes ─────────────────────
+
+class _GlobalVoiceBar extends StatefulWidget {
+  const _GlobalVoiceBar();
+
+  @override
+  State<_GlobalVoiceBar> createState() => _GlobalVoiceBarState();
+}
+
+class _GlobalVoiceBarState extends State<_GlobalVoiceBar> {
+  double? _left;
+  double? _bottom;
+  bool _initialised = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    final isDesktop = mq.size.width > 700;
+
+    if (!_initialised) {
+      _left = 12;
+      _bottom = isDesktop ? 12 : 96;
+      _initialised = true;
+    }
+
+    return ValueListenableBuilder<bool>(
+      valueListenable: VoiceChannelManager.instance.isInChannel,
+      builder: (_, inChannel, __) {
+        if (!inChannel) return const SizedBox.shrink();
+
+        return Positioned(
+          left: _left,
+          bottom: _bottom,
+          child: GestureDetector(
+            onPanUpdate: (details) {
+              setState(() {
+                _left = (_left! + details.delta.dx)
+                    .clamp(0.0, mq.size.width - 260);
+                _bottom = (_bottom! - details.delta.dy)
+                    .clamp(0.0, mq.size.height - 80);
+              });
+            },
+            child: const SizedBox(
+              width: 280,
+              child: VoiceChannelBar(),
+            ),
+          ),
+        );
+      },
     );
   }
 }

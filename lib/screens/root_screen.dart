@@ -45,6 +45,7 @@ import '../background/foreground_task_handler.dart';
 import '../globals.dart';
 import '../utils/upload_task.dart';
 import '../widgets/adaptive_blur.dart';
+import '../voice/voice_channel_manager.dart';
 import '../managers/settings_manager.dart';
 import '../managers/unread_manager.dart';
 import '../models/group.dart';
@@ -55,6 +56,7 @@ import '../widgets/voice_confirm_dialog.dart';
 import '../widgets/search_dialog_content.dart';
 import '../screens/chats_tab.dart';
 import '../managers/blocklist_manager.dart';
+import '../managers/mute_manager.dart';
 import '../screens/accounts_tab.dart';
 import '../screens/active_sessions_screen.dart';
 import '../utils/optimized_state_manager.dart';
@@ -2132,6 +2134,13 @@ class RootScreenState extends State<RootScreen>
     _pageController = PageController(initialPage: _index);
     callManager.init(getWs: () => _ws);
 
+    // Route voice channel signaling to VoiceChannelManager
+    ExternalServerManager.setVoiceListener((msg, serverId) async {
+      final username = await AccountManager.getCurrentAccount();
+      if (username == null) return;
+      await VoiceChannelManager.instance.handleMessage(msg, username, serverId);
+    });
+
     callManager.isIncomingCall.addListener(_onCallStateChanged);
     callManager.isInCall.addListener(_onCallStateChanged);
     callManager.isConnecting.addListener(_onCallStateChanged);
@@ -2328,6 +2337,9 @@ class RootScreenState extends State<RootScreen>
     callManager.isRemoteVideoEnabled.removeListener(_onCallStateChanged);
 
     callManager.cleanup();
+
+    ExternalServerManager.clearVoiceListener();
+    VoiceChannelManager.instance.leaveChannel();
 
     _persistChatsTimer?.cancel();
     if (_hasPendingPersist) {
@@ -2883,7 +2895,7 @@ class RootScreenState extends State<RootScreen>
       final finalPreview = count > 1 ? '$count new messages' : preview;
       final previewIsMedia = count == 1 && isMedia;
 
-      if (!kIsWeb && Platform.isWindows) {
+      if (!kIsWeb && Platform.isWindows && !MuteManager.isMuted(sender)) {
         unawaited(() async {
           final isMinimized = await windowManager.isMinimized();
           final isVisible = await windowManager.isVisible();
@@ -2917,7 +2929,7 @@ class RootScreenState extends State<RootScreen>
 
       if (!kIsWeb && Platform.isAndroid) {
         final chatIsOpen = selectedChatOther == sender && count == 1;
-        if (!chatIsOpen) {
+        if (!chatIsOpen && !MuteManager.isMuted(sender)) {
           unawaited(() async {
             final hideContent = SettingsManager.notifHideContent.value;
             final notifTitle = hideContent ? 'ONYX' : senderDisplayName;
@@ -3892,11 +3904,11 @@ class RootScreenState extends State<RootScreen>
 
                 schedulePersistChats(chatId: chatId);
 
-                if (!msg.outgoing) {
+                if (!msg.outgoing && !MuteManager.isMuted(from)) {
                   _scheduleNotificationSound();
                 }
 
-                if (SettingsManager.notificationsEnabled.value && mounted) {
+                if (SettingsManager.notificationsEnabled.value && mounted && !MuteManager.isMuted(from)) {
                   final rawPrev = msg.rawEnvelopePreview ??
                       (msg.content.length > 120
                           ? '${msg.content.substring(0, 120)}...'
@@ -5039,7 +5051,9 @@ class RootScreenState extends State<RootScreen>
     _bumpForChat(chatId);
 
     schedulePersistChats(chatId: chatId);
-    unawaited(_playNotificationSound());
+    if (!MuteManager.isMuted(message.from)) {
+      unawaited(_playNotificationSound());
+    }
 
     if (selectedChatOther != message.from) {
       unreadManager.incrementUnread(chatId);
@@ -5123,7 +5137,9 @@ class RootScreenState extends State<RootScreen>
       _bumpForChat(chatId);
 
       schedulePersistChats(chatId: chatId);
-      unawaited(_playNotificationSound());
+      if (!MuteManager.isMuted(from)) {
+        unawaited(_playNotificationSound());
+      }
 
       if (selectedChatOther != from) {
         unreadManager.incrementUnread(chatId);
@@ -5938,7 +5954,7 @@ class RootScreenState extends State<RootScreen>
                   Expanded(
                     child: Row(
                       children: [
-                        
+
                         if (!isNavBottom)
                           TweenAnimationBuilder<double>(
                             tween: Tween<double>(begin: -80.0, end: 0.0),
@@ -7062,6 +7078,7 @@ class RootScreenState extends State<RootScreen>
               );
             },
           ),
+
         ],
       ),
     );
@@ -7110,3 +7127,4 @@ _KeyPairData _decodeIdentity(Map<String, String> identity) {
   final pk = SimplePublicKey(pubBytes, type: KeyPairType.x25519);
   return _KeyPairData(kp, pk);
 }
+
