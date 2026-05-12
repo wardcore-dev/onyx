@@ -26,6 +26,7 @@ final ValueNotifier<Map<int, int>> groupChatsVersion = ValueNotifier<Map<int, in
 
 final ValueNotifier<bool> recordingNotifier = ValueNotifier<bool>(false);
 final ValueNotifier<bool> wsConnectedNotifier = ValueNotifier<bool>(false);
+final ValueNotifier<bool> sessionExpiredNotifier = ValueNotifier<bool>(false);
 
 final ValueNotifier<bool> proxyActiveNotifier = ValueNotifier<bool>(false);
 final ValueNotifier<Set<String>> onlineUsersNotifier = ValueNotifier(
@@ -98,7 +99,7 @@ const String wsUrl = 'wss://api-onyx.wardcore.com/ws';
 const String publicIpApi = 'https://api.ipify.org';
 
 
-const String kAppVersion = 'v1.4-beta';
+const String kAppVersion = 'v1.5-beta';
 
 bool get isDesktop {
   if (kIsWeb) return false;

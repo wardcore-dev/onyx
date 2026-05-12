@@ -122,6 +122,8 @@ class AppLocalizations {
   String get alignAllRight => _ru ? 'Выровнять все сообщения вправо' : 'Align all messages right';
   String get alignAllRightSubtitle => _ru ? 'Все сообщения отображаются справа, как в зеркале' : 'All messages aligned to the right side like a mirror';
   String get showAvatarInChats => _ru ? 'Аватар в списке чатов' : 'Show avatar in chats list';
+  String get showAccountIndicator => _ru ? 'Показывать текущий аккаунт' : 'Show current account';
+  String get showAccountIndicatorSubtitle => _ru ? 'Отображать имя и юзернейм в углу приложения' : 'Display name and username in the app corner';
   String get showAvatarSubtitle => _ru ? 'Показывать аватар собеседника в списке чатов' : 'Show contact avatar in chat list';
   String get chatBackground => _ru ? 'Фон чата' : 'Chat Background';
   String get chatBgSubtitle => _ru ? 'Установить изображение как фон в чатах' : 'Set an image as chat background';
@@ -340,6 +342,11 @@ class AppLocalizations {
   String get chooseCrypto => _ru ? 'Выберите криптовалюту для доната' : 'Choose a crypto to donate';
   String get addressCopied => _ru ? 'адрес скопирован' : 'address copied';
 
+  String get hideFromSearch => _ru ? 'Не показывать меня в поиске' : 'Hide me from search';
+  String get hideFromSearchSubtitle => _ru ? 'Другие пользователи не смогут найти вас по имени' : 'Others won\'t find you by username search';
+  String get hideFromSearchSavedOk => _ru ? ' Настройки приватности сохранены' : ' Privacy settings saved';
+  String get hideFromSearchSavedFail => _ru ? ' Сохранено локально, ошибка синхронизации' : ' Saved locally, failed to sync';
+
   String get statusVisibility => _ru ? 'Видимость' : 'Visibility';
   String get statusShowStatus => _ru ? 'Показывать' : 'Show Status';
   String get statusHideStatus => _ru ? 'Скрывать' : 'Hide Status';
@@ -367,6 +374,32 @@ class AppLocalizations {
         'Local cache will remain. This action cannot be undone.';
   String get serverMediaCleared => _ru ? ' Серверный кэш полностью очищен' : ' All server media cleared';
   String get notLoggedIn => _ru ? 'Не авторизован' : 'Not logged in';
+
+  // Cache manager screen
+  String get serverMediaManagerTitle => _ru ? 'Серверные медиа' : 'Server Media';
+  String get cacheTabImages => _ru ? 'Изображения' : 'Images';
+  String get cacheTabVoice => _ru ? 'Голос' : 'Voice';
+  String get cacheTabVideo => _ru ? 'Видео' : 'Video';
+  String get cacheTabFiles => _ru ? 'Файлы' : 'Files';
+  String get cacheTabAvatars => _ru ? 'Аватары' : 'Avatars';
+  String get cacheNoFiles => _ru ? 'Нет файлов в этой категории' : 'No files in this category';
+  String get cacheClearTabTitle => _ru ? 'Очистить категорию?' : 'Clear category?';
+  String cacheClearTabContent(String typeName) => _ru
+      ? 'Удалить все файлы в категории "$typeName"? Действие необратимо.'
+      : 'Delete all files in "$typeName"? This cannot be undone.';
+  String cacheFilesDeleted(int n) => _ru
+      ? 'Удалено файлов: $n'
+      : 'Deleted $n file${n == 1 ? '' : 's'}';
+  String get cacheFileDeleteFailed => _ru ? 'Не удалось удалить файл' : 'Failed to delete file';
+  String get cacheClearAll => _ru ? 'Очистить всё' : 'Clear All';
+  String get cacheClearTab => _ru ? 'Очистить вкладку' : 'Clear tab';
+  String get manageCacheTitle => _ru ? 'Управление кэшем' : 'Manage Cache';
+  String get manageCacheButton => _ru ? 'Управление кэшем медиа' : 'Manage Media Cache';
+  String get localCacheTab => _ru ? 'Локальный' : 'Local';
+  String get serverCacheTab => _ru ? 'Серверный' : 'Server';
+  String get cacheSelectAll => _ru ? 'Выбрать все' : 'Select all';
+  String get cacheDeselectAll => _ru ? 'Снять выбор' : 'Deselect all';
+  String get cacheSelected => _ru ? 'выбрано' : 'selected';
   String get clearLocalCacheDialogTitle => _ru ? 'Очистить кэш?' : 'Clear local cache';
   String get clearLocalCacheDialogContent => _ru
       ? 'Удалить весь кэшированный медиаконтент (голос, фото, видео)?\nЗагрузки на сервере и история чатов не затрагиваются.'
@@ -786,6 +819,90 @@ class AppLocalizations {
   String get blockedUsersEmpty => _ru ? 'Список заблокированных пуст' : 'No blocked users';
   String get unblockAction => _ru ? 'Разблокировать' : 'Unblock';
   String get writeMessage => _ru ? 'Написать' : 'Write';
+
+  // ── Fake PIN / Decoy account ──────────────────────────────────────────────
+  String get fakePinTitle => _ru ? 'Фейковый PIN' : 'Fake PIN';
+  String get fakePinSubtitle => _ru ? 'Открыть фейковый аккаунт под принуждением' : 'Open a decoy account under duress';
+  String get fakePinSheetTitle => _ru ? 'Настройка фейкового PIN' : 'Fake PIN Setup';
+  String get fakePinStatusActive => _ru ? 'Активен' : 'Active';
+  String get fakePinStatusOff => _ru ? 'Выкл' : 'Off';
+  String get fakePinDescription => _ru
+      ? 'Когда этот PIN вводится на экране блокировки, приложение открывается с фейковым аккаунтом вместо настоящего.'
+      : 'When this PIN is entered at the lock screen, the app opens showing your decoy account instead of your real one.';
+  String get setFakePin => _ru ? 'Установить фейковый PIN' : 'Set Fake PIN';
+  String get disableFakePin => _ru ? 'Отключить фейковый PIN' : 'Disable Fake PIN';
+  String get changeFakePin => _ru ? 'Изменить фейковый PIN' : 'Change Fake PIN';
+  String get disableFakePinTitle => _ru ? 'Отключить фейковый PIN?' : 'Disable Fake PIN?';
+  String get disableFakePinContent => _ru
+      ? 'Фейковый PIN будет удалён. Настройки фейкового аккаунта сохранятся.'
+      : 'The fake PIN will be removed. Your decoy account settings will be kept.';
+  String get fakePinEnabledSnack => _ru ? 'Фейковый PIN включён' : 'Fake PIN enabled';
+  String get fakePinDisabledSnack => _ru ? 'Фейковый PIN отключён' : 'Fake PIN disabled';
+  String get fakePinCannotMatchReal => _ru ? 'Фейковый PIN не может совпадать с реальным' : 'Fake PIN cannot match your real PIN';
+  String get decoyAccountSection => _ru ? 'Фейковый аккаунт' : 'Decoy Account';
+  String get decoyAccountSubtitle => _ru ? 'Этот аккаунт будет показан при вводе фейкового PIN' : 'This account will be shown when the fake PIN is used';
+  String get decoyDisplayNameLabel => _ru ? 'Имя' : 'Display name';
+  String get decoyUsernameLabel => _ru ? 'Имя пользователя' : 'Username';
+  String get decoyDisplayNameHint => _ru ? 'Введите имя' : 'Enter display name';
+  String get decoyUsernameHint => _ru ? 'Введите логин' : 'Enter username';
+  String get saveDecoyAccount => _ru ? 'Сохранить фейковый аккаунт' : 'Save decoy account';
+  String get decoyAccountSaved => _ru ? 'Фейковый аккаунт сохранён' : 'Decoy account saved';
+  String get decoyFieldsRequired => _ru ? 'Имя и логин не могут быть пустыми' : 'Username and display name cannot be empty';
+  String get removeAvatar => _ru ? 'Удалить аватарку' : 'Remove avatar';
+  String get fakePinSecurityNote => _ru
+      ? 'Фейковый PIN должен отличаться от реального. Фейковый аккаунт не подключается ни к какому серверу — он показывает только настроенный вами профиль.'
+      : 'The fake PIN must differ from your real PIN. The decoy account has no server connection — it only shows the profile you configured here.';
+  String get decoyNoChats => _ru ? 'Нет чатов' : 'No chats yet';
+  String get decoyNoGroups => _ru ? 'Нет групп' : 'No groups yet';
+  String get decoyNoFavorites => _ru ? 'Нет избранного' : 'No favorites yet';
+  String get decoyOtherAccounts => _ru ? 'Другие аккаунты' : 'Other accounts';
+  String get decoyNoOtherAccounts => _ru ? 'Нет других аккаунтов' : 'No other accounts';
+  String get lock => _ru ? 'Заблокировать' : 'Lock';
+  String get decoyAppearance => _ru ? 'Внешний вид' : 'Appearance';
+  String get decoyNotifications => _ru ? 'Уведомления' : 'Notifications';
+  String get decoyStorage => _ru ? 'Хранилище' : 'Storage';
+  String get decoyAppearanceSubtitle => _ru ? 'Тема и параметры отображения' : 'Theme and display options';
+  String get decoyNotificationsSubtitle => _ru ? 'Звук и оповещения' : 'Sound and alert settings';
+  String get decoyStorageSubtitle => _ru ? 'Управление кэшем файлов' : 'Manage cached files';
+
+  // Decoy contacts
+  String get decoyContactsSection => _ru ? 'Фейковые чаты' : 'Fake Chats';
+  String get decoyContactsSubtitle => _ru
+      ? 'Добавьте контакты с перепиской — они появятся когда открывается фейк-аккаунт'
+      : 'Add contacts with messages — they appear when the decoy account is opened';
+  String get generateContacts => _ru ? 'Сгенерировать контакты' : 'Generate Contacts';
+  String get addDecoyContact => _ru ? 'Добавить контакт' : 'Add Contact';
+  String get decoyNoContacts => _ru ? 'Нет фейковых чатов' : 'No fake chats yet';
+  String get decoyContactUsername => _ru ? 'Юзернейм контакта' : 'Contact username';
+  String get decoyContactDisplayName => _ru ? 'Имя контакта' : 'Contact display name';
+  String contactsGenerated(int n) =>
+      _ru ? 'Добавлено $n контактов' : 'Added $n contacts';
+  String get contactAdded => _ru ? 'Контакт добавлен' : 'Contact added';
+  String get contactRemoved => _ru ? 'Контакт удалён' : 'Contact removed';
+  String get decoyContactExists => _ru ? 'Такой контакт уже есть' : 'Contact already exists';
+  String get decoyContactsCleared => _ru ? 'Все чаты очищены' : 'All chats cleared';
+  String get clearDecoyChats => _ru ? 'Очистить все чаты' : 'Clear All Chats';
+  String get messagesCount => _ru ? 'сообщений' : 'messages';
+  String get add => _ru ? 'Добавить' : 'Add';
+  String get decoyChatsSubtitle => _ru
+      ? 'Контакты с историей переписки'
+      : 'Contacts with message history';
+  String get decoyGroupsSection => _ru ? 'Группы и каналы' : 'Groups & Channels';
+  String get decoyGroupsSubtitle => _ru ? 'Фейковые группы и каналы' : 'Fake groups and channels';
+  String get decoyFavoritesSection => _ru ? 'Избранное' : 'Favorites';
+  String get decoyFavoritesSubtitle => _ru ? 'Закреплённые чаты' : 'Pinned favorite chats';
+  String get noFakeGroups => _ru ? 'Нет групп' : 'No groups yet';
+  String get noFakeFavorites => _ru ? 'Нет избранного' : 'No favorites yet';
+  String get addFakeGroup => _ru ? 'Группу' : 'Group';
+  String get addFakeChannel => _ru ? 'Канал' : 'Channel';
+  String get addFakeFavorite => _ru ? 'Добавить избранное' : 'Add Favorite';
+  String get groupType => _ru ? 'Группа' : 'Group';
+  String get channelType => _ru ? 'Канал' : 'Channel';
+  String get favTitleHint => _ru ? 'Название' : 'Title';
+  String get generateAll => _ru ? 'Сгенерировать всё' : 'Generate All';
+  String get generateAllConfirm => _ru
+      ? 'Будет сгенерирован случайный контент. Текущие данные будут заменены.'
+      : 'Random content will be generated, replacing existing data.';
 }
 
 class _AppLocalizationsDelegate

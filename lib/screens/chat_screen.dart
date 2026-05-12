@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' show lerpDouble;
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/services.dart';
@@ -49,6 +50,7 @@ import '../l10n/app_localizations.dart';
 import '../managers/blocklist_manager.dart';
 import '../widgets/message_reaction_bar.dart';
 import '../widgets/media_picker_sheet.dart';
+import '../widgets/chat_input_bar.dart';
 
 const List<String> _randomHints = [
   'Say hi!',
@@ -119,12 +121,12 @@ class ChatScreen extends StatefulWidget {
 
 class ChatScreenState extends State<ChatScreen>
     with SingleTickerProviderStateMixin, ReactionStateMixin {
-  
   static final Set<String> _sessionInputAnimationsShown = {};
 
   final TextEditingController _textCtrl = TextEditingController();
   final ScrollController _scroll = ScrollController();
   late final FocusNode _focusNode;
+  late final FocusNode _keyboardListenerFocusNode;
   Timer? _typingThrottle;
   bool _typingSentRecently = false;
   final Set<String> _alreadyRenderedMessageIds = {};
@@ -132,8 +134,6 @@ class ChatScreenState extends State<ChatScreen>
   bool _shouldPreserveExternalFocus = false;
   bool _suppressAutoRefocus = false;
   final ValueNotifier<bool> _scrollDownVisible = ValueNotifier<bool>(false);
-  
-
 
   String? _droppedFilePath;
 
@@ -155,8 +155,11 @@ class ChatScreenState extends State<ChatScreen>
   List<_ListItem>? _cachedItems;
   int _cachedMessagesHash = 0;
 
-  late final _selectionNotifier = ValueNotifier<({bool active, Map<String, ChatMessage> selected})>((active: false, selected: {}));
-  Map<String, ChatMessage> get _selectedMessages => _selectionNotifier.value.selected;
+  late final _selectionNotifier =
+      ValueNotifier<({bool active, Map<String, ChatMessage> selected})>(
+          (active: false, selected: {}));
+  Map<String, ChatMessage> get _selectedMessages =>
+      _selectionNotifier.value.selected;
 
   final List<ChatMessage> _olderMessages = [];
   final List<UploadTask> _pendingUploads = [];
@@ -169,7 +172,8 @@ class ChatScreenState extends State<ChatScreen>
   String _searchQuery = '';
   int _currentMatchIdx = 0;
   List<int> _cachedSearchMatches = [];
-  final _searchStats = ValueNotifier<({int current, int total})>((current: 0, total: 0));
+  final _searchStats =
+      ValueNotifier<({int current, int total})>((current: 0, total: 0));
   final _searchFocusNode = FocusNode();
 
   late final Listenable _combinedHeaderListenable;
@@ -202,7 +206,9 @@ class ChatScreenState extends State<ChatScreen>
   }
 
   void _cancelEditing() {
-    setState(() { _editingMessage = null; });
+    setState(() {
+      _editingMessage = null;
+    });
     _textCtrl.clear();
     _focusNode.requestFocus();
   }
@@ -214,7 +220,8 @@ class ChatScreenState extends State<ChatScreen>
     final raw = prefs.getString(_pinPrefsKey);
     if (raw != null && mounted) {
       try {
-        setState(() => _pinnedMessage = Map<String, dynamic>.from(jsonDecode(raw) as Map));
+        setState(() =>
+            _pinnedMessage = Map<String, dynamic>.from(jsonDecode(raw) as Map));
       } catch (_) {}
     }
   }
@@ -271,7 +278,10 @@ class ChatScreenState extends State<ChatScreen>
     if (serverId == null && localId == null) return;
     final rootState = rootScreenKey.currentState;
     if (rootState == null) return;
-    final msgs = <ChatMessage>[...(rootState.chats[_chatId] ?? []), ..._olderMessages];
+    final msgs = <ChatMessage>[
+      ...(rootState.chats[_chatId] ?? []),
+      ..._olderMessages
+    ];
     final items = _buildMessagesWithDaySeparators(msgs);
 
     int? foundIdx;
@@ -297,9 +307,8 @@ class ChatScreenState extends State<ChatScreen>
     final listviewIdx = foundIdx + _pendingUploads.length;
     final totalItems = items.length + _pendingUploads.length;
     final maxExt = _scroll.position.maxScrollExtent;
-    final proportional = totalItems > 0
-        ? (listviewIdx / totalItems) * maxExt
-        : 0.0;
+    final proportional =
+        totalItems > 0 ? (listviewIdx / totalItems) * maxExt : 0.0;
 
     setState(() => _scrollTargetId = foundId);
 
@@ -357,7 +366,8 @@ class ChatScreenState extends State<ChatScreen>
               ),
               child: Row(
                 children: [
-                  Icon(Icons.push_pin_rounded, size: 16, color: colorScheme.primary),
+                  Icon(Icons.push_pin_rounded,
+                      size: 16, color: colorScheme.primary),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(
@@ -393,7 +403,8 @@ class ChatScreenState extends State<ChatScreen>
                     },
                     visualDensity: VisualDensity.compact,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    constraints:
+                        const BoxConstraints(minWidth: 28, minHeight: 28),
                   ),
                 ],
               ),
@@ -419,7 +430,8 @@ class ChatScreenState extends State<ChatScreen>
   void _enterSelectionMode(ChatMessage msg, String uniqueKey) {
     HapticFeedback.mediumImpact();
     final cur = _selectionNotifier.value;
-    _selectionNotifier.value = (active: true, selected: {...cur.selected, uniqueKey: msg});
+    _selectionNotifier.value =
+        (active: true, selected: {...cur.selected, uniqueKey: msg});
   }
 
   void _exitSelectionMode() {
@@ -452,9 +464,7 @@ class ChatScreenState extends State<ChatScreen>
   }
 
   void _forwardSelectedMessages() {
-    final contents = _selectedMessages.values
-        .map((m) => m.content)
-        .toList();
+    final contents = _selectedMessages.values.map((m) => m.content).toList();
     if (contents.isEmpty) return;
     _exitSelectionMode();
     ForwardScreen.show(context, contents);
@@ -463,7 +473,8 @@ class ChatScreenState extends State<ChatScreen>
   Future<void> _confirmDeleteSelected() async {
     // media can be deleted anytime (outgoing), text only within 30s (canEditOrDelete already checks outgoing+timer)
     final toDelete = _selectedMessages.values
-        .where((m) => m.serverMessageId != null &&
+        .where((m) =>
+            m.serverMessageId != null &&
             (!_isTextMessage(m) ? m.outgoing : m.canEditOrDelete))
         .toList();
     if (toDelete.isEmpty) return;
@@ -502,12 +513,11 @@ class ChatScreenState extends State<ChatScreen>
     }
   }
 
-
   void _showMessageMenu(ChatMessage msg) {
     _focusNode.unfocus();
     final text = msg.content;
     final l = AppLocalizations.of(context);
-    
+
     if (text.startsWith('[cannot-decrypt')) return;
 
     final isImage = text.startsWith('IMAGEv1:');
@@ -516,8 +526,7 @@ class ChatScreenState extends State<ChatScreen>
     final isVoice = text.startsWith('VOICEv1:');
     final isFile = text.startsWith('FILEv1:') || text.startsWith('FILE:');
     final isSaveable = isImage || isAlbum || isVideo || isVoice || isFile;
-    final isMedia = isSaveable ||
-        text.startsWith('MEDIA_PROXYv1:');
+    final isMedia = isSaveable || text.startsWith('MEDIA_PROXYv1:');
 
     _shouldPreserveExternalFocus = true;
 
@@ -552,7 +561,8 @@ class ChatScreenState extends State<ChatScreen>
         onCopyImage: isImage
             ? () {
                 Navigator.pop(ctx);
-                copyMessageImageToClipboard(text, (m) => rootScreenKey.currentState?.showSnack(m));
+                copyMessageImageToClipboard(
+                    text, (m) => rootScreenKey.currentState?.showSnack(m));
               }
             : null,
         onEdit: canEdit && !isMedia
@@ -600,7 +610,7 @@ class ChatScreenState extends State<ChatScreen>
                     rootScreenKey.currentState?.showSnack(cannotDeleteMsg);
                     return;
                   }
-                  
+
                   if (msg.content.startsWith('ALBUMv1:')) {
                     await _deleteAlbumFiles(msg.content);
                   } else {
@@ -614,8 +624,11 @@ class ChatScreenState extends State<ChatScreen>
           Navigator.pop(ctx);
           final msgKey =
               '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
-          openEmojiPicker(context, msgKey, widget.myUsername, onAfterToggle: (emoji, wasReacted) {
-            if (msg.serverMessageId != null) _serverTogglePrivateReaction(msgKey, msg.serverMessageId!, emoji, wasReacted);
+          openEmojiPicker(context, msgKey, widget.myUsername,
+              onAfterToggle: (emoji, wasReacted) {
+            if (msg.serverMessageId != null)
+              _serverTogglePrivateReaction(
+                  msgKey, msg.serverMessageId!, emoji, wasReacted);
           });
         },
       ),
@@ -635,9 +648,12 @@ class ChatScreenState extends State<ChatScreen>
     final isVideo = text.toUpperCase().startsWith('VIDEOV1:');
     final isVoice = text.startsWith('VOICEv1:');
     final isFile = text.startsWith('FILEv1:') || text.startsWith('FILE:');
-    final isMedia = isVoice || isImage || isVideo ||
+    final isMedia = isVoice ||
+        isImage ||
+        isVideo ||
         text.toUpperCase().startsWith('FILEV1:') ||
-        isAlbum || isFile ||
+        isAlbum ||
+        isFile ||
         text.startsWith('MEDIA_PROXYv1:');
     final l = AppLocalizations.of(context);
     return [
@@ -656,8 +672,11 @@ class ChatScreenState extends State<ChatScreen>
         onPressed: () {
           final msgKey =
               '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
-          openEmojiPicker(context, msgKey, widget.myUsername, onAfterToggle: (emoji, wasReacted) {
-            if (msg.serverMessageId != null) _serverTogglePrivateReaction(msgKey, msg.serverMessageId!, emoji, wasReacted);
+          openEmojiPicker(context, msgKey, widget.myUsername,
+              onAfterToggle: (emoji, wasReacted) {
+            if (msg.serverMessageId != null)
+              _serverTogglePrivateReaction(
+                  msgKey, msg.serverMessageId!, emoji, wasReacted);
           });
         },
       ),
@@ -669,7 +688,8 @@ class ChatScreenState extends State<ChatScreen>
       if (isImage)
         ContextMenuButtonItem(
           label: 'Copy Image',
-          onPressed: () => copyMessageImageToClipboard(text, (m) => rootScreenKey.currentState?.showSnack(m)),
+          onPressed: () => copyMessageImageToClipboard(
+              text, (m) => rootScreenKey.currentState?.showSnack(m)),
         ),
       if (!isMedia)
         ContextMenuButtonItem(
@@ -729,8 +749,10 @@ class ChatScreenState extends State<ChatScreen>
     }
     try {
       if (content.startsWith('IMAGEv1:')) {
-        final data = jsonDecode(content.substring('IMAGEv1:'.length)) as Map<String, dynamic>;
-        final filename = data['url'] as String? ?? data['filename'] as String? ?? '';
+        final data = jsonDecode(content.substring('IMAGEv1:'.length))
+            as Map<String, dynamic>;
+        final filename =
+            data['url'] as String? ?? data['filename'] as String? ?? '';
         if (filename.isEmpty) return;
         final cached = imageFileCache[filename];
         if (cached == null) {
@@ -742,12 +764,17 @@ class ChatScreenState extends State<ChatScreen>
       }
 
       if (content.startsWith('VOICEv1:')) {
-        final meta = jsonDecode(content.substring('VOICEv1:'.length)) as Map<String, dynamic>;
-        final filename = meta['url'] as String? ?? meta['filename'] as String? ?? '';
+        final meta = jsonDecode(content.substring('VOICEv1:'.length))
+            as Map<String, dynamic>;
+        final filename =
+            meta['url'] as String? ?? meta['filename'] as String? ?? '';
         final orig = meta['orig'] as String? ?? p.basename(filename);
         if (filename.isEmpty) return;
         final localPath = mediaFilePathRegistry[filename];
-        if (localPath == null) { rootScreenKey.currentState?.showSnack('Voice not loaded yet'); return; }
+        if (localPath == null) {
+          rootScreenKey.currentState?.showSnack('Voice not loaded yet');
+          return;
+        }
         // "orig" may be a display label without extension (e.g. "Voice message");
         // fall back to the cached file's extension in that case.
         String saveName = orig.isNotEmpty ? orig : p.basename(localPath);
@@ -759,13 +786,19 @@ class ChatScreenState extends State<ChatScreen>
       }
 
       if (content.toUpperCase().startsWith('VIDEOV1:')) {
-        final meta = jsonDecode(content.substring('VIDEOv1:'.length)) as Map<String, dynamic>;
-        final filename = meta['url'] as String? ?? meta['filename'] as String? ?? '';
+        final meta = jsonDecode(content.substring('VIDEOv1:'.length))
+            as Map<String, dynamic>;
+        final filename =
+            meta['url'] as String? ?? meta['filename'] as String? ?? '';
         final orig = meta['orig'] as String? ?? p.basename(filename);
         if (filename.isEmpty) return;
         final localPath = mediaFilePathRegistry[filename];
-        if (localPath == null) { rootScreenKey.currentState?.showSnack('Video not loaded yet'); return; }
-        await _saveFileToDevice(File(localPath), orig.isNotEmpty ? orig : p.basename(localPath));
+        if (localPath == null) {
+          rootScreenKey.currentState?.showSnack('Video not loaded yet');
+          return;
+        }
+        await _saveFileToDevice(
+            File(localPath), orig.isNotEmpty ? orig : p.basename(localPath));
         return;
       }
 
@@ -773,7 +806,8 @@ class ChatScreenState extends State<ChatScreen>
         final String filename;
         final String orig;
         if (content.startsWith('FILEv1:')) {
-          final meta = jsonDecode(content.substring('FILEv1:'.length)) as Map<String, dynamic>;
+          final meta = jsonDecode(content.substring('FILEv1:'.length))
+              as Map<String, dynamic>;
           filename = meta['filename'] as String? ?? '';
           orig = meta['orig'] as String? ?? p.basename(filename);
         } else {
@@ -782,13 +816,18 @@ class ChatScreenState extends State<ChatScreen>
         }
         if (filename.isEmpty) return;
         final localPath = mediaFilePathRegistry[filename];
-        if (localPath == null) { rootScreenKey.currentState?.showSnack('File not loaded yet'); return; }
-        await _saveFileToDevice(File(localPath), orig.isNotEmpty ? orig : p.basename(localPath));
+        if (localPath == null) {
+          rootScreenKey.currentState?.showSnack('File not loaded yet');
+          return;
+        }
+        await _saveFileToDevice(
+            File(localPath), orig.isNotEmpty ? orig : p.basename(localPath));
         return;
       }
 
       if (content.startsWith('ALBUMv1:')) {
-        final list = jsonDecode(content.substring('ALBUMv1:'.length)) as List<dynamic>;
+        final list =
+            jsonDecode(content.substring('ALBUMv1:'.length)) as List<dynamic>;
         final items = list.whereType<Map<String, dynamic>>().toList();
         if (items.isEmpty) return;
         int saved = 0, failed = 0;
@@ -797,14 +836,26 @@ class ChatScreenState extends State<ChatScreen>
           for (final item in items) {
             final filename = item['filename'] as String? ?? '';
             final cached = imageFileCache[filename];
-            if (cached == null) { failed++; continue; }
+            if (cached == null) {
+              failed++;
+              continue;
+            }
             try {
-              final ok = await GallerySaver.saveImage(cached.file.path, albumName: 'ONYX');
-              if (ok == true) { saved++; } else { failed++; }
-            } catch (_) { failed++; }
+              final ok = await GallerySaver.saveImage(cached.file.path,
+                  albumName: 'ONYX');
+              if (ok == true) {
+                saved++;
+              } else {
+                failed++;
+              }
+            } catch (_) {
+              failed++;
+            }
           }
           rootScreenKey.currentState?.showSnack(
-            failed == 0 ? 'All $saved images saved to gallery' : '$saved saved, $failed failed',
+            failed == 0
+                ? 'All $saved images saved to gallery'
+                : '$saved saved, $failed failed',
           );
           return;
         }
@@ -823,14 +874,21 @@ class ChatScreenState extends State<ChatScreen>
                 ? item['orig'] as String
                 : p.basename(filename);
             final cached = imageFileCache[filename];
-            if (cached == null) { failed++; continue; }
+            if (cached == null) {
+              failed++;
+              continue;
+            }
             try {
               await cached.file.copy(p.join(dirPath, orig));
               saved++;
-            } catch (_) { failed++; }
+            } catch (_) {
+              failed++;
+            }
           }
           rootScreenKey.currentState?.showSnack(
-            failed == 0 ? 'All $saved images saved to: $dirPath' : '$saved saved, $failed failed',
+            failed == 0
+                ? 'All $saved images saved to: $dirPath'
+                : '$saved saved, $failed failed',
           );
         }
       }
@@ -843,15 +901,26 @@ class ChatScreenState extends State<ChatScreen>
     try {
       if (Platform.isAndroid || Platform.isIOS) {
         final ext = p.extension(originalName).toLowerCase();
-        final isImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.heic'].contains(ext);
-        final isVideo = ['.mp4', '.mov', '.avi', '.webm', '.m4v', '.mkv'].contains(ext);
+        final isImage = [
+          '.jpg',
+          '.jpeg',
+          '.png',
+          '.gif',
+          '.webp',
+          '.bmp',
+          '.heic'
+        ].contains(ext);
+        final isVideo =
+            ['.mp4', '.mov', '.avi', '.webm', '.m4v', '.mkv'].contains(ext);
         if (isImage) {
-          final saved = await GallerySaver.saveImage(file.path, albumName: 'ONYX');
+          final saved =
+              await GallerySaver.saveImage(file.path, albumName: 'ONYX');
           rootScreenKey.currentState?.showSnack(
             saved == true ? 'Saved to gallery' : 'Failed to save to gallery',
           );
         } else if (isVideo) {
-          final saved = await GallerySaver.saveVideo(file.path, albumName: 'ONYX');
+          final saved =
+              await GallerySaver.saveVideo(file.path, albumName: 'ONYX');
           rootScreenKey.currentState?.showSnack(
             saved == true ? 'Saved to gallery' : 'Failed to save to gallery',
           );
@@ -859,7 +928,8 @@ class ChatScreenState extends State<ChatScreen>
           // Audio / documents / archives — copy to Downloads/ONYX
           final dl = await getDownloadsDirectory();
           if (dl == null) {
-            rootScreenKey.currentState?.showSnack('Cannot access Downloads directory');
+            rootScreenKey.currentState
+                ?.showSnack('Cannot access Downloads directory');
             return;
           }
           final onyxDir = Directory('${dl.path}/ONYX');
@@ -942,10 +1012,12 @@ class ChatScreenState extends State<ChatScreen>
     _loadPinnedMessage();
     _loadPrivateReactions();
     HardwareKeyboard.instance.addHandler(_handleGlobalKey);
-    rootScreenKey.currentState?.subscribeToPrivateReactions(widget.otherUsername, _onPrivateReactionUpdate);
+    rootScreenKey.currentState?.subscribeToPrivateReactions(
+        widget.otherUsername, _onPrivateReactionUpdate);
     final randomIndex = Random().nextInt(_randomHints.length);
     _inputHint = _randomHints[randomIndex];
     _focusNode = FocusNode();
+    _keyboardListenerFocusNode = FocusNode();
 
     _inputEntryController = AnimationController(
       duration: const Duration(milliseconds: 600),
@@ -996,13 +1068,14 @@ class ChatScreenState extends State<ChatScreen>
             if (mounted) _markMessagesAsRead();
           }
         }
+
         animation.addStatusListener(onStatus);
       }
     });
 
     _focusNode.addListener(() {
+      if (mounted) setState(() {});
       if (!_focusNode.hasFocus && mounted) {
-        
         if (isDesktop &&
             !recordingNotifier.value &&
             !_shouldPreserveExternalFocus &&
@@ -1026,12 +1099,10 @@ class ChatScreenState extends State<ChatScreen>
     final chatId = 'chat_${widget.otherUsername}';
 
     if (!_sessionInputAnimationsShown.contains(chatId)) {
-      
       _inputEntryController.forward();
       _sessionInputAnimationsShown.add(chatId);
       _hasInputAnimated = true;
     } else {
-      
       _inputEntryController.value = 1.0;
       _hasInputAnimated = true;
     }
@@ -1061,7 +1132,6 @@ class ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _showUserProfileDialog(String username) async {
-    
     FocusScope.of(context).unfocus();
 
     final cached = UserCache.getSync(username);
@@ -1112,15 +1182,15 @@ class ChatScreenState extends State<ChatScreen>
                           onPressed: () {
                             Clipboard.setData(
                                 ClipboardData(text: '@$username'));
-                            rootScreenKey.currentState
-                                ?.showSnack(AppLocalizations.of(context).copiedUsername(username));
+                            rootScreenKey.currentState?.showSnack(
+                                AppLocalizations.of(context)
+                                    .copiedUsername(username));
                           },
                           child: Text('@$username',
                               style: TextStyle(
                                   color: colorScheme.primary,
                                   fontWeight: FontWeight.w600)),
                         ),
-                        
                         const SizedBox(height: 12),
                         Row(
                           mainAxisSize: MainAxisSize.min,
@@ -1128,8 +1198,7 @@ class ChatScreenState extends State<ChatScreen>
                             FilledButton.icon(
                               onPressed: () {
                                 Navigator.of(ctx).pop();
-                                FocusScope.of(context)
-                                    .requestFocus(_focusNode);
+                                FocusScope.of(context).requestFocus(_focusNode);
                               },
                               icon: const Icon(Icons.message),
                               label: Text(AppLocalizations.of(context).message),
@@ -1155,9 +1224,13 @@ class ChatScreenState extends State<ChatScreen>
 
   void _onScroll() {
     final pixels = _scroll.position.pixels;
-    if (pixels > 0.0 && pixels <= 1.5 && !_scroll.position.isScrollingNotifier.value) {
+    if (pixels > 0.0 &&
+        pixels <= 1.5 &&
+        !_scroll.position.isScrollingNotifier.value) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scroll.hasClients && _scroll.position.pixels > 0.0 && _scroll.position.pixels <= 1.5) {
+        if (_scroll.hasClients &&
+            _scroll.position.pixels > 0.0 &&
+            _scroll.position.pixels <= 1.5) {
           _scroll.jumpTo(0.0);
         }
       });
@@ -1186,15 +1259,21 @@ class ChatScreenState extends State<ChatScreen>
     final oldest = allMsgs.isNotEmpty ? allMsgs.last : null;
     final oldestId = oldest?.serverMessageId;
     if (oldestId == null) {
-      if (mounted) setState(() { _hasMoreMessages = false; });
+      if (mounted)
+        setState(() {
+          _hasMoreMessages = false;
+        });
       return;
     }
 
-    if (mounted) setState(() { _isLoadingMore = true; });
+    if (mounted)
+      setState(() {
+        _isLoadingMore = true;
+      });
 
     try {
-      final older = await ChatLoadOptimizer().loadOlderMessages(
-          widget.myUsername, widget.otherUsername, oldestId);
+      final older = await ChatLoadOptimizer()
+          .loadOlderMessages(widget.myUsername, widget.otherUsername, oldestId);
       if (!mounted) return;
       setState(() {
         _isLoadingMore = false;
@@ -1206,7 +1285,10 @@ class ChatScreenState extends State<ChatScreen>
       });
     } catch (e) {
       debugPrint('[loadMoreMessages] $e');
-      if (mounted) setState(() { _isLoadingMore = false; });
+      if (mounted)
+        setState(() {
+          _isLoadingMore = false;
+        });
     }
   }
 
@@ -1228,7 +1310,7 @@ class ChatScreenState extends State<ChatScreen>
         if (_scroll.hasClients) {
           _scroll.jumpTo(0);
         }
-        
+
         _markMessagesAsRead();
       });
     }
@@ -1274,6 +1356,7 @@ class ChatScreenState extends State<ChatScreen>
     _scroll.dispose();
     _scrollDownVisible.dispose();
     _focusNode.dispose();
+    _keyboardListenerFocusNode.dispose();
     _typingThrottle?.cancel();
     _inputEntryController.dispose();
     _searchController.dispose();
@@ -1294,7 +1377,8 @@ class ChatScreenState extends State<ChatScreen>
     final cachedBatch = <String, Map<String, dynamic>>{};
     for (final msg in messages) {
       if (msg.reactions.isNotEmpty) {
-        final key = '${msg.id}_${msg.serverMessageId}_${msg.time.millisecondsSinceEpoch}';
+        final key =
+            '${msg.id}_${msg.serverMessageId}_${msg.time.millisecondsSinceEpoch}';
         cachedBatch[key] = msg.reactions.map((e, u) => MapEntry(e, u));
       }
     }
@@ -1315,18 +1399,24 @@ class ChatScreenState extends State<ChatScreen>
       );
       if (resp.statusCode == 200 && mounted) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
-        final reactionsData = (data['reactions'] as Map<String, dynamic>?) ?? {};
+        final reactionsData =
+            (data['reactions'] as Map<String, dynamic>?) ?? {};
         final batch = <String, Map<String, dynamic>>{};
         for (final msg in messages) {
           if (msg.serverMessageId == null) continue;
           final r = reactionsData[msg.serverMessageId.toString()];
-          final key = '${msg.id}_${msg.serverMessageId}_${msg.time.millisecondsSinceEpoch}';
+          final key =
+              '${msg.id}_${msg.serverMessageId}_${msg.time.millisecondsSinceEpoch}';
           if (r is Map) {
             final reactionMap = Map<String, dynamic>.from(r);
             batch[key] = reactionMap;
             // Persist into the message so it's available next time
             msg.reactions = reactionMap.map(
-              (e, u) => MapEntry(e, (u is List) ? u.map((x) => x.toString()).toList() : <String>[]),
+              (e, u) => MapEntry(
+                  e,
+                  (u is List)
+                      ? u.map((x) => x.toString()).toList()
+                      : <String>[]),
             );
           } else {
             msg.reactions = {};
@@ -1342,7 +1432,8 @@ class ChatScreenState extends State<ChatScreen>
   void _onPrivateReactionUpdate(Map<String, dynamic> obj) {
     if (!mounted) return;
     final msgIdRaw = obj['message_id'];
-    final msgId = msgIdRaw is int ? msgIdRaw : int.tryParse(msgIdRaw?.toString() ?? '');
+    final msgId =
+        msgIdRaw is int ? msgIdRaw : int.tryParse(msgIdRaw?.toString() ?? '');
     if (msgId == null) return;
     final reactions = (obj['reactions'] as Map<String, dynamic>?) ?? {};
     final root = rootScreenKey.currentState;
@@ -1351,40 +1442,51 @@ class ChatScreenState extends State<ChatScreen>
     final messages = root.chats[chatId] ?? [];
     for (final msg in messages) {
       if (msg.serverMessageId == msgId) {
-        final key = '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
+        final key =
+            '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
         applyReactionUpdate(key, reactions);
         // Persist into the message for next open
         msg.reactions = reactions.map(
-          (e, u) => MapEntry(e, (u is List) ? u.map((x) => x.toString()).toList() : <String>[]),
+          (e, u) => MapEntry(e,
+              (u is List) ? u.map((x) => x.toString()).toList() : <String>[]),
         );
         break;
       }
     }
   }
 
-  Future<void> _serverTogglePrivateReaction(String uniqueKey, int serverMsgId, String emoji, bool remove) async {
+  Future<void> _serverTogglePrivateReaction(
+      String uniqueKey, int serverMsgId, String emoji, bool remove) async {
     if (!mounted) return;
     final token = await AccountManager.getToken(widget.myUsername);
     if (token == null) {
-      debugPrint('[reaction.private] token null for ${widget.myUsername}, skipping');
+      debugPrint(
+          '[reaction.private] token null for ${widget.myUsername}, skipping');
       return;
     }
     try {
-      debugPrint('[reaction.private] ${remove ? "DELETE" : "POST"} msgId=$serverMsgId emoji=$emoji other=${widget.otherUsername}');
+      debugPrint(
+          '[reaction.private] ${remove ? "DELETE" : "POST"} msgId=$serverMsgId emoji=$emoji other=${widget.otherUsername}');
       http.Response resp;
       if (remove) {
         resp = await http.delete(
-          Uri.parse('$serverBase/messages/$serverMsgId/reactions/${Uri.encodeComponent(emoji)}?other_username=${Uri.encodeComponent(widget.otherUsername)}'),
+          Uri.parse(
+              '$serverBase/messages/$serverMsgId/reactions/${Uri.encodeComponent(emoji)}?other_username=${Uri.encodeComponent(widget.otherUsername)}'),
           headers: {'Authorization': 'Bearer $token'},
         );
       } else {
         resp = await http.post(
           Uri.parse('$serverBase/messages/$serverMsgId/reactions'),
-          headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
-          body: jsonEncode({'emoji': emoji, 'other_username': widget.otherUsername}),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json'
+          },
+          body: jsonEncode(
+              {'emoji': emoji, 'other_username': widget.otherUsername}),
         );
       }
-      debugPrint('[reaction.private] server responded ${resp.statusCode}: ${resp.body}');
+      debugPrint(
+          '[reaction.private] server responded ${resp.statusCode}: ${resp.body}');
     } catch (e) {
       debugPrint('[reaction.private] server error: $e');
     }
@@ -1398,7 +1500,11 @@ class ChatScreenState extends State<ChatScreen>
     final isCtrl = HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
     if (isCtrl && event.logicalKey == LogicalKeyboardKey.keyF) {
-      if (_showSearch) { _closeSearch(); } else { _openSearch(); }
+      if (_showSearch) {
+        _closeSearch();
+      } else {
+        _openSearch();
+      }
       return true;
     }
     if (event.logicalKey == LogicalKeyboardKey.escape && _showSearch) {
@@ -1443,14 +1549,17 @@ class ChatScreenState extends State<ChatScreen>
     // ↓ = newer messages (lower adjustedI = toward bottom of chat)
     if (_cachedSearchMatches.isEmpty) return;
     setState(() {
-      _currentMatchIdx = (_currentMatchIdx - 1 + _cachedSearchMatches.length) % _cachedSearchMatches.length;
+      _currentMatchIdx = (_currentMatchIdx - 1 + _cachedSearchMatches.length) %
+          _cachedSearchMatches.length;
     });
     _scrollToCurrentMatch();
   }
 
   void _openSearch() {
     _suppressAutoRefocus = true;
-    setState(() { _showSearch = true; });
+    setState(() {
+      _showSearch = true;
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) FocusScope.of(context).requestFocus(_searchFocusNode);
     });
@@ -1458,7 +1567,8 @@ class ChatScreenState extends State<ChatScreen>
 
   void _scrollToCurrentMatch() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scroll.hasClients || _cachedSearchMatches.isEmpty) return;
+      if (!mounted || !_scroll.hasClients || _cachedSearchMatches.isEmpty)
+        return;
       final matchItemIdx = _cachedSearchMatches[_currentMatchIdx];
       final pendingCount = _pendingUploads.length;
       final totalItems = pendingCount + (_cachedItems?.length ?? 0);
@@ -1466,12 +1576,12 @@ class ChatScreenState extends State<ChatScreen>
       final listIdx = pendingCount + matchItemIdx;
       final maxExtent = _scroll.position.maxScrollExtent;
       final target = (maxExtent * listIdx / totalItems).clamp(0.0, maxExtent);
-      _scroll.animateTo(target, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+      _scroll.animateTo(target,
+          duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
     });
   }
 
   void _onUserTyping() {
-    
     if (!_typingSentRecently) {
       try {
         widget.onTyping();
@@ -1491,7 +1601,6 @@ class ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _submitMessage(String value) async {
-    
     if (value.trim().isEmpty) return;
 
     final content = value.trim();
@@ -1500,7 +1609,9 @@ class ChatScreenState extends State<ChatScreen>
       final editing = _editingMessage!;
       final serverId = editing.serverMessageId;
       if (serverId != null) {
-        setState(() { _editingMessage = null; });
+        setState(() {
+          _editingMessage = null;
+        });
         _textCtrl.clear();
         _focusNode.requestFocus();
         await widget.onEditMessage(serverId, content);
@@ -1509,11 +1620,11 @@ class ChatScreenState extends State<ChatScreen>
     }
 
     if (_isLANMode) {
-      
       final localId = DateTime.now().microsecondsSinceEpoch.toString();
-      final int? replyId = _replyingToMessage != null && _replyingToMessage!['id'] != null
-          ? int.tryParse(_replyingToMessage!['id'].toString())
-          : null;
+      final int? replyId =
+          _replyingToMessage != null && _replyingToMessage!['id'] != null
+              ? int.tryParse(_replyingToMessage!['id'].toString())
+              : null;
 
       final message = ChatMessage(
         id: localId,
@@ -1525,7 +1636,9 @@ class ChatScreenState extends State<ChatScreen>
         time: DateTime.now(),
         replyToId: replyId,
         replyToSender: _replyingToMessage != null
-            ? (_replyingToMessage!['senderDisplayName'] ?? _replyingToMessage!['sender'])?.toString()
+            ? (_replyingToMessage!['senderDisplayName'] ??
+                    _replyingToMessage!['sender'])
+                ?.toString()
             : null,
         replyToContent: _replyingToMessage != null
             ? (_replyingToMessage!['content'])?.toString()
@@ -1535,25 +1648,27 @@ class ChatScreenState extends State<ChatScreen>
 
       final sent = await _lanManager.sendMessage(message, widget.otherUsername);
       if (!sent) {
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedSendLan);
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value).failedSendLan);
         return;
       }
 
       final replyWithMode = _replyingToMessage != null
           ? Map<String, dynamic>.from(_replyingToMessage!)
           : <String, dynamic>{};
-      replyWithMode['_deliveryMode'] = 'lan'; 
+      replyWithMode['_deliveryMode'] = 'lan';
       await widget.onSend(content, replyWithMode);
     } else {
-      
       await widget.onSend(content, _replyingToMessage);
     }
 
     _textCtrl.clear();
     _shouldPreserveExternalFocus = false;
     _focusNode.requestFocus();
-    
-    setState(() { _replyingToMessage = null; });
+
+    setState(() {
+      _replyingToMessage = null;
+    });
     _scrollToBottomAfterSend();
   }
 
@@ -1562,13 +1677,14 @@ class ChatScreenState extends State<ChatScreen>
     final lanEnabledMsg = l.lanModeEnabled;
     final internetEnabledMsg = l.internetModeEnabled;
     final userNotInLanMsg = l.deliveryUserNotInLan;
-    
+
     if (_fastChangeMode) {
-      final lanAvailable = _lanManager.isUserAvailableInLAN(widget.otherUsername);
+      final lanAvailable =
+          _lanManager.isUserAvailableInLAN(widget.otherUsername);
       if (lanAvailable) {
         setState(() {
           _isLANMode = !_isLANMode;
-          
+
           final modes = Map<String, bool>.from(lanModePerChat.value);
           modes[widget.otherUsername] = _isLANMode;
           lanModePerChat.value = modes;
@@ -1580,7 +1696,6 @@ class ChatScreenState extends State<ChatScreen>
         }
         return;
       } else {
-        
         rootScreenKey.currentState?.showSnack(userNotInLanMsg);
         return;
       }
@@ -1612,9 +1727,10 @@ class ChatScreenState extends State<ChatScreen>
                 title: Text(
                   'LAN',
                   style: TextStyle(
-                    color: _lanManager.isUserAvailableInLAN(widget.otherUsername)
-                        ? null
-                        : Colors.grey,
+                    color:
+                        _lanManager.isUserAvailableInLAN(widget.otherUsername)
+                            ? null
+                            : Colors.grey,
                   ),
                 ),
                 subtitle: Text(
@@ -1622,9 +1738,10 @@ class ChatScreenState extends State<ChatScreen>
                       ? l.deliveryLanSubtitle
                       : l.deliveryUserNotInLan,
                   style: TextStyle(
-                    color: _lanManager.isUserAvailableInLAN(widget.otherUsername)
-                        ? null
-                        : Colors.grey,
+                    color:
+                        _lanManager.isUserAvailableInLAN(widget.otherUsername)
+                            ? null
+                            : Colors.grey,
                   ),
                 ),
                 enabled: _lanManager.isUserAvailableInLAN(widget.otherUsername),
@@ -1658,7 +1775,7 @@ class ChatScreenState extends State<ChatScreen>
     if (choice != null) {
       setState(() {
         _isLANMode = choice == 'lan';
-        
+
         final modes = Map<String, bool>.from(lanModePerChat.value);
         modes[widget.otherUsername] = _isLANMode;
         lanModePerChat.value = modes;
@@ -1669,6 +1786,60 @@ class ChatScreenState extends State<ChatScreen>
         rootScreenKey.currentState?.showSnack(internetEnabledMsg);
       }
     }
+  }
+
+  Future<void> _openAttachmentPicker() async {
+    if (kIsWeb) {
+      rootScreenKey.currentState?.showSnack(
+        'Attachment upload: desktop/mobile only',
+      );
+      return;
+    }
+
+    List<String>? paths;
+    if (Platform.isAndroid || Platform.isIOS) {
+      paths = await showMediaPickerSheet(context);
+    } else {
+      try {
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.any,
+          allowMultiple: true,
+        );
+        paths = result?.files.map((f) => f.path).whereType<String>().toList();
+      } catch (e) {
+        debugPrint('[Attach] FilePicker error: $e');
+        rootScreenKey.currentState?.showSnack('File picker error: $e');
+      }
+    }
+    if (paths == null || paths.isEmpty) return;
+
+    if (paths.length > 1 && paths.every(FileTypeDetector.isImage)) {
+      await _sendAlbum(paths);
+      return;
+    }
+
+    final path = paths.first;
+    final basename = p.basename(path);
+    final ext = p.extension(basename).toLowerCase();
+
+    String fileType;
+    if (FileTypeDetector.isImage(path)) {
+      fileType = 'IMAGE';
+    } else if (FileTypeDetector.isVideo(path)) {
+      fileType = 'VIDEO';
+    } else if (FileTypeDetector.isAudio(path)) {
+      fileType = 'AUDIO';
+    } else if (FileTypeDetector.isDocument(path)) {
+      fileType = 'DOCUMENT';
+    } else if (FileTypeDetector.isCompress(path)) {
+      fileType = 'COMPRESS';
+    } else if (FileTypeDetector.isData(path)) {
+      fileType = 'DATA';
+    } else {
+      fileType = 'FILE';
+    }
+
+    _showFilePreviewAndSend(path, basename, ext, fileType);
   }
 
   Future<void> _showMessagePreview(
@@ -1685,7 +1856,9 @@ class ChatScreenState extends State<ChatScreen>
                 children: [
                   if (replyTo != null) ...[
                     Text(
-                      l.replyingTo(replyTo['senderDisplayName'] ?? replyTo['sender'] ?? '?'),
+                      l.replyingTo(replyTo['senderDisplayName'] ??
+                          replyTo['sender'] ??
+                          '?'),
                       style: TextStyle(
                         fontSize: 12,
                         color: Theme.of(ctx).colorScheme.onSurfaceVariant,
@@ -1728,14 +1901,14 @@ class ChatScreenState extends State<ChatScreen>
                           color: baseColor,
                           borderRadius: BorderRadius.circular(8),
                         ),
-                          child: SelectableText(
-                            text,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Theme.of(ctx).colorScheme.onSurface,
-                            ),
+                        child: SelectableText(
+                          text,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Theme.of(ctx).colorScheme.onSurface,
                           ),
-                        );
+                        ),
+                      );
                     },
                   ),
                 ],
@@ -1844,13 +2017,15 @@ class ChatScreenState extends State<ChatScreen>
       context: context,
       position: position,
       items: [
-        PopupMenuItem<String>(value: 'copy', child: Text(AppLocalizations.of(context).copy)),
+        PopupMenuItem<String>(
+            value: 'copy', child: Text(AppLocalizations.of(context).copy)),
       ],
       elevation: 8,
     ).then((value) {
       if (value == 'copy') {
         Clipboard.setData(ClipboardData(text: text));
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).msgCopied);
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value).msgCopied);
       }
       Future.delayed(const Duration(milliseconds: 300), () {
         _shouldPreserveExternalFocus = false;
@@ -1866,12 +2041,16 @@ class ChatScreenState extends State<ChatScreen>
         (msgs.isNotEmpty ? msgs.last.id.hashCode : 0) ^
         unreadCount.hashCode;
 
-    if (_cachedMessages != null && _cachedMessagesHash == currentHash && _cachedItems != null) {
-      debugPrint('[ChatScreen] Using CACHED items (${_cachedItems!.length} items, hash: $currentHash)');
+    if (_cachedMessages != null &&
+        _cachedMessagesHash == currentHash &&
+        _cachedItems != null) {
+      debugPrint(
+          '[ChatScreen] Using CACHED items (${_cachedItems!.length} items, hash: $currentHash)');
       return _cachedItems!;
     }
 
-    debugPrint('[ChatScreen] Building NEW items list from ${msgs.length} messages (hash changed: $_cachedMessagesHash → $currentHash)');
+    debugPrint(
+        '[ChatScreen] Building NEW items list from ${msgs.length} messages (hash changed: $_cachedMessagesHash → $currentHash)');
 
     if (_alreadyRenderedMessageIds.isEmpty && msgs.isNotEmpty) {
       for (final msg in msgs) {
@@ -1912,7 +2091,7 @@ class ChatScreenState extends State<ChatScreen>
 
     _cachedMessages = List.from(msgs);
     _cachedItems = result;
-    _cachedMessagesHash = currentHash; 
+    _cachedMessagesHash = currentHash;
 
     return result;
   }
@@ -2009,8 +2188,8 @@ class ChatScreenState extends State<ChatScreen>
     return DragDropZone(
       onFilesDropped: _handleDroppedFiles,
       child: Scaffold(
-                extendBodyBehindAppBar: true,
-                appBar: AppBar(
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
           backgroundColor: Colors.transparent,
           surfaceTintColor: Colors.transparent,
           elevation: 0,
@@ -2059,125 +2238,150 @@ class ChatScreenState extends State<ChatScreen>
                     ],
                   )
                 : Row(
-            children: [
-              GestureDetector(
-                onTap: () => _showUserProfileDialog(widget.otherUsername),
-                onLongPress: () => _showUserProfileDialog(widget.otherUsername),
-                child: AvatarWidget(
-                  key: ValueKey('avatar-${widget.otherUsername}'),
-                  username: widget.otherUsername,
-                  tokenProvider: avatarTokenProvider,
-                  avatarBaseUrl: serverBase,
-                  size: 40.0,
-                  editable: false,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Builder(
-                  builder: (context) {
-                    final userInfo = UserCache.getSync(widget.otherUsername);
-                    final displayName =
-                        userInfo?.displayName ?? widget.otherUsername;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        GestureDetector(
-                          onTap: () =>
-                              _showUserProfileDialog(widget.otherUsername),
-                          onLongPress: () =>
-                              _showUserProfileDialog(widget.otherUsername),
-                          child: Text(
-                            displayName,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
+                    children: [
+                      GestureDetector(
+                        onTap: () =>
+                            _showUserProfileDialog(widget.otherUsername),
+                        onLongPress: () =>
+                            _showUserProfileDialog(widget.otherUsername),
+                        child: AvatarWidget(
+                          key: ValueKey('avatar-${widget.otherUsername}'),
+                          username: widget.otherUsername,
+                          tokenProvider: avatarTokenProvider,
+                          avatarBaseUrl: serverBase,
+                          size: 40.0,
+                          editable: false,
                         ),
-                        
-                        AnimatedBuilder(
-                          animation: _combinedHeaderListenable,
-                          builder: (context, child) {
-                            
-                            final typing = typingUsersNotifier.value.contains(widget.otherUsername);
-                            if (typing) {
-                              return const Text(
-                                'typing...',
-                                style: TextStyle(fontSize: 12, color: Colors.orangeAccent),
-                              );
-                            }
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Builder(
+                          builder: (context) {
+                            final userInfo =
+                                UserCache.getSync(widget.otherUsername);
+                            final displayName =
+                                userInfo?.displayName ?? widget.otherUsername;
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                GestureDetector(
+                                  onTap: () => _showUserProfileDialog(
+                                      widget.otherUsername),
+                                  onLongPress: () => _showUserProfileDialog(
+                                      widget.otherUsername),
+                                  child: Text(
+                                    displayName,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                AnimatedBuilder(
+                                  animation: _combinedHeaderListenable,
+                                  builder: (context, child) {
+                                    final typing = typingUsersNotifier.value
+                                        .contains(widget.otherUsername);
+                                    if (typing) {
+                                      return const Text(
+                                        'typing...',
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.orangeAccent),
+                                      );
+                                    }
 
-                            final isConnected = wsConnectedNotifier.value;
-                            if (!isConnected) {
-                              return const Text(
-                                'no connection (auto mode)',
-                                style: TextStyle(fontSize: 12, color: Colors.grey),
-                              );
-                            }
+                                    final isConnected =
+                                        wsConnectedNotifier.value;
+                                    if (!isConnected) {
+                                      return const Text(
+                                        'no connection (auto mode)',
+                                        style: TextStyle(
+                                            fontSize: 12, color: Colors.grey),
+                                      );
+                                    }
 
-                            final online = onlineUsersNotifier.value.contains(widget.otherUsername);
-                            final statuses = userStatusNotifier.value;
-                            final visMap = userStatusVisibilityNotifier.value;
+                                    final online = onlineUsersNotifier.value
+                                        .contains(widget.otherUsername);
+                                    final statuses = userStatusNotifier.value;
+                                    final visMap =
+                                        userStatusVisibilityNotifier.value;
 
-                            final visibilityEntry = visMap.containsKey(widget.otherUsername)
-                                ? visMap[widget.otherUsername]
-                                : null;
+                                    final visibilityEntry =
+                                        visMap.containsKey(widget.otherUsername)
+                                            ? visMap[widget.otherUsername]
+                                            : null;
 
-                            if (visibilityEntry == 'hide') {
-                              return const SizedBox.shrink();
-                            }
+                                    if (visibilityEntry == 'hide') {
+                                      return const SizedBox.shrink();
+                                    }
 
-                            final customStatus = statuses[widget.otherUsername];
+                                    final customStatus =
+                                        statuses[widget.otherUsername];
 
-                            if (customStatus != null && customStatus.isNotEmpty) {
-                              return Builder(
-                                builder: (ctx) {
-                                  final statusColor = online
-                                      ? const Color(0xFF2ECC71)
-                                      : Theme.of(ctx).colorScheme.onSurfaceVariant.withValues(alpha: 0.9);
-                                  return Text(
-                                    customStatus,
-                                    style: TextStyle(fontSize: 12, color: statusColor),
-                                  );
-                                },
-                              );
-                            }
+                                    if (customStatus != null &&
+                                        customStatus.isNotEmpty) {
+                                      return Builder(
+                                        builder: (ctx) {
+                                          final statusColor = online
+                                              ? const Color(0xFF2ECC71)
+                                              : Theme.of(ctx)
+                                                  .colorScheme
+                                                  .onSurfaceVariant
+                                                  .withValues(alpha: 0.9);
+                                          return Text(
+                                            customStatus,
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: statusColor),
+                                          );
+                                        },
+                                      );
+                                    }
 
-                            if (visibilityEntry == 'show') {
-                              final statusText = online ? 'online' : 'offline';
-                              return Builder(
-                                builder: (ctx) {
-                                  final statusColor = online
-                                      ? const Color(0xFF2ECC71)
-                                      : Theme.of(ctx).colorScheme.onSurfaceVariant.withValues(alpha: 0.9);
-                                  return Text(
-                                    statusText,
-                                    style: TextStyle(fontSize: 12, color: statusColor),
-                                  );
-                                },
-                              );
-                            }
+                                    if (visibilityEntry == 'show') {
+                                      final statusText =
+                                          online ? 'online' : 'offline';
+                                      return Builder(
+                                        builder: (ctx) {
+                                          final statusColor = online
+                                              ? const Color(0xFF2ECC71)
+                                              : Theme.of(ctx)
+                                                  .colorScheme
+                                                  .onSurfaceVariant
+                                                  .withValues(alpha: 0.9);
+                                          return Text(
+                                            statusText,
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: statusColor),
+                                          );
+                                        },
+                                      );
+                                    }
 
-                            if (online) {
-                              return Builder(
-                                builder: (ctx) {
-                                  const statusColor = Color(0xFF2ECC71);
-                                  return const Text(
-                                    'online',
-                                    style: TextStyle(fontSize: 12, color: statusColor),
-                                  );
-                                },
-                              );
-                            }
+                                    if (online) {
+                                      return Builder(
+                                        builder: (ctx) {
+                                          const statusColor = Color(0xFF2ECC71);
+                                          return const Text(
+                                            'online',
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: statusColor),
+                                          );
+                                        },
+                                      );
+                                    }
 
-                            return const SizedBox.shrink();
+                                    return const SizedBox.shrink();
+                                  },
+                                ),
+                              ],
+                            );
                           },
                         ),
-                      ],
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
+                      ),
+                    ],
+                  ),
           ),
           actions: [
             ValueListenableBuilder(
@@ -2207,457 +2411,520 @@ class ChatScreenState extends State<ChatScreen>
                         ),
                     ])
                   : Row(mainAxisSize: MainAxisSize.min, children: [
-            IconButton(
-              icon: const Icon(Icons.search),
-              tooltip: 'Search (Ctrl+F)',
-              onPressed: () { if (_showSearch) _closeSearch(); else _openSearch(); },
-            ),
-            ValueListenableBuilder<bool>(
-              valueListenable: callManager.isInCall,
-              builder: (ctx, inCall, _) => inCall
-                  ? const SizedBox()
-                  : IconButton(
-                      icon: Icon(
-                        Icons.phone,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withOpacity(0.8),
-                      ),
-                      onPressed: () async {
-                          final confirmed = await showDialog<bool>(
-                            context: context,
-                            builder: (dCtx) => AlertDialog(
-                              title: Text(AppLocalizations.of(context).voiceCallsTitle),
-                              content: Text(AppLocalizations.of(context).voiceCallsContent),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.of(dCtx).pop(false),
-                                  child: Text(AppLocalizations.of(context).cancel),
-                                ),
-                                TextButton(
-                                  onPressed: () {
-                                    Navigator.of(dCtx).pop(false);
-                                    showModalBottomSheet(
-                                      context: context,
-                                      isScrollControlled: true,
-                                      backgroundColor: Colors.transparent,
-                                      builder: (_) => const SupportSheet(),
-                                    );
-                                  },
-                                  child: Text(AppLocalizations.of(context).supportOnyxBtn),
-                                ),
-                                TextButton(
-                                  onPressed: () => Navigator.of(dCtx).pop(true),
-                                  child: Text(AppLocalizations.of(context).call),
-                                ),
-                              ],
-                            ),
-                          );
-                          if (confirmed == true) {
-                            callManager.startCall(widget.otherUsername!);
-                          }
+                      IconButton(
+                        icon: const Icon(Icons.search),
+                        tooltip: 'Search (Ctrl+F)',
+                        onPressed: () {
+                          if (_showSearch)
+                            _closeSearch();
+                          else
+                            _openSearch();
                         },
-                    ),
-            ),
-            ValueListenableBuilder<Set<String>>(
-              valueListenable: BlocklistManager.blockedUsers,
-              builder: (_, blocked, __) {
-                final isBlocked = widget.otherUsername != null &&
-                    blocked.contains(widget.otherUsername!);
-                return IconButton(
-                  tooltip: isBlocked
-                      ? AppLocalizations.of(context).unblockUserLabel
-                      : null,
-                  icon: Icon(
-                    isBlocked ? Icons.lock_open_rounded : Icons.shield,
-                    size: 20,
-                  ),
-                  onPressed: () async {
-                    if (BlocklistManager.isBlocked(widget.otherUsername ?? '')) {
-                      final other = widget.otherUsername ?? '';
-                      final confirmed = await showDialog<bool>(
-                        context: context,
-                        builder: (dCtx) => AlertDialog(
-                          title: Text(AppLocalizations.of(context).unblockUserLabel),
-                          content: Text(AppLocalizations.of(context).unblockUserConfirmContent(other)),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.of(dCtx).pop(false),
-                              child: Text(AppLocalizations.of(context).cancel),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.of(dCtx).pop(true),
-                              child: Text(AppLocalizations.of(context).unblockUserLabel),
-                            ),
-                          ],
-                        ),
-                      );
-                      if (confirmed != true) return;
-                      await BlocklistManager.unblock(other);
-                      try {
-                        final token =
-                            await AccountManager.getToken(widget.myUsername);
-                        await http.delete(
-                          Uri.parse('$serverBase/block/$other'),
-                          headers: {'authorization': 'Bearer $token'},
-                        );
-                      } catch (e) {
-                        debugPrint('[unblock] failed: $e');
-                      }
-                      return;
-                    }
-                final recipient = widget.otherUsername;
-                final secTitle = AppLocalizations.of(context).securityCheckTitle;
-                final secContent = AppLocalizations.of(context).securityCheckContent(recipient);
-                final closeLabel = AppLocalizations.of(context).close;
-                String? theirPubB64;
-                String? myPubB64;
-                final token = await AccountManager.getToken(widget.myUsername);
-                try {
-                  final results = await Future.wait([
-                    http.get(
-                      Uri.parse('$serverBase/pubkey/$recipient'),
-                      headers: {'authorization': 'Bearer $token'},
-                    ),
-                    http.get(
-                      Uri.parse('$serverBase/pubkey/${widget.myUsername}'),
-                      headers: {'authorization': 'Bearer $token'},
-                    ),
-                  ]);
-                  if (results[0].statusCode == 200) {
-                    theirPubB64 = (jsonDecode(results[0].body))['pubkey'] as String?;
-                  }
-                  if (results[1].statusCode == 200) {
-                    myPubB64 = (jsonDecode(results[1].body))['pubkey'] as String?;
-                  }
-                } catch (e) {
-                  rootScreenKey.currentState
-                      ?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedToFetchPubkey);
-                  return;
-                }
-                if (theirPubB64 == null) {
-                  rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).userHasNoPubkey);
-                  return;
-                }
-                if (myPubB64 == null) {
-                  rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).userHasNoPubkey);
-                  return;
-                }
-                if (!mounted) return;
-
-                final myUsername = widget.myUsername;
-                final otherUsername = widget.otherUsername;
-                final List<String> sortedNames = [myUsername, otherUsername]
-                  ..sort();
-                final List<int> myPubBytes = base64Decode(myPubB64);
-                final List<int> theirPubBytes = base64Decode(theirPubB64);
-                final List<int> keyA =
-                    sortedNames[0] == myUsername ? myPubBytes : theirPubBytes;
-                final List<int> keyB =
-                    sortedNames[0] == myUsername ? theirPubBytes : myPubBytes;
-                final combined = Uint8List.fromList([...keyA, ...keyB]);
-                final hash = dart_crypto.sha256.convert(combined).bytes;
-                final indices = [hash[0], hash[1], hash[2], hash[3]];
-
-                const List<String> emojiList = [
-                  "😀",
-                  "😁",
-                  "😂",
-                  "🤣",
-                  "😃",
-                  "😄",
-                  "😅",
-                  "😆",
-                  "😇",
-                  "😈",
-                  "👿",
-                  "😉",
-                  "😊",
-                  "😋",
-                  "😌",
-                  "😍",
-                  "🥰",
-                  "😎",
-                  "😏",
-                  "😐",
-                  "😑",
-                  "😒",
-                  "😓",
-                  "😔",
-                  "😕",
-                  "🙂",
-                  "🙃",
-                  "😗",
-                  "😙",
-                  "😚",
-                  "😘",
-                  "🥲",
-                  "😭",
-                  "😢",
-                  "😥",
-                  "😰",
-                  "😨",
-                  "😱",
-                  "😳",
-                  "🥵",
-                  "🥶",
-                  "😮",
-                  "😤",
-                  "😠",
-                  "😡",
-                  "🤬",
-                  "😞",
-                  "😟",
-                  "😣",
-                  "😖",
-                  "😫",
-                  "😩",
-                  "🥺",
-                  "🤯",
-                  "😬",
-                  "🤔",
-                  "🤭",
-                  "🤫",
-                  "🤥",
-                  "🙄",
-                  "🤢",
-                  "🤮",
-                  "🤧",
-                  "🥴",
-                  "😵",
-                  "🤑",
-                  "🤠",
-                  "🥳",
-                  "🥸",
-                  "🧐",
-                  "🤓",
-                  "👻",
-                  "💀",
-                  "☠",
-                  "👹",
-                  "👺",
-                  "🤡",
-                  "👾",
-                  "🎃",
-                  "🎄",
-                  "🎆",
-                  "🎇",
-                  "🧨",
-                  "✨",
-                  "🎉",
-                  "🎊",
-                  "🎋",
-                  "🎍",
-                  "🎎",
-                  "🎏",
-                  "🎐",
-                  "🎑",
-                  "🎀",
-                  "🏆",
-                  "🥇",
-                  "🥈",
-                  "🥉",
-                  "🏅",
-                  "🥊",
-                  "🎯",
-                  "🎳",
-                  "🎮",
-                  "🎰",
-                  "🎲",
-                  "🧩",
-                  "🧸",
-                  "♟",
-                  "🎨",
-                  "🎪",
-                  "🎬",
-                  "🎤",
-                  "🎧",
-                  "🎼",
-                  "🎵",
-                  "🎶",
-                  "🎸",
-                  "🎹",
-                  "🥁",
-                  "🎷",
-                  "🎺",
-                  "🎻",
-                  "🪕",
-                  "📱",
-                  "💻",
-                  "🖥",
-                  "⌨",
-                  "🖱",
-                  "💾",
-                  "💿",
-                  "📀",
-                  "📺",
-                  "📻",
-                  "📷",
-                  "📸",
-                  "📹",
-                  "🎥",
-                  "🔍",
-                  "🔎",
-                  "🔦",
-                  "💡",
-                  "©",
-                  "®",
-                  "™",
-                  "🐶",
-                  "🐱",
-                  "🐭",
-                  "🐹",
-                  "🐰",
-                  "🦊",
-                  "🐻",
-                  "🐼",
-                  "🐨",
-                  "🐯",
-                  "🦁",
-                  "🐮",
-                  "🐷",
-                  "🐸",
-                  "🐵",
-                  "🐔",
-                  "🐧",
-                  "🐦",
-                  "🐤",
-                  "🦆",
-                  "🦅",
-                  "🦉",
-                  "🦇",
-                  "🐝",
-                  "🦋",
-                  "🐌",
-                  "🐞",
-                  "🐜",
-                  "🐢",
-                  "🐍",
-                  "🦎",
-                  "🦖",
-                  "🦕",
-                  "🦈",
-                  "🐬",
-                  "🐳",
-                  "🐋",
-                  "🦭",
-                  "🐊",
-                  "🐲",
-                  "🐉",
-                  "🦌",
-                  "🦙",
-                  "🦘",
-                  "🦡",
-                  "🦗",
-                  "🦂",
-                  "🌵",
-                  "🌲",
-                  "🌳",
-                  "🌴",
-                  "🌱",
-                  "🌿",
-                  "☘",
-                  "🍀",
-                  "🍁",
-                  "🍂",
-                  "🍃",
-                  "🌺",
-                  "🌻",
-                  "🌸",
-                  "🌼",
-                  "🌷",
-                  "🌹",
-                  "🥀",
-                  "🌞",
-                  "🌕",
-                  "🌙",
-                  "🌟",
-                  "💫",
-                  "⭐",
-                  "🌠",
-                  "☄",
-                  "☀",
-                  "⛅",
-                  "☁",
-                  "🌧",
-                  "⛈",
-                  "🌩",
-                  "🌨",
-                  "🌪",
-                  "🌈",
-                  "🌊",
-                  "💧",
-                  "💦",
-                  "🔥",
-                  "🌍",
-                  "🌎",
-                  "🌏",
-                  "🏔",
-                  "⛰",
-                  "🌋",
-                  "🏕",
-                  "🏖",
-                  "🏜",
-                  "🏝",
-                  "🏞",
-                  "🏟",
-                  "🏛",
-                  "🏗",
-                  "🧱",
-                  "🏠",
-                  "🏡",
-                ];
-
-                final emojis = indices
-                    .map((i) => emojiList[i % emojiList.length])
-                    .toList();
-
-                showDialog(
-                  context: context,
-                  builder: (_) => AlertDialog(
-                    title: Text(secTitle),
-                    content: SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Text(
-                            secContent,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.grey,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: emojis
-                                .map((e) => Text(
-                                      e,
-                                      style: const TextStyle(fontSize: 48),
-                                    ))
-                                .toList(),
-                          ),
-                        ],
                       ),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: Text(closeLabel),
-                      )
-                    ],
-                  ),
-                );
-              },
-                );
-              },
+                      ValueListenableBuilder<bool>(
+                        valueListenable: callManager.isInCall,
+                        builder: (ctx, inCall, _) => inCall
+                            ? const SizedBox()
+                            : IconButton(
+                                icon: Icon(
+                                  Icons.phone,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withOpacity(0.8),
+                                ),
+                                onPressed: () async {
+                                  final confirmed = await showDialog<bool>(
+                                    context: context,
+                                    builder: (dCtx) => AlertDialog(
+                                      title: Text(AppLocalizations.of(context)
+                                          .voiceCallsTitle),
+                                      content: Text(AppLocalizations.of(context)
+                                          .voiceCallsContent),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.of(dCtx).pop(false),
+                                          child: Text(
+                                              AppLocalizations.of(context)
+                                                  .cancel),
+                                        ),
+                                        TextButton(
+                                          onPressed: () {
+                                            Navigator.of(dCtx).pop(false);
+                                            showModalBottomSheet(
+                                              context: context,
+                                              isScrollControlled: true,
+                                              backgroundColor:
+                                                  Colors.transparent,
+                                              builder: (_) =>
+                                                  const SupportSheet(),
+                                            );
+                                          },
+                                          child: Text(
+                                              AppLocalizations.of(context)
+                                                  .supportOnyxBtn),
+                                        ),
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.of(dCtx).pop(true),
+                                          child: Text(
+                                              AppLocalizations.of(context)
+                                                  .call),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  if (confirmed == true) {
+                                    callManager
+                                        .startCall(widget.otherUsername!);
+                                  }
+                                },
+                              ),
+                      ),
+                      ValueListenableBuilder<Set<String>>(
+                        valueListenable: BlocklistManager.blockedUsers,
+                        builder: (_, blocked, __) {
+                          final isBlocked = widget.otherUsername != null &&
+                              blocked.contains(widget.otherUsername!);
+                          return IconButton(
+                            tooltip: isBlocked
+                                ? AppLocalizations.of(context).unblockUserLabel
+                                : null,
+                            icon: Icon(
+                              isBlocked
+                                  ? Icons.lock_open_rounded
+                                  : Icons.shield,
+                              size: 20,
+                            ),
+                            onPressed: () async {
+                              if (BlocklistManager.isBlocked(
+                                  widget.otherUsername ?? '')) {
+                                final other = widget.otherUsername ?? '';
+                                final confirmed = await showDialog<bool>(
+                                  context: context,
+                                  builder: (dCtx) => AlertDialog(
+                                    title: Text(AppLocalizations.of(context)
+                                        .unblockUserLabel),
+                                    content: Text(AppLocalizations.of(context)
+                                        .unblockUserConfirmContent(other)),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.of(dCtx).pop(false),
+                                        child: Text(AppLocalizations.of(context)
+                                            .cancel),
+                                      ),
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.of(dCtx).pop(true),
+                                        child: Text(AppLocalizations.of(context)
+                                            .unblockUserLabel),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirmed != true) return;
+                                await BlocklistManager.unblock(other);
+                                try {
+                                  final token = await AccountManager.getToken(
+                                      widget.myUsername);
+                                  await http.delete(
+                                    Uri.parse('$serverBase/block/$other'),
+                                    headers: {'authorization': 'Bearer $token'},
+                                  );
+                                } catch (e) {
+                                  debugPrint('[unblock] failed: $e');
+                                }
+                                return;
+                              }
+                              final recipient = widget.otherUsername;
+                              final secTitle = AppLocalizations.of(context)
+                                  .securityCheckTitle;
+                              final secContent = AppLocalizations.of(context)
+                                  .securityCheckContent(recipient);
+                              final closeLabel =
+                                  AppLocalizations.of(context).close;
+                              String? theirPubB64;
+                              String? myPubB64;
+                              final token = await AccountManager.getToken(
+                                  widget.myUsername);
+                              try {
+                                final results = await Future.wait([
+                                  http.get(
+                                    Uri.parse('$serverBase/pubkey/$recipient'),
+                                    headers: {'authorization': 'Bearer $token'},
+                                  ),
+                                  http.get(
+                                    Uri.parse(
+                                        '$serverBase/pubkey/${widget.myUsername}'),
+                                    headers: {'authorization': 'Bearer $token'},
+                                  ),
+                                ]);
+                                if (results[0].statusCode == 200) {
+                                  theirPubB64 =
+                                      (jsonDecode(results[0].body))['pubkey']
+                                          as String?;
+                                }
+                                if (results[1].statusCode == 200) {
+                                  myPubB64 =
+                                      (jsonDecode(results[1].body))['pubkey']
+                                          as String?;
+                                }
+                              } catch (e) {
+                                rootScreenKey.currentState?.showSnack(
+                                    AppLocalizations(
+                                            SettingsManager.appLocale.value)
+                                        .failedToFetchPubkey);
+                                return;
+                              }
+                              if (theirPubB64 == null) {
+                                rootScreenKey.currentState?.showSnack(
+                                    AppLocalizations(
+                                            SettingsManager.appLocale.value)
+                                        .userHasNoPubkey);
+                                return;
+                              }
+                              if (myPubB64 == null) {
+                                rootScreenKey.currentState?.showSnack(
+                                    AppLocalizations(
+                                            SettingsManager.appLocale.value)
+                                        .userHasNoPubkey);
+                                return;
+                              }
+                              if (!mounted) return;
+
+                              final myUsername = widget.myUsername;
+                              final otherUsername = widget.otherUsername;
+                              final List<String> sortedNames = [
+                                myUsername,
+                                otherUsername
+                              ]..sort();
+                              final List<int> myPubBytes =
+                                  base64Decode(myPubB64);
+                              final List<int> theirPubBytes =
+                                  base64Decode(theirPubB64);
+                              final List<int> keyA =
+                                  sortedNames[0] == myUsername
+                                      ? myPubBytes
+                                      : theirPubBytes;
+                              final List<int> keyB =
+                                  sortedNames[0] == myUsername
+                                      ? theirPubBytes
+                                      : myPubBytes;
+                              final combined =
+                                  Uint8List.fromList([...keyA, ...keyB]);
+                              final hash =
+                                  dart_crypto.sha256.convert(combined).bytes;
+                              final indices = [
+                                hash[0],
+                                hash[1],
+                                hash[2],
+                                hash[3]
+                              ];
+
+                              const List<String> emojiList = [
+                                "😀",
+                                "😁",
+                                "😂",
+                                "🤣",
+                                "😃",
+                                "😄",
+                                "😅",
+                                "😆",
+                                "😇",
+                                "😈",
+                                "👿",
+                                "😉",
+                                "😊",
+                                "😋",
+                                "😌",
+                                "😍",
+                                "🥰",
+                                "😎",
+                                "😏",
+                                "😐",
+                                "😑",
+                                "😒",
+                                "😓",
+                                "😔",
+                                "😕",
+                                "🙂",
+                                "🙃",
+                                "😗",
+                                "😙",
+                                "😚",
+                                "😘",
+                                "🥲",
+                                "😭",
+                                "😢",
+                                "😥",
+                                "😰",
+                                "😨",
+                                "😱",
+                                "😳",
+                                "🥵",
+                                "🥶",
+                                "😮",
+                                "😤",
+                                "😠",
+                                "😡",
+                                "🤬",
+                                "😞",
+                                "😟",
+                                "😣",
+                                "😖",
+                                "😫",
+                                "😩",
+                                "🥺",
+                                "🤯",
+                                "😬",
+                                "🤔",
+                                "🤭",
+                                "🤫",
+                                "🤥",
+                                "🙄",
+                                "🤢",
+                                "🤮",
+                                "🤧",
+                                "🥴",
+                                "😵",
+                                "🤑",
+                                "🤠",
+                                "🥳",
+                                "🥸",
+                                "🧐",
+                                "🤓",
+                                "👻",
+                                "💀",
+                                "☠",
+                                "👹",
+                                "👺",
+                                "🤡",
+                                "👾",
+                                "🎃",
+                                "🎄",
+                                "🎆",
+                                "🎇",
+                                "🧨",
+                                "✨",
+                                "🎉",
+                                "🎊",
+                                "🎋",
+                                "🎍",
+                                "🎎",
+                                "🎏",
+                                "🎐",
+                                "🎑",
+                                "🎀",
+                                "🏆",
+                                "🥇",
+                                "🥈",
+                                "🥉",
+                                "🏅",
+                                "🥊",
+                                "🎯",
+                                "🎳",
+                                "🎮",
+                                "🎰",
+                                "🎲",
+                                "🧩",
+                                "🧸",
+                                "♟",
+                                "🎨",
+                                "🎪",
+                                "🎬",
+                                "🎤",
+                                "🎧",
+                                "🎼",
+                                "🎵",
+                                "🎶",
+                                "🎸",
+                                "🎹",
+                                "🥁",
+                                "🎷",
+                                "🎺",
+                                "🎻",
+                                "🪕",
+                                "📱",
+                                "💻",
+                                "🖥",
+                                "⌨",
+                                "🖱",
+                                "💾",
+                                "💿",
+                                "📀",
+                                "📺",
+                                "📻",
+                                "📷",
+                                "📸",
+                                "📹",
+                                "🎥",
+                                "🔍",
+                                "🔎",
+                                "🔦",
+                                "💡",
+                                "©",
+                                "®",
+                                "™",
+                                "🐶",
+                                "🐱",
+                                "🐭",
+                                "🐹",
+                                "🐰",
+                                "🦊",
+                                "🐻",
+                                "🐼",
+                                "🐨",
+                                "🐯",
+                                "🦁",
+                                "🐮",
+                                "🐷",
+                                "🐸",
+                                "🐵",
+                                "🐔",
+                                "🐧",
+                                "🐦",
+                                "🐤",
+                                "🦆",
+                                "🦅",
+                                "🦉",
+                                "🦇",
+                                "🐝",
+                                "🦋",
+                                "🐌",
+                                "🐞",
+                                "🐜",
+                                "🐢",
+                                "🐍",
+                                "🦎",
+                                "🦖",
+                                "🦕",
+                                "🦈",
+                                "🐬",
+                                "🐳",
+                                "🐋",
+                                "🦭",
+                                "🐊",
+                                "🐲",
+                                "🐉",
+                                "🦌",
+                                "🦙",
+                                "🦘",
+                                "🦡",
+                                "🦗",
+                                "🦂",
+                                "🌵",
+                                "🌲",
+                                "🌳",
+                                "🌴",
+                                "🌱",
+                                "🌿",
+                                "☘",
+                                "🍀",
+                                "🍁",
+                                "🍂",
+                                "🍃",
+                                "🌺",
+                                "🌻",
+                                "🌸",
+                                "🌼",
+                                "🌷",
+                                "🌹",
+                                "🥀",
+                                "🌞",
+                                "🌕",
+                                "🌙",
+                                "🌟",
+                                "💫",
+                                "⭐",
+                                "🌠",
+                                "☄",
+                                "☀",
+                                "⛅",
+                                "☁",
+                                "🌧",
+                                "⛈",
+                                "🌩",
+                                "🌨",
+                                "🌪",
+                                "🌈",
+                                "🌊",
+                                "💧",
+                                "💦",
+                                "🔥",
+                                "🌍",
+                                "🌎",
+                                "🌏",
+                                "🏔",
+                                "⛰",
+                                "🌋",
+                                "🏕",
+                                "🏖",
+                                "🏜",
+                                "🏝",
+                                "🏞",
+                                "🏟",
+                                "🏛",
+                                "🏗",
+                                "🧱",
+                                "🏠",
+                                "🏡",
+                              ];
+
+                              final emojis = indices
+                                  .map((i) => emojiList[i % emojiList.length])
+                                  .toList();
+
+                              showDialog(
+                                context: context,
+                                builder: (_) => AlertDialog(
+                                  title: Text(secTitle),
+                                  content: SingleChildScrollView(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                          secContent,
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            color: Colors.grey,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceEvenly,
+                                          children: emojis
+                                              .map((e) => Text(
+                                                    e,
+                                                    style: const TextStyle(
+                                                        fontSize: 48),
+                                                  ))
+                                              .toList(),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.of(context).pop(),
+                                      child: Text(closeLabel),
+                                    )
+                                  ],
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      ),
+                    ]),
             ),
-          ]),
-          ),
-        ],
-      ),
+          ],
+        ),
         body: Stack(
           children: [
             ValueListenableBuilder<String?>(
@@ -2698,7 +2965,8 @@ class ChatScreenState extends State<ChatScreen>
                 final mainMsgs = rootState.chats[chatId] ?? [];
                 final msgs = [...mainMsgs, ..._olderMessages];
                 if (msgs.isEmpty) {
-                  return Center(child: Text(AppLocalizations.of(context).noMessagesYet));
+                  return Center(
+                      child: Text(AppLocalizations.of(context).noMessagesYet));
                 }
 
                 final items = _buildMessagesWithDaySeparators(msgs);
@@ -2706,14 +2974,22 @@ class ChatScreenState extends State<ChatScreen>
                 // Update search matches (side-effect during build is safe here
                 // because we only assign fields, no setState).
                 if (_showSearch && _searchQuery.isNotEmpty) {
-                  _cachedSearchMatches = items.asMap().entries
-                      .where((e) => e.value is _MessageItem &&
-                          (e.value as _MessageItem).message.content
-                              .toLowerCase().contains(_searchQuery))
+                  _cachedSearchMatches = items
+                      .asMap()
+                      .entries
+                      .where((e) =>
+                          e.value is _MessageItem &&
+                          (e.value as _MessageItem)
+                              .message
+                              .content
+                              .toLowerCase()
+                              .contains(_searchQuery))
                       .map((e) => e.key)
                       .toList();
-                  final clampedIdx = _cachedSearchMatches.isEmpty ? 0
-                      : _currentMatchIdx.clamp(0, _cachedSearchMatches.length - 1);
+                  final clampedIdx = _cachedSearchMatches.isEmpty
+                      ? 0
+                      : _currentMatchIdx.clamp(
+                          0, _cachedSearchMatches.length - 1);
                   final stats = (
                     current: _cachedSearchMatches.isEmpty ? 0 : clampedIdx + 1,
                     total: _cachedSearchMatches.length,
@@ -2733,260 +3009,392 @@ class ChatScreenState extends State<ChatScreen>
                 }
 
                 return ValueListenableBuilder<bool>(
-                      valueListenable: SettingsManager.showAvatarInChats,
-                      builder: (_, showAvatar, __) {
+                  valueListenable: SettingsManager.showAvatarInChats,
+                  builder: (_, showAvatar, __) {
+                    return ValueListenableBuilder<bool>(
+                      valueListenable: SettingsManager.swapMessageAlignment,
+                      builder: (_, swapped, __) {
                         return ValueListenableBuilder<bool>(
-                          valueListenable: SettingsManager.swapMessageAlignment,
-                          builder: (_, swapped, __) {
-                            return ValueListenableBuilder<bool>(
-                              valueListenable:
-                                  SettingsManager.alignAllMessagesRight,
-                              builder: (_, alignRight, __) {
-                                
-                                return Listener(
-                                  onPointerDown: (_) {
-                                    if (!isDesktop) return;
-                                    _suppressAutoRefocus = true;
-                                    _focusNode.unfocus();
-                                  },
-                                  child: ListView.builder(
-                                      controller: _scroll,
-                                      reverse: true,
-                                      cacheExtent: 800, 
-                                      addRepaintBoundaries: true,
-                                      addAutomaticKeepAlives: false, 
-                                      padding: EdgeInsets.only(
-                                          top: MediaQuery.of(context)
-                                                  .padding
-                                                  .top +
-                                              kToolbarHeight +
-                                              (_showSearch ? 64 : 12),
-                                          bottom: 72 + MediaQuery.of(context).padding.bottom),
-                                      itemCount: _pendingUploads.length + items.length + (_isLoadingMore || _hasMoreMessages ? 1 : 0),
-                                      itemBuilder: (context, i) {
-                                        // Pending uploads sit at the bottom (index 0 in reversed list)
-                                        if (i < _pendingUploads.length) {
-                                          final task = _pendingUploads[_pendingUploads.length - 1 - i];
-                                          return _buildPendingUploadWidget(task);
-                                        }
-                                        final adjustedI = i - _pendingUploads.length;
-                                        if (adjustedI == items.length) {
-                                          return Padding(
-                                            padding: const EdgeInsets.symmetric(vertical: 12),
-                                            child: _isLoadingMore
-                                                ? const Center(child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2)))
-                                                : const SizedBox.shrink(),
-                                          );
-                                        }
-                                        final item = items[adjustedI];
+                          valueListenable:
+                              SettingsManager.alignAllMessagesRight,
+                          builder: (_, alignRight, __) {
+                            return Listener(
+                              onPointerDown: (_) {
+                                if (!isDesktop) return;
+                                _suppressAutoRefocus = true;
+                                _focusNode.unfocus();
+                              },
+                              child: ListView.builder(
+                                controller: _scroll,
+                                reverse: true,
+                                cacheExtent: 800,
+                                addRepaintBoundaries: true,
+                                addAutomaticKeepAlives: false,
+                                padding: EdgeInsets.only(
+                                    top: MediaQuery.of(context).padding.top +
+                                        kToolbarHeight +
+                                        (_showSearch ? 64 : 12),
+                                    bottom: 72 +
+                                        MediaQuery.of(context).padding.bottom),
+                                itemCount: _pendingUploads.length +
+                                    items.length +
+                                    (_isLoadingMore || _hasMoreMessages
+                                        ? 1
+                                        : 0),
+                                itemBuilder: (context, i) {
+                                  // Pending uploads sit at the bottom (index 0 in reversed list)
+                                  if (i < _pendingUploads.length) {
+                                    final task = _pendingUploads[
+                                        _pendingUploads.length - 1 - i];
+                                    return _buildPendingUploadWidget(task);
+                                  }
+                                  final adjustedI = i - _pendingUploads.length;
+                                  if (adjustedI == items.length) {
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 12),
+                                      child: _isLoadingMore
+                                          ? const Center(
+                                              child: SizedBox(
+                                                  width: 24,
+                                                  height: 24,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                          strokeWidth: 2)))
+                                          : const SizedBox.shrink(),
+                                    );
+                                  }
+                                  final item = items[adjustedI];
 
-                                        if (item is _DaySeparatorItem) {
-                                          return _buildDaySeparator(
-                                              context, item.date);
-                                        } else if (item is _UnreadMarkerItem) {
-                                          return _buildUnreadMarker(context);
-                                        } else if (item is _MessageItem) {
-                                          final msg = item.message;
-                                          final String uniqueKey =
-                                              '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
-                                          // Use stable local id for animation tracking so that
-                                          // when serverMessageId arrives the key doesn't change
-                                          // and trigger a second animation on the same bubble.
-                                          final String animKey = msg.id;
+                                  if (item is _DaySeparatorItem) {
+                                    return _buildDaySeparator(
+                                        context, item.date);
+                                  } else if (item is _UnreadMarkerItem) {
+                                    return _buildUnreadMarker(context);
+                                  } else if (item is _MessageItem) {
+                                    final msg = item.message;
+                                    final String uniqueKey =
+                                        '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
+                                    // Use stable local id for animation tracking so that
+                                    // when serverMessageId arrives the key doesn't change
+                                    // and trigger a second animation on the same bubble.
+                                    final String animKey = msg.id;
 
-                                          final bool isFirstAppearance =
-                                              !_alreadyRenderedMessageIds
-                                                  .contains(animKey);
-                                          if (isFirstAppearance) {
-                                            _alreadyRenderedMessageIds
-                                                .add(animKey);
-                                          }
+                                    final bool isFirstAppearance =
+                                        !_alreadyRenderedMessageIds
+                                            .contains(animKey);
+                                    if (isFirstAppearance) {
+                                      _alreadyRenderedMessageIds.add(animKey);
+                                    }
 
-                                          final isIncoming = !msg.outgoing;
-                                          final isSearchMatch = _searchQuery.isNotEmpty &&
-                                              msg.content.toLowerCase().contains(_searchQuery);
-                                          final isCurrentSearchMatch = isSearchMatch &&
-                                              _cachedSearchMatches.isNotEmpty &&
-                                              _cachedSearchMatches[_currentMatchIdx] == adjustedI;
+                                    final isIncoming = !msg.outgoing;
+                                    final isSearchMatch =
+                                        _searchQuery.isNotEmpty &&
+                                            msg.content
+                                                .toLowerCase()
+                                                .contains(_searchQuery);
+                                    final isCurrentSearchMatch =
+                                        isSearchMatch &&
+                                            _cachedSearchMatches.isNotEmpty &&
+                                            _cachedSearchMatches[
+                                                    _currentMatchIdx] ==
+                                                adjustedI;
 
-                                          final shouldShowRight = alignRight
-                                              ? !swapped
-                                              : (swapped
-                                                  ? isIncoming
-                                                  : msg.outgoing);
+                                    final shouldShowRight = alignRight
+                                        ? !swapped
+                                        : (swapped ? isIncoming : msg.outgoing);
 
-                                          final cs = Theme.of(context).colorScheme;
+                                    final cs = Theme.of(context).colorScheme;
 
-                                          final msgBubble = MessageBubble(
-                                            key: ValueKey<String>('mb_inner_$uniqueKey'),
-                                            text: msg.content,
-                                            outgoing: msg.outgoing,
-                                            rawPreview: msg.rawEnvelopePreview,
-                                            serverMessageId: msg.serverMessageId,
-                                            time: msg.time,
-                                            onRequestResend: (id) => widget.onRequestResend(id),
-                                            desktopMenuItems: _buildDesktopMenuItems(msg),
-                                            peerUsername: widget.otherUsername,
-                                            chatMessage: msg,
-                                            replyToId: msg.replyToId,
-                                            replyToUsername: msg.replyToSender,
-                                            replyToContent: msg.replyToContent,
-                                            onReplyTap: msg.replyToId != null
-                                                ? () => _scrollToMessageById(msg.replyToId)
+                                    final msgBubble = MessageBubble(
+                                      key: ValueKey<String>(
+                                          'mb_inner_$uniqueKey'),
+                                      text: msg.content,
+                                      outgoing: msg.outgoing,
+                                      rawPreview: msg.rawEnvelopePreview,
+                                      serverMessageId: msg.serverMessageId,
+                                      time: msg.time,
+                                      onRequestResend: (id) =>
+                                          widget.onRequestResend(id),
+                                      desktopMenuItems:
+                                          _buildDesktopMenuItems(msg),
+                                      peerUsername: widget.otherUsername,
+                                      chatMessage: msg,
+                                      replyToId: msg.replyToId,
+                                      replyToUsername: msg.replyToSender,
+                                      replyToContent: msg.replyToContent,
+                                      onReplyTap: msg.replyToId != null
+                                          ? () => _scrollToMessageById(
+                                              msg.replyToId)
+                                          : null,
+                                      highlighted:
+                                          (msg.serverMessageId != null &&
+                                                  _replyingToMessage != null &&
+                                                  _replyingToMessage!['id']
+                                                          ?.toString() ==
+                                                      msg.serverMessageId
+                                                          ?.toString()) ||
+                                              (msg.serverMessageId == null &&
+                                                  _replyingToMessage != null &&
+                                                  _replyingToMessage!['localId']
+                                                          ?.toString() ==
+                                                      msg.id.toString()),
+                                    );
+
+                                    final expensiveChild =
+                                        AnimatedMessageBubble(
+                                      key: ValueKey<String>(animKey),
+                                      outgoing: msg.outgoing,
+                                      animate: isFirstAppearance &&
+                                          SettingsManager
+                                              .messageAnimationsEnabled.value,
+                                      child: RepaintBoundary(child: msgBubble),
+                                    );
+
+                                    return ValueListenableBuilder<
+                                        ({
+                                          bool active,
+                                          Map<String, ChatMessage> selected
+                                        })>(
+                                      valueListenable: _selectionNotifier,
+                                      child: expensiveChild,
+                                      builder: (_, sel, bubbleChild) {
+                                        final isSelected =
+                                            sel.selected.containsKey(uniqueKey);
+                                        final checkmark = AnimatedContainer(
+                                          duration:
+                                              const Duration(milliseconds: 150),
+                                          margin: const EdgeInsets.symmetric(
+                                              horizontal: 6),
+                                          width: 22,
+                                          height: 22,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: isSelected
+                                                ? cs.primary
+                                                : Colors.transparent,
+                                            border: Border.all(
+                                              color: isSelected
+                                                  ? cs.primary
+                                                  : cs.onSurface
+                                                      .withValues(alpha: 0.35),
+                                              width: 2,
+                                            ),
+                                          ),
+                                          child: isSelected
+                                              ? Icon(Icons.check,
+                                                  size: 14, color: cs.onPrimary)
+                                              : null,
+                                        );
+                                        return RawGestureDetector(
+                                          behavior: HitTestBehavior.translucent,
+                                          gestures: {
+                                            LongPressGestureRecognizer:
+                                                GestureRecognizerFactoryWithHandlers<
+                                                    LongPressGestureRecognizer>(
+                                              () => LongPressGestureRecognizer(
+                                                  duration: const Duration(
+                                                      milliseconds: 250)),
+                                              (instance) {
+                                                instance.onLongPress = sel
+                                                        .active
+                                                    ? () =>
+                                                        _toggleMessageSelection(
+                                                            msg, uniqueKey)
+                                                    : () => _enterSelectionMode(
+                                                        msg, uniqueKey);
+                                              },
+                                            ),
+                                          },
+                                          child: GestureDetector(
+                                            behavior:
+                                                HitTestBehavior.translucent,
+                                            onTap: sel.active
+                                                ? () => _toggleMessageSelection(
+                                                    msg, uniqueKey)
                                                 : null,
-                                            highlighted: (msg.serverMessageId != null &&
-                                                    _replyingToMessage != null &&
-                                                    _replyingToMessage!['id']?.toString() ==
-                                                        msg.serverMessageId?.toString()) ||
-                                                (msg.serverMessageId == null &&
-                                                    _replyingToMessage != null &&
-                                                    _replyingToMessage!['localId']?.toString() ==
-                                                        msg.id.toString()),
-                                          );
-
-                                          final expensiveChild = AnimatedMessageBubble(
-                                              key: ValueKey<String>(animKey),
-                                              outgoing: msg.outgoing,
-                                              animate: isFirstAppearance &&
-                                                  SettingsManager.messageAnimationsEnabled.value,
-                                              child: RepaintBoundary(child: msgBubble),
-                                            );
-
-                                          return ValueListenableBuilder<({bool active, Map<String, ChatMessage> selected})>(
-                                            valueListenable: _selectionNotifier,
-                                            child: expensiveChild,
-                                            builder: (_, sel, bubbleChild) {
-                                              final isSelected = sel.selected.containsKey(uniqueKey);
-                                              final checkmark = AnimatedContainer(
-                                                duration: const Duration(milliseconds: 150),
-                                                margin: const EdgeInsets.symmetric(horizontal: 6),
-                                                width: 22,
-                                                height: 22,
-                                                decoration: BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  color: isSelected ? cs.primary : Colors.transparent,
-                                                  border: Border.all(
-                                                    color: isSelected
-                                                        ? cs.primary
-                                                        : cs.onSurface.withValues(alpha: 0.35),
-                                                    width: 2,
-                                                  ),
-                                                ),
-                                                child: isSelected
-                                                    ? Icon(Icons.check, size: 14, color: cs.onPrimary)
-                                                    : null,
-                                              );
-                                              return RawGestureDetector(
-                                                behavior: HitTestBehavior.translucent,
-                                                gestures: {
-                                                  LongPressGestureRecognizer: GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
-                                                    () => LongPressGestureRecognizer(duration: const Duration(milliseconds: 250)),
-                                                    (instance) {
-                                                      instance.onLongPress = sel.active
-                                                          ? () => _toggleMessageSelection(msg, uniqueKey)
-                                                          : () => _enterSelectionMode(msg, uniqueKey);
-                                                    },
-                                                  ),
-                                                },
-                                                child: GestureDetector(
-                                                behavior: HitTestBehavior.translucent,
-                                                onTap: sel.active
-                                                    ? () => _toggleMessageSelection(msg, uniqueKey)
-                                                    : null,
-                                                onDoubleTap: sel.active
-                                                    ? null
-                                                    : () => _enterSelectionMode(msg, uniqueKey),
-                                                  child: AnimatedContainer(
-                                                  key: (_scrollTargetId != null && (_scrollTargetId == msg.serverMessageId?.toString() || _scrollTargetId == msg.id)) ? _scrollTargetKey : null,
-                                                  duration: const Duration(milliseconds: 150),
-                                                  curve: Curves.easeOut,
-                                                  color: isCurrentSearchMatch
-                                                      ? cs.primary.withValues(alpha: 0.28)
-                                                      : isSearchMatch
-                                                          ? cs.primary.withValues(alpha: 0.12)
-                                                          : isSelected
-                                                              ? cs.primaryContainer.withValues(alpha: 0.45)
-                                                              : (_scrollHighlightId != null &&
-                                                                      (_scrollHighlightId == msg.serverMessageId?.toString() ||
-                                                                          _scrollHighlightId == msg.id))
-                                                                  ? cs.primary.withValues(alpha: 0.18)
-                                                                  : Colors.transparent,
-                                                  padding: const EdgeInsets.symmetric(
-                                                      vertical: 6, horizontal: 12),
-                                                  child: Row(
-                                                    mainAxisAlignment: shouldShowRight
+                                            onDoubleTap: sel.active
+                                                ? null
+                                                : () => _enterSelectionMode(
+                                                    msg, uniqueKey),
+                                            child: AnimatedContainer(
+                                              key: (_scrollTargetId != null &&
+                                                      (_scrollTargetId ==
+                                                              msg.serverMessageId
+                                                                  ?.toString() ||
+                                                          _scrollTargetId ==
+                                                              msg.id))
+                                                  ? _scrollTargetKey
+                                                  : null,
+                                              duration: const Duration(
+                                                  milliseconds: 150),
+                                              curve: Curves.easeOut,
+                                              color: isCurrentSearchMatch
+                                                  ? cs.primary
+                                                      .withValues(alpha: 0.28)
+                                                  : isSearchMatch
+                                                      ? cs.primary.withValues(
+                                                          alpha: 0.12)
+                                                      : isSelected
+                                                          ? cs.primaryContainer
+                                                              .withValues(
+                                                                  alpha: 0.45)
+                                                          : (_scrollHighlightId !=
+                                                                      null &&
+                                                                  (_scrollHighlightId ==
+                                                                          msg.serverMessageId
+                                                                              ?.toString() ||
+                                                                      _scrollHighlightId ==
+                                                                          msg
+                                                                              .id))
+                                                              ? cs.primary
+                                                                  .withValues(
+                                                                      alpha:
+                                                                          0.18)
+                                                              : Colors
+                                                                  .transparent,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      vertical: 6,
+                                                      horizontal: 12),
+                                              child: Row(
+                                                mainAxisAlignment:
+                                                    shouldShowRight
                                                         ? MainAxisAlignment.end
-                                                        : MainAxisAlignment.start,
-                                                    children: [
-                                                      if (sel.active && !shouldShowRight) checkmark,
-                                                      Flexible(
-                                                        child: GestureDetector(
-                                                          onHorizontalDragEnd: isDesktop || sel.active
+                                                        : MainAxisAlignment
+                                                            .start,
+                                                children: [
+                                                  if (sel.active &&
+                                                      !shouldShowRight)
+                                                    checkmark,
+                                                  Flexible(
+                                                    child: GestureDetector(
+                                                      onHorizontalDragEnd:
+                                                          isDesktop ||
+                                                                  sel.active
                                                               ? null
                                                               : (details) {
-                                                                  final v = details.primaryVelocity;
-                                                                  if (v != null && v > 300) {
-                                                                    HapticFeedback.selectionClick();
-                                                                    _showMessageMenu(msg);
-                                                                  } else if (v != null && v < -300) {
-                                                                    final preview = {
-                                                                      'id': msg.serverMessageId,
-                                                                      'localId': msg.id,
-                                                                      'sender': msg.from,
-                                                                      'senderDisplayName': msg.from,
-                                                                      'content': getPreviewText(msg.content),
+                                                                  final v = details
+                                                                      .primaryVelocity;
+                                                                  if (v !=
+                                                                          null &&
+                                                                      v > 300) {
+                                                                    HapticFeedback
+                                                                        .selectionClick();
+                                                                    _showMessageMenu(
+                                                                        msg);
+                                                                  } else if (v !=
+                                                                          null &&
+                                                                      v < -300) {
+                                                                    final preview =
+                                                                        {
+                                                                      'id': msg
+                                                                          .serverMessageId,
+                                                                      'localId':
+                                                                          msg.id,
+                                                                      'sender':
+                                                                          msg.from,
+                                                                      'senderDisplayName':
+                                                                          msg.from,
+                                                                      'content':
+                                                                          getPreviewText(
+                                                                              msg.content),
                                                                     };
-                                                                    _startReplyingToMessage(preview);
-                                                                    HapticFeedback.selectionClick();
+                                                                    _startReplyingToMessage(
+                                                                        preview);
+                                                                    HapticFeedback
+                                                                        .selectionClick();
                                                                   }
                                                                 },
-                                                          onSecondaryTap: isDesktop && !sel.active
-                                                              ? () => _showMessageMenu(msg)
-                                                              : null,
-                                                          child: Column(
-                                                            crossAxisAlignment: shouldShowRight
-                                                                ? CrossAxisAlignment.end
-                                                                : CrossAxisAlignment.start,
-                                                            mainAxisSize: MainAxisSize.min,
-                                                            children: [
-                                                              bubbleChild!,
-                                                              MessageReactionBar(
-                                                                reactions: reactionsFor(uniqueKey),
-                                                                myUsername: widget.myUsername,
-                                                                outgoing: msg.outgoing,
-                                                                onToggle: (emoji) {
-                                                                  final wasReacted = hasReaction(uniqueKey, emoji, widget.myUsername);
-                                                                  toggleReaction(uniqueKey, emoji, widget.myUsername);
-                                                                  if (msg.serverMessageId != null) _serverTogglePrivateReaction(uniqueKey, msg.serverMessageId!, emoji, wasReacted);
-                                                                },
-                                                                onAddReaction: (ctx) => openEmojiPicker(ctx, uniqueKey, widget.myUsername, onAfterToggle: (emoji, wasReacted) {
-                                                                  if (msg.serverMessageId != null) _serverTogglePrivateReaction(uniqueKey, msg.serverMessageId!, emoji, wasReacted);
-                                                                }),
-                                                              ),
-                                                            ],
+                                                      onSecondaryTap: isDesktop &&
+                                                              !sel.active
+                                                          ? () =>
+                                                              _showMessageMenu(
+                                                                  msg)
+                                                          : null,
+                                                      child: Column(
+                                                        crossAxisAlignment:
+                                                            shouldShowRight
+                                                                ? CrossAxisAlignment
+                                                                    .end
+                                                                : CrossAxisAlignment
+                                                                    .start,
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        children: [
+                                                          bubbleChild!,
+                                                          MessageReactionBar(
+                                                            reactions:
+                                                                reactionsFor(
+                                                                    uniqueKey),
+                                                            myUsername: widget
+                                                                .myUsername,
+                                                            outgoing:
+                                                                msg.outgoing,
+                                                            onToggle: (emoji) {
+                                                              final wasReacted =
+                                                                  hasReaction(
+                                                                      uniqueKey,
+                                                                      emoji,
+                                                                      widget
+                                                                          .myUsername);
+                                                              toggleReaction(
+                                                                  uniqueKey,
+                                                                  emoji,
+                                                                  widget
+                                                                      .myUsername);
+                                                              if (msg.serverMessageId !=
+                                                                  null)
+                                                                _serverTogglePrivateReaction(
+                                                                    uniqueKey,
+                                                                    msg.serverMessageId!,
+                                                                    emoji,
+                                                                    wasReacted);
+                                                            },
+                                                            onAddReaction: (ctx) =>
+                                                                openEmojiPicker(
+                                                                    ctx,
+                                                                    uniqueKey,
+                                                                    widget
+                                                                        .myUsername,
+                                                                    onAfterToggle:
+                                                                        (emoji,
+                                                                            wasReacted) {
+                                                              if (msg.serverMessageId !=
+                                                                  null)
+                                                                _serverTogglePrivateReaction(
+                                                                    uniqueKey,
+                                                                    msg.serverMessageId!,
+                                                                    emoji,
+                                                                    wasReacted);
+                                                            }),
                                                           ),
-                                                        ),
+                                                        ],
                                                       ),
-                                                      if (sel.active && shouldShowRight) checkmark,
-                                                    ],
+                                                    ),
                                                   ),
-                                                ),
+                                                  if (sel.active &&
+                                                      shouldShowRight)
+                                                    checkmark,
+                                                ],
                                               ),
-                                            );
-                                            },
-                                          );
-                                        }
-
-                                        return const SizedBox.shrink();
+                                            ),
+                                          ),
+                                        );
                                       },
-                                    ),
-                                );
-                              },
+                                    );
+                                  }
+
+                                  return const SizedBox.shrink();
+                                },
+                              ),
                             );
                           },
                         );
                       },
                     );
+                  },
+                );
               },
             ),
             if (_pinnedMessage != null)
@@ -2998,7 +3406,9 @@ class ChatScreenState extends State<ChatScreen>
               ),
             if (_showSearch)
               Positioned(
-                top: MediaQuery.of(context).padding.top + kToolbarHeight + (_pinnedMessage != null ? 68.0 : 8.0),
+                top: MediaQuery.of(context).padding.top +
+                    kToolbarHeight +
+                    (_pinnedMessage != null ? 68.0 : 8.0),
                 left: 16,
                 right: 16,
                 child: ChatSearchBar(
@@ -3011,6 +3421,106 @@ class ChatScreenState extends State<ChatScreen>
                   onClose: _closeSearch,
                 ),
               ),
+            ValueListenableBuilder<bool>(
+              valueListenable: _scrollDownVisible,
+              builder: (_, visible, child) => AnimatedOpacity(
+                opacity: visible ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 200),
+                child: IgnorePointer(
+                  ignoring: !visible,
+                  child: child,
+                ),
+              ),
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 100),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Stack(
+                      children: [
+                        ValueListenableBuilder<double>(
+                          valueListenable: SettingsManager.elementBrightness,
+                          builder: (_, brightness, ___) {
+                            final baseColor = SettingsManager.getElementColor(
+                              Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
+                              brightness,
+                            );
+                            return IconButton(
+                              splashRadius: 20,
+                              padding: EdgeInsets.zero,
+                              icon: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: baseColor.withValues(alpha: 0.5),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .outlineVariant
+                                        .withValues(alpha: 0.15),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Icon(
+                                  Icons.arrow_downward,
+                                  size: 18,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.7),
+                                ),
+                              ),
+                              onPressed: _scrollToBottom,
+                            );
+                          },
+                        ),
+                        ListenableBuilder(
+                          listenable: unreadManager,
+                          builder: (context, _) {
+                            final me =
+                                rootScreenKey.currentState?.currentUsername ??
+                                    widget.myUsername;
+                            final List<String> ids = [me, widget.otherUsername]
+                              ..sort();
+                            final String chatId = ids.join(':');
+                            final unreadCount =
+                                unreadManager.getUnreadCount(chatId);
+                            if (unreadCount == 0) {
+                              return const SizedBox.shrink();
+                            }
+                            return Positioned(
+                              top: -4,
+                              right: -4,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 5, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  unreadCount.toString(),
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color:
+                                        Theme.of(context).colorScheme.onPrimary,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
             Align(
               alignment: Alignment.bottomCenter,
               child: Padding(
@@ -3027,68 +3537,95 @@ class ChatScreenState extends State<ChatScreen>
                         return Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            
                             AnimatedSize(
                               duration: const Duration(milliseconds: 220),
                               curve: Curves.easeOut,
                               child: _editingMessage != null
                                   ? ValueListenableBuilder<double>(
-                                      valueListenable: SettingsManager.elementBrightness,
+                                      valueListenable:
+                                          SettingsManager.elementBrightness,
                                       builder: (_, brightness, ___) {
-                                        final baseColor = SettingsManager.getElementColor(
-                                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                                        final baseColor =
+                                            SettingsManager.getElementColor(
+                                          Theme.of(context)
+                                              .colorScheme
+                                              .surfaceContainerHighest,
                                           brightness,
                                         );
-                                        final colorScheme = Theme.of(context).colorScheme;
+                                        final colorScheme =
+                                            Theme.of(context).colorScheme;
                                         return Container(
-                                          constraints: BoxConstraints(maxWidth: width),
-                                          margin: const EdgeInsets.only(bottom: 8),
-                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                          constraints:
+                                              BoxConstraints(maxWidth: width),
+                                          margin:
+                                              const EdgeInsets.only(bottom: 8),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 12, vertical: 10),
                                           decoration: BoxDecoration(
-                                            color: baseColor.withValues(alpha: opacity),
-                                            borderRadius: BorderRadius.circular(16),
+                                            color: baseColor.withValues(
+                                                alpha: opacity),
+                                            borderRadius:
+                                                BorderRadius.circular(16),
                                             border: Border.all(
-                                              color: colorScheme.primary.withValues(alpha: 0.25),
+                                              color: colorScheme.primary
+                                                  .withValues(alpha: 0.25),
                                               width: 1,
                                             ),
                                           ),
                                           child: Row(
                                             children: [
-                                              Icon(Icons.edit_rounded, size: 16, color: colorScheme.primary),
+                                              Icon(Icons.edit_rounded,
+                                                  size: 16,
+                                                  color: colorScheme.primary),
                                               const SizedBox(width: 8),
                                               Expanded(
                                                 child: Column(
-                                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                                  mainAxisSize: MainAxisSize.min,
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
                                                   children: [
                                                     Text(
                                                       'Editing',
                                                       style: TextStyle(
                                                         fontSize: 13,
-                                                        fontWeight: FontWeight.w600,
-                                                        color: colorScheme.primary,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                        color:
+                                                            colorScheme.primary,
                                                       ),
                                                     ),
                                                     const SizedBox(height: 2),
                                                     Text(
-                                                      getPreviewText(_editingMessage!.content),
+                                                      getPreviewText(
+                                                          _editingMessage!
+                                                              .content),
                                                       maxLines: 1,
-                                                      overflow: TextOverflow.ellipsis,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
                                                       style: TextStyle(
                                                         fontSize: 12,
-                                                        color: colorScheme.onSurface.withValues(alpha: 0.6),
+                                                        color: colorScheme
+                                                            .onSurface
+                                                            .withValues(
+                                                                alpha: 0.6),
                                                       ),
                                                     ),
                                                   ],
                                                 ),
                                               ),
                                               IconButton(
-                                                icon: const Icon(Icons.close, size: 18),
+                                                icon: const Icon(Icons.close,
+                                                    size: 18),
                                                 onPressed: _cancelEditing,
-                                                visualDensity: VisualDensity.compact,
+                                                visualDensity:
+                                                    VisualDensity.compact,
                                                 splashRadius: 18,
                                                 padding: EdgeInsets.zero,
-                                                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                                constraints:
+                                                    const BoxConstraints(
+                                                        minWidth: 32,
+                                                        minHeight: 32),
                                               ),
                                             ],
                                           ),
@@ -3097,26 +3634,33 @@ class ChatScreenState extends State<ChatScreen>
                                     )
                                   : const SizedBox.shrink(),
                             ),
-                            
                             AnimatedSize(
                               duration: const Duration(milliseconds: 220),
                               curve: Curves.easeOut,
                               child: _replyingToMessage != null
                                   ? ValueListenableBuilder<double>(
-                                      valueListenable: SettingsManager.elementBrightness,
+                                      valueListenable:
+                                          SettingsManager.elementBrightness,
                                       builder: (_, brightness, ___) {
-                                        final baseColor = SettingsManager.getElementColor(
-                                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                                        final baseColor =
+                                            SettingsManager.getElementColor(
+                                          Theme.of(context)
+                                              .colorScheme
+                                              .surfaceContainerHighest,
                                           brightness,
                                         );
                                         return Container(
-                                          constraints: BoxConstraints(maxWidth: width),
-                                          margin: const EdgeInsets.only(bottom: 8),
+                                          constraints:
+                                              BoxConstraints(maxWidth: width),
+                                          margin:
+                                              const EdgeInsets.only(bottom: 8),
                                           padding: const EdgeInsets.symmetric(
                                               horizontal: 12, vertical: 10),
                                           decoration: BoxDecoration(
-                                            color: baseColor.withValues(alpha: opacity),
-                                            borderRadius: BorderRadius.circular(16),
+                                            color: baseColor.withValues(
+                                                alpha: opacity),
+                                            borderRadius:
+                                                BorderRadius.circular(16),
                                             border: Border.all(
                                               color: Theme.of(context)
                                                   .colorScheme
@@ -3125,59 +3669,69 @@ class ChatScreenState extends State<ChatScreen>
                                               width: 1,
                                             ),
                                           ),
-                                      child: Row(
-                                        children: [
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Text(
-                                                  _replyingToMessage![
-                                                              'senderDisplayName']
-                                                          ?.toString() ??
-                                                      _replyingToMessage!['sender']
-                                                          ?.toString() ??
-                                                      'Unknown',
-                                                  style: TextStyle(
-                                                    fontSize: 13,
-                                                    fontWeight: FontWeight.w600,
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .primary,
-                                                  ),
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
+                                          child: Row(
+                                            children: [
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    Text(
+                                                      _replyingToMessage![
+                                                                  'senderDisplayName']
+                                                              ?.toString() ??
+                                                          _replyingToMessage![
+                                                                  'sender']
+                                                              ?.toString() ??
+                                                          'Unknown',
+                                                      style: TextStyle(
+                                                        fontSize: 13,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                        color: Theme.of(context)
+                                                            .colorScheme
+                                                            .primary,
+                                                      ),
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    Text(
+                                                      getPreviewText(
+                                                        (_replyingToMessage![
+                                                                    'content'] ??
+                                                                '')
+                                                            .toString(),
+                                                      ),
+                                                      maxLines: 2,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: TextStyle(
+                                                        fontSize: 12,
+                                                        color: Theme.of(context)
+                                                            .colorScheme
+                                                            .onSurface
+                                                            .withOpacity(0.7),
+                                                      ),
+                                                    ),
+                                                  ],
                                                 ),
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  getPreviewText(
-                                                    (_replyingToMessage!['content'] ??
-                                                            '')
-                                                        .toString(),
-                                                  ),
-                                                  maxLines: 2,
-                                                  overflow: TextOverflow.ellipsis,
-                                                  style: TextStyle(
-                                                    fontSize: 12,
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurface
-                                                        .withOpacity(0.7),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(Icons.close, size: 18),
-                                            onPressed: _cancelReplying,
-                                            visualDensity: VisualDensity.compact,
-                                            splashRadius: 18,
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(
-                                                minWidth: 32, minHeight: 32),
+                                              ),
+                                              IconButton(
+                                                icon: const Icon(Icons.close,
+                                                    size: 18),
+                                                onPressed: _cancelReplying,
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                                splashRadius: 18,
+                                                padding: EdgeInsets.zero,
+                                                constraints:
+                                                    const BoxConstraints(
+                                                        minWidth: 32,
+                                                        minHeight: 32),
                                               ),
                                             ],
                                           ),
@@ -3186,7 +3740,6 @@ class ChatScreenState extends State<ChatScreen>
                                     )
                                   : const SizedBox.shrink(),
                             ),
-                            
                             AnimatedBuilder(
                               animation: _inputEntryController,
                               builder: (context, child) {
@@ -3200,351 +3753,126 @@ class ChatScreenState extends State<ChatScreen>
                                 );
                               },
                               child: ValueListenableBuilder<double>(
-                                valueListenable: SettingsManager.elementBrightness,
+                                valueListenable:
+                                    SettingsManager.elementBrightness,
                                 builder: (_, brightness, ___) {
-                                  final baseColor = SettingsManager.getElementColor(
-                                    Theme.of(context).colorScheme.surfaceContainerHighest,
+                                  final baseColor =
+                                      SettingsManager.getElementColor(
+                                    Theme.of(context)
+                                        .colorScheme
+                                        .surfaceContainerHighest,
                                     brightness,
                                   );
-                                  return Container(
+                                  final borderColor = Theme.of(context)
+                                      .colorScheme
+                                      .outlineVariant
+                                      .withValues(alpha: 0.15);
+                                  return ConstrainedBox(
                                     constraints: BoxConstraints(maxWidth: width),
-                                    decoration: BoxDecoration(
-                                      color: baseColor.withValues(alpha: opacity),
-                                      borderRadius: BorderRadius.circular(28),
-                                      border: Border.all(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .outlineVariant
-                                            .withValues(alpha: 0.15),
-                                        width: 1,
-                                      ),
-                                    ),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 6),
-                                    child: ValueListenableBuilder<bool>(
-                                    valueListenable: recordingNotifier,
-                                    builder: (context, isRecording, _) {
-                                      return Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          AnimatedOpacity(
-                                            duration: const Duration(
-                                                milliseconds: 180),
-                                            opacity: isRecording ? 1.0 : 0.0,
-                                            child: isRecording
-                                                ? Padding(
-                                                    padding:
-                                                        const EdgeInsets.only(
-                                                            bottom: 6.0),
-                                                    child: Material(
-                                                      shape:
-                                                          const CircleBorder(),
-                                                      color: Theme.of(context)
-                                                          .colorScheme
-                                                          .errorContainer,
-                                                      child: IconButton(
-                                                        icon: Icon(
-                                                          Icons.delete,
-                                                          color: Theme.of(
-                                                                  context)
-                                                              .colorScheme
-                                                              .onErrorContainer,
-                                                          size: 18,
-                                                        ),
-                                                        onPressed: () {
-                                                          debugPrint(
-                                                              '<<TRASH PRESSED>> cancel recording');
-                                                          rootScreenKey
-                                                              .currentState
-                                                              ?.cancelRecording();
-                                                        },
-                                                        visualDensity:
-                                                            VisualDensity
-                                                                .compact,
-                                                        padding:
-                                                            EdgeInsets.zero,
-                                                        splashRadius: 20,
-                                                      ),
-                                                    ),
-                                                  )
-                                                : const SizedBox.shrink(),
-                                          ),
-                                          Material(
-                                            shape: const CircleBorder(),
-                                            color: isRecording
-                                                ? Theme.of(context)
-                                                    .colorScheme
-                                                    .error
-                                                    .withOpacity(0.12)
-                                                : Colors.transparent,
-                                            child: IconButton(
-                                              icon: Icon(
-                                                isRecording
-                                                    ? Icons.stop
-                                                    : Icons.mic,
-                                                color: isRecording
-                                                    ? Theme.of(context)
-                                                        .colorScheme
-                                                        .error
-                                                    : Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurface
-                                                        .withOpacity(0.6),
-                                                size: 20,
-                                              ),
-                                              onPressed: () {
-                                                debugPrint(
-                                                    '<<MIC BUTTON PRESSED>> isRecording=$isRecording');
-                                                if (isRecording) {
-                                                  rootScreenKey.currentState
-                                                      ?.stopRecordingAndUpload(
-                                                          widget.otherUsername,
-                                                          _replyingToMessage,
-                                                          (task) {
-                                                    task.onComplete = (_) async {
-                                                      if (mounted) setState(() => _pendingUploads.remove(task));
-                                                    };
-                                                    if (mounted) setState(() => _pendingUploads.add(task));
-                                                  });
-                                                  
-                                                  setState(() {
-                                                    debugPrint(
-                                                        '[chat_screen::mic.send] clearing _replyingToMessage\n${StackTrace.current}');
-                                                    _replyingToMessage = null;
-                                                  });
-                                                } else {
-                                                  rootScreenKey.currentState
-                                                      ?.startRecording();
+                                    child: ChatInputBar(
+                                      controller: _textCtrl,
+                                      textFocusNode: _focusNode,
+                                      recordingListenable: recordingNotifier,
+                                      onCancelRecording: () {
+                                        rootScreenKey.currentState
+                                            ?.cancelRecording();
+                                      },
+                                      onMicPressed: (isRecording) {
+                                        if (isRecording) {
+                                          rootScreenKey.currentState
+                                              ?.stopRecordingAndUpload(
+                                            widget.otherUsername,
+                                            _replyingToMessage,
+                                            (task) {
+                                              task.onComplete = (_) async {
+                                                if (mounted) {
+                                                  setState(() =>
+                                                      _pendingUploads.remove(task));
                                                 }
-                                              },
-                                              visualDensity:
-                                                  VisualDensity.compact,
-                                              splashRadius: 20,
-                                              padding: EdgeInsets.zero,
-                                            ),
-                                          ),
-                                        ],
-                                      );
-                                    },
-                                  ),
-                                  ),
-
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 6),
-                                    child: IconButton(
-                                    icon: Icon(
-                                      Icons.attach_file,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurface
-                                          .withOpacity(0.6),
-                                      size: 20,
-                                    ),
-                                    onPressed: () async {
-                                      if (kIsWeb) {
-                                        rootScreenKey.currentState?.showSnack(
-                                            'Attachment upload: desktop/mobile only');
-                                        return;
-                                      }
-                                      List<String>? paths;
-                                      if (Platform.isAndroid || Platform.isIOS) {
-                                        paths = await showMediaPickerSheet(context);
-                                      } else {
-                                        try {
-                                          final result = await FilePicker.platform
-                                              .pickFiles(type: FileType.any, allowMultiple: true);
-                                          paths = result?.files
-                                              .map((f) => f.path)
-                                              .whereType<String>()
-                                              .toList();
-                                        } catch (e) {
-                                          debugPrint('[Attach] FilePicker error: $e');
-                                          rootScreenKey.currentState?.showSnack('File picker error: $e');
-                                        }
-                                      }
-                                      if (paths == null || paths.isEmpty) return;
-
-                                      if (paths.length > 1 &&
-                                          paths.every(FileTypeDetector.isImage)) {
-                                        await _sendAlbum(paths);
-                                        return;
-                                      }
-
-                                      final path = paths.first;
-                                      final basename = p.basename(path);
-                                      final ext = p.extension(basename).toLowerCase();
-
-                                      String fileType;
-                                      if (FileTypeDetector.isImage(path)) {
-                                        fileType = 'IMAGE';
-                                      } else if (FileTypeDetector.isVideo(path)) {
-                                        fileType = 'VIDEO';
-                                      } else if (FileTypeDetector.isAudio(path)) {
-                                        fileType = 'AUDIO';
-                                      } else if (FileTypeDetector.isDocument(path)) {
-                                        fileType = 'DOCUMENT';
-                                      } else if (FileTypeDetector.isCompress(path)) {
-                                        fileType = 'COMPRESS';
-                                      } else if (FileTypeDetector.isData(path)) {
-                                        fileType = 'DATA';
-                                      } else {
-                                        fileType = 'FILE';
-                                      }
-
-                                      _showFilePreviewAndSend(path, basename, ext, fileType);
-                                    },
-                                    visualDensity: VisualDensity.compact,
-                                    splashRadius: 20,
-                                    padding: EdgeInsets.zero,
-                                  ),
-                                  ),
-
-                                  Expanded(
-                                    child: RawKeyboardListener(
-                                      focusNode: FocusNode(),
-                                      onKey: (event) async {
-                                        
-                                        if (event.isKeyPressed(LogicalKeyboardKey.keyV) &&
-                                            (event.isControlPressed || event.isMetaPressed)) {
-                                          await _handlePasteFromClipboard();
-                                          return;
-                                        }
-
-                                        if (event.isKeyPressed(
-                                            LogicalKeyboardKey.enter)) {
-                                          if (!event.isShiftPressed) {
-                                            
-                                            if (_textCtrl.text
-                                                .trim()
-                                                .isNotEmpty) {
-                                              _submitMessage(_textCtrl.text);
-                                            }
-                                            
-                                            return;
-                                          }
-                                          
-                                          if (event.isShiftPressed &&
-                                              _textCtrl.text.isNotEmpty) {
-                                            final text = _textCtrl.text;
-                                            final selection =
-                                                _textCtrl.selection;
-                                            _textCtrl.text = text.substring(
-                                                    0, selection.start) +
-                                                '\n' +
-                                                text.substring(selection.start);
-                                            _textCtrl.selection =
-                                                TextSelection.fromPosition(
-                                                    TextPosition(
-                                                        offset:
-                                                            selection.start +
-                                                                1));
-                                          }
+                                              };
+                                              if (mounted) {
+                                                setState(() =>
+                                                    _pendingUploads.add(task));
+                                              }
+                                            },
+                                          );
+                                          setState(() {
+                                            _replyingToMessage = null;
+                                          });
+                                        } else {
+                                          rootScreenKey.currentState
+                                              ?.startRecording();
                                         }
                                       },
-                                      child: TextField(
-                                        focusNode: _focusNode,
-                                        controller: _textCtrl,
-                                        onTap: () => _suppressAutoRefocus = false,
-                                        minLines: 1,
-                                        maxLines: 5,
-                                        style: TextStyle(
-                                          color: Theme.of(context)
+                                      onAttachPressed: _openAttachmentPicker,
+                                      onSendPressed: () =>
+                                          _submitMessage(_textCtrl.text),
+                                      onSendLongPress: _showDeliveryModeDialog,
+                                      onPaste: _handlePasteFromClipboard,
+                                      onChanged: (_) => _onUserTyping(),
+                                      hintText: AppLocalizations.of(context)
+                                          .localizeHint(_inputHint),
+                                      backgroundColor: baseColor,
+                                      opacity: opacity,
+                                      borderColor: borderColor,
+                                      sendIcon: _isLANMode
+                                          ? Icons.router
+                                          : Icons.send,
+                                      sendColor: _isLANMode
+                                          ? Colors.green
+                                          : Theme.of(context)
                                               .colorScheme
-                                              .onSurface,
-                                        ),
-                                        decoration: InputDecoration(
-                                          hintText: AppLocalizations.of(context).localizeHint(_inputHint),
-                                          hintStyle: TextStyle(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSurface
-                                                .withValues(alpha: 0.5),
-                                          ),
-                                          filled: false,
-                                          fillColor: Colors.transparent,
-                                          border: InputBorder.none,
-                                          focusedBorder: InputBorder.none,
-                                          enabledBorder: InputBorder.none,
-                                          contentPadding:
-                                              const EdgeInsets.symmetric(
-                                            vertical: 12,
-                                            horizontal: 12,
-                                          ),
-                                        ),
-                                        
-                                        onChanged: (_) => _onUserTyping(),
-                                        textInputAction: TextInputAction.none,
-                                        contentInsertionConfiguration:
-                                            ContentInsertionConfiguration(
-                                          allowedMimeTypes: const [
-                                            'image/png',
-                                            'image/jpeg',
-                                            'image/gif',
-                                            'image/webp',
-                                          ],
-                                          onContentInserted: (data) async {
-                                            try {
-                                              Uint8List? bytes = data.data;
-                                              if (bytes == null && data.uri.isNotEmpty) {
-                                                try {
-                                                  bytes = await _clipboardChannel
-                                                      .invokeMethod<Uint8List>(
-                                                          'readContentUri',
-                                                          {'uri': data.uri});
-                                                } catch (_) {}
-                                              }
-                                              if (bytes != null && bytes.isNotEmpty && mounted) {
-                                                final ext = data.mimeType.contains('/')
-                                                    ? data.mimeType.split('/').last
-                                                    : 'png';
-                                                final tempDir = await getTemporaryDirectory();
-                                                final tempFile = File(
-                                                    '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext');
-                                                await tempFile.writeAsBytes(bytes);
-                                                _handleDroppedFiles([tempFile.path]);
-                                              }
-                                            } catch (e) {
-                                              debugPrint('[ContentInsert] Error: $e');
+                                              .primary,
+                                      contentInsertionConfiguration:
+                                          ContentInsertionConfiguration(
+                                        allowedMimeTypes: const [
+                                          'image/png',
+                                          'image/jpeg',
+                                          'image/gif',
+                                          'image/webp',
+                                        ],
+                                        onContentInserted: (data) async {
+                                          try {
+                                            Uint8List? bytes = data.data;
+                                            if (bytes == null &&
+                                                data.uri.isNotEmpty) {
+                                              try {
+                                                bytes = await _clipboardChannel
+                                                    .invokeMethod<Uint8List>(
+                                                  'readContentUri',
+                                                  {'uri': data.uri},
+                                                );
+                                              } catch (_) {}
                                             }
-                                          },
-                                        ),
+                                            if (bytes != null &&
+                                                bytes.isNotEmpty &&
+                                                mounted) {
+                                              final ext = data.mimeType
+                                                      .contains('/')
+                                                  ? data.mimeType
+                                                      .split('/')
+                                                      .last
+                                                  : 'png';
+                                              final tempDir =
+                                                  await getTemporaryDirectory();
+                                              final tempFile = File(
+                                                '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext',
+                                              );
+                                              await tempFile.writeAsBytes(bytes);
+                                              _handleDroppedFiles(
+                                                  [tempFile.path]);
+                                            }
+                                          } catch (e) {
+                                            debugPrint(
+                                              '[ContentInsert] Error: $e',
+                                            );
+                                          }
+                                        },
                                       ),
                                     ),
-                                  ),
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 6),
-                                    child: MouseRegion(
-                                      cursor: SystemMouseCursors.click,
-                                      child: Material(
-                                        color: Colors.transparent,
-                                        child: InkWell(
-                                          onTap: () => _submitMessage(_textCtrl.text),
-                                          onLongPress: () => _showDeliveryModeDialog(),
-                                          customBorder: const CircleBorder(),
-                                          child: Container(
-                                            width: 36,
-                                            height: 36,
-                                            alignment: Alignment.center,
-                                            child: Icon(
-                                              _isLANMode ? Icons.router : Icons.send,
-                                              color: _isLANMode
-                                                  ? Colors.green
-                                                  : Theme.of(context).colorScheme.primary,
-                                              size: 20,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                                  );
+                                },
                               ),
-                            );
-                          },
-                        ),
                             ),
                           ],
                         );
@@ -3552,109 +3880,6 @@ class ChatScreenState extends State<ChatScreen>
                     );
                   },
                 ),
-              ),
-            ),
-            
-            ValueListenableBuilder<bool>(
-              valueListenable: _scrollDownVisible,
-              builder: (_, visible, child) => AnimatedOpacity(
-                opacity: visible ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 200),
-                child: IgnorePointer(
-                  ignoring: !visible,
-                  child: child,
-                ),
-              ),
-              child: Align(
-                alignment: Alignment.bottomCenter,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 80),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: Stack(
-                        children: [
-                          ValueListenableBuilder<double>(
-                            valueListenable: SettingsManager.elementBrightness,
-                            builder: (_, brightness, ___) {
-                              final baseColor = SettingsManager.getElementColor(
-                                Theme.of(context).colorScheme.surfaceContainerHighest,
-                                brightness,
-                              );
-                              return IconButton(
-                                splashRadius: 20,
-                                padding: EdgeInsets.zero,
-                                icon: Container(
-                                  width: 32,
-                                  height: 32,
-                                  decoration: BoxDecoration(
-                                    color: baseColor.withValues(alpha: 0.5),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .outlineVariant
-                                          .withValues(alpha: 0.15),
-                                      width: 1,
-                                    ),
-                                  ),
-                                  child: Icon(
-                                    Icons.arrow_downward,
-                                    size: 18,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurface
-                                        .withValues(alpha: 0.7),
-                                  ),
-                                ),
-                                onPressed: _scrollToBottom,
-                              );
-                            },
-                          ),
-                          ListenableBuilder(
-                            listenable: unreadManager,
-                            builder: (context, _) {
-                              final me =
-                                  rootScreenKey.currentState?.currentUsername ??
-                                      widget.myUsername;
-                              final List<String> ids = [
-                                me,
-                                widget.otherUsername
-                              ]..sort();
-                              final String chatId = ids.join(':');
-                              final unreadCount =
-                                  unreadManager.getUnreadCount(chatId);
-                              if (unreadCount == 0) {
-                                return const SizedBox.shrink();
-                              }
-                              return Positioned(
-                                top: -4,
-                                right: -4,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 5, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        Theme.of(context).colorScheme.primary,
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Text(
-                                    unreadCount.toString(),
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onPrimary,
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
               ),
             ),
           ],
@@ -3674,7 +3899,8 @@ class ChatScreenState extends State<ChatScreen>
     final filePath = filePaths.first;
     final file = File(filePath);
     if (!await file.exists()) {
-      rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+      rootScreenKey.currentState?.showSnack(
+          AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
       return;
     }
 
@@ -3702,12 +3928,13 @@ class ChatScreenState extends State<ChatScreen>
 
   Future<void> _handlePasteFromClipboard() async {
     try {
-      
       List<Object?>? rawPaths;
       try {
-        rawPaths = await _clipboardChannel.invokeMethod<List<Object?>>('getClipboardFilePaths');
+        rawPaths = await _clipboardChannel
+            .invokeMethod<List<Object?>>('getClipboardFilePaths');
       } catch (_) {}
-      final filePaths = rawPaths?.whereType<String>().where((s) => s.isNotEmpty).toList();
+      final filePaths =
+          rawPaths?.whereType<String>().where((s) => s.isNotEmpty).toList();
       if (filePaths != null && filePaths.isNotEmpty) {
         debugPrint('[clipboard] File paths from clipboard: $filePaths');
         _handleDroppedFiles(filePaths);
@@ -3716,13 +3943,16 @@ class ChatScreenState extends State<ChatScreen>
 
       Uint8List? imageBytes;
       try {
-        imageBytes = await _clipboardChannel.invokeMethod<Uint8List>('getClipboardImage');
+        imageBytes = await _clipboardChannel
+            .invokeMethod<Uint8List>('getClipboardImage');
       } catch (_) {}
       if (imageBytes != null && imageBytes.isNotEmpty) {
         final tempDir = await getTemporaryDirectory();
-        final tempFile = File('${tempDir.path}/clipboard_${DateTime.now().millisecondsSinceEpoch}.png');
+        final tempFile = File(
+            '${tempDir.path}/clipboard_${DateTime.now().millisecondsSinceEpoch}.png');
         await tempFile.writeAsBytes(imageBytes);
-        debugPrint('[clipboard] Image pasted from native clipboard: ${tempFile.path}');
+        debugPrint(
+            '[clipboard] Image pasted from native clipboard: ${tempFile.path}');
         _handleDroppedFiles([tempFile.path]);
         return;
       }
@@ -3783,14 +4013,17 @@ class ChatScreenState extends State<ChatScreen>
           filePath: filePath,
           onSend: () => _sendFile(filePath, basename, ext, fileType),
           onCancel: () {
-            rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileCancelled);
+            rootScreenKey.currentState?.showSnack(
+                AppLocalizations(SettingsManager.appLocale.value)
+                    .fileCancelled);
           },
           onPasteExtra: fileType == 'IMAGE' ? _pasteImageForAlbum : null,
-          onSendAlbum: fileType == 'IMAGE' ? (paths) => _sendAlbum(paths, skipConfirm: true) : null,
+          onSendAlbum: fileType == 'IMAGE'
+              ? (paths) => _sendAlbum(paths, skipConfirm: true)
+              : null,
         ),
       );
     } else {
-
       _sendFile(filePath, basename, ext, fileType);
     }
   }
@@ -3800,21 +4033,26 @@ class ChatScreenState extends State<ChatScreen>
     try {
       List<Object?>? rawPaths;
       try {
-        rawPaths = await _clipboardChannel.invokeMethod<List<Object?>>('getClipboardFilePaths');
+        rawPaths = await _clipboardChannel
+            .invokeMethod<List<Object?>>('getClipboardFilePaths');
       } catch (_) {}
-      final filePaths = rawPaths?.whereType<String>().where((s) => s.isNotEmpty).toList();
+      final filePaths =
+          rawPaths?.whereType<String>().where((s) => s.isNotEmpty).toList();
       if (filePaths != null && filePaths.isNotEmpty) {
-        final imgPath = filePaths.firstWhere(FileTypeDetector.isImage, orElse: () => '');
+        final imgPath =
+            filePaths.firstWhere(FileTypeDetector.isImage, orElse: () => '');
         if (imgPath.isNotEmpty) return imgPath;
       }
 
       Uint8List? imageBytes;
       try {
-        imageBytes = await _clipboardChannel.invokeMethod<Uint8List>('getClipboardImage');
+        imageBytes = await _clipboardChannel
+            .invokeMethod<Uint8List>('getClipboardImage');
       } catch (_) {}
       if (imageBytes != null && imageBytes.isNotEmpty) {
         final tempDir = await getTemporaryDirectory();
-        final tempFile = File('${tempDir.path}/clipboard_${DateTime.now().millisecondsSinceEpoch}.png');
+        final tempFile = File(
+            '${tempDir.path}/clipboard_${DateTime.now().millisecondsSinceEpoch}.png');
         await tempFile.writeAsBytes(imageBytes);
         return tempFile.path;
       }
@@ -3831,17 +4069,28 @@ class ChatScreenState extends State<ChatScreen>
     required String contentType,
     required Uint8List bytes,
   }) async {
-    
     final presignResp = await http.post(
       Uri.parse('$serverBase/media/presign/upload'),
-      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
-      body: jsonEncode({'type': type, 'ext': ext, 'size': bytes.length, 'contentType': contentType}),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json'
+      },
+      body: jsonEncode({
+        'type': type,
+        'ext': ext,
+        'size': bytes.length,
+        'contentType': contentType
+      }),
     );
     if (presignResp.statusCode == 413) {
       dynamic body;
-      try { body = jsonDecode(presignResp.body); } catch (_) {}
+      try {
+        body = jsonDecode(presignResp.body);
+      } catch (_) {}
       rootScreenKey.currentState?.showSnack(
-        body is Map ? (body['detail'] ?? 'Storage quota exceeded') : 'Storage quota exceeded',
+        body is Map
+            ? (body['detail'] ?? 'Storage quota exceeded')
+            : 'Storage quota exceeded',
       );
       return null;
     }
@@ -3869,16 +4118,28 @@ class ChatScreenState extends State<ChatScreen>
 
     final confirmResp = await http.post(
       Uri.parse('$serverBase/media/presign/confirm'),
-      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
-      body: jsonEncode({'type': type, 'filename': filename, 'to': widget.otherUsername, 'no_notify': true}),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json'
+      },
+      body: jsonEncode({
+        'type': type,
+        'filename': filename,
+        'to': widget.otherUsername,
+        'no_notify': true
+      }),
     );
     if (confirmResp.statusCode != 200) {
       debugPrint('[presignUpload] confirm failed: ${confirmResp.statusCode}');
       if (confirmResp.statusCode == 413) {
         dynamic body;
-        try { body = jsonDecode(confirmResp.body); } catch (_) {}
+        try {
+          body = jsonDecode(confirmResp.body);
+        } catch (_) {}
         rootScreenKey.currentState?.showSnack(
-          body is Map ? (body['detail'] ?? 'Storage quota exceeded') : 'Storage quota exceeded',
+          body is Map
+              ? (body['detail'] ?? 'Storage quota exceeded')
+              : 'Storage quota exceeded',
         );
       }
       return null;
@@ -3899,14 +4160,26 @@ class ChatScreenState extends State<ChatScreen>
     // Step 1: Get presigned URL
     final presignResp = await http.post(
       Uri.parse('$serverBase/media/presign/upload'),
-      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
-      body: jsonEncode({'type': presignType, 'ext': ext, 'size': bytes.length, 'contentType': contentType}),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json'
+      },
+      body: jsonEncode({
+        'type': presignType,
+        'ext': ext,
+        'size': bytes.length,
+        'contentType': contentType
+      }),
     );
     if (presignResp.statusCode == 413) {
       dynamic body;
-      try { body = jsonDecode(presignResp.body); } catch (_) {}
+      try {
+        body = jsonDecode(presignResp.body);
+      } catch (_) {}
       rootScreenKey.currentState?.showSnack(
-        body is Map ? (body['detail'] ?? 'Storage quota exceeded') : 'Storage quota exceeded',
+        body is Map
+            ? (body['detail'] ?? 'Storage quota exceeded')
+            : 'Storage quota exceeded',
       );
       task.status = UploadStatus.failed;
       if (mounted) setState(() {});
@@ -3971,16 +4244,28 @@ class ChatScreenState extends State<ChatScreen>
     // Step 3: Confirm upload
     final confirmResp = await http.post(
       Uri.parse('$serverBase/media/presign/confirm'),
-      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
-      body: jsonEncode({'type': presignType, 'filename': filename, 'to': widget.otherUsername, 'no_notify': true}),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json'
+      },
+      body: jsonEncode({
+        'type': presignType,
+        'filename': filename,
+        'to': widget.otherUsername,
+        'no_notify': true
+      }),
     );
     if (confirmResp.statusCode != 200) {
       debugPrint('[presignUpload] confirm failed: ${confirmResp.statusCode}');
       if (confirmResp.statusCode == 413) {
         dynamic body;
-        try { body = jsonDecode(confirmResp.body); } catch (_) {}
+        try {
+          body = jsonDecode(confirmResp.body);
+        } catch (_) {}
         rootScreenKey.currentState?.showSnack(
-          body is Map ? (body['detail'] ?? 'Storage quota exceeded') : 'Storage quota exceeded',
+          body is Map
+              ? (body['detail'] ?? 'Storage quota exceeded')
+              : 'Storage quota exceeded',
         );
       }
       task.status = UploadStatus.failed;
@@ -3998,7 +4283,10 @@ class ChatScreenState extends State<ChatScreen>
     task.status = UploadStatus.failed;
     task.activeClient?.close();
     task.activeClient = null;
-    if (mounted) setState(() { _pendingUploads.remove(task); });
+    if (mounted)
+      setState(() {
+        _pendingUploads.remove(task);
+      });
   }
 
   Widget _buildPendingUploadWidget(UploadTask task) {
@@ -4015,9 +4303,7 @@ class ChatScreenState extends State<ChatScreen>
     String ext,
     String fileType,
   ) async {
-    
     if (_isLANMode) {
-      
       return await _sendFileLAN(filePath, basename, fileType);
     }
 
@@ -4031,23 +4317,29 @@ class ChatScreenState extends State<ChatScreen>
         final token = await AccountManager.getToken(
             rootScreenKey.currentState?.currentUsername ?? '');
         if (token == null) {
-          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
+          rootScreenKey.currentState?.showSnack(
+              AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
           return;
         }
 
         final localFile = File(filePath);
         if (!await localFile.exists()) {
-          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+          rootScreenKey.currentState?.showSnack(
+              AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
           return;
         }
         if (await localFile.length() == 0) {
-          rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileEmpty);
+          rootScreenKey.currentState?.showSnack(
+              AppLocalizations(SettingsManager.appLocale.value).fileEmpty);
           return;
         }
 
         final plainBytes = await localFile.readAsBytes();
         final root = rootScreenKey.currentState;
-        if (root == null) { rootScreenKey.currentState?.showSnack('RootScreen not ready'); return; }
+        if (root == null) {
+          rootScreenKey.currentState?.showSnack('RootScreen not ready');
+          return;
+        }
 
         final uploadType = (fileType == 'AUDIO') ? 'voice' : 'file';
         final fileExt = p.extension(basename).toLowerCase();
@@ -4055,37 +4347,62 @@ class ChatScreenState extends State<ChatScreen>
         // Show pending upload card immediately
         final task = UploadTask(
           id: '${DateTime.now().millisecondsSinceEpoch}',
-          type: uploadType, localPath: filePath, basename: basename,
+          type: uploadType,
+          localPath: filePath,
+          basename: basename,
         );
         task.presignType = 'file';
         task.presignExt = fileExt;
         task.presignContentType = 'application/octet-stream';
-        if (mounted) setState(() { _pendingUploads.add(task); });
+        if (mounted)
+          setState(() {
+            _pendingUploads.add(task);
+          });
 
-        final (encryptedBytes, fileMediaKeyB64) = await root.encryptMediaRandom(plainBytes, kind: 'file');
+        final (encryptedBytes, fileMediaKeyB64) =
+            await root.encryptMediaRandom(plainBytes, kind: 'file');
         task.encryptedBytes = encryptedBytes;
         task.mediaKey = fileMediaKeyB64;
         task.status = UploadStatus.uploading;
         if (mounted) setState(() {});
 
         final replyTo = _replyingToMessage;
-        if (mounted) setState(() { _replyingToMessage = null; });
+        if (mounted)
+          setState(() {
+            _replyingToMessage = null;
+          });
 
         task.onComplete = (filename) async {
-          final content = 'FILEv1:${jsonEncode({'filename': filename, 'owner': widget.myUsername, 'orig': basename, 'key': fileMediaKeyB64})}';
+          final content = 'FILEv1:${jsonEncode({
+                'filename': filename,
+                'owner': widget.myUsername,
+                'orig': basename,
+                'key': fileMediaKeyB64
+              })}';
           await widget.onSend(content, replyTo);
-          if (mounted) setState(() { _pendingUploads.remove(task); });
-          if (mounted) rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileSent);
+          if (mounted)
+            setState(() {
+              _pendingUploads.remove(task);
+            });
+          if (mounted)
+            rootScreenKey.currentState?.showSnack(
+                AppLocalizations(SettingsManager.appLocale.value).fileSent);
         };
 
         final filename = await _presignUploadWithProgress(
-          token: token, presignType: 'file', ext: fileExt,
+          token: token,
+          presignType: 'file',
+          ext: fileExt,
           contentType: 'application/octet-stream',
-          bytes: encryptedBytes, task: task,
+          bytes: encryptedBytes,
+          task: task,
         );
         if (filename == null) {
           if (task.status == UploadStatus.failed) {
-            if (mounted) setState(() { _pendingUploads.remove(task); });
+            if (mounted)
+              setState(() {
+                _pendingUploads.remove(task);
+              });
             rootScreenKey.currentState?.showSnack('Upload failed');
           }
           return;
@@ -4097,14 +4414,17 @@ class ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<void> _sendFileLAN(String filePath, String basename, String fileType) async {
+  Future<void> _sendFileLAN(
+      String filePath, String basename, String fileType) async {
     try {
-      debugPrint('[LAN SEND] Starting - filePath: "$filePath", basename: "$basename", fileType: $fileType');
+      debugPrint(
+          '[LAN SEND] Starting - filePath: "$filePath", basename: "$basename", fileType: $fileType');
 
       final file = File(filePath);
       if (!await file.exists()) {
         debugPrint('[LAN SEND] ERROR: Source file not found');
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
         return;
       }
 
@@ -4120,7 +4440,8 @@ class ChatScreenState extends State<ChatScreen>
 
       final localLanFile = File('${lanMediaDir.path}/$basename');
       await localLanFile.writeAsBytes(fileBytes, flush: true);
-      debugPrint('[LAN SEND] Saved locally to: ${localLanFile.path} (exists: ${await localLanFile.exists()})');
+      debugPrint(
+          '[LAN SEND] Saved locally to: ${localLanFile.path} (exists: ${await localLanFile.exists()})');
 
       String mediaType;
       if (fileType == 'IMAGE') {
@@ -4143,7 +4464,8 @@ class ChatScreenState extends State<ChatScreen>
       );
 
       if (!sent) {
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).failedSendLan);
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value).failedSendLan);
         return;
       }
 
@@ -4155,7 +4477,11 @@ class ChatScreenState extends State<ChatScreen>
       } else if (mediaType == 'voice') {
         final duration = fileBytes.length ~/ (16000 * 2);
         final format = basename.split('.').last;
-        content = 'VOICEv1:${jsonEncode({'url': 'lan://$basename', 'duration': duration, 'format': format})}';
+        content = 'VOICEv1:${jsonEncode({
+              'url': 'lan://$basename',
+              'duration': duration,
+              'format': format
+            })}';
       } else {
         content = 'FILEv1:${jsonEncode({'filename': 'lan://$basename'})}';
       }
@@ -4169,7 +4495,8 @@ class ChatScreenState extends State<ChatScreen>
         setState(() {
           _replyingToMessage = null;
         });
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileSentLan);
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value).fileSentLan);
       }
     } catch (e) {
       if (mounted) {
@@ -4180,27 +4507,33 @@ class ChatScreenState extends State<ChatScreen>
 
   Future<void> _sendImage(String filePath, String basename, String ext) async {
     MediaType contentType;
-    if (ext == '.png')       contentType = MediaType('image', 'png');
-    else if (ext == '.webp') contentType = MediaType('image', 'webp');
-    else if (ext == '.gif')  contentType = MediaType('image', 'gif');
-    else                     contentType = MediaType('image', 'jpeg');
+    if (ext == '.png')
+      contentType = MediaType('image', 'png');
+    else if (ext == '.webp')
+      contentType = MediaType('image', 'webp');
+    else if (ext == '.gif')
+      contentType = MediaType('image', 'gif');
+    else
+      contentType = MediaType('image', 'jpeg');
 
     try {
       final token = await AccountManager.getToken(
           rootScreenKey.currentState?.currentUsername ?? '');
       if (token == null) {
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
         return;
       }
 
-      final ok = await (rootScreenKey.currentState?.checkQuotaAndPrompt(
-            limitMb: 10.0, includeImageCache: false) ??
+      final ok = await (rootScreenKey.currentState
+              ?.checkQuotaAndPrompt(limitMb: 10.0, includeImageCache: false) ??
           Future.value(true));
       if (!ok) return;
 
       final localFile = File(filePath);
       if (!await localFile.exists()) {
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
         return;
       }
       if (await localFile.length() == 0) {
@@ -4210,49 +4543,80 @@ class ChatScreenState extends State<ChatScreen>
 
       final plainBytes = await localFile.readAsBytes();
       final root = rootScreenKey.currentState;
-      if (root == null) { rootScreenKey.currentState?.showSnack('RootScreen not ready'); return; }
+      if (root == null) {
+        rootScreenKey.currentState?.showSnack('RootScreen not ready');
+        return;
+      }
 
       // Create pending upload task — shows blurred preview immediately
       final task = UploadTask(
         id: '${DateTime.now().millisecondsSinceEpoch}',
-        type: 'image', localPath: filePath, basename: basename,
+        type: 'image',
+        localPath: filePath,
+        basename: basename,
       );
       task.previewBytes = plainBytes;
       task.presignType = 'image';
       task.presignExt = ext;
       task.presignContentType = '${contentType.type}/${contentType.subtype}';
-      if (mounted) setState(() { _pendingUploads.add(task); });
+      if (mounted)
+        setState(() {
+          _pendingUploads.add(task);
+        });
 
-      final (encryptedBytes, imageMediaKeyB64) = await root.encryptMediaRandom(plainBytes, kind: 'image');
+      final (encryptedBytes, imageMediaKeyB64) =
+          await root.encryptMediaRandom(plainBytes, kind: 'image');
       task.encryptedBytes = encryptedBytes;
       task.mediaKey = imageMediaKeyB64;
       task.status = UploadStatus.uploading;
       if (mounted) setState(() {});
 
       final replyTo = _replyingToMessage;
-      if (mounted) setState(() { _replyingToMessage = null; });
+      if (mounted)
+        setState(() {
+          _replyingToMessage = null;
+        });
 
       task.onComplete = (filename) async {
         try {
           final appSupport = await getApplicationSupportDirectory();
           final cacheDir = Directory('${appSupport.path}/image_cache');
           await cacheDir.create(recursive: true);
-          if (await localFile.exists()) await localFile.copy('${cacheDir.path}/$filename');
-        } catch (e) { debugPrint('[chat_screen] Failed to copy image to cache: $e'); }
-        final meta = jsonEncode({'filename': filename, 'owner': widget.myUsername, 'orig': basename, 'key': imageMediaKeyB64});
+          if (await localFile.exists())
+            await localFile.copy('${cacheDir.path}/$filename');
+        } catch (e) {
+          debugPrint('[chat_screen] Failed to copy image to cache: $e');
+        }
+        final meta = jsonEncode({
+          'filename': filename,
+          'owner': widget.myUsername,
+          'orig': basename,
+          'key': imageMediaKeyB64
+        });
         await widget.onSend('IMAGEv1:$meta', replyTo);
-        if (mounted) setState(() { _pendingUploads.remove(task); });
-        if (mounted) rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).imageSent);
+        if (mounted)
+          setState(() {
+            _pendingUploads.remove(task);
+          });
+        if (mounted)
+          rootScreenKey.currentState?.showSnack(
+              AppLocalizations(SettingsManager.appLocale.value).imageSent);
       };
 
       final filename = await _presignUploadWithProgress(
-        token: token, presignType: 'image', ext: ext,
+        token: token,
+        presignType: 'image',
+        ext: ext,
         contentType: '${contentType.type}/${contentType.subtype}',
-        bytes: encryptedBytes, task: task,
+        bytes: encryptedBytes,
+        task: task,
       );
       if (filename == null) {
         if (task.status == UploadStatus.failed) {
-          if (mounted) setState(() { _pendingUploads.remove(task); });
+          if (mounted)
+            setState(() {
+              _pendingUploads.remove(task);
+            });
           rootScreenKey.currentState?.showSnack('Upload failed');
         }
         // If paused, task stays in list so user can resume
@@ -4271,7 +4635,8 @@ class ChatScreenState extends State<ChatScreen>
           .toList();
       final filenames = items
           .map((m) => m['filename'] as String? ?? '')
-          .where((f) => f.isNotEmpty && !f.startsWith('http') && !f.startsWith('lan://'))
+          .where((f) =>
+              f.isNotEmpty && !f.startsWith('http') && !f.startsWith('lan://'))
           .toList();
       if (filenames.isEmpty) return;
 
@@ -4297,7 +4662,7 @@ class ChatScreenState extends State<ChatScreen>
       'VOICEv1:': 'voice',
       'IMAGEv1:': 'image',
       'VIDEOv1:': 'video',
-      'FILEv1:':  'file',
+      'FILEv1:': 'file',
       'AUDIOv1:': 'file',
     };
     String? type;
@@ -4306,7 +4671,8 @@ class ChatScreenState extends State<ChatScreen>
       if (content.startsWith(entry.key)) {
         type = entry.value;
         try {
-          final meta = jsonDecode(content.substring(entry.key.length)) as Map<String, dynamic>;
+          final meta = jsonDecode(content.substring(entry.key.length))
+              as Map<String, dynamic>;
           filename = meta['filename'] as String?;
         } catch (_) {}
         break;
@@ -4333,7 +4699,8 @@ class ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<void> _sendAlbum(List<String> filePaths, {bool skipConfirm = false}) async {
+  Future<void> _sendAlbum(List<String> filePaths,
+      {bool skipConfirm = false}) async {
     final limited = filePaths.take(10).toList();
     if (limited.isEmpty) return;
 
@@ -4355,7 +4722,8 @@ class ChatScreenState extends State<ChatScreen>
       final token = await AccountManager.getToken(
           rootScreenKey.currentState?.currentUsername ?? '');
       if (token == null) {
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
         return;
       }
 
@@ -4366,8 +4734,9 @@ class ChatScreenState extends State<ChatScreen>
           Future.value(true));
       if (!ok) return;
 
-      rootScreenKey.currentState
-          ?.showSnack(AppLocalizations(SettingsManager.appLocale.value).uploadingImages(limited.length));
+      rootScreenKey.currentState?.showSnack(
+          AppLocalizations(SettingsManager.appLocale.value)
+              .uploadingImages(limited.length));
 
       final appSupport = await getApplicationSupportDirectory();
       final cacheDir = Directory('${appSupport.path}/image_cache');
@@ -4397,8 +4766,8 @@ class ChatScreenState extends State<ChatScreen>
         final root = rootScreenKey.currentState;
         if (root == null) return;
 
-        final (encryptedBytes, albumItemKeyB64) = await root
-            .encryptMediaRandom(plainBytes, kind: 'image');
+        final (encryptedBytes, albumItemKeyB64) =
+            await root.encryptMediaRandom(plainBytes, kind: 'image');
 
         final filename = await _presignUpload(
           token: token,
@@ -4416,24 +4785,35 @@ class ChatScreenState extends State<ChatScreen>
           await localFile.copy('${cacheDir.path}/$filename');
         } catch (_) {}
 
-        albumItems.add({'filename': filename, 'owner': widget.myUsername, 'orig': basename, 'key': albumItemKeyB64});
+        albumItems.add({
+          'filename': filename,
+          'owner': widget.myUsername,
+          'orig': basename,
+          'key': albumItemKeyB64
+        });
       }
 
       if (albumItems.isEmpty) {
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).albumUploadFailed);
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value)
+                .albumUploadFailed);
         return;
       }
 
       final content = 'ALBUMv1:${jsonEncode(albumItems)}';
       final replyTo = _replyingToMessage;
 
-      if (mounted) setState(() { _replyingToMessage = null; });
+      if (mounted)
+        setState(() {
+          _replyingToMessage = null;
+        });
 
       await widget.onSend(content, replyTo);
 
       if (mounted) {
-        rootScreenKey.currentState
-            ?.showSnack(AppLocalizations(SettingsManager.appLocale.value).albumSent(albumItems.length));
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value)
+                .albumSent(albumItems.length));
       }
     } catch (e) {
       if (mounted) rootScreenKey.currentState?.showSnack('Error: $e');
@@ -4442,30 +4822,39 @@ class ChatScreenState extends State<ChatScreen>
 
   Future<void> _sendVideo(String filePath, String basename, String ext) async {
     final MediaType contentType;
-    if (ext == '.mov')       contentType = MediaType('video', 'quicktime');
-    else if (ext == '.avi')  contentType = MediaType('video', 'x-msvideo');
-    else if (ext == '.mkv')  contentType = MediaType('video', 'x-matroska');
-    else if (ext == '.webm') contentType = MediaType('video', 'webm');
-    else if (ext == '.flv')  contentType = MediaType('video', 'x-flv');
-    else if (ext == '.m4v')  contentType = MediaType('video', 'x-m4v');
-    else                     contentType = MediaType('video', 'mp4');
+    if (ext == '.mov')
+      contentType = MediaType('video', 'quicktime');
+    else if (ext == '.avi')
+      contentType = MediaType('video', 'x-msvideo');
+    else if (ext == '.mkv')
+      contentType = MediaType('video', 'x-matroska');
+    else if (ext == '.webm')
+      contentType = MediaType('video', 'webm');
+    else if (ext == '.flv')
+      contentType = MediaType('video', 'x-flv');
+    else if (ext == '.m4v')
+      contentType = MediaType('video', 'x-m4v');
+    else
+      contentType = MediaType('video', 'mp4');
 
     try {
       final token = await AccountManager.getToken(
           rootScreenKey.currentState?.currentUsername ?? '');
       if (token == null) {
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
         return;
       }
 
-      final ok = await (rootScreenKey.currentState?.checkQuotaAndPrompt(
-            limitMb: 100.0, includeImageCache: false) ??
+      final ok = await (rootScreenKey.currentState
+              ?.checkQuotaAndPrompt(limitMb: 100.0, includeImageCache: false) ??
           Future.value(true));
       if (!ok) return;
 
       final localFile = File(filePath);
       if (!await localFile.exists()) {
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+        rootScreenKey.currentState?.showSnack(
+            AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
         return;
       }
       if (await localFile.length() == 0) {
@@ -4475,42 +4864,70 @@ class ChatScreenState extends State<ChatScreen>
 
       final plainBytes = await localFile.readAsBytes();
       final root = rootScreenKey.currentState;
-      if (root == null) { rootScreenKey.currentState?.showSnack('RootScreen not ready'); return; }
+      if (root == null) {
+        rootScreenKey.currentState?.showSnack('RootScreen not ready');
+        return;
+      }
 
       // Create pending upload task — shows video placeholder immediately
       final task = UploadTask(
         id: '${DateTime.now().millisecondsSinceEpoch}',
-        type: 'video', localPath: filePath, basename: basename,
+        type: 'video',
+        localPath: filePath,
+        basename: basename,
       );
       task.presignType = 'video';
       task.presignExt = ext;
       task.presignContentType = '${contentType.type}/${contentType.subtype}';
-      if (mounted) setState(() { _pendingUploads.add(task); });
+      if (mounted)
+        setState(() {
+          _pendingUploads.add(task);
+        });
 
-      final (encryptedBytes, videoMediaKeyB64) = await root.encryptMediaRandom(plainBytes, kind: 'video');
+      final (encryptedBytes, videoMediaKeyB64) =
+          await root.encryptMediaRandom(plainBytes, kind: 'video');
       task.encryptedBytes = encryptedBytes;
       task.mediaKey = videoMediaKeyB64;
       task.status = UploadStatus.uploading;
       if (mounted) setState(() {});
 
       final replyTo = _replyingToMessage;
-      if (mounted) setState(() { _replyingToMessage = null; });
+      if (mounted)
+        setState(() {
+          _replyingToMessage = null;
+        });
 
       task.onComplete = (filename) async {
-        final meta = jsonEncode({'filename': filename, 'owner': widget.myUsername, 'orig': basename, 'key': videoMediaKeyB64});
+        final meta = jsonEncode({
+          'filename': filename,
+          'owner': widget.myUsername,
+          'orig': basename,
+          'key': videoMediaKeyB64
+        });
         await widget.onSend('VIDEOv1:$meta', replyTo);
-        if (mounted) setState(() { _pendingUploads.remove(task); });
-        if (mounted) rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).videoSent);
+        if (mounted)
+          setState(() {
+            _pendingUploads.remove(task);
+          });
+        if (mounted)
+          rootScreenKey.currentState?.showSnack(
+              AppLocalizations(SettingsManager.appLocale.value).videoSent);
       };
 
       final filename = await _presignUploadWithProgress(
-        token: token, presignType: 'video', ext: ext,
+        token: token,
+        presignType: 'video',
+        ext: ext,
         contentType: '${contentType.type}/${contentType.subtype}',
-        bytes: encryptedBytes, task: task,
+        bytes: encryptedBytes,
+        task: task,
       );
       if (filename == null) {
         if (task.status == UploadStatus.failed) {
-          if (mounted) setState(() { _pendingUploads.remove(task); });
+          if (mounted)
+            setState(() {
+              _pendingUploads.remove(task);
+            });
           rootScreenKey.currentState?.showSnack('Upload failed');
         }
         return;
@@ -4566,13 +4983,13 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
   void initState() {
     super.initState();
     _secondsLeft = widget.msg.editSecondsLeft;
-    
+
     if (widget.canEditDelete && _secondsLeft != 0) {
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
         final left = widget.msg.editSecondsLeft;
         if (!mounted) return;
         setState(() => _secondsLeft = left);
-        if (left == 0) _timer?.cancel(); 
+        if (left == 0) _timer?.cancel();
       });
     }
   }
@@ -4586,32 +5003,36 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    
+
     final canAct = widget.canEditDelete && _secondsLeft != 0;
 
     String editLabel() {
       if (!canAct) return 'Edit';
       if (_secondsLeft > 0) return 'Edit  ·  ${_secondsLeft}s';
-      return 'Edit'; 
+      return 'Edit';
     }
 
     String deleteLabel() {
-      
       if (widget.canAlwaysDelete) return 'Delete';
       if (!canAct) return 'Delete';
       if (_secondsLeft > 0) return 'Delete  ·  ${_secondsLeft}s';
-      return 'Delete'; 
+      return 'Delete';
     }
 
     Widget actionTile(IconData icon, String label, VoidCallback? onTap,
         {Color? color}) {
       final effective = color ?? colorScheme.onSurface;
       return ListTile(
-        leading: Icon(icon, color: onTap != null ? effective : colorScheme.onSurface.withValues(alpha: 0.3)),
+        leading: Icon(icon,
+            color: onTap != null
+                ? effective
+                : colorScheme.onSurface.withValues(alpha: 0.3)),
         title: Text(
           label,
           style: TextStyle(
-            color: onTap != null ? effective : colorScheme.onSurface.withValues(alpha: 0.3),
+            color: onTap != null
+                ? effective
+                : colorScheme.onSurface.withValues(alpha: 0.3),
           ),
         ),
         onTap: onTap,
@@ -4626,57 +5047,61 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
           colorScheme.surfaceContainerHighest,
           brightness,
         );
-    return SafeArea(
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        decoration: BoxDecoration(
-          color: sheetColor,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: colorScheme.onSurface.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(2),
-              ),
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            decoration: BoxDecoration(
+              color: sheetColor,
+              borderRadius: BorderRadius.circular(20),
             ),
-            const SizedBox(height: 8),
-            actionTile(Icons.reply_rounded, 'Reply', widget.onReply),
-            actionTile(Icons.add_reaction_outlined, 'React', widget.onReact),
-            actionTile(
-              widget.isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
-              widget.isPinned ? 'Unpin' : 'Pin',
-              widget.onPin,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 8),
+                Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: colorScheme.onSurface.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                actionTile(Icons.reply_rounded, 'Reply', widget.onReply),
+                actionTile(
+                    Icons.add_reaction_outlined, 'React', widget.onReact),
+                actionTile(
+                  widget.isPinned
+                      ? Icons.push_pin_outlined
+                      : Icons.push_pin_rounded,
+                  widget.isPinned ? 'Unpin' : 'Pin',
+                  widget.onPin,
+                ),
+                if (widget.onSave != null)
+                  actionTile(Icons.save_alt_rounded, 'Save', widget.onSave),
+                if (widget.onCopyImage != null)
+                  actionTile(
+                      Icons.copy_all_rounded, 'Copy Image', widget.onCopyImage),
+                if (widget.msg.outgoing && !widget.isMedia)
+                  actionTile(
+                    Icons.edit_rounded,
+                    editLabel(),
+                    canAct ? widget.onEdit : null,
+                  ),
+                if (!widget.isMedia)
+                  actionTile(Icons.copy_rounded, 'Copy', widget.onCopy),
+                if (widget.msg.outgoing && widget.onDelete != null)
+                  actionTile(
+                    Icons.delete_outline_rounded,
+                    deleteLabel(),
+                    (canAct || widget.canAlwaysDelete) ? widget.onDelete : null,
+                    color: Colors.red.shade400,
+                  ),
+                const SizedBox(height: 4),
+              ],
             ),
-            if (widget.onSave != null)
-              actionTile(Icons.save_alt_rounded, 'Save', widget.onSave),
-            if (widget.onCopyImage != null)
-              actionTile(Icons.copy_all_rounded, 'Copy Image', widget.onCopyImage),
-            if (widget.msg.outgoing && !widget.isMedia)
-              actionTile(
-                Icons.edit_rounded,
-                editLabel(),
-                canAct ? widget.onEdit : null,
-              ),
-            if (!widget.isMedia)
-              actionTile(Icons.copy_rounded, 'Copy', widget.onCopy),
-            if (widget.msg.outgoing && widget.onDelete != null)
-              actionTile(
-                Icons.delete_outline_rounded,
-                deleteLabel(),
-                (canAct || widget.canAlwaysDelete) ? widget.onDelete : null,
-                color: Colors.red.shade400,
-              ),
-            const SizedBox(height: 4),
-          ],
-        ),
-      ),
-    );
+          ),
+        );
       },
     );
   }
@@ -4703,7 +5128,7 @@ class _EditTimerBadgeState extends State<_EditTimerBadge> {
       if (!mounted) return;
       final left = widget.msg.editSecondsLeft;
       setState(() => _secondsLeft = left);
-      if (left == 0) _timer?.cancel(); 
+      if (left == 0) _timer?.cancel();
     });
   }
 
@@ -4717,7 +5142,7 @@ class _EditTimerBadgeState extends State<_EditTimerBadge> {
   Widget build(BuildContext context) {
     if (_secondsLeft == 0) return const SizedBox.shrink();
     final colorScheme = Theme.of(context).colorScheme;
-    
+
     if (_secondsLeft < 0) {
       return Padding(
         padding: const EdgeInsets.only(left: 4),

@@ -89,7 +89,6 @@ class MessageBubble extends StatelessWidget {
     double msgOpacity,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
-    const double incomingBaseAlpha = 0.5;
     const double outgoingBorderAlpha = 0.3;
     const double incomingBorderAlpha = 0.2;
     final Color textRaw = colorScheme.onSurface;
@@ -128,7 +127,7 @@ class MessageBubble extends StatelessWidget {
         }
         final Color baseColor = outgoing
             ? baseRawOutgoing.withOpacity(msgOpacity)
-            : baseRawIncoming.withOpacity(msgOpacity * incomingBaseAlpha);
+            : baseRawIncoming.withOpacity(msgOpacity);
         final Color borderColor = outgoing
             ? colorScheme.primary.withOpacity(msgOpacity * outgoingBorderAlpha)
             : colorScheme.outline.withOpacity(msgOpacity * incomingBorderAlpha);

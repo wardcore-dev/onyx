@@ -50,7 +50,7 @@ class ExternalServer {
     return 'ws://$host:$port/ws?token=${Uri.encodeComponent(token)}';
   }
 
-  ExternalServer copyWith({String? token, String? name, String? description, String? passwordHash}) {
+  ExternalServer copyWith({String? token, String? name, String? description, String? passwordHash, List<String>? features}) {
     return ExternalServer(
       id: id,
       host: host,
@@ -66,7 +66,7 @@ class ExternalServer {
       mediaProvider: mediaProvider,
       maxFileSizeMb: maxFileSizeMb,
       maxMembersPerGroup: maxMembersPerGroup,
-      features: features,
+      features: features ?? this.features,
       joinedAt: joinedAt,
     );
   }

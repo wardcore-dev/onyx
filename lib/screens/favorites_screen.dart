@@ -38,6 +38,7 @@ import '../widgets/chat_search_bar.dart';
 import '../widgets/animated_message_bubble.dart';
 import '../widgets/message_reaction_bar.dart';
 import '../widgets/media_picker_sheet.dart';
+import '../widgets/chat_input_bar.dart';
 
 abstract class _ListItem {}
 
@@ -1839,250 +1840,42 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     rootScreenKey.currentState?.schedulePersistChats(chatId: _chatId());
   }
 
-  List<Widget> _buildFavoritesInputChildren() {
-    return [
-      Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: ValueListenableBuilder<bool>(
-        valueListenable: recordingNotifier,
-        builder: (context, isRecording, _) {
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AnimatedOpacity(
-                duration: const Duration(milliseconds: 180),
-                opacity: isRecording ? 1.0 : 0.0,
-                child: isRecording
-                    ? Padding(
-                        padding: const EdgeInsets.only(bottom: 6.0),
-                        child: Material(
-                          shape: const CircleBorder(),
-                          color: Theme.of(context).colorScheme.errorContainer,
-                          child: IconButton(
-                            icon: Icon(
-                              Icons.delete,
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onErrorContainer,
-                              size: 18,
-                            ),
-                            onPressed: () {
-                              rootScreenKey.currentState?.cancelRecording();
-                            },
-                            visualDensity: VisualDensity.compact,
-                            padding: EdgeInsets.zero,
-                            splashRadius: 20,
-                          ),
-                        ),
-                      )
-                    : const SizedBox.shrink(),
-              ),
-              Material(
-                shape: const CircleBorder(),
-                color: isRecording
-                    ? Theme.of(context).colorScheme.error.withOpacity(0.12)
-                    : Colors.transparent,
-                child: IconButton(
-                  icon: Icon(
-                    isRecording ? Icons.stop : Icons.mic,
-                    color: isRecording
-                        ? Theme.of(context).colorScheme.error
-                        : Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withOpacity(0.6),
-                    size: 20,
-                  ),
-                  onPressed: () {
-                    if (isRecording) {
-                      rootScreenKey.currentState?.stopRecordingAndUpload(
-                          'fav:${widget.favoriteId}',
-                          _replyingToMessage,
-                          (task) {
-                        task.onComplete = (_) async {
-                          if (mounted) setState(() => _pendingUploads.remove(task));
-                        };
-                        if (mounted) setState(() => _pendingUploads.add(task));
-                      });
-                      setState(() {
-                        debugPrint(
-                            '[favorites_screen::mic.send] clearing _replyingToMessage\n${StackTrace.current}');
-                        _replyingToMessage = null;
-                      });
-                    } else {
-                      rootScreenKey.currentState?.startRecording();
-                    }
-                  },
-                  visualDensity: VisualDensity.compact,
-                  splashRadius: 20,
-                  padding: EdgeInsets.zero,
-                ),
-              ),
-            ],
-          );
-        },
-        ),
-      ),
+  Future<void> _pickFavoriteAttachments() async {
+    if (kIsWeb) return;
 
-      Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: IconButton(
-          icon: Icon(
-            Icons.attach_file,
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-            size: 20,
-          ),
-          onPressed: () async {
-            if (kIsWeb) return;
+    List<String>? paths;
+    if (Platform.isAndroid || Platform.isIOS) {
+      paths = await showMediaPickerSheet(context);
+    } else {
+      try {
+        final result = await FilePicker.platform
+            .pickFiles(type: FileType.any, allowMultiple: true);
+        paths = result?.files
+            .map((f) => f.path)
+            .whereType<String>()
+            .toList();
+      } catch (e) {
+        debugPrint('[Attach] FilePicker error: $e');
+        rootScreenKey.currentState?.showSnack('File picker error: $e');
+      }
+    }
+    if (paths == null || paths.isEmpty) return;
 
-            List<String>? paths;
-            if (Platform.isAndroid || Platform.isIOS) {
-              paths = await showMediaPickerSheet(context);
-            } else {
-              try {
-                final result = await FilePicker.platform
-                    .pickFiles(type: FileType.any, allowMultiple: true);
-                paths = result?.files
-                    .map((f) => f.path)
-                    .whereType<String>()
-                    .toList();
-              } catch (e) {
-                debugPrint('[Attach] FilePicker error: $e');
-                rootScreenKey.currentState?.showSnack('File picker error: $e');
-              }
-            }
-            if (paths == null || paths.isEmpty) return;
+    if (paths.length > 1 && paths.every(FileTypeDetector.isImage)) {
+      await _sendAlbum(paths);
+      return;
+    }
 
-            if (paths.length > 1 && paths.every(FileTypeDetector.isImage)) {
-              await _sendAlbum(paths);
-              return;
-            }
-
-            final path = paths.first;
-            if (!FileTypeDetector.isAllowed(path)) {
-              final ext = p.extension(path).toLowerCase();
-              rootScreenKey.currentState?.showSnack('Unsupported file type: $ext');
-              return;
-            }
-            final basename = p.basename(path);
-            final ext = p.extension(basename).toLowerCase();
-            final type = FileTypeDetector.getFileType(path);
-            _showFilePreviewAndSend(path, basename, ext, type);
-          },
-          visualDensity: VisualDensity.compact,
-          splashRadius: 20,
-          padding: EdgeInsets.zero,
-        ),
-      ),
-
-      Expanded(
-        child: KeyboardListener(
-          focusNode: FocusNode(),
-          onKeyEvent: (event) {
-            if (event is KeyDownEvent) {
-
-              if (HardwareKeyboard.instance.isLogicalKeyPressed(LogicalKeyboardKey.keyV) &&
-                  (HardwareKeyboard.instance.isControlPressed ||
-                   HardwareKeyboard.instance.isMetaPressed)) {
-                _handlePasteFromClipboard();
-                return;
-              }
-
-              if (HardwareKeyboard.instance
-                  .isLogicalKeyPressed(LogicalKeyboardKey.enter)) {
-                if (!HardwareKeyboard.instance.isShiftPressed) {
-                  if (_textCtrl.text.trim().isNotEmpty) {
-                    _submitMessage(_textCtrl.text);
-                  }
-                  return;
-                }
-                if (HardwareKeyboard.instance.isShiftPressed &&
-                    _textCtrl.text.isNotEmpty) {
-                  final text = _textCtrl.text;
-                  final selection = _textCtrl.selection;
-                  _textCtrl.text =
-                      '${text.substring(0, selection.start)}\n${text.substring(selection.start)}';
-                  _textCtrl.selection = TextSelection.fromPosition(
-                      TextPosition(offset: selection.start + 1));
-                }
-              }
-            }
-          },
-          child: TextField(
-            focusNode: _focusNode,
-            controller: _textCtrl,
-            onTap: () => _suppressAutoRefocus = false,
-            minLines: 1,
-            maxLines: 5,
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
-            decoration: InputDecoration(
-              hintText: AppLocalizations.of(context).localizeHint('Type something...'),
-              hintStyle: TextStyle(
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurface
-                    .withValues(alpha: 0.5),
-              ),
-              filled: false,
-              fillColor: Colors.transparent,
-              border: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              contentPadding:
-                  const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-            ),
-            onChanged: (_) => _onUserTyping(),
-            textInputAction: TextInputAction.none,
-            contentInsertionConfiguration: ContentInsertionConfiguration(
-              allowedMimeTypes: const [
-                'image/png',
-                'image/jpeg',
-                'image/gif',
-                'image/webp',
-              ],
-              onContentInserted: (data) async {
-                try {
-                  Uint8List? bytes = data.data;
-                  if (bytes == null && data.uri.isNotEmpty) {
-                    try {
-                      bytes = await _clipboardChannel
-                          .invokeMethod<Uint8List>(
-                              'readContentUri', {'uri': data.uri});
-                    } catch (e) { debugPrint('[err] $e'); }
-                  }
-                  if (bytes != null && bytes.isNotEmpty && mounted) {
-                    final ext = data.mimeType.contains('/')
-                        ? data.mimeType.split('/').last
-                        : 'png';
-                    final tempDir = await getTemporaryDirectory();
-                    final tempFile = File(
-                        '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext');
-                    await tempFile.writeAsBytes(bytes);
-                    _handleDroppedFiles([tempFile.path]);
-                  }
-                } catch (e) {
-                  debugPrint('[ContentInsert] Error: $e');
-                }
-              },
-            ),
-          ),
-        ),
-      ),
-      Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: IconButton(
-          icon: Icon(
-            Icons.send,
-            color: Theme.of(context).colorScheme.primary,
-            size: 20,
-          ),
-          onPressed: () => _submitMessage(_textCtrl.text),
-          visualDensity: VisualDensity.compact,
-          splashRadius: 20,
-          padding: EdgeInsets.zero,
-        ),
-      ),
-    ];
+    final path = paths.first;
+    if (!FileTypeDetector.isAllowed(path)) {
+      final ext = p.extension(path).toLowerCase();
+      rootScreenKey.currentState?.showSnack('Unsupported file type: $ext');
+      return;
+    }
+    final basename = p.basename(path);
+    final ext = p.extension(basename).toLowerCase();
+    final type = FileTypeDetector.getFileType(path);
+    _showFilePreviewAndSend(path, basename, ext, type);
   }
 
   @override
@@ -2737,23 +2530,85 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                     Theme.of(context).colorScheme.surfaceContainerHighest,
                                     brightness,
                                   );
-                                  return Container(
+                                  return ConstrainedBox(
                                     constraints: BoxConstraints(maxWidth: width),
-                                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                                    decoration: BoxDecoration(
-                                      color: baseColor.withValues(alpha: opacity),
-                                      borderRadius: BorderRadius.circular(28),
-                                      border: Border.all(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .outlineVariant
-                                            .withValues(alpha: 0.15),
-                                        width: 1,
+                                    child: ChatInputBar(
+                                      controller: _textCtrl,
+                                      textFocusNode: _focusNode,
+                                      recordingListenable: recordingNotifier,
+                                      onCancelRecording: () {
+                                        rootScreenKey.currentState?.cancelRecording();
+                                      },
+                                      onMicPressed: (isRecording) {
+                                        if (isRecording) {
+                                          rootScreenKey.currentState?.stopRecordingAndUpload(
+                                            'fav:${widget.favoriteId}',
+                                            _replyingToMessage,
+                                            (task) {
+                                              task.onComplete = (_) async {
+                                                if (mounted) {
+                                                  setState(() => _pendingUploads.remove(task));
+                                                }
+                                              };
+                                              if (mounted) {
+                                                setState(() => _pendingUploads.add(task));
+                                              }
+                                            },
+                                          );
+                                          setState(() {
+                                            _replyingToMessage = null;
+                                          });
+                                        } else {
+                                          rootScreenKey.currentState?.startRecording();
+                                        }
+                                      },
+                                      onAttachPressed: _pickFavoriteAttachments,
+                                      onSendPressed: () => _submitMessage(_textCtrl.text),
+                                      onPaste: _handlePasteFromClipboard,
+                                      onChanged: (_) => _onUserTyping(),
+                                      hintText: AppLocalizations.of(context)
+                                          .localizeHint('Type something...'),
+                                      backgroundColor: baseColor,
+                                      opacity: opacity,
+                                      borderColor: Theme.of(context)
+                                          .colorScheme
+                                          .outlineVariant
+                                          .withValues(alpha: 0.15),
+                                      contentInsertionConfiguration:
+                                          ContentInsertionConfiguration(
+                                        allowedMimeTypes: const [
+                                          'image/png',
+                                          'image/jpeg',
+                                          'image/gif',
+                                          'image/webp',
+                                        ],
+                                        onContentInserted: (data) async {
+                                          try {
+                                            Uint8List? bytes = data.data;
+                                            if (bytes == null && data.uri.isNotEmpty) {
+                                              try {
+                                                bytes = await _clipboardChannel
+                                                    .invokeMethod<Uint8List>(
+                                                        'readContentUri', {'uri': data.uri});
+                                              } catch (e) {
+                                                debugPrint('[err] $e');
+                                              }
+                                            }
+                                            if (bytes != null && bytes.isNotEmpty && mounted) {
+                                              final ext = data.mimeType.contains('/')
+                                                  ? data.mimeType.split('/').last
+                                                  : 'png';
+                                              final tempDir = await getTemporaryDirectory();
+                                              final tempFile = File(
+                                                  '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext');
+                                              await tempFile.writeAsBytes(bytes);
+                                              _handleDroppedFiles([tempFile.path]);
+                                            }
+                                          } catch (e) {
+                                            debugPrint('[ContentInsert] Error: $e');
+                                          }
+                                        },
                                       ),
-                                    ),
-                                    child: Row(
-                                      crossAxisAlignment: CrossAxisAlignment.end,
-                                      children: _buildFavoritesInputChildren(),
                                     ),
                                   );
                                 },

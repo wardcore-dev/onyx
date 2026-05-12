@@ -21,6 +21,7 @@ class SettingsManager {
   static const _swapMessageAlignmentKey = 'swap_message_alignment';
   static const _alignAllMessagesRightKey = 'align_all_messages_right';
   static const _showAvatarInChatsKey = 'show_avatar_in_chats';
+  static const _showAccountIndicatorKey = 'show_account_indicator';
   static const _smoothScrollKey = 'smooth_scroll_enabled';
   static const _messageAnimationsKey = 'message_animations_enabled';
   static const _enablePerformanceOptimizationsKey =
@@ -36,6 +37,7 @@ class SettingsManager {
   static const _statusVisibilityKey = 'status_visibility';
   static const _statusOnlineKey = 'status_online';
   static const _statusOfflineKey = 'status_offline';
+  static const _hideFromSearchKey = 'hide_from_search';
   static const _desktopNavPositionKey = 'desktop_nav_position';
   static const _notificationsEnabledKey = 'notifications_enabled';
   static const _notificationPositionKey = 'notification_position';
@@ -57,6 +59,10 @@ class SettingsManager {
   static const _launchAtStartupKey = 'launch_at_startup';
   static const _audioInputDeviceKey = 'audio_input_device_id';
   static const _audioOutputDeviceKey = 'audio_output_device_id';
+  static const _showAccountGraphKey       = 'show_account_graph';
+  static const _graphOrbitSpeedKey        = 'graph_orbit_speed';
+  static const _graphAnimationKey         = 'graph_animation_enabled';
+  static const _graphPreservePositionKey  = 'graph_preserve_position';
 
   static String? _accountContext;
   static SharedPreferences? _prefs;
@@ -94,6 +100,9 @@ class SettingsManager {
       ValueNotifier<bool>(false);
 
   static final ValueNotifier<bool> showAvatarInChats =
+      ValueNotifier<bool>(true);
+
+  static final ValueNotifier<bool> showAccountIndicator =
       ValueNotifier<bool>(true);
 
   static final ValueNotifier<bool> smoothScrollEnabled =
@@ -135,6 +144,8 @@ class SettingsManager {
   static final ValueNotifier<String> statusOffline =
       ValueNotifier<String>('offline');
 
+  static final ValueNotifier<bool> hideFromSearch = ValueNotifier<bool>(false);
+
   static final ValueNotifier<String> desktopNavPosition =
       ValueNotifier<String>('left');
 
@@ -167,6 +178,10 @@ class SettingsManager {
 
   static final ValueNotifier<String> audioInputDeviceId = ValueNotifier<String>('');
   static final ValueNotifier<String> audioOutputDeviceId = ValueNotifier<String>('');
+  static final ValueNotifier<bool>   showAccountGraph       = ValueNotifier<bool>(true);
+  static final ValueNotifier<double> graphOrbitSpeed        = ValueNotifier<double>(120.0);
+  static final ValueNotifier<bool>   graphAnimation         = ValueNotifier<bool>(true);
+  static final ValueNotifier<bool>   graphPreservePosition  = ValueNotifier<bool>(true);
 
   static Future<void> init() async {
     final prefs = await _getPrefs();
@@ -185,6 +200,7 @@ class SettingsManager {
     final swapAlign = prefs.getBool(_swapMessageAlignmentKey) ?? false;
     final alignAllRight = prefs.getBool(_alignAllMessagesRightKey) ?? false;
     final showAvatar = prefs.getBool(_showAvatarInChatsKey) ?? true;
+    final showAccountInd = prefs.getBool(_showAccountIndicatorKey) ?? true;
     final smoothScroll = prefs.getBool(_smoothScrollKey) ?? false;
     final messageAnimations = prefs.getBool(_messageAnimationsKey) ?? true;
     final perfOptimizations =
@@ -206,6 +222,7 @@ class SettingsManager {
     final statusVisibility_ = prefs.getString(_statusVisibilityKey) ?? 'show';
     final statusOnline_ = prefs.getString(_statusOnlineKey) ?? 'online';
     final statusOffline_ = prefs.getString(_statusOfflineKey) ?? 'offline';
+    final hideFromSearch_ = prefs.getBool(_hideFromSearchKey) ?? false;
 
     final desktopNavPosition_ =
         prefs.getString(_desktopNavPositionKey) ?? 'left';
@@ -257,6 +274,7 @@ class SettingsManager {
     swapMessageAlignment.value = swapAlign;
     alignAllMessagesRight.value = alignAllRight;
     showAvatarInChats.value = showAvatar;
+    showAccountIndicator.value = showAccountInd;
     smoothScrollEnabled.value = smoothScroll;
     messageAnimationsEnabled.value = messageAnimations;
     enablePerformanceOptimizations.value = perfOptimizations;
@@ -271,6 +289,7 @@ class SettingsManager {
     SettingsManager.statusVisibility.value = statusVisibility_;
     SettingsManager.statusOnline.value = statusOnline_;
     SettingsManager.statusOffline.value = statusOffline_;
+    SettingsManager.hideFromSearch.value = hideFromSearch_;
     SettingsManager.desktopNavPosition.value = desktopNavPosition_;
     SettingsManager.notificationsEnabled.value = notificationsEnabled_;
     SettingsManager.notificationPosition.value = notificationPosition_;
@@ -295,6 +314,10 @@ class SettingsManager {
 
     SettingsManager.audioInputDeviceId.value = prefs.getString(_audioInputDeviceKey) ?? '';
     SettingsManager.audioOutputDeviceId.value = prefs.getString(_audioOutputDeviceKey) ?? '';
+    SettingsManager.showAccountGraph.value      = prefs.getBool(_showAccountGraphKey) ?? true;
+    SettingsManager.graphOrbitSpeed.value       = prefs.getDouble(_graphOrbitSpeedKey) ?? 120.0;
+    SettingsManager.graphAnimation.value        = prefs.getBool(_graphAnimationKey) ?? true;
+    SettingsManager.graphPreservePosition.value = prefs.getBool(_graphPreservePositionKey) ?? true;
   }
 
   static String _scopedKey(String baseKey) {
@@ -404,6 +427,12 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setBool(_showAvatarInChatsKey, val);
     showAvatarInChats.value = val;
+  }
+
+  static Future<void> setShowAccountIndicator(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_showAccountIndicatorKey, val);
+    showAccountIndicator.value = val;
   }
 
   static Future<void> setSmoothScroll(bool val) async {
@@ -618,6 +647,36 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setString(_audioOutputDeviceKey, id);
     audioOutputDeviceId.value = id;
+  }
+
+  static Future<void> setShowAccountGraph(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_showAccountGraphKey, val);
+    showAccountGraph.value = val;
+  }
+
+  static Future<void> setGraphOrbitSpeed(double val) async {
+    final prefs = await _getPrefs();
+    await prefs.setDouble(_graphOrbitSpeedKey, val);
+    graphOrbitSpeed.value = val;
+  }
+
+  static Future<void> setGraphAnimation(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_graphAnimationKey, val);
+    graphAnimation.value = val;
+  }
+
+  static Future<void> setGraphPreservePosition(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_graphPreservePositionKey, val);
+    graphPreservePosition.value = val;
+  }
+
+  static Future<void> setHideFromSearch(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_hideFromSearchKey, val);
+    hideFromSearch.value = val;
   }
 
   static Color getElementColor(

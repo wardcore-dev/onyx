@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show LogicalKeyboardKey, KeyDownEvent, KeyRepeatEvent;
 import '../managers/settings_manager.dart';
+import '../managers/decoy_manager.dart';
 
 bool get _isDesktop =>
     !const bool.fromEnvironment('dart.library.html') &&
@@ -11,15 +12,17 @@ bool get _isDesktop =>
 class PinCodeScreen extends StatefulWidget {
   final bool isSetup;
   final VoidCallback? onSuccess;
+  final VoidCallback? onFakePin;
   final ValueChanged<String>? onPinSet;
   final VoidCallback? onCancel;
   final String? headerText;
-  
+
   final VoidCallback? onBiometric;
 
   const PinCodeScreen.verify({
     Key? key,
     required VoidCallback this.onSuccess,
+    this.onFakePin,
     this.onBiometric,
   })  : isSetup = false,
         onPinSet = null,
@@ -33,6 +36,7 @@ class PinCodeScreen extends StatefulWidget {
     required VoidCallback this.onCancel,
   })  : isSetup = true,
         onSuccess = null,
+        onFakePin = null,
         onBiometric = null,
         headerText = null,
         super(key: key);
@@ -42,6 +46,7 @@ class PinCodeScreen extends StatefulWidget {
     required VoidCallback this.onSuccess,
     required VoidCallback this.onCancel,
   })  : isSetup = false,
+        onFakePin = null,
         onPinSet = null,
         onBiometric = null,
         headerText = 'Enter current PIN to disable',
@@ -154,13 +159,20 @@ class _PinCodeScreenState extends State<PinCodeScreen>
       final stored = await SettingsManager.getPin();
       if (_pin == stored) {
         widget.onSuccess?.call();
-      } else {
-        _shake();
-        setState(() {
-          _pin = '';
-          _error = 'Incorrect PIN';
-        });
+        return;
       }
+      if (widget.onFakePin != null && await DecoyManager.isEnabled()) {
+        final fakeStored = await DecoyManager.getPin();
+        if (fakeStored != null && _pin == fakeStored) {
+          widget.onFakePin!();
+          return;
+        }
+      }
+      _shake();
+      setState(() {
+        _pin = '';
+        _error = 'Incorrect PIN';
+      });
     }
   }
 

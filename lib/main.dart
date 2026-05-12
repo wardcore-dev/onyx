@@ -25,6 +25,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'widgets/avatar_widget.dart';
 import 'screens/root_screen_wrapper.dart';
 import 'screens/pin_code_screen.dart';
+import 'managers/decoy_manager.dart';
 import 'package:local_auth/local_auth.dart';
 import 'managers/settings_manager.dart';
 import 'managers/blocklist_manager.dart';
@@ -781,8 +782,8 @@ class _PinGateWidgetState extends State<_PinGateWidget> {
   void initState() {
     super.initState();
     _unlocked = !SettingsManager.pinEnabled.value;
+    DecoyManager.onLockRequest = _lockApp;
     if (!_unlocked && SettingsManager.biometricEnabled.value) {
-      
       WidgetsBinding.instance.addPostFrameCallback((_) => _tryBiometric());
     }
   }
@@ -801,11 +802,23 @@ class _PinGateWidgetState extends State<_PinGateWidget> {
     }
   }
 
+  void _lockApp() {
+    wsConnectedNotifier.value = false;
+    DecoyManager.deactivate();
+    if (mounted) setState(() => _unlocked = false);
+  }
+
+  Future<void> _activateDecoy() async {
+    await DecoyManager.activate();
+    if (mounted) setState(() => _unlocked = true);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_unlocked) {
       return PinCodeScreen.verify(
         onSuccess: () => setState(() => _unlocked = true),
+        onFakePin: _activateDecoy,
         onBiometric: SettingsManager.biometricEnabled.value ? _tryBiometric : null,
       );
     }

@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import '../managers/settings_manager.dart';
 import '../managers/account_manager.dart';
+import '../managers/decoy_manager.dart';
 import '../globals.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/auth_dialog.dart';
@@ -35,10 +36,13 @@ class _RootScreenWrapperState extends State<RootScreenWrapper> {
           isDarkMode: widget.isDarkMode,
           onThemeChanged: widget.onThemeChanged,
         ),
-        ValueListenableBuilder<List<String>>(
+        ValueListenableBuilder<bool>(
+          valueListenable: DecoyManager.isActive,
+          builder: (context, decoyActive, _) =>
+          ValueListenableBuilder<List<String>>(
           valueListenable: AccountManager.accountsNotifier,
           builder: (context, accounts, _) {
-            if (accounts.isNotEmpty) return const SizedBox.shrink();
+            if (accounts.isNotEmpty || decoyActive) return const SizedBox.shrink();
             return _WelcomeOverlay(
               onLogin: (u, p) async {
                 final state = rootScreenKey.currentState;
@@ -52,6 +56,7 @@ class _RootScreenWrapperState extends State<RootScreenWrapper> {
               },
             );
           },
+          ),
         ),
       ],
     );

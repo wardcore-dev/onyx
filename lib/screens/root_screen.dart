@@ -86,7 +86,10 @@ import '../l10n/app_localizations.dart';
 import '../utils/update_checker.dart';
 import '../widgets/update_banner.dart';
 import '../widgets/about_onyx_dialog.dart';
+import '../widgets/account_graph_view.dart';
 import '../screens/pin_code_screen.dart';
+import '../managers/decoy_manager.dart';
+import '../managers/decoy_data_manager.dart';
 import 'package:local_auth/local_auth.dart';
 
 final Map<String, List<int>> _pubkeyCache = {};
@@ -95,7 +98,8 @@ final Map<String, List<Map<String, dynamic>>> _devicePubkeysCache = {};
 DateTime? _lastPubkeyUploadTime;
 final X25519 _x25519 = X25519();
 final Cipher _xchacha = Xchacha20.poly1305Aead();
-final ValueNotifier<double> _chatsPanelWidthNotifier = ValueNotifier<double>(300.0);
+final ValueNotifier<double> _chatsPanelWidthNotifier =
+    ValueNotifier<double>(300.0);
 
 bool _pubkeyUploadedToServer = false;
 DateTime? _lastPubkeyUploadAttempt;
@@ -143,10 +147,8 @@ class RootScreenState extends State<RootScreen>
   bool _fullSaveRequested = false;
 
   static const List<String> _motivationalHints = [
-
     'Never be silenced',
     'Nothing unnecessary.',
- 
     "Don't know. Don't want to.",
     "Be yourself — or someone else. I don’t check.",
     'Privacy is on. Extra questions are off.',
@@ -162,20 +164,21 @@ class RootScreenState extends State<RootScreen>
 
   List<FavoriteChat> _favorites = [];
   String? _selectedFavoriteId;
-  
+
   final Set<String> _favoritesMediaPrefetched = {};
-  
+
   final Set<String> _chatsMediaPrefetched = {};
+  final Set<String> _missingPrefetchMedia = {};
+  bool _isPreloadingUserProfiles = false;
 
   Stream<dynamic>? wsStream;
-  
+
   List<FavoriteChat> get favorites => List.unmodifiable(_favorites);
 
   bool _isSwitchingAccount = false;
   String? _pendingAccountSwitch;
 
-  bool _manualWsDisconnect =
-      false; 
+  bool _manualWsDisconnect = false;
   Timer? _reconnectTimer;
   int _reconnectAttempts = 0;
   final Duration _baseReconnectDelay = const Duration(seconds: 3);
@@ -183,13 +186,22 @@ class RootScreenState extends State<RootScreen>
 
   int _index = 0;
   late final PageController _pageController;
-  
+
   Timer? _pageChangeDebounce;
   int _pendingPageIndex = 0;
   String? currentUsername;
   String? currentDisplayName;
   String? currentUin;
   bool _isPrimaryDevice = false;
+
+  bool get _mobileGraphEnabled =>
+      !isDesktop && SettingsManager.showAccountGraph.value;
+  int get _graphTabOffset => 0;
+  bool _graphOverlayVisible = false;
+  bool _graphOverlayMounted = false;
+  Timer? _graphUnmountTimer;
+  static double _savedHandleY = 100.0;
+  double _handleY = 100.0;
   SimpleKeyPair? _identityKeyPair;
   SimplePublicKey? _identityPublicKey;
   String? identityPubKeyBase64;
@@ -199,7 +211,7 @@ class RootScreenState extends State<RootScreen>
   // Messages queued when WS was offline — drained on reconnect
   final List<Map<String, dynamic>> _pendingMsgQueue = [];
   StreamSubscription<String>? _notificationSubscription;
-  
+
   final Set<int> _activeGroupChatIds = {};
   final Map<int, void Function(Map<String, dynamic>)> _groupMessageListeners =
       {};
@@ -225,14 +237,13 @@ class RootScreenState extends State<RootScreen>
   bool _pendingSoundFlush = false;
   Timer? _soundFlushTimer;
 
-  final Map<String, String> _pendingNotifications = {}; 
+  final Map<String, String> _pendingNotifications = {};
   Timer? _notifFlushTimer;
   String? selectedChatOther;
   Group? selectedGroup;
-  Group? selectedExternalGroup; 
-  ExternalServer? selectedExternalServer; 
+  Group? selectedExternalGroup;
+  ExternalServer? selectedExternalServer;
   String _sanitizeFilename(String name) {
-    
     return name.replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '_');
   }
 
@@ -276,7 +287,7 @@ class RootScreenState extends State<RootScreen>
   }
 
   final AudioPlayer _audioPlayer = AudioPlayer();
-  
+
   final AudioRecorder _recorder = AudioRecorder();
 
   bool _isRecording = false;
@@ -286,17 +297,18 @@ class RootScreenState extends State<RootScreen>
   String? get lastRecordedPathForUpload => _lastRecordedPathForUpload;
 
   void _handlePageChanged(int newIndex) {
-    
-    if (newIndex == 5 && !_isPrimaryDevice) {
+    if (newIndex == 5 + _graphTabOffset && !_isPrimaryDevice) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _pageController.hasClients) {
-          _pageController.jumpToPage(4);
+          _pageController.jumpToPage(4 + _graphTabOffset);
         }
       });
       return;
     }
 
-    _pendingPageIndex = newIndex;
+    final tabIndex = newIndex;
+
+    _pendingPageIndex = tabIndex;
     _pageChangeDebounce?.cancel();
     _pageChangeDebounce = Timer(const Duration(milliseconds: 50), () {
       if (mounted && _index != _pendingPageIndex) {
@@ -368,13 +380,11 @@ class RootScreenState extends State<RootScreen>
 
     String? path;
     try {
-      
       try {
         path = await _recorder.stop();
         debugPrint('<<cancelRecording>> recorder.stop() -> $path');
       } catch (e) {
         debugPrint('<<cancelRecording>> recorder.stop() threw: $e');
-        
       }
 
       setState(() => _isRecording = false);
@@ -401,7 +411,7 @@ class RootScreenState extends State<RootScreen>
       _appendLog('[record] canceled');
     } catch (e, st) {
       debugPrint('<<cancelRecording>> unexpected: $e\n$st');
-      
+
       setState(() => _isRecording = false);
       try {
         recordingNotifier.value = false;
@@ -422,20 +432,20 @@ class RootScreenState extends State<RootScreen>
         final id = String.fromCharCodes(bytes.sublist(pos, pos + 4));
         final chunkSize = bd.getUint32(pos + 4, Endian.little);
         if (id == 'data') {
-          dataOffset = pos + 4; 
+          dataOffset = pos + 4;
           break;
         }
-        if (chunkSize == 0) break; 
+        if (chunkSize == 0) break;
         pos += 8 + chunkSize + (chunkSize & 1);
       }
 
       if (dataOffset < 0) return;
       final currentDataSize = bd.getUint32(dataOffset, Endian.little);
-      if (currentDataSize != 0) return; 
+      if (currentDataSize != 0) return;
 
       final actualDataSize = bytes.length - (dataOffset + 4);
-      bd.setUint32(4, bytes.length - 8, Endian.little);      
-      bd.setUint32(dataOffset, actualDataSize, Endian.little); 
+      bd.setUint32(4, bytes.length - 8, Endian.little);
+      bd.setUint32(dataOffset, actualDataSize, Endian.little);
       await file.writeAsBytes(bytes);
       debugPrint('<<_fixWavHeader>> patched $path: dataSize=$actualDataSize');
     } catch (e) {
@@ -449,11 +459,13 @@ class RootScreenState extends State<RootScreen>
 
     String? path;
     try {
-      
       path = await _recorder.stop();
       debugPrint('<<stopRecordingOnly>> recorder.stop() -> $path');
 
-      if (path != null && !kIsWeb && Platform.isWindows && path.endsWith('.wav')) {
+      if (path != null &&
+          !kIsWeb &&
+          Platform.isWindows &&
+          path.endsWith('.wav')) {
         await _fixWavHeader(path);
       }
 
@@ -474,7 +486,7 @@ class RootScreenState extends State<RootScreen>
   }
 
   void saveFavorites() {
-    _saveFavorites(); 
+    _saveFavorites();
   }
 
   void updateFavorite(FavoriteChat updated) {
@@ -508,7 +520,8 @@ class RootScreenState extends State<RootScreen>
       final token = await AccountManager.getToken(username);
       if (token == null) return;
 
-      final res = await http.get(Uri.parse('$serverBase/conversations'), headers: {
+      final res =
+          await http.get(Uri.parse('$serverBase/conversations'), headers: {
         'authorization': 'Bearer $token',
         'Content-Type': 'application/json',
       });
@@ -527,7 +540,8 @@ class RootScreenState extends State<RootScreen>
         if (selectedChatOther != null) users.add(selectedChatOther!);
 
         if (users.isNotEmpty && _ws != null) {
-          _ws!.sink.add(jsonEncode({'type': 'request_status_snapshot', 'users': users.toList()}));
+          _ws!.sink.add(jsonEncode(
+              {'type': 'request_status_snapshot', 'users': users.toList()}));
           _appendLog('[status_snapshot] requested for ${users.length} users');
         }
       }
@@ -546,7 +560,6 @@ class RootScreenState extends State<RootScreen>
   Future<void> startRecording() async {
     debugPrint('<<_startRecording>> entry');
     try {
-      
       if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
         final micStatus = await Permission.microphone.request();
         debugPrint('<<_startRecording>> microphone permission: $micStatus');
@@ -563,10 +576,8 @@ class RootScreenState extends State<RootScreen>
 
       if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
         filename = 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
-        encoder =
-            AudioEncoder.aacLc; 
+        encoder = AudioEncoder.aacLc;
       } else {
-        
         filename = 'voice_${DateTime.now().millisecondsSinceEpoch}.wav';
         encoder = AudioEncoder.wav;
       }
@@ -611,7 +622,7 @@ class RootScreenState extends State<RootScreen>
           debugPrint(
             '<<_startRecording>> file exists after start, length=$len bytes',
           );
-          
+
           if (len == 0) {
             rootScreenKey.currentState?.showSnack(
               'Recording started but file size is 0 — testing different codec',
@@ -643,7 +654,6 @@ class RootScreenState extends State<RootScreen>
     bool includeImageCache = true,
   }) async {
     try {
-      
       final appSupport = await getApplicationSupportDirectory();
       final voiceDir = Directory('${appSupport.path}/voice_cache');
 
@@ -652,17 +662,23 @@ class RootScreenState extends State<RootScreen>
       int totalBytes = 0;
 
       if (await voiceDir.exists()) {
-        await for (final f in voiceDir.list(recursive: true, followLinks: false)) {
+        await for (final f
+            in voiceDir.list(recursive: true, followLinks: false)) {
           if (f is File) {
-            try { totalBytes += await f.length(); } catch (_) {}
+            try {
+              totalBytes += await f.length();
+            } catch (_) {}
           }
         }
       }
 
       if (includeImageCache && await imageCacheDir.exists()) {
-        await for (final f in imageCacheDir.list(recursive: true, followLinks: false)) {
+        await for (final f
+            in imageCacheDir.list(recursive: true, followLinks: false)) {
           if (f is File) {
-            try { totalBytes += await f.length(); } catch (_) {}
+            try {
+              totalBytes += await f.length();
+            } catch (_) {}
           }
         }
       }
@@ -670,7 +686,6 @@ class RootScreenState extends State<RootScreen>
       final usedMb = totalBytes / (1024 * 1024);
 
       if (usedMb >= limitMb) {
-        
         if (!mounted) return false;
         final opened = await showDialog<bool>(
           context: context,
@@ -695,17 +710,15 @@ class RootScreenState extends State<RootScreen>
         );
 
         if (opened == true) {
-          
           try {
             _onTabSelected(2);
           } catch (_) {}
         }
-        return false; 
+        return false;
       }
 
-      return true; 
+      return true;
     } catch (e) {
-      
       debugPrint('[checkQuotaAndPrompt] error: $e');
       return true;
     }
@@ -730,7 +743,6 @@ class RootScreenState extends State<RootScreen>
 
     String? path;
     try {
-
       path = await _recorder.stop();
       debugPrint(
           '<<stopRecordingAndUpload>> recorder.stop() returned path=$path');
@@ -760,8 +772,8 @@ class RootScreenState extends State<RootScreen>
       final bytes = await f.readAsBytes();
 
       if (SettingsManager.confirmVoiceUpload.value) {
-        
-        final duration = recordedDuration ?? Duration(seconds: (bytes.length / 16000).ceil());
+        final duration = recordedDuration ??
+            Duration(seconds: (bytes.length / 16000).ceil());
 
         if (mounted) {
           final confirmed = await showDialog<bool>(
@@ -776,7 +788,7 @@ class RootScreenState extends State<RootScreen>
                       rootScreenKey.currentState
                           ?.showSnack('Voice message cancelled');
                     }
-                    
+
                     try {
                       if (File(path!).existsSync()) {
                         File(path!).deleteSync();
@@ -788,7 +800,6 @@ class RootScreenState extends State<RootScreen>
               false;
         }
       } else {
-        
         await _performVoiceUpload(to, path, replyTo, onTaskCreated);
       }
     } catch (e, st) {
@@ -817,16 +828,15 @@ class RootScreenState extends State<RootScreen>
   ]) async {
     UploadTask? voiceTask;
     try {
-
       final isLANMode = lanModePerChat.value[to] ?? false;
       if (isLANMode) {
-
         return await _performVoiceUploadLAN(to, path, replyTo);
       }
 
       // Favorites are local-only — no server upload.
       if (to.startsWith('fav:')) {
-        return await _performVoiceUploadFavorite(to, path, replyTo, onTaskCreated);
+        return await _performVoiceUploadFavorite(
+            to, path, replyTo, onTaskCreated);
       }
 
       final token = await AccountManager.getToken(currentUsername ?? '');
@@ -838,20 +848,22 @@ class RootScreenState extends State<RootScreen>
 
       final bool isPersonalChat = !to.startsWith('fav:');
       final String noNotifyParam = isPersonalChat ? '&no_notify=1' : '';
-      final String uriStr = '$serverBase/voice/upload?to=${Uri.encodeComponent(to)}$noNotifyParam';
+      final String uriStr =
+          '$serverBase/voice/upload?to=${Uri.encodeComponent(to)}$noNotifyParam';
       final uri = Uri.parse(uriStr);
       final req = http.MultipartRequest('POST', uri);
       req.headers['authorization'] = 'Bearer $token';
 
       final f = File(path);
       final plainBytes = await f.readAsBytes();
-      
+
       Uint8List bytesToUpload;
       String? voiceMediaKeyB64;
       if (to.startsWith('fav:')) {
         bytesToUpload = plainBytes;
       } else {
-        final (enc, keyB64) = await encryptMediaRandom(plainBytes, kind: 'voice');
+        final (enc, keyB64) =
+            await encryptMediaRandom(plainBytes, kind: 'voice');
         bytesToUpload = enc;
         voiceMediaKeyB64 = keyB64;
       }
@@ -871,20 +883,34 @@ class RootScreenState extends State<RootScreen>
 
       final presignResp = await http.post(
         Uri.parse('$serverBase/media/presign/upload'),
-        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
-        body: jsonEncode({'type': 'voice', 'ext': ext, 'size': bytesToUpload.length, 'contentType': 'application/octet-stream'}),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json'
+        },
+        body: jsonEncode({
+          'type': 'voice',
+          'ext': ext,
+          'size': bytesToUpload.length,
+          'contentType': 'application/octet-stream'
+        }),
       );
       if (presignResp.statusCode == 413) {
         dynamic body;
-        try { body = jsonDecode(presignResp.body); } catch (_) {}
+        try {
+          body = jsonDecode(presignResp.body);
+        } catch (_) {}
         rootScreenKey.currentState?.showSnack(
-          body is Map ? (body['detail'] ?? 'Storage quota exceeded') : 'Storage quota exceeded',
+          body is Map
+              ? (body['detail'] ?? 'Storage quota exceeded')
+              : 'Storage quota exceeded',
         );
         return;
       }
       if (presignResp.statusCode != 200) {
-        debugPrint('<<_performVoiceUpload>> presign failed: ${presignResp.statusCode}');
-        rootScreenKey.currentState?.showSnack('Upload failed: ${presignResp.statusCode}');
+        debugPrint(
+            '<<_performVoiceUpload>> presign failed: ${presignResp.statusCode}');
+        rootScreenKey.currentState
+            ?.showSnack('Upload failed: ${presignResp.statusCode}');
         return;
       }
       final presignData = jsonDecode(presignResp.body) as Map<String, dynamic>;
@@ -898,8 +924,7 @@ class RootScreenState extends State<RootScreen>
       final putClient = http.Client();
       voiceTask.activeClient = putClient;
       try {
-        final putRequest =
-            http.StreamedRequest('PUT', Uri.parse(presignedUrl));
+        final putRequest = http.StreamedRequest('PUT', Uri.parse(presignedUrl));
         putRequest.headers['Content-Type'] = 'application/octet-stream';
         putRequest.contentLength = bytesToUpload.length;
         final responseFuture = putClient.send(putRequest);
@@ -929,22 +954,35 @@ class RootScreenState extends State<RootScreen>
 
       final confirmResp = await http.post(
         Uri.parse('$serverBase/media/presign/confirm'),
-        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
-        body: jsonEncode({'type': 'voice', 'filename': filename, 'to': to, 'no_notify': isPersonalChat}),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json'
+        },
+        body: jsonEncode({
+          'type': 'voice',
+          'filename': filename,
+          'to': to,
+          'no_notify': isPersonalChat
+        }),
       );
       int? serverMsgId;
       if (confirmResp.statusCode == 200) {
         try {
           final json = jsonDecode(confirmResp.body) as Map<String, dynamic>;
-          serverMsgId = json['id'] is int ? json['id'] as int : int.tryParse(json['id']?.toString() ?? '');
+          serverMsgId = json['id'] is int
+              ? json['id'] as int
+              : int.tryParse(json['id']?.toString() ?? '');
         } catch (_) {}
       } else {
-        debugPrint('<<_performVoiceUpload>> confirm failed: ${confirmResp.statusCode}');
-        rootScreenKey.currentState?.showSnack('Upload failed: ${confirmResp.statusCode}');
+        debugPrint(
+            '<<_performVoiceUpload>> confirm failed: ${confirmResp.statusCode}');
+        rootScreenKey.currentState
+            ?.showSnack('Upload failed: ${confirmResp.statusCode}');
         return;
       }
 
-      debugPrint('<<_performVoiceUpload>> upload confirmed, filename=$filename');
+      debugPrint(
+          '<<_performVoiceUpload>> upload confirmed, filename=$filename');
 
       final voiceCacheDir = await getApplicationSupportDirectory();
       final cachePath = '${voiceCacheDir.path}/voice_cache';
@@ -961,10 +999,8 @@ class RootScreenState extends State<RootScreen>
       final content = 'VOICEv1:$voiceContent';
 
       if (isPersonalChat) {
-        
         await _sendChatMessage(to, content, replyTo);
       } else {
-        
         final localId = DateTime.now().microsecondsSinceEpoch.toString();
         final msg = ChatMessage(
           id: localId,
@@ -975,9 +1011,14 @@ class RootScreenState extends State<RootScreen>
           delivered: false,
           time: DateTime.now(),
           serverMessageId: serverMsgId,
-          replyToId: replyTo != null && replyTo['id'] != null ? int.tryParse(replyTo['id'].toString()) : null,
-          replyToSender: replyTo != null ? (replyTo['senderDisplayName'] ?? replyTo['sender'])?.toString() : null,
-          replyToContent: replyTo != null ? replyTo['content']?.toString() : null,
+          replyToId: replyTo != null && replyTo['id'] != null
+              ? int.tryParse(replyTo['id'].toString())
+              : null,
+          replyToSender: replyTo != null
+              ? (replyTo['senderDisplayName'] ?? replyTo['sender'])?.toString()
+              : null,
+          replyToContent:
+              replyTo != null ? replyTo['content']?.toString() : null,
         );
         chats.putIfAbsent(to, () => []).add(msg);
         await persistChats();
@@ -1005,9 +1046,9 @@ class RootScreenState extends State<RootScreen>
     }
   }
 
-  Future<void> _performVoiceUploadLAN(String to, String path, [Map<String, dynamic>? replyTo]) async {
+  Future<void> _performVoiceUploadLAN(String to, String path,
+      [Map<String, dynamic>? replyTo]) async {
     try {
-      
       final file = File(path);
       if (!await file.exists()) {
         showSnack('Voice file not found');
@@ -1034,7 +1075,8 @@ class RootScreenState extends State<RootScreen>
 
       final localLanFile = File('${lanMediaDir.path}/$filename');
       await localLanFile.writeAsBytes(voiceBytes, flush: true);
-      debugPrint('[LAN VOICE] Saved locally to: ${localLanFile.path} (exists: ${await localLanFile.exists()})');
+      debugPrint(
+          '[LAN VOICE] Saved locally to: ${localLanFile.path} (exists: ${await localLanFile.exists()})');
 
       final sent = await LANMessageManager().sendMediaMessage(
         from: currentUsername!,
@@ -1050,9 +1092,9 @@ class RootScreenState extends State<RootScreen>
         return;
       }
 
-      final duration = voiceBytes.length ~/ (16000 * 2); 
+      final duration = voiceBytes.length ~/ (16000 * 2);
       final voiceContent = jsonEncode({
-        'url': 'lan://$filename', 
+        'url': 'lan://$filename',
         'duration': duration,
         'format': format,
       });
@@ -1073,8 +1115,11 @@ class RootScreenState extends State<RootScreen>
         delivered: true,
         time: DateTime.now(),
         replyToId: replyId,
-        replyToSender: replyTo != null ? (replyTo['senderDisplayName'] ?? replyTo['sender'])?.toString() : null,
-        replyToContent: replyTo != null ? (replyTo['content'])?.toString() : null,
+        replyToSender: replyTo != null
+            ? (replyTo['senderDisplayName'] ?? replyTo['sender'])?.toString()
+            : null,
+        replyToContent:
+            replyTo != null ? (replyTo['content'])?.toString() : null,
         deliveryMode: DeliveryMode.lan,
       );
 
@@ -1138,7 +1183,8 @@ class RootScreenState extends State<RootScreen>
 
       // Use fav:// prefix so VoiceMessagePlayer reads from local cache
       // instead of trying to fetch from the server.
-      final voiceContent = jsonEncode({'filename': 'fav://$filename', 'orig': filename});
+      final voiceContent =
+          jsonEncode({'filename': 'fav://$filename', 'orig': filename});
       final content = 'VOICEv1:$voiceContent';
 
       final localId = voiceTask.id;
@@ -1180,7 +1226,7 @@ class RootScreenState extends State<RootScreen>
     return bytes[0] == 0x4F &&
         bytes[1] == 0x67 &&
         bytes[2] == 0x67 &&
-        bytes[3] == 0x53; 
+        bytes[3] == 0x53;
   }
 
   bool _isM4A(List<int> bytes) {
@@ -1209,19 +1255,16 @@ class RootScreenState extends State<RootScreen>
     debugPrint('[_downloadAndPlayVoice] entry -> $filename');
 
     try {
-      
       final appSupport = await getApplicationDocumentsDirectory();
 
       Directory cacheDir;
       String actualFilename;
 
       if (filename.startsWith('lan://')) {
-        
-        actualFilename = filename.substring(6); 
+        actualFilename = filename.substring(6);
         cacheDir = Directory('${appSupport.path}/lan_media');
         debugPrint('[_downloadAndPlayVoice] LAN mode: $actualFilename');
       } else {
-        
         actualFilename = filename;
         cacheDir = Directory('${appSupport.path}/voice_cache');
       }
@@ -1238,8 +1281,9 @@ class RootScreenState extends State<RootScreen>
       ];
       File? cachedFile;
       for (final ext in possibleExts) {
-        final tryName =
-            actualFilename.endsWith(ext) || ext.isEmpty ? actualFilename : '$actualFilename$ext';
+        final tryName = actualFilename.endsWith(ext) || ext.isEmpty
+            ? actualFilename
+            : '$actualFilename$ext';
         final f = File('${cacheDir.path}/$tryName');
         if (await f.exists()) {
           cachedFile = f;
@@ -1255,7 +1299,6 @@ class RootScreenState extends State<RootScreen>
 
         final session = await AudioSession.instance;
         try {
-          
           await session.setActive(true);
           debugPrint('[_downloadAndPlayVoice] session.setActive(true) OK');
         } catch (e) {
@@ -1277,7 +1320,6 @@ class RootScreenState extends State<RootScreen>
         }
 
         try {
-          
           await _audioPlayer.stop();
           await _audioPlayer.play(DeviceFileSource(file.path));
           debugPrint('[_downloadAndPlayVoice] play() called for ${file.path}');
@@ -1303,7 +1345,6 @@ class RootScreenState extends State<RootScreen>
           await _playFile(cachedFile);
           return;
         } catch (e) {
-          
           debugPrint(
             '[_downloadAndPlayVoice] playback from cache failed, deleting and retrying: $e',
           );
@@ -1447,8 +1488,8 @@ class RootScreenState extends State<RootScreen>
     await cacheDir.create(recursive: true);
     final displayDir = await MediaCache.instance.displayDirFor('image');
 
-    final existing = await MediaCache.instance.findCachedDisplay(
-        cacheDir, [filename], displayDir);
+    final existing = await MediaCache.instance
+        .findCachedDisplay(cacheDir, [filename], displayDir);
     if (existing != null) return existing;
 
     final token = await AccountManager.getToken(currentUsername ?? '');
@@ -1493,8 +1534,8 @@ class RootScreenState extends State<RootScreen>
         .map((ext) =>
             filename.endsWith(ext) || ext.isEmpty ? filename : '$filename$ext')
         .toList();
-    final existing = await MediaCache.instance.findCachedDisplay(
-        cacheDir, candidateNames, displayDir);
+    final existing = await MediaCache.instance
+        .findCachedDisplay(cacheDir, candidateNames, displayDir);
     if (existing != null) return existing;
 
     final token = await AccountManager.getToken(currentUsername ?? '');
@@ -1507,8 +1548,8 @@ class RootScreenState extends State<RootScreen>
     final cipherBytes = res.bodyBytes;
     if (cipherBytes.isEmpty) throw Exception('Empty response');
 
-    final bytes =
-        await decryptMediaFromPeer(peerUsername, cipherBytes, kind: 'voice', mediaKeyB64: mediaKeyB64);
+    final bytes = await decryptMediaFromPeer(peerUsername, cipherBytes,
+        kind: 'voice', mediaKeyB64: mediaKeyB64);
 
     String outName = filename;
     if (!_isOgg(bytes) &&
@@ -1533,8 +1574,8 @@ class RootScreenState extends State<RootScreen>
     await cacheDir.create(recursive: true);
     final displayDir = await MediaCache.instance.displayDirFor('video');
 
-    final existing = await MediaCache.instance.findCachedDisplay(
-        cacheDir, [filename], displayDir);
+    final existing = await MediaCache.instance
+        .findCachedDisplay(cacheDir, [filename], displayDir);
     if (existing != null) return existing;
 
     final token = await AccountManager.getToken(currentUsername ?? '');
@@ -1548,8 +1589,8 @@ class RootScreenState extends State<RootScreen>
     final cipherBytes = res.bodyBytes;
     if (cipherBytes.isEmpty) throw Exception('Empty response');
 
-    final bytes =
-        await decryptMediaFromPeer(peerUsername, cipherBytes, kind: 'video', mediaKeyB64: mediaKeyB64);
+    final bytes = await decryptMediaFromPeer(peerUsername, cipherBytes,
+        kind: 'video', mediaKeyB64: mediaKeyB64);
 
     await MediaCache.instance.writeEncrypted(cacheDir, filename, bytes);
     final displayFile = File('${displayDir.path}/$filename');
@@ -1558,25 +1599,34 @@ class RootScreenState extends State<RootScreen>
   }
 
   Future<File?> downloadFileToCache(String filename,
-      {required String peerUsername, String? owner, String? mediaKeyB64, void Function(double)? onProgress}) async {
+      {required String peerUsername,
+      String? owner,
+      String? mediaKeyB64,
+      void Function(double)? onProgress}) async {
     final appSupport = await getApplicationSupportDirectory();
     final cacheDir = Directory('${appSupport.path}/file_cache');
     await cacheDir.create(recursive: true);
     final displayDir = await MediaCache.instance.displayDirFor('file');
 
-    final existing = await MediaCache.instance.findCachedDisplay(
-        cacheDir, [filename], displayDir);
+    final existing = await MediaCache.instance
+        .findCachedDisplay(cacheDir, [filename], displayDir);
     if (existing != null) return existing;
 
     final legacyCacheNames = [
-      'file_cache', 'document_cache', 'data_cache',
-      'archive_cache', 'image_cache', 'video_cache',
-      'voice_cache', 'audio_cache',
+      'file_cache',
+      'document_cache',
+      'data_cache',
+      'archive_cache',
+      'image_cache',
+      'video_cache',
+      'voice_cache',
+      'audio_cache',
     ];
     for (final name in legacyCacheNames) {
       final f = File('${appSupport.path}/$name/$filename');
       if (await f.exists()) {
-        debugPrint('[downloadFileToCache] found local cached file in $name: ${f.path}');
+        debugPrint(
+            '[downloadFileToCache] found local cached file in $name: ${f.path}');
         return f;
       }
     }
@@ -1594,7 +1644,8 @@ class RootScreenState extends State<RootScreen>
       final streamedResponse = await client.send(request);
 
       if (streamedResponse.statusCode == 404) {
-        debugPrint('[downloadFileToCache] file not found on server: $filename (404)');
+        debugPrint(
+            '[downloadFileToCache] file not found on server: $filename (404)');
         return null;
       }
       if (streamedResponse.statusCode != 200) {
@@ -1616,8 +1667,8 @@ class RootScreenState extends State<RootScreen>
       final cipherBytes = Uint8List.fromList(chunks.expand((c) => c).toList());
       if (cipherBytes.isEmpty) throw Exception('Empty response');
 
-      final bytes =
-          await decryptMediaFromPeer(peerUsername, cipherBytes, kind: 'file', mediaKeyB64: mediaKeyB64);
+      final bytes = await decryptMediaFromPeer(peerUsername, cipherBytes,
+          kind: 'file', mediaKeyB64: mediaKeyB64);
 
       await MediaCache.instance.writeEncrypted(cacheDir, filename, bytes);
       final displayFile = File('${displayDir.path}/$filename');
@@ -1650,8 +1701,9 @@ class RootScreenState extends State<RootScreen>
           final filename = (data['filename'] as String?)?.trim();
           final keyB64 = data['key'] as String?;
           if (filename != null && filename.isNotEmpty) {
-            tasks.add(
-                downloadImageToCache(filename, peerUsername: m.from, mediaKeyB64: keyB64).then((_) {
+            tasks.add(downloadImageToCache(filename,
+                    peerUsername: m.from, mediaKeyB64: keyB64)
+                .then((_) {
               _appendLog('[fav.prefetch] image cached: $filename');
             }).catchError((e) {
               _appendLog('[fav.prefetch] image $filename failed: $e');
@@ -1664,8 +1716,9 @@ class RootScreenState extends State<RootScreen>
           final filename = (meta['filename'] as String?)?.trim();
           final keyB64 = meta['key'] as String?;
           if (filename != null && filename.isNotEmpty) {
-            tasks.add(
-                downloadVideoToCache(filename, peerUsername: m.from, mediaKeyB64: keyB64).then((_) {
+            tasks.add(downloadVideoToCache(filename,
+                    peerUsername: m.from, mediaKeyB64: keyB64)
+                .then((_) {
               _appendLog('[fav.prefetch] video cached: $filename');
             }).catchError((e) {
               _appendLog('[fav.prefetch] video $filename failed: $e');
@@ -1677,8 +1730,9 @@ class RootScreenState extends State<RootScreen>
           final filename = (data['filename'] as String?)?.trim();
           final keyB64 = data['key'] as String?;
           if (filename != null && filename.isNotEmpty) {
-            tasks.add(
-                downloadVoiceToCache(filename, peerUsername: m.from, mediaKeyB64: keyB64).then((_) {
+            tasks.add(downloadVoiceToCache(filename,
+                    peerUsername: m.from, mediaKeyB64: keyB64)
+                .then((_) {
               _appendLog('[fav.prefetch] voice cached: $filename');
             }).catchError((e) {
               _appendLog('[fav.prefetch] voice $filename failed: $e');
@@ -1704,8 +1758,9 @@ class RootScreenState extends State<RootScreen>
             final filename = (data['filename'] as String?)?.trim();
             final keyB64 = data['key'] as String?;
             if (filename != null && filename.isNotEmpty) {
-              tasks.add(
-                  downloadFileToCache(filename, peerUsername: m.from, mediaKeyB64: keyB64).then((_) {
+              tasks.add(downloadFileToCache(filename,
+                      peerUsername: m.from, mediaKeyB64: keyB64)
+                  .then((_) {
                 _appendLog('[fav.prefetch] file cached: $filename');
               }).catchError((e) {
                 _appendLog('[fav.prefetch] file $filename failed: $e');
@@ -1713,7 +1768,6 @@ class RootScreenState extends State<RootScreen>
             }
           } catch (e) {}
         } else if (text.startsWith('MEDIA_PROXYv1:')) {
-          
           try {
             final data = jsonDecode(text.substring('MEDIA_PROXYv1:'.length))
                 as Map<String, dynamic>;
@@ -1721,7 +1775,6 @@ class RootScreenState extends State<RootScreen>
             final typ = (data['type'] as String?)?.trim();
             if (url != null && url.isNotEmpty) {
               if (typ == 'voice') {
-                
                 tasks.add(http.get(Uri.parse(url)).then((res) async {
                   if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
                     final appSupport = await getApplicationSupportDirectory();
@@ -1738,7 +1791,6 @@ class RootScreenState extends State<RootScreen>
                   _appendLog('[fav.prefetch] external voice $url failed: $e');
                 }));
               } else {
-                
                 tasks.add(http.get(Uri.parse(url)).then((res) async {
                   if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
                     final appSupport = await getApplicationSupportDirectory();
@@ -1768,14 +1820,42 @@ class RootScreenState extends State<RootScreen>
         _appendLog('[fav.prefetch] message parse error: $e');
       }
 
-      if (tasks.length >= 6) {
+      if (tasks.length >= 2) {
         await Future.wait(tasks);
         tasks.clear();
+        await Future.delayed(Duration.zero);
       }
     }
 
     if (tasks.isNotEmpty) await Future.wait(tasks);
     _appendLog('[fav.prefetch] completed for $favId');
+  }
+
+  bool _messageHasPrefetchableMedia(String text) {
+    return text.startsWith('IMAGEv1:') ||
+        text.toUpperCase().startsWith('VIDEOV1:') ||
+        text.startsWith('VOICEv1:') ||
+        text.startsWith('AUDIOv1:') ||
+        text.startsWith('FILEv1:') ||
+        text.startsWith('MEDIA_PROXYv1:');
+  }
+
+  bool _isHttp404Error(Object error) => error.toString().contains('HTTP 404');
+
+  String _prefetchMediaKey(String kind, String id) => '$kind::$id';
+
+  Iterable<ChatMessage> _recentPrefetchMessages(
+    List<ChatMessage> messages, {
+    int limit = 8,
+  }) sync* {
+    final selected = <ChatMessage>[];
+    for (final message in messages.reversed) {
+      if (_messageHasPrefetchableMedia(message.content)) {
+        selected.add(message);
+        if (selected.length >= limit) break;
+      }
+    }
+    yield* selected.reversed;
   }
 
   Future<void> ensureMediaCachedForChat(String chatId,
@@ -1790,7 +1870,7 @@ class RootScreenState extends State<RootScreen>
         '[chat.prefetch] starting for $chatId with ${msgs.length} messages');
 
     final List<Future<void>> tasks = [];
-    for (final m in msgs) {
+    for (final m in _recentPrefetchMessages(msgs)) {
       try {
         final text = m.content;
         if (text.startsWith('IMAGEv1:')) {
@@ -1799,10 +1879,17 @@ class RootScreenState extends State<RootScreen>
           final filename = (data['filename'] as String?)?.trim();
           final keyB64 = data['key'] as String?;
           if (filename != null && filename.isNotEmpty) {
-            tasks.add(
-                downloadImageToCache(filename, peerUsername: m.from, mediaKeyB64: keyB64).then((_) {
+            final prefetchKey = _prefetchMediaKey('image', filename);
+            if (_missingPrefetchMedia.contains(prefetchKey)) continue;
+            tasks.add(downloadImageToCache(filename,
+                    peerUsername: m.from, mediaKeyB64: keyB64)
+                .then((_) {
               _appendLog('[chat.prefetch] image cached: $filename');
             }).catchError((e) {
+              if (_isHttp404Error(e)) {
+                _missingPrefetchMedia.add(prefetchKey);
+                return;
+              }
               _appendLog('[chat.prefetch] image $filename failed: $e');
             }));
           }
@@ -1813,10 +1900,17 @@ class RootScreenState extends State<RootScreen>
           final filename = (meta['filename'] as String?)?.trim();
           final keyB64 = meta['key'] as String?;
           if (filename != null && filename.isNotEmpty) {
-            tasks.add(
-                downloadVideoToCache(filename, peerUsername: m.from, mediaKeyB64: keyB64).then((_) {
+            final prefetchKey = _prefetchMediaKey('video', filename);
+            if (_missingPrefetchMedia.contains(prefetchKey)) continue;
+            tasks.add(downloadVideoToCache(filename,
+                    peerUsername: m.from, mediaKeyB64: keyB64)
+                .then((_) {
               _appendLog('[chat.prefetch] video cached: $filename');
             }).catchError((e) {
+              if (_isHttp404Error(e)) {
+                _missingPrefetchMedia.add(prefetchKey);
+                return;
+              }
               _appendLog('[chat.prefetch] video $filename failed: $e');
             }));
           }
@@ -1826,10 +1920,17 @@ class RootScreenState extends State<RootScreen>
           final filename = (data['filename'] as String?)?.trim();
           final keyB64 = data['key'] as String?;
           if (filename != null && filename.isNotEmpty) {
-            tasks.add(
-                downloadVoiceToCache(filename, peerUsername: m.from, mediaKeyB64: keyB64).then((_) {
+            final prefetchKey = _prefetchMediaKey('voice', filename);
+            if (_missingPrefetchMedia.contains(prefetchKey)) continue;
+            tasks.add(downloadVoiceToCache(filename,
+                    peerUsername: m.from, mediaKeyB64: keyB64)
+                .then((_) {
               _appendLog('[chat.prefetch] voice cached: $filename');
             }).catchError((e) {
+              if (_isHttp404Error(e)) {
+                _missingPrefetchMedia.add(prefetchKey);
+                return;
+              }
               _appendLog('[chat.prefetch] voice $filename failed: $e');
             }));
           }
@@ -1839,10 +1940,20 @@ class RootScreenState extends State<RootScreen>
           final filename =
               (data['filename'] ?? data['orig'] as String?)?.trim();
           if (filename != null && filename.isNotEmpty) {
-            tasks.add(
-                downloadFileToCache(filename, peerUsername: m.from).then((_) {
+            final prefetchKey = _prefetchMediaKey('audio', filename);
+            if (_missingPrefetchMedia.contains(prefetchKey)) continue;
+            tasks.add(downloadFileToCache(filename, peerUsername: m.from)
+                .then((file) {
+              if (file == null) {
+                _missingPrefetchMedia.add(prefetchKey);
+                return;
+              }
               _appendLog('[chat.prefetch] audio cached: $filename');
             }).catchError((e) {
+              if (_isHttp404Error(e)) {
+                _missingPrefetchMedia.add(prefetchKey);
+                return;
+              }
               _appendLog('[chat.prefetch] audio $filename failed: $e');
             }));
           }
@@ -1853,10 +1964,21 @@ class RootScreenState extends State<RootScreen>
             final filename = (data['filename'] as String?)?.trim();
             final keyB64 = data['key'] as String?;
             if (filename != null && filename.isNotEmpty) {
-              tasks.add(
-                  downloadFileToCache(filename, peerUsername: m.from, mediaKeyB64: keyB64).then((_) {
+              final prefetchKey = _prefetchMediaKey('file', filename);
+              if (_missingPrefetchMedia.contains(prefetchKey)) continue;
+              tasks.add(downloadFileToCache(filename,
+                      peerUsername: m.from, mediaKeyB64: keyB64)
+                  .then((file) {
+                if (file == null) {
+                  _missingPrefetchMedia.add(prefetchKey);
+                  return;
+                }
                 _appendLog('[chat.prefetch] file cached: $filename');
               }).catchError((e) {
+                if (_isHttp404Error(e)) {
+                  _missingPrefetchMedia.add(prefetchKey);
+                  return;
+                }
                 _appendLog('[chat.prefetch] file $filename failed: $e');
               }));
             }
@@ -1868,6 +1990,11 @@ class RootScreenState extends State<RootScreen>
             final url = (data['url'] as String?)?.trim();
             final typ = (data['type'] as String?)?.trim();
             if (url != null && url.isNotEmpty) {
+              final prefetchKey = _prefetchMediaKey(
+                typ == 'voice' ? 'external_voice' : 'external_media',
+                url,
+              );
+              if (_missingPrefetchMedia.contains(prefetchKey)) continue;
               if (typ == 'voice') {
                 tasks.add(http.get(Uri.parse(url)).then((res) async {
                   if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
@@ -1880,8 +2007,14 @@ class RootScreenState extends State<RootScreen>
                     final f = File('${cacheDir.path}/$name');
                     await f.writeAsBytes(res.bodyBytes, flush: true);
                     _appendLog('[chat.prefetch] external voice cached: $url');
+                  } else if (res.statusCode == 404) {
+                    _missingPrefetchMedia.add(prefetchKey);
                   }
                 }).catchError((e) {
+                  if (_isHttp404Error(e)) {
+                    _missingPrefetchMedia.add(prefetchKey);
+                    return;
+                  }
                   _appendLog('[chat.prefetch] external voice $url failed: $e');
                 }));
               } else {
@@ -1900,8 +2033,14 @@ class RootScreenState extends State<RootScreen>
                         _sanitizeFilename(Uri.parse(url).pathSegments.last);
                     final f = File('${cacheDir.path}/$name');
                     await f.writeAsBytes(res.bodyBytes, flush: true);
+                  } else if (res.statusCode == 404) {
+                    _missingPrefetchMedia.add(prefetchKey);
                   }
                 }).catchError((e) {
+                  if (_isHttp404Error(e)) {
+                    _missingPrefetchMedia.add(prefetchKey);
+                    return;
+                  }
                   _appendLog('[chat.prefetch] external media $url failed: $e');
                 }));
               }
@@ -1914,9 +2053,10 @@ class RootScreenState extends State<RootScreen>
         _appendLog('[chat.prefetch] message parse error: $e');
       }
 
-      if (tasks.length >= 6) {
+      if (tasks.length >= 2) {
         await Future.wait(tasks);
         tasks.clear();
+        await Future.delayed(Duration.zero);
       }
     }
 
@@ -1932,7 +2072,9 @@ class RootScreenState extends State<RootScreen>
       entries.sort((a, b) => b.value.last.time.compareTo(a.value.last.time));
       final toPrefetch = entries.take(limit).map((e) => e.key).toList();
       for (final id in toPrefetch) {
-        Future.microtask(() => ensureMediaCachedForChat(id));
+        if (!mounted) break;
+        await ensureMediaCachedForChat(id);
+        await Future.delayed(const Duration(milliseconds: 500));
       }
     } catch (e) {
       debugPrint('[chat.prefetch] error: $e');
@@ -1950,13 +2092,11 @@ class RootScreenState extends State<RootScreen>
       final cached = await AccountManager.loadChats(uname);
       if (mounted) {
         setState(() {
-          
           final merged = Map<String, List<ChatMessage>>.from(cached);
           for (final entry in chats.entries) {
             if (!merged.containsKey(entry.key)) {
               merged[entry.key] = entry.value;
             } else {
-              
               final cachedServerIds = merged[entry.key]!
                   .where((m) => m.serverMessageId != null)
                   .map((m) => m.serverMessageId!)
@@ -1979,16 +2119,15 @@ class RootScreenState extends State<RootScreen>
           _buildServerMsgIndex();
         });
         chatsVersion.value++;
-        unawaited(_preloadUserProfiles());
-        Future.delayed(const Duration(seconds: 4), () {
-          if (mounted) _prefetchTopChatsMedia(3);
+        unawaited(_warmRecentUserProfiles());
+        Future.delayed(const Duration(seconds: 20), () {
+          if (mounted) _prefetchTopChatsMedia(1);
         });
         _appendLog('[chats] quick cache load ${chats.length} chats for $uname');
       }
     } catch (e) {
       debugPrint('[chats] quick cache load failed: $e');
     } finally {
-      
       _chatsLoadCompleter?.complete();
     }
   }
@@ -1998,7 +2137,7 @@ class RootScreenState extends State<RootScreen>
       _favorites.add(fav);
     });
     _saveFavorites();
-    
+
     Future.microtask(() => ensureMediaCachedForFavorite(fav.id));
   }
 
@@ -2030,7 +2169,6 @@ class RootScreenState extends State<RootScreen>
 
     if (i == 0 || i == 1 || i == 2 || i == 3) {
       if (isDesktop) {
-        
         setState(() {
           selectedChatOther = null;
           selectedGroup = null;
@@ -2040,7 +2178,6 @@ class RootScreenState extends State<RootScreen>
           _index = i;
         });
       } else {
-        
         Navigator.of(context, rootNavigator: true)
             .popUntil((route) => route.isFirst);
         setState(() => _index = i);
@@ -2050,13 +2187,14 @@ class RootScreenState extends State<RootScreen>
     }
 
     if (_pageController.hasClients) {
-      _pageController.jumpToPage(i);
+      _pageController.jumpToPage(i + _graphTabOffset);
     }
   }
 
   @override
   void initState() {
     super.initState();
+    _handleY = _savedHandleY;
     HardwareKeyboard.instance.addHandler(_onGlobalKeyEvent);
     _motivationalHintIndex = Random().nextInt(_motivationalHints.length);
 
@@ -2080,7 +2218,8 @@ class RootScreenState extends State<RootScreen>
         // before we call setState, to prevent "setState during build" crashes.
         if (!mounted) return;
         final completer = Completer<void>();
-        WidgetsBinding.instance.addPostFrameCallback((_) => completer.complete());
+        WidgetsBinding.instance
+            .addPostFrameCallback((_) => completer.complete());
         await completer.future;
         if (!mounted) return;
 
@@ -2103,20 +2242,27 @@ class RootScreenState extends State<RootScreen>
           // before the navigation animation starts, causing jitter.
           selectedChatOther = username;
           _checkKeyChangeOnChatOpen(username);
-          Navigator.of(context).push(
+          Navigator.of(context)
+              .push(
             _chatRoute((_) => ChatScreen(
-                myUsername: currentUsername ?? 'me',
-                otherUsername: username,
-                onSend: (t, replyTo) => _sendChatMessage(username, t, replyTo),
-                onTyping: () => _handleSendTyping(username),
-                onRequestResend: (id) {
-                  if (id != null) _requestResend(id);
-                },
-                onEditMessage: (id, text) => _editChatMessage(username, id, text),
-                onDeleteMessage: (id) => _deleteChatMessage(id),
-              )),
-          ).then((_) {
-            if (mounted) setState(() { selectedChatOther = null; });
+                  myUsername: currentUsername ?? 'me',
+                  otherUsername: username,
+                  onSend: (t, replyTo) =>
+                      _sendChatMessage(username, t, replyTo),
+                  onTyping: () => _handleSendTyping(username),
+                  onRequestResend: (id) {
+                    if (id != null) _requestResend(id);
+                  },
+                  onEditMessage: (id, text) =>
+                      _editChatMessage(username, id, text),
+                  onDeleteMessage: (id) => _deleteChatMessage(id),
+                )),
+          )
+              .then((_) {
+            if (mounted)
+              setState(() {
+                selectedChatOther = null;
+              });
           });
         }
       });
@@ -2126,12 +2272,20 @@ class RootScreenState extends State<RootScreen>
 
     _configureAudioSession();
 
+    // Set decoy identity before the first build so currentUsername is non-null
+    // and the "no account" screen never flashes.
+    if (DecoyManager.isActive.value) {
+      currentUsername = DecoyManager.username;
+      currentDisplayName = DecoyManager.displayName;
+    }
+
     _initializeAccountAndConnect();
 
     _audioPlayer.setReleaseMode(ReleaseMode.stop);
     _audioPlayer.setPlayerMode(PlayerMode.mediaPlayer);
 
-    _pageController = PageController(initialPage: _index);
+    _pageController = PageController(initialPage: _index + _graphTabOffset);
+    SettingsManager.showAccountGraph.addListener(_onShowGraphChanged);
     callManager.init(getWs: () => _ws);
 
     // Route voice channel signaling to VoiceChannelManager
@@ -2152,7 +2306,7 @@ class RootScreenState extends State<RootScreen>
         NotificationService.openChatStream.listen((other) {
       if (!mounted) return;
       NotificationService.clearMessagesForUser(other);
-      
+
       if (isDesktop) {
         setState(() {
           selectedChatOther = other;
@@ -2162,7 +2316,7 @@ class RootScreenState extends State<RootScreen>
           _selectedFavoriteId = null;
         });
         _checkKeyChangeOnChatOpen(other);
-        
+
         _markChatAsRead(other);
         return;
       }
@@ -2173,21 +2327,24 @@ class RootScreenState extends State<RootScreen>
       Navigator.of(context)
           .push(
         _chatRoute((_) => ChatScreen(
-            myUsername: currentUsername ?? 'me',
-            otherUsername: other,
-            onSend: (t, replyTo) => _sendChatMessage(other, t, replyTo),
-            onTyping: () => _handleSendTyping(other),
-            onRequestResend: (id) {
-              if (id != null) _requestResend(id);
-            },
-            onEditMessage: (id, text) => _editChatMessage(other, id, text),
-            onDeleteMessage: (id) => _deleteChatMessage(id),
-          )),
+              myUsername: currentUsername ?? 'me',
+              otherUsername: other,
+              onSend: (t, replyTo) => _sendChatMessage(other, t, replyTo),
+              onTyping: () => _handleSendTyping(other),
+              onRequestResend: (id) {
+                if (id != null) _requestResend(id);
+              },
+              onEditMessage: (id, text) => _editChatMessage(other, id, text),
+              onDeleteMessage: (id) => _deleteChatMessage(id),
+            )),
       )
           .then((_) {
-        if (mounted) setState(() { selectedChatOther = null; });
+        if (mounted)
+          setState(() {
+            selectedChatOther = null;
+          });
         _sendPresence('online');
-        
+
         _markChatAsRead(other);
       });
     });
@@ -2201,7 +2358,6 @@ class RootScreenState extends State<RootScreen>
   }
 
   Future<void> _initBackground() async {
-    
     if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
       await Workmanager().initialize(
         callbackDispatcher,
@@ -2251,7 +2407,6 @@ class RootScreenState extends State<RootScreen>
   }
 
   void hideDetailPanel() {
-    
     try {
       Navigator.of(context).popUntil((route) => route is! PopupRoute);
     } catch (_) {}
@@ -2286,7 +2441,8 @@ class RootScreenState extends State<RootScreen>
           notificationText: 'Connected — receiving messages',
           callback: onyxForegroundTaskEntryPoint,
         );
-        _appendLog('[lifecycle] Foreground service started (background keep-alive)');
+        _appendLog(
+            '[lifecycle] Foreground service started (background keep-alive)');
       } else if (state == AppLifecycleState.resumed) {
         FlutterForegroundTask.stopService();
         _appendLog('[lifecycle] Foreground service stopped (app foregrounded)');
@@ -2321,7 +2477,7 @@ class RootScreenState extends State<RootScreen>
   @override
   void reassemble() {
     super.reassemble();
-    
+
     ExternalServerManager.reconnectIfNeeded();
   }
 
@@ -2345,8 +2501,10 @@ class RootScreenState extends State<RootScreen>
     if (_hasPendingPersist) {
       unawaited(persistChats());
     }
-    
+
     _pageChangeDebounce?.cancel();
+    _graphUnmountTimer?.cancel();
+    _savedHandleY = _handleY;
 
     try {
       _notificationSubscription?.cancel();
@@ -2356,7 +2514,7 @@ class RootScreenState extends State<RootScreen>
     } catch (_) {}
 
     _audioPlayer.dispose();
-    
+
     _recorder.dispose();
 
     try {
@@ -2365,6 +2523,7 @@ class RootScreenState extends State<RootScreen>
 
     _disconnectWs();
     HardwareKeyboard.instance.removeHandler(_onGlobalKeyEvent);
+    SettingsManager.showAccountGraph.removeListener(_onShowGraphChanged);
     _pageController.dispose();
     super.dispose();
   }
@@ -2375,7 +2534,6 @@ class RootScreenState extends State<RootScreen>
     try {
       final sound = SettingsManager.notifSound.value;
       if (sound.startsWith('custom:')) {
-        
         final path = sound.substring(7);
         await _audioPlayer.play(DeviceFileSource(path));
       } else {
@@ -2387,22 +2545,56 @@ class RootScreenState extends State<RootScreen>
   }
 
   void _initializeAccountAndConnect() {
-    
+    if (DecoyManager.isActive.value) {
+      _initDecoyMode();
+      return;
+    }
     unawaited(AccountManager.loadStatusSettings());
+    unawaited(AccountManager.loadPrivacySettings());
     _loadCurrentAccount();
+  }
+
+  Future<void> _initDecoyMode() async {
+    await DecoyDataManager.load();
+    if (!mounted) return;
+
+    for (final contact in DecoyDataManager.contacts) {
+      UserCache.seed(contact.username, contact.displayName);
+    }
+
+    // Mutate chats in-place so widget.chats in ChatsTab keeps the same reference.
+    // Replacing chats = newMap causes _rebuildSummaries to read the old empty map
+    // because ValueNotifier listeners fire synchronously before setState renders.
+    final fakeChats = DecoyDataManager.buildChatMap(currentUsername!);
+    chats.clear();
+    chats.addAll(fakeChats);
+    setState(() {
+      _favorites = List.from(DecoyDataManager.fakeFavorites);
+    });
+
+    // Now safe to bump — ChatsTab's widget.chats already has the data.
+    chatsVersion.value++;
+    groupsVersion.value++;
+
+    // Simulate connecting → connected after short delay
+    await Future.delayed(const Duration(milliseconds: 1600));
+    if (mounted && DecoyManager.isActive.value) {
+      wsConnectedNotifier.value = true;
+    }
+
+    _appendLog('[decoy] Decoy mode active');
   }
 
   Future<void> _loadCurrentAccount() async {
     final username = await AccountManager.getCurrentAccount();
-    
+
     if (username != null) {
-      
       unawaited(AccountManager.touchLastUsed(username));
 
       _chatsLoadCompleter = Completer<void>();
-      
+
       Future.microtask(() => _loadChatsFromCacheNow(username));
-      
+
       await _loadAccountData(username);
 
       if (_identityPublicKey == null) {
@@ -2424,12 +2616,13 @@ class RootScreenState extends State<RootScreen>
           );
         }
       }
-      
+
       if (currentUsername != null) {
         LANMessageManager().onMessageReceived = (message) {
           _handleIncomingLANMessage(message);
         };
-        LANMessageManager().onMediaReceived = (mediaType, filename, data, from, to, replyTo) {
+        LANMessageManager().onMediaReceived =
+            (mediaType, filename, data, from, to, replyTo) {
           _handleIncomingLANMedia(mediaType, filename, data, from, to, replyTo);
         };
         LANMessageManager().onKeyMismatch = (username, fingerprint) {
@@ -2466,21 +2659,19 @@ class RootScreenState extends State<RootScreen>
         showSnack('Account loaded, but connection failed. Retrying...');
       }
     } else {
-      
-      _appendLog('[startup] no saved account, checking for available accounts...');
-      
+      _appendLog(
+          '[startup] no saved account, checking for available accounts...');
+
       final accounts = await AccountManager.getAccountsList();
       if (accounts.isNotEmpty) {
-        
         _appendLog('[startup] auto-logging in to ${accounts.first}');
         await _switchToAccount(accounts.first);
       } else {
-        
         _appendLog('[startup] no accounts available, show login screen');
         currentUsername = null;
       }
     }
-    
+
     setState(() {});
   }
 
@@ -2495,19 +2686,18 @@ class RootScreenState extends State<RootScreen>
     final cachedUin = uinPrefs.getString('uin_$username');
     if (cachedUin != null) currentUin = cachedUin;
 
-    final cachedIsPrimary = await SecureStore.read('is_primary_device_$username');
+    final cachedIsPrimary =
+        await SecureStore.read('is_primary_device_$username');
     if (mounted) setState(() => _isPrimaryDevice = cachedIsPrimary == 'true');
 
     Future(() async {
       try {
         final tok = await AccountManager.getToken(username);
         if (tok == null || !mounted) return;
-        final isPrimaryRes = await http
-            .get(
-              Uri.parse('$serverBase/me/is-primary'),
-              headers: {'authorization': 'Bearer $tok'},
-            )
-            .timeout(const Duration(seconds: 5));
+        final isPrimaryRes = await http.get(
+          Uri.parse('$serverBase/me/is-primary'),
+          headers: {'authorization': 'Bearer $tok'},
+        ).timeout(const Duration(seconds: 5));
         if (isPrimaryRes.statusCode == 200 && mounted) {
           final data = jsonDecode(isPrimaryRes.body);
           final serverIsPrimary = data['is_primary'] == true;
@@ -2517,9 +2707,7 @@ class RootScreenState extends State<RootScreen>
           );
           if (mounted) setState(() => _isPrimaryDevice = serverIsPrimary);
         }
-      } catch (_) {
-        
-      }
+      } catch (_) {}
     });
 
     _normalizeChatsForCurrentUser();
@@ -2529,12 +2717,10 @@ class RootScreenState extends State<RootScreen>
       try {
         final token = await AccountManager.getToken(username);
         if (token == null || !mounted) return;
-        final res = await http
-            .get(
-              Uri.parse('$serverBase/profile/$username'),
-              headers: {'authorization': 'Bearer $token'},
-            )
-            .timeout(const Duration(seconds: 5));
+        final res = await http.get(
+          Uri.parse('$serverBase/profile/$username'),
+          headers: {'authorization': 'Bearer $token'},
+        ).timeout(const Duration(seconds: 5));
         if (res.statusCode == 200 && mounted) {
           final data = jsonDecode(res.body) as Map<String, dynamic>;
           final dn = (data['display_name'] as String?) ?? username;
@@ -2542,12 +2728,12 @@ class RootScreenState extends State<RootScreen>
           if (data['uin'] != null) {
             final uinStr = data['uin'].toString();
             currentUin = uinStr;
-            
+
             final prefs = await SharedPreferences.getInstance();
             unawaited(prefs.setString('uin_$username', uinStr));
           }
           setState(() {});
-          
+
           unawaited(AccountManager.cacheDisplayName(username, dn));
         }
       } catch (e) {
@@ -2558,7 +2744,6 @@ class RootScreenState extends State<RootScreen>
     final identity = await AccountManager.getIdentity(username);
     if (identity != null) {
       try {
-        
         final keyPairData = await compute(_decodeIdentity, identity);
         _identityKeyPair = keyPairData.keyPair;
         _identityPublicKey = keyPairData.publicKey;
@@ -2574,10 +2759,9 @@ class RootScreenState extends State<RootScreen>
 
     _initializeUnreadCounts();
 
-    unawaited(_preloadUserProfiles());
-    chatsVersion.value++; 
-    setState(
-        () {}); 
+    unawaited(_warmRecentUserProfiles());
+    chatsVersion.value++;
+    setState(() {});
     _appendLog('[chats] loaded ${chats.length} chats for $username');
   }
 
@@ -2641,7 +2825,6 @@ class RootScreenState extends State<RootScreen>
   }
 
   Future<void> _switchToAccount(String username) async {
-
     if (_isSwitchingAccount) {
       _appendLog('[account] switch to $username queued (switch in progress)');
       _pendingAccountSwitch = username;
@@ -2655,16 +2838,14 @@ class RootScreenState extends State<RootScreen>
 
     _isSwitchingAccount = true;
     _pendingAccountSwitch = null;
-    setState(() {}); 
+    setState(() {});
 
     try {
-      
       await _disconnectWs(manual: true, suppressPresence: true);
 
       ExternalServerManager.disconnectAll();
-      _appendLog('[ext-servers] Disconnected all external servers for account switch');
-
-      await Future.delayed(const Duration(milliseconds: 100));
+      _appendLog(
+          '[ext-servers] Disconnected all external servers for account switch');
 
       _persistChatsTimer?.cancel();
       if (_hasPendingPersist && currentUsername != null) {
@@ -2680,39 +2861,34 @@ class RootScreenState extends State<RootScreen>
         _chatScreenCache.clear();
         _groupChatScreenCache.clear();
         _externalGroupChatScreenCache.clear();
-        _appendLog('[session] _chatScreenCache cleared on account switch to $username');
+        _appendLog(
+            '[session] _chatScreenCache cleared on account switch to $username');
         selectedGroup = null;
         selectedExternalGroup = null;
         selectedExternalServer = null;
       });
       _pubkeyCache.clear();
       _pubkeyUploadedToServer = false;
-      
+
       _lastPubkeyUploadAttempt = null;
       _lastPubkeyUploadTime = null;
       chatsVersion.value++;
 
       await AccountManager.setCurrentAccount(username);
 
-      await AccountManager.loadStatusSettings();
+      // These HTTP calls don't affect WS connection — run in background
+      unawaited(AccountManager.loadStatusSettings());
+      unawaited(AccountManager.loadPrivacySettings());
 
       _chatsLoadCompleter = Completer<void>();
-      await _loadAccountData(username);
+      await _loadAccountData(
+          username); // identity loaded here — WS can connect after this
       await _loadChatsFromCacheNow(username);
       _appendLog('[account] switched to $username');
 
       accountSwitchVersion.value++;
 
-      await _loadFavorites();
-
-      try {
-        await ExternalServerManager.loadServers();
-        await ExternalServerManager.refreshAllExternalGroups();
-        _appendLog('[ext-servers] Loaded ${ExternalServerManager.servers.value.length} external servers for $username');
-      } catch (e) {
-        _appendLog('[ext-servers] Failed to load for new account: $e');
-      }
-
+      // Connect WS immediately after identity is ready
       final ready = await _ensurePubkeyAndWsReady(
         maxRetries: 10,
         retryDelay: const Duration(milliseconds: 100),
@@ -2720,11 +2896,23 @@ class RootScreenState extends State<RootScreen>
       if (!ready) {
         showSnack('Failed to connect after account switch');
       }
-
       _appendLog('[account] switch complete, ws ready=$ready');
+
+      // Load the rest after WS is up — these don't block connection
+      unawaited(_loadFavorites());
+      unawaited(() async {
+        try {
+          await ExternalServerManager.loadServers();
+          unawaited(ExternalServerManager.refreshAllExternalGroups());
+          _appendLog(
+              '[ext-servers] Loaded ${ExternalServerManager.servers.value.length} external servers for $username');
+        } catch (e) {
+          _appendLog('[ext-servers] Failed to load for new account: $e');
+        }
+      }());
     } finally {
       _isSwitchingAccount = false;
-      setState(() {}); 
+      setState(() {});
 
       final pending = _pendingAccountSwitch;
       if (pending != null) {
@@ -2737,30 +2925,27 @@ class RootScreenState extends State<RootScreen>
 
   Future<void> _deleteAccount(String username) async {
     final isCurrent = username == currentUsername;
-    
+
     _appendLog('[account] deleting $username (is current: $isCurrent)');
-    
+
     await AccountManager.removeAccount(username);
     _appendLog('[account] removed $username from storage');
-    
+
     if (isCurrent) {
-      
       final remaining = await AccountManager.getAccountsList();
       _appendLog('[account] accounts remaining after delete: $remaining');
-      
+
       if (remaining.isNotEmpty) {
-        
-        _appendLog('[account] switching to ${remaining.first} after deleting current');
+        _appendLog(
+            '[account] switching to ${remaining.first} after deleting current');
         await _switchToAccount(remaining.first);
       } else {
-        
         _appendLog('[account] no accounts remaining after delete, logging out');
         await _logout();
-        
+
         if (mounted) setState(() {});
       }
     } else {
-      
       if (mounted) setState(() {});
     }
   }
@@ -2774,22 +2959,21 @@ class RootScreenState extends State<RootScreen>
     }
 
     if (_fullSaveRequested || _dirtyChatIds.isEmpty) {
-      
       await AccountManager.saveChats(currentUsername!, chats);
-      _appendLog('[persist] full save ${chats.length} chats for $currentUsername');
+      _appendLog(
+          '[persist] full save ${chats.length} chats for $currentUsername');
     } else {
-      
       final dirty = Set<String>.from(_dirtyChatIds);
       for (final chatId in dirty) {
         final msgs = chats[chatId];
         if (msgs != null) {
           await AccountManager.saveSingleChat(currentUsername!, chatId, msgs);
         } else {
-          
           await AccountManager.deleteChatFile(currentUsername!, chatId);
         }
       }
-      _appendLog('[persist] incremental save ${dirty.length} chats for $currentUsername');
+      _appendLog(
+          '[persist] incremental save ${dirty.length} chats for $currentUsername');
     }
 
     _dirtyChatIds.clear();
@@ -2881,7 +3065,7 @@ class RootScreenState extends State<RootScreen>
         _pendingNotifications.clear();
         return;
       }
-      
+
       final entry = _pendingNotifications.entries.last;
       final sender = entry.key;
       final preview = entry.value;
@@ -2891,7 +3075,8 @@ class RootScreenState extends State<RootScreen>
       final colorScheme = Theme.of(context).colorScheme;
       String hex(Color c) => c.toARGB32().toRadixString(16).padLeft(8, '0');
       final position = SettingsManager.notificationPosition.value;
-      final senderDisplayName = UserCache.getSync(sender)?.displayName ?? sender;
+      final senderDisplayName =
+          UserCache.getSync(sender)?.displayName ?? sender;
       final finalPreview = count > 1 ? '$count new messages' : preview;
       final previewIsMedia = count == 1 && isMedia;
 
@@ -2934,7 +3119,8 @@ class RootScreenState extends State<RootScreen>
             final hideContent = SettingsManager.notifHideContent.value;
             final notifTitle = hideContent ? 'ONYX' : senderDisplayName;
             final notifBody = hideContent ? 'New message' : finalPreview;
-            final avatarBytes = hideContent ? null : await getAvatarCachedBytes(sender);
+            final avatarBytes =
+                hideContent ? null : await getAvatarCachedBytes(sender);
             await NotificationService.showMessageNotification(
               title: notifTitle,
               body: notifBody,
@@ -2955,8 +3141,8 @@ class RootScreenState extends State<RootScreen>
   void _appendLog(String s) {
     final t = '${DateTime.now().toIso8601String()} $s';
     debugPrint(t);
-    _log.insert(0, t);
-    if (_log.length > 500) _log.removeRange(500, _log.length);
+    _log.add(t);
+    if (_log.length > 500) _log.removeAt(0);
   }
 
   String _computePubkeyFpHex(List<int> raw) {
@@ -3021,19 +3207,17 @@ class RootScreenState extends State<RootScreen>
       _appendLog('[pubkey] missing identity or account');
       return false;
     }
-    
+
     try {
       if (_pubkeyUploadedToServer && _lastPubkeyUploadTime != null) {
         final since = DateTime.now().difference(_lastPubkeyUploadTime!);
         if (since.inSeconds < 60) {
           _appendLog(
               '[pubkey] skipped upload (already on server, debounce ${60 - since.inSeconds}s)');
-          return true; 
+          return true;
         }
       }
-    } catch (e) {
-      
-    }
+    } catch (e) {}
     final token = await AccountManager.getToken(currentUsername!);
     if (token == null) {
       _appendLog('[pubkey] no token');
@@ -3054,28 +3238,27 @@ class RootScreenState extends State<RootScreen>
         _appendLog('[pubkey] uploaded ');
         return true;
       } else {
-        
         _appendLog('[pubkey] failed: ${res.statusCode}');
         return false;
       }
     } catch (e) {
-      
       _appendLog('[pubkey] error: $e');
       return false;
     }
   }
 
   Future<void> rotateIdentityKey() async {
-    await _generateIdentity();        
-    _pubkeyUploadedToServer = false;  
-    _lastPubkeyUploadTime  = null;
-    _pubkeyCache.clear();             
-    _devicePubkeysCache.clear();      
-    await _uploadPubkeyToServer();    
+    await _generateIdentity();
+    _pubkeyUploadedToServer = false;
+    _lastPubkeyUploadTime = null;
+    _pubkeyCache.clear();
+    _devicePubkeysCache.clear();
+    await _uploadPubkeyToServer();
 
     if (_ws != null) {
       try {
-        _ws!.sink.add(jsonEncode({'type': 'pubkey_updated', 'username': currentUsername}));
+        _ws!.sink.add(jsonEncode(
+            {'type': 'pubkey_updated', 'username': currentUsername}));
         _appendLog('[key-rotation] pubkey_updated broadcast sent via WS');
       } catch (e) {
         _appendLog('[key-rotation] pubkey_updated WS send failed: $e');
@@ -3087,7 +3270,8 @@ class RootScreenState extends State<RootScreen>
 
   Future<void> fullSessionReset() async {
     final username = currentUsername;
-    final token = username != null ? await AccountManager.getToken(username) : null;
+    final token =
+        username != null ? await AccountManager.getToken(username) : null;
 
     await rotateIdentityKey();
 
@@ -3097,9 +3281,8 @@ class RootScreenState extends State<RootScreen>
           Uri.parse('$serverBase/me/sessions'),
           headers: {'authorization': 'Bearer $token'},
         );
-        final revoked = res.statusCode == 200
-            ? (jsonDecode(res.body)['revoked'] ?? 0)
-            : 0;
+        final revoked =
+            res.statusCode == 200 ? (jsonDecode(res.body)['revoked'] ?? 0) : 0;
         _appendLog('[session-reset] Revoked $revoked other session(s) ');
         showSnack(' Key rotated — $revoked other session(s) kicked');
       } catch (e) {
@@ -3173,7 +3356,10 @@ class RootScreenState extends State<RootScreen>
       final plugin = DeviceInfoPlugin();
       if (Platform.isAndroid) {
         final info = await plugin.androidInfo;
-        return ('${info.brand} ${info.model}', 'Android ${info.version.release}');
+        return (
+          '${info.brand} ${info.model}',
+          'Android ${info.version.release}'
+        );
       } else if (Platform.isIOS) {
         final info = await plugin.iosInfo;
         return (info.utsname.machine, 'iOS ${info.systemVersion}');
@@ -3244,10 +3430,10 @@ class RootScreenState extends State<RootScreen>
         await _loadFavorites();
         _appendLog('[login] ok for $username');
 
-        await _disconnectWs(); 
-        _pubkeyCache.clear(); 
-        _pubkeyUploadedToServer = false; 
-        _lastPubkeyUploadAttempt = null; 
+        await _disconnectWs();
+        _pubkeyCache.clear();
+        _pubkeyUploadedToServer = false;
+        _lastPubkeyUploadAttempt = null;
 
         bool ready = false;
         for (int i = 0; i < 5; i++) {
@@ -3267,7 +3453,8 @@ class RootScreenState extends State<RootScreen>
         try {
           await ExternalServerManager.loadServers();
           await ExternalServerManager.refreshAllExternalGroups();
-          _appendLog('[ext-servers] Loaded ${ExternalServerManager.servers.value.length} external servers for $username');
+          _appendLog(
+              '[ext-servers] Loaded ${ExternalServerManager.servers.value.length} external servers for $username');
         } catch (e) {
           _appendLog('[ext-servers] Failed to load for new account: $e');
         }
@@ -3286,7 +3473,8 @@ class RootScreenState extends State<RootScreen>
     final passphrase = await SecureStore.read('passphrase_$username');
     if (!mounted) return;
     if (passphrase == null) {
-      showSnack(AppLocalizations(SettingsManager.appLocale.value).passphraseNotFound);
+      showSnack(
+          AppLocalizations(SettingsManager.appLocale.value).passphraseNotFound);
       return;
     }
     final words = passphrase.split(' ');
@@ -3299,7 +3487,8 @@ class RootScreenState extends State<RootScreen>
             Icon(Icons.key, color: colorScheme.primary),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(AppLocalizations.of(ctx).yourPassphraseTitle, style: const TextStyle(fontSize: 16)),
+              child: Text(AppLocalizations.of(ctx).yourPassphraseTitle,
+                  style: const TextStyle(fontSize: 16)),
             ),
           ],
         ),
@@ -3318,7 +3507,8 @@ class RootScreenState extends State<RootScreen>
                 runSpacing: 8,
                 children: words.asMap().entries.map((e) {
                   return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
                       color: colorScheme.primaryContainer,
                       borderRadius: BorderRadius.circular(8),
@@ -3385,10 +3575,195 @@ class RootScreenState extends State<RootScreen>
     _onTabSelected(5);
   }
 
+  void _openGraphOverlay() {
+    _graphUnmountTimer?.cancel();
+    setState(() {
+      _graphOverlayMounted = true;
+      _graphOverlayVisible = true;
+    });
+  }
+
+  void _closeGraphOverlay() {
+    setState(() => _graphOverlayVisible = false);
+    _graphUnmountTimer?.cancel();
+    _graphUnmountTimer = Timer(const Duration(milliseconds: 320), () {
+      if (mounted && !_graphOverlayVisible) {
+        setState(() => _graphOverlayMounted = false);
+      }
+    });
+  }
+
+  void _onShowGraphChanged() {
+    if (!mounted) return;
+    if (!_mobileGraphEnabled) {
+      _graphUnmountTimer?.cancel();
+      _graphOverlayVisible = false;
+      _graphOverlayMounted = false;
+    }
+    setState(() {});
+    // Re-align PageController after the tab list gains/loses the graph page
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _pageController.hasClients) {
+        _pageController.jumpToPage(_index + _graphTabOffset);
+      }
+    });
+  }
+
+  Widget _buildMobileGraphPage() {
+    return AccountGraphView(
+      onChatTap: (username) {
+        final chatId = chatIdForUser(username);
+        chats.putIfAbsent(chatId, () => []);
+        setState(() {
+          selectedChatOther = username;
+        });
+        Navigator.of(context).push(
+          _chatRoute((_) => ChatScreen(
+                myUsername: currentUsername ?? 'me',
+                otherUsername: username,
+                onSend: (t, replyTo) => _sendChatMessage(username, t, replyTo),
+                onTyping: () => _handleSendTyping(username),
+                onRequestResend: (id) {
+                  if (id != null) _requestResend(id);
+                },
+                onEditMessage: (id, text) =>
+                    _editChatMessage(username, id, text),
+                onDeleteMessage: (id) => _deleteChatMessage(id),
+              )),
+        );
+      },
+      onGroupTap: (group) {
+        Navigator.of(context).push(
+          _chatRoute((_) => GroupChatScreen(group: group)),
+        );
+      },
+      onExternalGroupTap: (group) {
+        final srv = ExternalServerManager.servers.value
+            .cast<ExternalServer?>()
+            .firstWhere((s) => s?.id == group.externalServerId,
+                orElse: () => null);
+        if (srv == null) return;
+        Navigator.of(context).push(
+          _chatRoute((_) => ExternalGroupChatScreen(group: group, server: srv)),
+        );
+      },
+      onFavoriteTap: (favId) {
+        try {
+          final fav = _favorites.firstWhere((f) => f.id == favId);
+          Navigator.of(context).push(
+            _chatRoute((_) => getFavoritesScreen(favId, fav.title)),
+          );
+        } catch (_) {}
+      },
+    );
+  }
+
+  Widget _buildGraphOverlay() {
+    final colors = Theme.of(context).colorScheme;
+    return AnimatedSlide(
+      offset: _graphOverlayVisible ? Offset.zero : const Offset(-1.0, 0.0),
+      duration: const Duration(milliseconds: 280),
+      curve: _graphOverlayVisible ? Curves.easeOutCubic : Curves.easeInCubic,
+      child: IgnorePointer(
+        ignoring: !_graphOverlayVisible,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Material(
+              color: colors.surface,
+              child: _graphOverlayMounted
+                  ? _buildMobileGraphPage()
+                  : const SizedBox.shrink(),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: SafeArea(
+                minimum: const EdgeInsets.all(8),
+                child: Material(
+                  color: colors.surfaceContainerHighest.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(20),
+                  child: IconButton(
+                    icon: const Icon(Icons.close),
+                    iconSize: 20,
+                    onPressed: _closeGraphOverlay,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGraphHandle() {
+    return ValueListenableBuilder<double>(
+      valueListenable: SettingsManager.elementOpacity,
+      builder: (_, opacity, __) => ValueListenableBuilder<double>(
+        valueListenable: SettingsManager.elementBrightness,
+        builder: (_, brightness, ___) {
+          final colors = Theme.of(context).colorScheme;
+          final baseColor = SettingsManager.getElementColor(
+            colors.surfaceContainerHighest,
+            brightness,
+          );
+          final bg = baseColor.withValues(
+            alpha: (opacity * 0.62).clamp(0.0, 0.78),
+          );
+          final fg = colors.primary.withValues(
+            alpha: (_graphOverlayVisible ? 1.0 : 0.88).clamp(0.0, 1.0),
+          );
+
+          return Positioned(
+            left: 0,
+            top: _handleY,
+            child: GestureDetector(
+              onTap: () => _graphOverlayVisible
+                  ? _closeGraphOverlay()
+                  : _openGraphOverlay(),
+              onVerticalDragUpdate: (d) {
+                final screenH = MediaQuery.of(context).size.height;
+                setState(() {
+                  _handleY =
+                      (_handleY + d.delta.dy).clamp(40.0, screenH - 100.0);
+                });
+              },
+              onVerticalDragEnd: (_) => _savedHandleY = _handleY,
+              child: Container(
+                width: 30,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: const BorderRadius.only(
+                    topRight: Radius.circular(14),
+                    bottomRight: Radius.circular(14),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.28),
+                      blurRadius: 8,
+                      offset: const Offset(2, 1),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  _graphOverlayVisible ? Icons.hub : Icons.hub_outlined,
+                  size: 19,
+                  color: fg,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _logout() async {
     _disconnectWs();
     ExternalServerManager.disconnectAll();
-    
+
     currentUsername = null;
     currentDisplayName = null;
     currentUin = null;
@@ -3403,10 +3778,10 @@ class RootScreenState extends State<RootScreen>
     _chatScreenCache.clear();
     _groupChatScreenCache.clear();
     _externalGroupChatScreenCache.clear();
-    
+
     chatsVersion.value++;
-    unawaited(_preloadUserProfiles());
-    
+    unawaited(_warmRecentUserProfiles());
+
     await AccountManager.setCurrentAccount(null);
 
     if (isDesktop) {
@@ -3459,7 +3834,7 @@ class RootScreenState extends State<RootScreen>
 
       try {
         _ws = WebSocketChannel.connect(Uri.parse(wsUri));
-        
+
         _ws!.sink.add(jsonEncode({'type': 'auth', 'token': token}));
         _appendLog('[ws.connect] Auth frame sent');
       } catch (e) {
@@ -3474,31 +3849,39 @@ class RootScreenState extends State<RootScreen>
             if (event is String) {
               final obj = jsonDecode(event) as Map<String, dynamic>;
               final typ = obj['type'] as String?;
-              
+
               if (typ == 'init_complete') {
                 wsConnectedNotifier.value = true;
-                _appendLog('[ws] server init complete — WS tunnel established (proxy=${SettingsManager.proxyEnabled.value ? "${SettingsManager.proxyType.value.toUpperCase()} ${SettingsManager.proxyHost.value}:${SettingsManager.proxyPort.value}" : "none"})');
+                sessionExpiredNotifier.value = false;
+                _appendLog(
+                    '[ws] server init complete — WS tunnel established (proxy=${SettingsManager.proxyEnabled.value ? "${SettingsManager.proxyType.value.toUpperCase()} ${SettingsManager.proxyHost.value}:${SettingsManager.proxyPort.value}" : "none"})');
                 _appendLog('[ws] sending presence...');
                 _sendPresence('online');
                 _drainPendingMsgQueue();
 
                 try {
-                  
                   unawaited(_requestStatusSnapshotForKnownUsers());
                   unawaited(_syncBlocklistFromServer());
 
                   final known = Set<String>.from(chats.keys);
                   if (selectedChatOther != null) known.add(selectedChatOther!);
                   if (known.isNotEmpty && _ws != null) {
-                    _ws!.sink.add(jsonEncode({'type': 'request_status_snapshot', 'users': known.toList()}));
+                    _ws!.sink.add(jsonEncode({
+                      'type': 'request_status_snapshot',
+                      'users': known.toList()
+                    }));
                   }
 
                   Future.delayed(const Duration(seconds: 2), () {
                     try {
                       final known2 = Set<String>.from(chats.keys);
-                      if (selectedChatOther != null) known2.add(selectedChatOther!);
+                      if (selectedChatOther != null)
+                        known2.add(selectedChatOther!);
                       if (known2.isNotEmpty && _ws != null) {
-                        _ws!.sink.add(jsonEncode({'type': 'request_status_snapshot', 'users': known2.toList()}));
+                        _ws!.sink.add(jsonEncode({
+                          'type': 'request_status_snapshot',
+                          'users': known2.toList()
+                        }));
                       }
                     } catch (_) {}
                   });
@@ -3516,14 +3899,15 @@ class RootScreenState extends State<RootScreen>
                   ProxyManager.pendingApplyOnConnect = false;
                   ProxyManager.applyFromSettings();
                   applyCertPinning();
-                  _appendLog('[proxy] Deferred proxy applied — reconnecting via ${SettingsManager.proxyType.value.toUpperCase()} ${SettingsManager.proxyHost.value}:${SettingsManager.proxyPort.value}');
+                  _appendLog(
+                      '[proxy] Deferred proxy applied — reconnecting via ${SettingsManager.proxyType.value.toUpperCase()} ${SettingsManager.proxyHost.value}:${SettingsManager.proxyPort.value}');
                   Future.delayed(const Duration(milliseconds: 500), () {
                     _disconnectWs();
-                    Future.delayed(const Duration(milliseconds: 300), _connectWs);
+                    Future.delayed(
+                        const Duration(milliseconds: 300), _connectWs);
                   });
                 } else if (SettingsManager.proxyEnabled.value &&
                     ProxyManager.lastApplied != null) {
-                  
                   proxyActiveNotifier.value = true;
                 }
 
@@ -3551,16 +3935,17 @@ class RootScreenState extends State<RootScreen>
 
                   onlineUsersNotifier.value = s;
 
-                  final vis = Map<String, String>.from(userStatusVisibilityNotifier.value);
+                  final vis = Map<String, String>.from(
+                      userStatusVisibilityNotifier.value);
                   if (vis[userFrom] != 'hide') {
                     vis[userFrom] = 'show';
                     userStatusVisibilityNotifier.value = vis;
                   }
 
-                  final statuses = Map<String, String>.from(userStatusNotifier.value);
+                  final statuses =
+                      Map<String, String>.from(userStatusNotifier.value);
                   statuses[userFrom] = state;
                   userStatusNotifier.value = statuses;
-
                 }
                 return;
               }
@@ -3577,22 +3962,24 @@ class RootScreenState extends State<RootScreen>
                   final s = Set<String>.from(onlineUsersNotifier.value);
 
                   if (statusVisibility == 'hide') {
-                    
                     s.remove(username);
                     onlineUsersNotifier.value = s;
 
-                    final statuses = Map<String, String>.from(userStatusNotifier.value);
+                    final statuses =
+                        Map<String, String>.from(userStatusNotifier.value);
                     statuses.remove(username);
                     userStatusNotifier.value = statuses;
 
-                    final vis = Map<String, String>.from(userStatusVisibilityNotifier.value);
+                    final vis = Map<String, String>.from(
+                        userStatusVisibilityNotifier.value);
                     vis[username] = 'hide';
                     userStatusVisibilityNotifier.value = vis;
 
                     return;
                   }
 
-                  final vis = Map<String, String>.from(userStatusVisibilityNotifier.value);
+                  final vis = Map<String, String>.from(
+                      userStatusVisibilityNotifier.value);
                   vis[username] = 'show';
                   userStatusVisibilityNotifier.value = vis;
 
@@ -3602,7 +3989,8 @@ class RootScreenState extends State<RootScreen>
                     s.remove(username);
                   onlineUsersNotifier.value = s;
 
-                  final statuses = Map<String, String>.from(userStatusNotifier.value);
+                  final statuses =
+                      Map<String, String>.from(userStatusNotifier.value);
                   if (displayState != null && displayState.isNotEmpty)
                     statuses[username] = displayState;
                   else
@@ -3612,7 +4000,8 @@ class RootScreenState extends State<RootScreen>
                   try {
                     final msgId = obj['message_id'] as String?;
                     if (msgId != null && _ws != null) {
-                      _ws!.sink.add(jsonEncode({'type': 'status_ack', 'message_id': msgId}));
+                      _ws!.sink.add(jsonEncode(
+                          {'type': 'status_ack', 'message_id': msgId}));
                     }
                   } catch (e) {
                     _appendLog('[status_ack] send failed: $e');
@@ -3628,18 +4017,21 @@ class RootScreenState extends State<RootScreen>
                     try {
                       final username = (u['username'] as String?)?.toString();
                       if (username == null) continue;
-                      final statusVisibility = (u['status_visibility'] as String?) ?? 'show';
+                      final statusVisibility =
+                          (u['status_visibility'] as String?) ?? 'show';
                       final displayState = (u['state'] as String?);
                       final isOnline = u['is_online'] == true;
 
                       final s = Set<String>.from(onlineUsersNotifier.value);
-                      final vis = Map<String, String>.from(userStatusVisibilityNotifier.value);
+                      final vis = Map<String, String>.from(
+                          userStatusVisibilityNotifier.value);
 
                       if (statusVisibility == 'hide') {
                         s.remove(username);
                         onlineUsersNotifier.value = s;
 
-                        final statuses = Map<String, String>.from(userStatusNotifier.value);
+                        final statuses =
+                            Map<String, String>.from(userStatusNotifier.value);
                         statuses.remove(username);
                         userStatusNotifier.value = statuses;
 
@@ -3658,15 +4050,14 @@ class RootScreenState extends State<RootScreen>
                         s.remove(username);
                       onlineUsersNotifier.value = s;
 
-                      final statuses = Map<String, String>.from(userStatusNotifier.value);
+                      final statuses =
+                          Map<String, String>.from(userStatusNotifier.value);
                       if (displayState != null && displayState.isNotEmpty)
                         statuses[username] = displayState;
                       else
                         statuses.remove(username);
                       userStatusNotifier.value = statuses;
-                    } catch (e) {
-                      
-                    }
+                    } catch (e) {}
                   }
                 } catch (e) {
                   _appendLog('[status_snapshot] parse error: $e');
@@ -3676,12 +4067,10 @@ class RootScreenState extends State<RootScreen>
               }
 
               if (typ == 'pong') {
-                
                 _appendLog('[pong] received from server');
                 return;
               }
               if (typ == 'typing') {
-                
                 return;
               }
 
@@ -3692,7 +4081,7 @@ class RootScreenState extends State<RootScreen>
                   if (from != null) {
                     _appendLog(
                         '[ws.avatar_update] from=$from deleted=$deleted');
-                    
+
                     avatarVersion.value++;
                   }
                 } catch (e) {
@@ -3726,11 +4115,10 @@ class RootScreenState extends State<RootScreen>
                 return;
               }
               if (typ == 'pubkey_updated') {
-                
                 final u = obj['username'] as String?;
                 if (u != null) {
                   _pubkeyCache.remove(u);
-                  _devicePubkeysCache.remove(u); 
+                  _devicePubkeysCache.remove(u);
                   _appendLog('[ws] pubkey_updated: cleared cache for $u');
                   _showKeyChangedWarning(u);
                 }
@@ -3738,13 +4126,14 @@ class RootScreenState extends State<RootScreen>
               }
 
               if (typ == 'device_approval_needed') {
-                final deviceName = (obj['device_name'] as String?) ?? 'Unknown device';
+                final deviceName =
+                    (obj['device_name'] as String?) ?? 'Unknown device';
                 final deviceOs = obj['device_os'] as String?;
-                final label = deviceOs != null ? '$deviceName ($deviceOs)' : deviceName;
+                final label =
+                    deviceOs != null ? '$deviceName ($deviceOs)' : deviceName;
                 _appendLog('[ws] device_approval_needed: $label');
                 if (!mounted) return;
                 if (_isPrimaryDevice) {
-                  
                   final colorScheme = Theme.of(context).colorScheme;
                   final brightness = SettingsManager.elementBrightness.value;
                   final opacity = SettingsManager.elementOpacity.value;
@@ -3765,9 +4154,12 @@ class RootScreenState extends State<RootScreen>
                       ),
                       backgroundColor: backgroundColor,
                       behavior: SnackBarBehavior.floating,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      margin: const EdgeInsets.only(bottom: 16, left: 16, right: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                      margin: const EdgeInsets.only(
+                          bottom: 16, left: 16, right: 16),
                       elevation: 4,
                       duration: const Duration(seconds: 8),
                       action: SnackBarAction(
@@ -3777,16 +4169,16 @@ class RootScreenState extends State<RootScreen>
                     ),
                   );
                 } else {
-                  
                   showSnack('A new device is requesting encryption access.');
                 }
                 return;
               }
 
               if (typ == 'device_approved') {
-                final deviceName = (obj['device_name'] as String?) ?? 'Unknown device';
+                final deviceName =
+                    (obj['device_name'] as String?) ?? 'Unknown device';
                 _appendLog('[ws] device_approved: $deviceName');
-                
+
                 _devicePubkeysCache.clear();
                 if (!mounted) return;
                 showSnack('Device "$deviceName" approved for encryption');
@@ -3806,7 +4198,6 @@ class RootScreenState extends State<RootScreen>
                 callManager.onHangup(obj);
                 return;
               } else if (typ == 'relay_offer') {
-                
                 debugPrint('[call] received relay_offer (fallback mode)');
                 return;
               }
@@ -3863,7 +4254,7 @@ class RootScreenState extends State<RootScreen>
                       : content;
                 }
                 final chatId = chatIdForUser(from);
-                
+
                 if (serverId != null) {
                   final existing = chats[chatId];
                   if (existing != null &&
@@ -3880,8 +4271,7 @@ class RootScreenState extends State<RootScreen>
                   to: currentUsername ?? 'me',
                   content: decrypted,
                   outgoing: false,
-                  isRead: selectedChatOther ==
-                      from, 
+                  isRead: selectedChatOther == from,
                   serverMessageId: serverId,
                   rawEnvelopePreview: rawPreview,
                   encryptedForDevice: encryptedForDevice,
@@ -3894,7 +4284,8 @@ class RootScreenState extends State<RootScreen>
                   replyToContent: obj['reply_to_content']?.toString(),
                 );
                 chats.putIfAbsent(chatId, () => []).add(msg);
-                if (msg.serverMessageId != null) _serverMsgIndex[msg.serverMessageId!] = chatId;
+                if (msg.serverMessageId != null)
+                  _serverMsgIndex[msg.serverMessageId!] = chatId;
 
                 if (!msg.isRead) {
                   unreadManager.incrementUnread(chatId);
@@ -3908,22 +4299,33 @@ class RootScreenState extends State<RootScreen>
                   _scheduleNotificationSound();
                 }
 
-                if (SettingsManager.notificationsEnabled.value && mounted && !MuteManager.isMuted(from)) {
+                if (SettingsManager.notificationsEnabled.value &&
+                    mounted &&
+                    !MuteManager.isMuted(from)) {
                   final rawPrev = msg.rawEnvelopePreview ??
                       (msg.content.length > 120
                           ? '${msg.content.substring(0, 120)}...'
                           : msg.content);
                   final messagePreview = getPreviewText(rawPrev);
                   const mediaLabels = {
-                    'Voice message', 'Image', 'Video file', 'Music', 'Video',
-                    'Document', 'Spreadsheet', 'Presentation', 'Archive',
-                    'Artifact', 'File',
+                    'Voice message',
+                    'Image',
+                    'Video file',
+                    'Music',
+                    'Video',
+                    'Document',
+                    'Spreadsheet',
+                    'Presentation',
+                    'Archive',
+                    'Artifact',
+                    'File',
                   };
                   final isMedia = mediaLabels.contains(messagePreview) ||
                       messagePreview.startsWith('[Message not decrypted]') ||
                       messagePreview == 'Album' ||
                       messagePreview.startsWith('Album ·');
-                  final displayName = UserCache.getSync(from)?.displayName ?? from;
+                  final displayName =
+                      UserCache.getSync(from)?.displayName ?? from;
                   _schedulePopupNotification(
                     from: from,
                     displayName: displayName,
@@ -3946,15 +4348,19 @@ class RootScreenState extends State<RootScreen>
                 _appendLog(
                   '[ws.ack] ok=$ok saved=$saved delivered=$delivered id=$serverId local=$localId ts=$timestamp',
                 );
-                
+
                 String? ackChatId;
                 if (saved && serverId != null && localId != null) {
-                  final targetServerId = (serverId is int) ? serverId : int.tryParse(serverId.toString());
+                  final targetServerId = (serverId is int)
+                      ? serverId
+                      : int.tryParse(serverId.toString());
                   if (targetServerId != null) {
                     for (final entry in chats.entries) {
                       bool matched = false;
                       for (final m in entry.value) {
-                        if (m.id == localId && m.outgoing && m.serverMessageId == null) {
+                        if (m.id == localId &&
+                            m.outgoing &&
+                            m.serverMessageId == null) {
                           m.serverMessageId = targetServerId;
                           _serverMsgIndex[targetServerId] = entry.key;
                           ackChatId = entry.key;
@@ -3999,7 +4405,8 @@ class RootScreenState extends State<RootScreen>
                 }
                 if (!mounted) return;
                 showSnack(
-                  AppLocalizations(SettingsManager.appLocale.value).blockedByUserMessage,
+                  AppLocalizations(SettingsManager.appLocale.value)
+                      .blockedByUserMessage,
                 );
                 return;
               }
@@ -4007,9 +4414,12 @@ class RootScreenState extends State<RootScreen>
               if (typ == 'msg_delivered') {
                 final serverId = obj['id'];
                 final delivered = obj['delivered'] == true;
-                _appendLog('[ws.msg_delivered] id=$serverId delivered=$delivered');
+                _appendLog(
+                    '[ws.msg_delivered] id=$serverId delivered=$delivered');
                 if (delivered && serverId != null) {
-                  final targetId = (serverId is int) ? serverId : int.tryParse(serverId.toString());
+                  final targetId = (serverId is int)
+                      ? serverId
+                      : int.tryParse(serverId.toString());
                   if (targetId != null) {
                     final foundChatId = _serverMsgIndex[targetId];
                     if (foundChatId != null) {
@@ -4034,11 +4444,14 @@ class RootScreenState extends State<RootScreen>
               if (typ == 'message_edited') {
                 try {
                   final midRaw = obj['message_id'];
-                  final mid = (midRaw is int) ? midRaw : int.tryParse(midRaw?.toString() ?? '');
+                  final mid = (midRaw is int)
+                      ? midRaw
+                      : int.tryParse(midRaw?.toString() ?? '');
                   final encContent = obj['new_content'] as String?;
                   final from = obj['from'] as String?;
                   if (mid != null && encContent != null && from != null) {
-                    final plain = await _tryDecryptIncoming(encContent, from) ?? encContent;
+                    final plain = await _tryDecryptIncoming(encContent, from) ??
+                        encContent;
                     final updatedChatId = _serverMsgIndex[mid];
                     if (updatedChatId != null) {
                       final msgs = chats[updatedChatId];
@@ -4064,7 +4477,9 @@ class RootScreenState extends State<RootScreen>
               if (typ == 'message_deleted') {
                 try {
                   final midRaw = obj['message_id'];
-                  final mid = (midRaw is int) ? midRaw : int.tryParse(midRaw?.toString() ?? '');
+                  final mid = (midRaw is int)
+                      ? midRaw
+                      : int.tryParse(midRaw?.toString() ?? '');
                   if (mid != null) {
                     final removedChatId = _serverMsgIndex[mid];
                     if (removedChatId != null) {
@@ -4090,7 +4505,9 @@ class RootScreenState extends State<RootScreen>
               if (typ == 'msg_delete') {
                 try {
                   final midRaw = obj['id'];
-                  final mid = (midRaw is int) ? midRaw : int.tryParse(midRaw?.toString() ?? '');
+                  final mid = (midRaw is int)
+                      ? midRaw
+                      : int.tryParse(midRaw?.toString() ?? '');
                   if (mid != null) {
                     final removedChatId = _serverMsgIndex[mid];
                     if (removedChatId != null) {
@@ -4102,11 +4519,13 @@ class RootScreenState extends State<RootScreen>
                           _serverMsgIndex.remove(mid);
                           _bumpForChat(removedChatId);
                           schedulePersistChats(chatId: removedChatId);
-                          _appendLog('[ws.msg_delete] removed server id=$mid from local store');
+                          _appendLog(
+                              '[ws.msg_delete] removed server id=$mid from local store');
                         }
                       }
                     } else {
-                      _appendLog('[ws.msg_delete] server id=$mid not found locally');
+                      _appendLog(
+                          '[ws.msg_delete] server id=$mid not found locally');
                     }
                   }
                 } catch (e) {
@@ -4125,7 +4544,8 @@ class RootScreenState extends State<RootScreen>
               if (typ == 'reaction_update') {
                 final msgType = obj['message_type'] as String?;
                 final groupId = obj['group_id'] as int?;
-                if (msgType == 'group' && groupId != null &&
+                if (msgType == 'group' &&
+                    groupId != null &&
                     _groupMessageListeners.containsKey(groupId)) {
                   _groupMessageListeners[groupId]!(obj);
                 } else if (msgType == 'private') {
@@ -4165,8 +4585,16 @@ class RootScreenState extends State<RootScreen>
           }
         },
         onDone: () {
-          _appendLog('[ws] closed (onDone)');
-          _handleWsClosed(manual: false, reason: 'onDone');
+          final closeCode = _ws?.closeCode;
+          _appendLog('[ws] closed (onDone) code=$closeCode');
+          if (closeCode == 1008) {
+            _appendLog(
+                '[ws] token rejected by server (1008) — session expired');
+            sessionExpiredNotifier.value = true;
+            _handleWsClosed(manual: true, reason: 'token_invalid_1008');
+          } else {
+            _handleWsClosed(manual: false, reason: 'onDone');
+          }
         },
         onError: (e) {
           final errStr = e.toString();
@@ -4189,7 +4617,7 @@ class RootScreenState extends State<RootScreen>
       );
       _appendLog('[ws] connected');
       _startHeartbeat();
-      
+
       setState(() {});
     });
   }
@@ -4214,7 +4642,7 @@ class RootScreenState extends State<RootScreen>
 
   void _handleWsClosed({required bool manual, String? reason}) {
     _appendLog('[ws.handleClosed] manual=$manual reason=${reason ?? "?"}');
-    
+
     _manualWsDisconnect = manual;
 
     _disconnectWs(manual: manual);
@@ -4227,7 +4655,6 @@ class RootScreenState extends State<RootScreen>
   }
 
   void _startReconnectLoop() {
-    
     if (_reconnectTimer != null) return;
     _reconnectAttempts = 0;
     Duration computeDelay() {
@@ -4240,7 +4667,6 @@ class RootScreenState extends State<RootScreen>
     _appendLog('[ws.reconnect] scheduling reconnect loop');
 
     _reconnectTimer = Timer.periodic(const Duration(seconds: 1), (t) async {
-      
       if (_ws != null && _ws!.closeCode == null) {
         _appendLog(
             '[ws.reconnect] connection restored, stopping reconnect loop');
@@ -4248,7 +4674,7 @@ class RootScreenState extends State<RootScreen>
         return;
       }
       final delay = computeDelay();
-      
+
       if (t.tick % (delay.inSeconds == 0 ? 1 : delay.inSeconds) != 0) return;
 
       _reconnectAttempts++;
@@ -4256,12 +4682,11 @@ class RootScreenState extends State<RootScreen>
         '[ws.reconnect] attempt #${_reconnectAttempts} (delay=${delay.inSeconds}s)',
       );
       try {
-        
         await _ensurePubkeyAndWsReady(
           maxRetries: 1,
           retryDelay: const Duration(milliseconds: 200),
         );
-        
+
         if (_ws == null) {
           _connectWs();
         } else {
@@ -4273,7 +4698,6 @@ class RootScreenState extends State<RootScreen>
       } catch (e) {
         _appendLog('[ws.reconnect] attempt failed: $e');
       }
-
     });
   }
 
@@ -4332,13 +4756,43 @@ class RootScreenState extends State<RootScreen>
     );
   }
 
+  Future<void> _warmRecentUserProfiles() async {
+    if (_isPreloadingUserProfiles) return;
+    _isPreloadingUserProfiles = true;
+    try {
+      final usernames = <String>{};
+      final recentEntries = chats.entries
+          .where((e) => !e.key.startsWith('fav:') && e.value.isNotEmpty)
+          .toList()
+        ..sort((a, b) => b.value.last.time.compareTo(a.value.last.time));
+      for (final entry in recentEntries.take(40)) {
+        final chatId = entry.key;
+        if (chatId.startsWith('grp:')) continue;
+        final parts = chatId.split(':');
+        final other = parts.firstWhere(
+          (p) => p != (currentUsername ?? 'me'),
+          orElse: () => chatId,
+        );
+        usernames.add(other);
+      }
+      final list = usernames.toList(growable: false);
+      for (int i = 0; i < list.length; i += 8) {
+        final batch = list.skip(i).take(8);
+        await Future.wait(
+          batch.map((u) => UserCache.get(u).catchError((_) => null)).toList(),
+        );
+        await Future.delayed(Duration.zero);
+      }
+    } finally {
+      _isPreloadingUserProfiles = false;
+    }
+  }
+
   Future<void> _disconnectWs(
       {bool manual = false, bool suppressPresence = false}) async {
-    
     _manualWsDisconnect = manual;
     wsConnectedNotifier.value = false;
     try {
-      
       if (_ws != null && !suppressPresence) _sendPresence('offline');
     } catch (_) {}
     _stopHeartbeat();
@@ -4349,7 +4803,7 @@ class RootScreenState extends State<RootScreen>
     } catch (_) {}
     _ws = null;
     onlineUsersNotifier.value = <String>{};
-    
+
     _appendLog(
         '[ws] disconnected (manual=$manual suppressPresence=$suppressPresence)');
 
@@ -4358,11 +4812,8 @@ class RootScreenState extends State<RootScreen>
     }
 
     if (manual) {
-      
       _stopReconnectLoop();
-    } else {
-      
-    }
+    } else {}
   }
 
   void connectWs() {
@@ -4377,7 +4828,6 @@ class RootScreenState extends State<RootScreen>
     if (_ws != null) {
       _sendPresence('online');
     } else {
-      
       _connectWs();
     }
   }
@@ -4392,7 +4842,6 @@ class RootScreenState extends State<RootScreen>
     }
 
     try {
-      
       final payload = {
         'type': 'presence',
         'state': state,
@@ -4431,15 +4880,15 @@ class RootScreenState extends State<RootScreen>
   Future<Uint8List> encryptMediaForPeer(
     String peerUsername,
     Uint8List plaintext, {
-    required String kind, 
+    required String kind,
   }) async {
     if (_identityKeyPair == null || _identityPublicKey == null) {
       _appendLog('[media.encrypt.$kind] identity missing – blocking send');
-      throw Exception('Cannot send $kind: identity key not loaded. Please reconnect.');
+      throw Exception(
+          'Cannot send $kind: identity key not loaded. Please reconnect.');
     }
 
     try {
-      
       List<int> peerPubBytes;
       if (_pubkeyCache.containsKey(peerUsername)) {
         peerPubBytes = _pubkeyCache[peerUsername]!;
@@ -4448,12 +4897,14 @@ class RootScreenState extends State<RootScreen>
         final r = await http.get(Uri.parse('$serverBase/pubkey/$peerUsername'),
             headers: {'authorization': 'Bearer $tok'});
         if (r.statusCode != 200) {
-          throw Exception('Cannot encrypt $kind: no public key for $peerUsername');
+          throw Exception(
+              'Cannot encrypt $kind: no public key for $peerUsername');
         }
         final obj = jsonDecode(r.body);
         final pkB64 = obj['pubkey'] as String?;
         if (pkB64 == null) {
-          throw Exception('Cannot encrypt $kind: null public key for $peerUsername');
+          throw Exception(
+              'Cannot encrypt $kind: null public key for $peerUsername');
         }
         peerPubBytes = base64Decode(pkB64);
         _pubkeyCache[peerUsername] = peerPubBytes;
@@ -4506,7 +4957,7 @@ class RootScreenState extends State<RootScreen>
       return cipher;
     } catch (e, st) {
       _appendLog('[media.encrypt.$kind] error: $e\n$st');
-      rethrow; 
+      rethrow;
     }
   }
 
@@ -4533,7 +4984,8 @@ class RootScreenState extends State<RootScreen>
         ...box.cipherText,
         ...box.mac.bytes,
       ]);
-      _appendLog('[media.encrypt.$kind] random-key ok ${plaintext.length} → ${cipher.length}');
+      _appendLog(
+          '[media.encrypt.$kind] random-key ok ${plaintext.length} → ${cipher.length}');
       return (cipher, mediaKeyB64);
     } catch (e, st) {
       _appendLog('[media.encrypt.$kind] error: $e\n$st');
@@ -4551,7 +5003,6 @@ class RootScreenState extends State<RootScreen>
     final prefixBytes = utf8.encode(prefix);
 
     if (data.length < prefixBytes.length + 24 + 16) {
-      
       return data;
     }
 
@@ -4563,7 +5014,6 @@ class RootScreenState extends State<RootScreen>
       }
     }
     if (!hasPrefix) {
-      
       return data;
     }
 
@@ -4589,13 +5039,13 @@ class RootScreenState extends State<RootScreen>
       if (mediaKeyB64 != null) {
         aeadKeyBytes = base64Decode(mediaKeyB64);
       } else {
-        
         List<int> peerPubBytes;
         if (_pubkeyCache.containsKey(peerUsername)) {
           peerPubBytes = _pubkeyCache[peerUsername]!;
         } else {
           final tok = await AccountManager.getToken(currentUsername ?? '');
-          final r = await http.get(Uri.parse('$serverBase/pubkey/$peerUsername'),
+          final r = await http.get(
+              Uri.parse('$serverBase/pubkey/$peerUsername'),
               headers: {'authorization': 'Bearer $tok'});
           if (r.statusCode != 200) {
             _appendLog('[media.decrypt.$kind] no pubkey for $peerUsername');
@@ -4648,7 +5098,7 @@ class RootScreenState extends State<RootScreen>
       return Uint8List.fromList(plain);
     } catch (e, st) {
       _appendLog('[media.decrypt.$kind] error: $e\n$st');
-      
+
       return data;
     }
   }
@@ -4672,7 +5122,8 @@ class RootScreenState extends State<RootScreen>
       final obj = jsonDecode(r.body);
       final pkB64 = obj['pubkey'] as String?;
       if (pkB64 == null) {
-        throw Exception('Recipient has no public key — cannot send encrypted message.');
+        throw Exception(
+            'Recipient has no public key — cannot send encrypted message.');
       }
       recipientPubBytes = base64Decode(pkB64);
       _pubkeyCache[recipient] = recipientPubBytes;
@@ -4742,10 +5193,10 @@ class RootScreenState extends State<RootScreen>
       if (!mounted) return;
       try {
         final tok = await AccountManager.getToken(currentUsername ?? '');
-        final r = await http
-            .get(Uri.parse('$serverBase/pubkey/$peer'),
-                headers: {'authorization': 'Bearer $tok'})
-            .timeout(const Duration(seconds: 5));
+        final r = await http.get(Uri.parse('$serverBase/pubkey/$peer'),
+            headers: {
+              'authorization': 'Bearer $tok'
+            }).timeout(const Duration(seconds: 5));
         if (r.statusCode != 200) continue;
         final body = jsonDecode(r.body) as Map<String, dynamic>;
         final freshPubkey = body['pubkey'] as String?;
@@ -4754,7 +5205,7 @@ class RootScreenState extends State<RootScreen>
         final stored = await AccountManager.getKnownPubkey(me, peer);
         unawaited(AccountManager.saveKnownPubkey(me, peer, freshPubkey));
 
-        if (stored == null) continue; 
+        if (stored == null) continue;
         if (stored != freshPubkey) {
           _appendLog('[pubkey-check] $peer key changed while offline');
           _showKeyChangedWarning(peer);
@@ -4771,20 +5222,22 @@ class RootScreenState extends State<RootScreen>
       if (!mounted) return;
       try {
         final tok = await AccountManager.getToken(currentUsername ?? '');
-        final r = await http
-            .get(Uri.parse('$serverBase/pubkey/$peer'),
-                headers: {'authorization': 'Bearer $tok'})
-            .timeout(const Duration(seconds: 5));
+        final r = await http.get(Uri.parse('$serverBase/pubkey/$peer'),
+            headers: {
+              'authorization': 'Bearer $tok'
+            }).timeout(const Duration(seconds: 5));
         if (r.statusCode != 200) return;
         final body = jsonDecode(r.body) as Map<String, dynamic>;
         final freshPubkey = body['pubkey'] as String?;
         if (freshPubkey == null || freshPubkey.isEmpty) return;
 
-        final stored = await AccountManager.getKnownPubkey(currentUsername!, peer);
-        
-        unawaited(AccountManager.saveKnownPubkey(currentUsername!, peer, freshPubkey));
+        final stored =
+            await AccountManager.getKnownPubkey(currentUsername!, peer);
 
-        if (stored == null) return; 
+        unawaited(AccountManager.saveKnownPubkey(
+            currentUsername!, peer, freshPubkey));
+
+        if (stored == null) return;
         if (stored != freshPubkey) {
           _appendLog('[pubkey-check] $peer key changed — stored≠fresh');
           _showKeyChangedWarning(peer);
@@ -4801,16 +5254,17 @@ class RootScreenState extends State<RootScreen>
     showSnack(' $peer has a new encryption key.');
   }
 
-  Future<List<Map<String, dynamic>>> _fetchAllDevicePubkeys(String recipient) async {
+  Future<List<Map<String, dynamic>>> _fetchAllDevicePubkeys(
+      String recipient) async {
     if (_devicePubkeysCache.containsKey(recipient)) {
       return _devicePubkeysCache[recipient]!;
     }
     try {
       final tok = await AccountManager.getToken(currentUsername ?? '');
-      final r = await http
-          .get(Uri.parse('$serverBase/pubkeys/$recipient'),
-              headers: {'authorization': 'Bearer $tok'})
-          .timeout(const Duration(seconds: 5));
+      final r = await http.get(Uri.parse('$serverBase/pubkeys/$recipient'),
+          headers: {
+            'authorization': 'Bearer $tok'
+          }).timeout(const Duration(seconds: 5));
       if (r.statusCode == 200) {
         final obj = jsonDecode(r.body) as Map<String, dynamic>;
         final raw = obj['devices'] as List<dynamic>? ?? [];
@@ -4858,7 +5312,8 @@ class RootScreenState extends State<RootScreen>
       nonce: nonce,
       aad: <int>[],
     );
-    final fullCt = Uint8List.fromList(secretBox.cipherText + secretBox.mac.bytes);
+    final fullCt =
+        Uint8List.fromList(secretBox.cipherText + secretBox.mac.bytes);
     final envelope = {
       'version': 1,
       'alg': 'xchacha20poly1305',
@@ -4875,7 +5330,7 @@ class RootScreenState extends State<RootScreen>
     String plaintext,
   ) async {
     final devices = await _fetchAllDevicePubkeys(recipient);
-    if (devices.isEmpty) return null; 
+    if (devices.isEmpty) return null;
 
     final payloads = <String, String>{};
     for (final device in devices) {
@@ -4883,7 +5338,8 @@ class RootScreenState extends State<RootScreen>
       final fp = device['fp'] as String?;
       if (pubkeyB64 == null || fp == null) continue;
       final pubkeyBytes = base64Decode(pubkeyB64);
-      final encrypted = await _encryptWithPubkeyBytes(recipient, plaintext, pubkeyBytes);
+      final encrypted =
+          await _encryptWithPubkeyBytes(recipient, plaintext, pubkeyBytes);
       payloads[fp] = encrypted;
     }
     if (payloads.isEmpty) return null;
@@ -4973,8 +5429,31 @@ class RootScreenState extends State<RootScreen>
     return ids.join(':');
   }
 
-  Future<void> _sendChatMessage(String to, String text, Map<String, dynamic>? replyTo) async {
+  Future<void> _sendChatMessage(
+      String to, String text, Map<String, dynamic>? replyTo) async {
     if (currentUsername == null) return;
+
+    if (DecoyManager.isActive.value) {
+      final chatId = chatIdForUser(to);
+      final localId = DateTime.now().microsecondsSinceEpoch.toString();
+      final msg = ChatMessage(
+        id: localId,
+        from: currentUsername!,
+        to: to,
+        content: text,
+        outgoing: true,
+        delivered: true,
+        isRead: true,
+        time: DateTime.now(),
+      );
+      chats.putIfAbsent(chatId, () => []).add(msg);
+      messageListNotifier.addMessageOptimized(chatId, msg);
+      _bumpForChat(chatId);
+      unawaited(DecoyDataManager.addMessageToContact(
+          to, currentUsername!, text, true));
+      return;
+    }
+
     if (_isSwitchingAccount) {
       _appendLog('[msg] blocked: account switch in progress');
       return;
@@ -4991,37 +5470,43 @@ class RootScreenState extends State<RootScreen>
 
     final isLANMode = replyTo != null && replyTo['_deliveryMode'] == 'lan';
 
-    final int? replyId = replyTo != null && replyTo['id'] != null ? int.tryParse(replyTo['id'].toString()) : null;
+    final int? replyId = replyTo != null && replyTo['id'] != null
+        ? int.tryParse(replyTo['id'].toString())
+        : null;
     final msgLocal = ChatMessage(
       id: localId,
       from: currentUsername!,
       to: to,
-      content: text, 
+      content: text,
       outgoing: true,
-      delivered: isLANMode ? true : false, 
-      time: DateTime.now(), 
+      delivered: isLANMode ? true : false,
+      time: DateTime.now(),
       replyToId: replyId,
-      replyToSender: replyTo != null ? (replyTo['senderDisplayName'] ?? replyTo['sender'])?.toString() : null,
+      replyToSender: replyTo != null
+          ? (replyTo['senderDisplayName'] ?? replyTo['sender'])?.toString()
+          : null,
       replyToContent: replyTo != null ? (replyTo['content'])?.toString() : null,
       deliveryMode: isLANMode ? DeliveryMode.lan : DeliveryMode.internet,
     );
 
     chats.putIfAbsent(chatId, () => []).add(msgLocal);
-    if (msgLocal.serverMessageId != null) _serverMsgIndex[msgLocal.serverMessageId!] = chatId;
-    debugPrint('[RootScreen] Added message to chatId=$chatId, total messages: ${chats[chatId]!.length}');
+    if (msgLocal.serverMessageId != null)
+      _serverMsgIndex[msgLocal.serverMessageId!] = chatId;
+    debugPrint(
+        '[RootScreen] Added message to chatId=$chatId, total messages: ${chats[chatId]!.length}');
 
     messageListNotifier.addMessageOptimized(chatId, msgLocal);
 
     final oldVersion = chatsVersion.value;
     _bumpForChat(chatId);
-    debugPrint('[RootScreen] Updated chatsVersion: $oldVersion -> ${chatsVersion.value}');
+    debugPrint(
+        '[RootScreen] Updated chatsVersion: $oldVersion -> ${chatsVersion.value}');
 
     schedulePersistChats(chatId: chatId);
 
     if (!isLANMode) {
       _sendChatMessageInBackground(to, text, localId, replyTo);
     }
-
   }
 
   void _handleIncomingLANMessage(ChatMessage message) {
@@ -5034,9 +5519,9 @@ class RootScreenState extends State<RootScreen>
       from: message.from,
       to: message.to,
       content: message.content,
-      outgoing: false, 
+      outgoing: false,
       delivered: true,
-      isRead: false, 
+      isRead: false,
       time: message.time,
       replyToId: message.replyToId,
       replyToSender: message.replyToSender,
@@ -5045,7 +5530,8 @@ class RootScreenState extends State<RootScreen>
     );
 
     chats.putIfAbsent(chatId, () => []).add(incomingMessage);
-    if (incomingMessage.serverMessageId != null) _serverMsgIndex[incomingMessage.serverMessageId!] = chatId;
+    if (incomingMessage.serverMessageId != null)
+      _serverMsgIndex[incomingMessage.serverMessageId!] = chatId;
 
     messageListNotifier.addMessageOptimized(chatId, incomingMessage);
     _bumpForChat(chatId);
@@ -5073,7 +5559,6 @@ class RootScreenState extends State<RootScreen>
     final chatId = chatIdForUser(from);
 
     try {
-      
       final dir = await getApplicationDocumentsDirectory();
       final mediaDir = Directory('${dir.path}/lan_media');
       if (!await mediaDir.exists()) {
@@ -5086,7 +5571,6 @@ class RootScreenState extends State<RootScreen>
 
       String content;
       if (mediaType == 'voice') {
-        
         final duration = data.length ~/ (16000 * 2);
         final format = filename.split('.').last;
         final voiceContent = jsonEncode({
@@ -5096,17 +5580,11 @@ class RootScreenState extends State<RootScreen>
         });
         content = 'VOICEv1:$voiceContent';
       } else if (mediaType == 'image') {
-        
         content = 'IMAGEv1:${jsonEncode({'url': 'lan://$filename'})}';
-
       } else if (mediaType == 'video') {
-        
         content = 'VIDEOv1:${jsonEncode({'url': 'lan://$filename'})}';
-
       } else if (mediaType == 'file') {
-        
         content = 'FILEv1:${jsonEncode({'filename': 'lan://$filename'})}';
-
       } else {
         content = 'Unknown media type: $mediaType';
       }
@@ -5126,8 +5604,11 @@ class RootScreenState extends State<RootScreen>
         isRead: false,
         time: DateTime.now(),
         replyToId: replyId,
-        replyToSender: replyTo != null ? (replyTo['senderDisplayName'] ?? replyTo['sender'])?.toString() : null,
-        replyToContent: replyTo != null ? (replyTo['content'])?.toString() : null,
+        replyToSender: replyTo != null
+            ? (replyTo['senderDisplayName'] ?? replyTo['sender'])?.toString()
+            : null,
+        replyToContent:
+            replyTo != null ? (replyTo['content'])?.toString() : null,
         deliveryMode: DeliveryMode.lan,
       );
 
@@ -5164,28 +5645,30 @@ class RootScreenState extends State<RootScreen>
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
-        
+
         final isOnline = data['is_online'] == true;
         final displayState = data['display_state'] as String?;
         final statusVisibility = data['status_visibility'] as String? ?? 'show';
 
-        _appendLog('[recipient-status] updated $username: visibility=$statusVisibility online=$isOnline state=$displayState');
+        _appendLog(
+            '[recipient-status] updated $username: visibility=$statusVisibility online=$isOnline state=$displayState');
 
         if (statusVisibility == 'hide') {
-          
-          final s = Set<String>.from(onlineUsersNotifier.value)..remove(username);
+          final s = Set<String>.from(onlineUsersNotifier.value)
+            ..remove(username);
           onlineUsersNotifier.value = s;
-          
+
           final statuses = Map<String, String>.from(userStatusNotifier.value);
           statuses.remove(username);
           userStatusNotifier.value = statuses;
-          
-          final vis = Map<String, String>.from(userStatusVisibilityNotifier.value);
+
+          final vis =
+              Map<String, String>.from(userStatusVisibilityNotifier.value);
           vis[username] = 'hide';
           userStatusVisibilityNotifier.value = vis;
         } else {
-          
-          final vis = Map<String, String>.from(userStatusVisibilityNotifier.value);
+          final vis =
+              Map<String, String>.from(userStatusVisibilityNotifier.value);
           vis[username] = 'show';
           userStatusVisibilityNotifier.value = vis;
 
@@ -5205,32 +5688,28 @@ class RootScreenState extends State<RootScreen>
       }
     } catch (e) {
       _appendLog('[recipient-status] error: $e');
-      
     }
   }
 
-  void _sendChatMessageInBackground(String to, String text, String localId, Map<String, dynamic>? replyTo) {
+  void _sendChatMessageInBackground(
+      String to, String text, String localId, Map<String, dynamic>? replyTo) {
     unawaited(Future.microtask(() async {
-      
-      Map<String, String>? payloads;   
-      String? fallbackEnvelope;        
+      Map<String, String>? payloads;
+      String? fallbackEnvelope;
 
       const retryDelays = [1, 2, 4, 8, 15];
       for (int attempt = 0; attempt <= retryDelays.length; attempt++) {
         if (attempt > 0) {
-          
           _devicePubkeysCache.remove(to);
           _pubkeyCache.remove(to);
           await Future.delayed(Duration(seconds: retryDelays[attempt - 1]));
         }
         try {
-          
           payloads = await _encryptForAllDevices(to, text);
           if (payloads == null) {
-            
             fallbackEnvelope = await _encryptForRecipientEnvelope(to, text);
           }
-          break; 
+          break;
         } catch (e) {
           _appendLog('[send] encrypt attempt ${attempt + 1} failed: $e');
           if (attempt == retryDelays.length) {
@@ -5283,7 +5762,7 @@ class RootScreenState extends State<RootScreen>
     final isMedia = text.startsWith('VOICEv1:') ||
         text.startsWith('IMAGEv1:') ||
         text.startsWith('VIDEOv1:') ||
-        text.startsWith('FILEv1:')  ||
+        text.startsWith('FILEv1:') ||
         text.startsWith('AUDIOv1:') ||
         text.startsWith('ALBUMv1:');
 
@@ -5294,20 +5773,22 @@ class RootScreenState extends State<RootScreen>
       if (isMedia) 'is_media': true,
       if (replyTo != null && replyTo['id'] != null)
         'reply_to_id': replyTo['id'].toString(),
-      if (replyTo != null && (replyTo['senderDisplayName'] ?? replyTo['sender']) != null)
-        'reply_to_sender': (replyTo['senderDisplayName'] ?? replyTo['sender']).toString(),
+      if (replyTo != null &&
+          (replyTo['senderDisplayName'] ?? replyTo['sender']) != null)
+        'reply_to_sender':
+            (replyTo['senderDisplayName'] ?? replyTo['sender']).toString(),
       if (replyTo != null && replyTo['content'] != null)
         'reply_to_content': replyTo['content'].toString(),
     };
 
     if (payloads != null && payloads.isNotEmpty) {
-      
       packet['payloads'] = payloads;
-      _appendLog('[send] MD msg sent localId=$localId devices=${payloads.length}');
+      _appendLog(
+          '[send] MD msg sent localId=$localId devices=${payloads.length}');
     } else if (fallbackEnvelope != null) {
-      
       packet['content'] = fallbackEnvelope;
-      _appendLog('[send] legacy msg sent localId=$localId len=${fallbackEnvelope.length}');
+      _appendLog(
+          '[send] legacy msg sent localId=$localId len=${fallbackEnvelope.length}');
     } else {
       _appendLog('[send] no payload to send — aborting');
       return;
@@ -5350,11 +5831,10 @@ class RootScreenState extends State<RootScreen>
     }
   }
 
-  void _handleSendTyping(String to) {
+  void _handleSendTyping(String to) {}
 
-  }
-
-  Future<void> _editChatMessage(String to, int messageId, String newText) async {
+  Future<void> _editChatMessage(
+      String to, int messageId, String newText) async {
     if (_ws == null || currentUsername == null) return;
     try {
       final envelope = await _encryptForRecipientEnvelope(to, newText);
@@ -5363,7 +5843,7 @@ class RootScreenState extends State<RootScreen>
         'message_id': messageId,
         'new_content': envelope,
       }));
-      
+
       final chatId = chatIdForUser(to);
       final msgs = chats[chatId];
       if (msgs != null) {
@@ -5390,7 +5870,7 @@ class RootScreenState extends State<RootScreen>
         'type': 'delete_message',
         'message_id': messageId,
       }));
-      
+
       final removedChatId = _serverMsgIndex[messageId];
       bool removed = false;
       if (removedChatId != null) {
@@ -5433,7 +5913,6 @@ class RootScreenState extends State<RootScreen>
     int maxRetries = 6,
     Duration retryDelay = const Duration(milliseconds: 400),
   }) async {
-    
     if (identityPubKeyBase64 == null) {
       _appendLog('[auto] identity missing -> generating');
       await _generateIdentity();
@@ -5446,7 +5925,6 @@ class RootScreenState extends State<RootScreen>
                 _pubkeyUploadRetryDelay);
 
     if (shouldRetryUpload) {
-      
       unawaited(_uploadPubkeyInBackground());
     }
 
@@ -5462,8 +5940,7 @@ class RootScreenState extends State<RootScreen>
     }
 
     final ok = _ws != null;
-    _appendLog(
-        '[auto] ws ready=$ok (pubkey_cached=$_pubkeyUploadedToServer)');
+    _appendLog('[auto] ws ready=$ok (pubkey_cached=$_pubkeyUploadedToServer)');
     return ok;
   }
 
@@ -5480,8 +5957,9 @@ class RootScreenState extends State<RootScreen>
         await Future.delayed(Duration(milliseconds: 500 * (i + 1)));
       }
     }
-    
-    _appendLog('[pubkey] WARNING: upload failed after 3 attempts — will retry on next connect');
+
+    _appendLog(
+        '[pubkey] WARNING: upload failed after 3 attempts — will retry on next connect');
   }
 
   void _tryMarkDeliveredFromAck(Map<String, dynamic> ack) {
@@ -5610,7 +6088,7 @@ class RootScreenState extends State<RootScreen>
       chatsVersion.value++;
       schedulePersistChats();
       _initializeUnreadCounts();
-      
+
       _chatScreenCache.clear();
       _groupChatScreenCache.clear();
       _externalGroupChatScreenCache.clear();
@@ -5737,11 +6215,9 @@ class RootScreenState extends State<RootScreen>
       context: context,
       barrierDismissible: true,
       barrierLabel: 'Search',
-      barrierColor: Colors.black54, 
-      
+      barrierColor: Colors.black54,
       transitionDuration: const Duration(milliseconds: 200),
       pageBuilder: (context, animation, secondaryAnimation) {
-        
         final bool isDesktop = MediaQuery.of(context).size.width > 700;
         return SafeArea(
           child: Padding(
@@ -5792,7 +6268,6 @@ class RootScreenState extends State<RootScreen>
                             Navigator.of(context).pop();
                             if (username != null && username.isNotEmpty) {
                               try {
-                                
                                 final chatId = chatIdForUser(username);
                                 chats.putIfAbsent(chatId, () => []);
                                 setState(() {
@@ -5802,20 +6277,31 @@ class RootScreenState extends State<RootScreen>
                                 });
                               } catch (_) {}
                               if (!isDesktop) {
-                                Navigator.of(context).push(
+                                Navigator.of(context)
+                                    .push(
                                   _chatRoute((_) => ChatScreen(
-                                      myUsername: currentUsername ?? 'me',
-                                      otherUsername: username,
-                                      onSend: (t, replyTo) => _sendChatMessage(username, t, replyTo),
-                                      onTyping: () => _handleSendTyping(username),
-                                      onRequestResend: (id) {
-                                        if (id != null) _requestResend(id);
-                                      },
-                                      onEditMessage: (id, text) => _editChatMessage(username, id, text),
-                                      onDeleteMessage: (id) => _deleteChatMessage(id),
-                                    )),
-                                ).then((_) {
-                                  if (mounted) setState(() { selectedChatOther = null; });
+                                        myUsername: currentUsername ?? 'me',
+                                        otherUsername: username,
+                                        onSend: (t, replyTo) =>
+                                            _sendChatMessage(
+                                                username, t, replyTo),
+                                        onTyping: () =>
+                                            _handleSendTyping(username),
+                                        onRequestResend: (id) {
+                                          if (id != null) _requestResend(id);
+                                        },
+                                        onEditMessage: (id, text) =>
+                                            _editChatMessage(
+                                                username, id, text),
+                                        onDeleteMessage: (id) =>
+                                            _deleteChatMessage(id),
+                                      )),
+                                )
+                                    .then((_) {
+                                  if (mounted)
+                                    setState(() {
+                                      selectedChatOther = null;
+                                    });
                                 });
                               }
                             }
@@ -5837,7 +6323,6 @@ class RootScreenState extends State<RootScreen>
           ),
         );
       },
-      
       transitionBuilder: (context, animation, secondaryAnimation, child) {
         return FadeTransition(
           opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
@@ -5856,80 +6341,89 @@ class RootScreenState extends State<RootScreen>
           builder: (_, path, __) {
             final makeTransparent =
                 apply && path != null && File(path).existsSync();
-            return AppBar(
-              title: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ValueListenableBuilder<bool>(
-                    valueListenable: wsConnectedNotifier,
-                    builder: (_, connected, __) {
-                      final baseStyle = const TextStyle(fontSize: 20, fontWeight: FontWeight.bold);
-                      final targetScale = (baseStyle.fontSize ?? 20) * 1.2 / 24.0;
-                      return TweenAnimationBuilder<double>(
-                        tween: Tween<double>(begin: 1.0, end: connected ? targetScale : 1.0),
-                        duration: const Duration(milliseconds: 300),
-                        curve: Curves.easeInOut,
-                        builder: (_, scale, child) => Transform.scale(scale: scale, child: child),
-                        child: GestureDetector(
-                          onTap: () => showAboutOnyxDialog(context),
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Image.asset('assets/onyx-512.png', width: 25, height: 25, fit: BoxFit.contain),
+            return ValueListenableBuilder<bool>(
+              valueListenable: SettingsManager.showAccountIndicator,
+              builder: (_, showInd, __) => AppBar(
+                title: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ValueListenableBuilder<bool>(
+                      valueListenable: wsConnectedNotifier,
+                      builder: (_, connected, __) {
+                        final baseStyle = const TextStyle(
+                            fontSize: 20, fontWeight: FontWeight.bold);
+                        final targetScale =
+                            (baseStyle.fontSize ?? 20) * 1.2 / 24.0;
+                        return TweenAnimationBuilder<double>(
+                          tween: Tween<double>(
+                              begin: 1.0, end: connected ? targetScale : 1.0),
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                          builder: (_, scale, child) =>
+                              Transform.scale(scale: scale, child: child),
+                          child: GestureDetector(
+                            onTap: () => showAboutOnyxDialog(context),
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Image.asset('assets/onyx-512.png',
+                                  width: 25, height: 25, fit: BoxFit.contain),
+                            ),
                           ),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: () => showAboutOnyxDialog(context),
-                    child: ConnectionTitle(
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        );
+                      },
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  const ProxyShieldBadge(),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => showAboutOnyxDialog(context),
+                      child: ConnectionTitle(
+                        style: const TextStyle(
+                            fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const ProxyShieldBadge(),
+                  ],
+                ),
+                centerTitle: true,
+                leading: (showInd && currentUsername != null)
+                    ? Container(
+                        padding: const EdgeInsets.only(left: 17, top: 12),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              currentDisplayName ?? currentUsername!,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            Text(
+                              '@$currentUsername',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : null,
+                leadingWidth: (showInd && currentUsername != null) ? 100 : null,
+                backgroundColor: makeTransparent
+                    ? Colors.transparent
+                    : Theme.of(context).colorScheme.surface,
+                elevation: makeTransparent ? 0 : 0,
+                actions: [
+                  if (_index == 0 || !isDesktop)
+                    IconButton(
+                      icon: const Icon(Icons.search),
+                      onPressed: _onSearchRequested,
+                    ),
                 ],
               ),
-              centerTitle: true,
-              leading: currentUsername != null
-                  ? Container(
-                      padding: const EdgeInsets.only(left: 17, top: 12),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            currentDisplayName ?? currentUsername!,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          Text(
-                            '@$currentUsername',
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : null,
-              leadingWidth: 100,
-              backgroundColor: makeTransparent
-                  ? Colors.transparent
-                  : Theme.of(context).colorScheme.surface,
-              elevation: makeTransparent ? 0 : 0,
-              actions: [
-                if (_index == 0 || !isDesktop)
-                  IconButton(
-                    icon: const Icon(Icons.search),
-                    onPressed: _onSearchRequested,
-                  ),
-              ],
             );
           },
         );
@@ -5945,7 +6439,6 @@ class RootScreenState extends State<RootScreen>
 
         return Stack(
           children: [
-
             Padding(
               padding: const EdgeInsets.only(top: 42.0),
               child: Column(
@@ -5954,7 +6447,6 @@ class RootScreenState extends State<RootScreen>
                   Expanded(
                     child: Row(
                       children: [
-
                         if (!isNavBottom)
                           TweenAnimationBuilder<double>(
                             tween: Tween<double>(begin: -80.0, end: 0.0),
@@ -5964,7 +6456,8 @@ class RootScreenState extends State<RootScreen>
                               return Transform.translate(
                                 offset: Offset(offset, 0),
                                 child: Opacity(
-                                  opacity: (1.0 + (offset / 80.0)).clamp(0.0, 1.0),
+                                  opacity:
+                                      (1.0 + (offset / 80.0)).clamp(0.0, 1.0),
                                   child: child,
                                 ),
                               );
@@ -5985,12 +6478,14 @@ class RootScreenState extends State<RootScreen>
                                   selectedIcon: AnimatedNavIcon(
                                     icon: Icons.chat_bubble,
                                     size: 26,
-                                    color: Theme.of(context).colorScheme.primary,
+                                    color:
+                                        Theme.of(context).colorScheme.primary,
                                     isSelected: _index == 0,
                                     animationType: NavIconAnimationType.bounce,
                                     entryDelay: 300,
                                   ),
-                                  label: Text(AppLocalizations.of(context).navChats),
+                                  label: Text(
+                                      AppLocalizations.of(context).navChats),
                                 ),
                                 NavigationRailDestination(
                                   icon: AnimatedNavIcon(
@@ -6003,12 +6498,14 @@ class RootScreenState extends State<RootScreen>
                                   selectedIcon: AnimatedNavIcon(
                                     icon: Icons.group,
                                     size: 26,
-                                    color: Theme.of(context).colorScheme.primary,
+                                    color:
+                                        Theme.of(context).colorScheme.primary,
                                     isSelected: _index == 1,
                                     animationType: NavIconAnimationType.bounce,
                                     entryDelay: 400,
                                   ),
-                                  label: Text(AppLocalizations.of(context).navGroups),
+                                  label: Text(
+                                      AppLocalizations.of(context).navGroups),
                                 ),
                                 NavigationRailDestination(
                                   icon: AnimatedNavIcon(
@@ -6021,12 +6518,14 @@ class RootScreenState extends State<RootScreen>
                                   selectedIcon: AnimatedNavIcon(
                                     icon: Icons.bookmark,
                                     size: 26,
-                                    color: Theme.of(context).colorScheme.primary,
+                                    color:
+                                        Theme.of(context).colorScheme.primary,
                                     isSelected: _index == 2,
                                     animationType: NavIconAnimationType.bounce,
                                     entryDelay: 500,
                                   ),
-                                  label: Text(AppLocalizations.of(context).navFavorites),
+                                  label: Text(AppLocalizations.of(context)
+                                      .navFavorites),
                                 ),
                                 NavigationRailDestination(
                                   icon: AnimatedNavIcon(
@@ -6039,12 +6538,14 @@ class RootScreenState extends State<RootScreen>
                                   selectedIcon: AnimatedNavIcon(
                                     icon: Icons.person,
                                     size: 26,
-                                    color: Theme.of(context).colorScheme.primary,
+                                    color:
+                                        Theme.of(context).colorScheme.primary,
                                     isSelected: _index == 3,
                                     animationType: NavIconAnimationType.bounce,
                                     entryDelay: 600,
                                   ),
-                                  label: Text(AppLocalizations.of(context).navAccounts),
+                                  label: Text(
+                                      AppLocalizations.of(context).navAccounts),
                                 ),
                                 NavigationRailDestination(
                                   icon: AnimatedNavIcon(
@@ -6057,485 +6558,665 @@ class RootScreenState extends State<RootScreen>
                                   selectedIcon: AnimatedNavIcon(
                                     icon: Icons.settings,
                                     size: 26,
-                                    color: Theme.of(context).colorScheme.primary,
+                                    color:
+                                        Theme.of(context).colorScheme.primary,
                                     isSelected: _index == 4,
                                     animationType: NavIconAnimationType.spin,
                                     entryDelay: 700,
                                   ),
-                                  label: Text(AppLocalizations.of(context).navSettings),
+                                  label: Text(
+                                      AppLocalizations.of(context).navSettings),
                                 ),
                               ],
                             ),
                           ),
                         ValueListenableBuilder<double>(
                           valueListenable: _chatsPanelWidthNotifier,
-                          builder: (_, width, child) => SizedBox(width: width, child: child),
+                          builder: (_, width, child) =>
+                              SizedBox(width: width, child: child),
                           child: Column(
-                        children: [
-                          AppBar(
-                            automaticallyImplyLeading: false,
-                            centerTitle: isNavBottom,
-                            leadingWidth: isNavBottom ? 80 : null,
-                            leading: isNavBottom && currentUsername != null
-                                ? Padding(
-                                    padding: const EdgeInsets.only(left: 8),
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          currentDisplayName ?? currentUsername!,
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.grey,
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        Text(
-                                          '@$currentUsername',
-                                          style: const TextStyle(fontSize: 10, color: Colors.grey),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ],
-                                    ),
-                                  )
-                                : isNavBottom ? const SizedBox(width: 48) : null,
-                            title: isNavBottom 
-                              ? Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    ValueListenableBuilder<bool>(
-                                      valueListenable: wsConnectedNotifier,
-                                      builder: (_, connected, __) {
-                                        final baseStyle = const TextStyle(fontSize: 20, fontWeight: FontWeight.bold);
-                                        final targetScale = (baseStyle.fontSize ?? 20) * 1.2 / 24.0;
-                                        return TweenAnimationBuilder<double>(
-                                          tween: Tween<double>(begin: 1.0, end: connected ? targetScale : 1.0),
-                                          duration: const Duration(milliseconds: 300),
-                                          curve: Curves.easeInOut,
-                                          builder: (_, scale, child) => Transform.scale(scale: scale, child: child),
-                                          child: GestureDetector(
-                                            onTap: () => showAboutOnyxDialog(context),
-                                            child: Padding(
-                                              padding: const EdgeInsets.only(top: 2),
-                                              child: Image.asset('assets/onyx-512.png', width: 25, height: 25, fit: BoxFit.contain),
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                    const SizedBox(width: 8),
-                                    GestureDetector(
-                                      onTap: () => showAboutOnyxDialog(context),
-                                      child: ConnectionTitle(
-                                        style: const TextStyle(
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    const ProxyShieldBadge(),
-                                  ],
-                                )
-                              : Center(
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      ValueListenableBuilder<bool>(
-                                        valueListenable: wsConnectedNotifier,
-                                        builder: (_, connected, __) {
-                                          final baseStyle = const TextStyle(fontSize: 20, fontWeight: FontWeight.bold);
-                                          final targetScale = (baseStyle.fontSize ?? 20) * 1.2 / 24.0;
-                                          return TweenAnimationBuilder<double>(
-                                            tween: Tween<double>(begin: 1.0, end: connected ? targetScale : 1.0),
-                                            duration: const Duration(milliseconds: 300),
-                                            curve: Curves.easeInOut,
-                                            builder: (_, scale, child) => Transform.scale(scale: scale, child: child),
-                                            child: GestureDetector(
-                                              onTap: () => showAboutOnyxDialog(context),
-                                              child: Padding(
-                                                padding: const EdgeInsets.only(top: 2),
-                                                child: Image.asset('assets/onyx-512.png', width: 25, height: 25, fit: BoxFit.contain),
+                            children: [
+                              AppBar(
+                                automaticallyImplyLeading: false,
+                                centerTitle: isNavBottom,
+                                leadingWidth: isNavBottom ? 80 : null,
+                                leading: ValueListenableBuilder<bool>(
+                                  valueListenable:
+                                      SettingsManager.showAccountIndicator,
+                                  builder: (_, showInd, __) {
+                                    if (isNavBottom &&
+                                        showInd &&
+                                        currentUsername != null) {
+                                      return Padding(
+                                        padding: const EdgeInsets.only(left: 8),
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              currentDisplayName ??
+                                                  currentUsername!,
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.grey,
                                               ),
+                                              overflow: TextOverflow.ellipsis,
                                             ),
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(width: 8),
-                                      GestureDetector(
-                                        onTap: () => showAboutOnyxDialog(context),
-                                        child: ConnectionTitle(
-                                          style: const TextStyle(
-                                            fontSize: 20,
-                                            fontWeight: FontWeight.bold,
-                                          ),
+                                            Text(
+                                              '@$currentUsername',
+                                              style: const TextStyle(
+                                                  fontSize: 10,
+                                                  color: Colors.grey),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
                                         ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      const ProxyShieldBadge(),
-                                    ],
-                                  ),
+                                      );
+                                    }
+                                    return isNavBottom
+                                        ? const SizedBox(width: 48)
+                                        : const SizedBox.shrink();
+                                  },
                                 ),
-                            actions: [
-                              IconButton(
-                                icon: const Icon(Icons.search),
-                                onPressed: _onSearchRequested,
-                              ),
-                            ],
-                            backgroundColor:
-                                Theme.of(context).colorScheme.surface,
-                            elevation: 0,
-                            scrolledUnderElevation: 0,
-                            shadowColor: Colors.transparent,
-                          ),
-                          Expanded(
-                            child: ValueListenableBuilder<String>(
-                              valueListenable: SettingsManager.desktopNavPosition,
-                              builder: (context, navPos, _) {
-                                final tabChild = <Widget>[
-                                  
-                                  ChatsTab(
-                                    chats: chats,
-                                    username: currentUsername,
-                                    onOpenChat: (other) async {
-                                      if (_chatsLoadCompleter != null && !_chatsLoadCompleter!.isCompleted) {
-                                        await _chatsLoadCompleter!.future;
-                                      }
-                                      if (!mounted) return;
-                                      final chatId = chatIdForUser(other);
-                                      chats.putIfAbsent(chatId, () => []);
-                                      setState(() {
-                                        selectedChatOther = other;
-                                        selectedGroup = null;
-                                        selectedExternalGroup = null;
-                                        selectedExternalServer = null;
-                                        _selectedFavoriteId = null;
-                                      });
-
-                                      if (!isDesktop) FocusScope.of(context).requestFocus(FocusNode());
-                                    },
-                                    onDeleteChat: _deleteChat,
-                                    onBlockUser: _blockUser,
-                                    onUnblockUser: _unblockUser,
-                                  ),
-
-                                  GroupsTab(
-                                    onOpenGroup: (group) {
-                                      if (group.isExternal) {
-                                        final server = ExternalServerManager.servers.value
-                                            .where((s) => s.id == group.externalServerId)
-                                            .firstOrNull;
-                                        if (server == null) return;
-                                        setState(() {
-                                          selectedChatOther = null;
-                                          selectedGroup = null;
-                                          selectedExternalGroup = group;
-                                          selectedExternalServer = server;
-                                          _selectedFavoriteId = null;
-                                        });
-                                      } else {
-                                        setState(() {
-                                          selectedChatOther = null;
-                                          selectedGroup = group;
-                                          selectedExternalGroup = null;
-                                          selectedExternalServer = null;
-                                          _selectedFavoriteId = null;
-                                        });
-                                      }
-                                    },
-                                  ),
-
-                                  FavoritesTab(
-                                    favorites: _favorites,
-                                    onOpen: (id) {
-                                      setState(() {
-                                        selectedChatOther = null;
-                                        selectedGroup = null;
-                                        selectedExternalGroup = null;
-                                        selectedExternalServer = null;
-                                        _selectedFavoriteId = id;
-                                      });
-                                    },
-                                    onAdd: _addFavorite,
-                                    onDelete: _deleteFavorite,
-                                  ),
-
-                                  AccountsTab(
-                                    currentUsername: currentUsername,
-                                    currentUin: currentUin,
-                                    identityPubFp: _identityPublicKey != null
-                                        ? _computePubkeyFpHex(_identityPublicKey!.bytes)
-                                        : null,
-                                    onLogin: _login,
-                                    onRegister: _register,
-                                    onSwitchAccount: _switchToAccountWithAuth,
-                                    onDeleteAccount: _deleteAccount,
-                                    logs: _log,
-                                    currentTheme: widget.currentTheme,
-                                  ),
-
-                                  SettingsTab(
-                                    currentTheme: widget.currentTheme,
-                                    isDarkMode: widget.isDarkMode,
-                                    onThemeChanged: widget.onThemeChanged,
-                                    onGenerateIdentity: _generateIdentity,
-                                    onUploadPubkey: _uploadPubkeyToServer,
-                                    onRotateKey: rotateIdentityKey,
-                                    onFullSessionReset: fullSessionReset,
-                                    onConnectWs: _connectWs,
-                                    onDisconnectWs: _disconnectWs,
-                                    onLogout: _logout,
-                                    logs: _log,
-                                    isPrimaryDevice: _isPrimaryDevice,
-                                    onShowPassphrase: _showPassphrase,
-                                    onChangePassword: _changePassword,
-                                    onOpenSessions: _openSessions,
-                                    onOpenChat: (username) {
-                                      _onTabSelected(0);
-                                      final chatId = chatIdForUser(username);
-                                      chats.putIfAbsent(chatId, () => []);
-                                      setState(() {
-                                        selectedChatOther = username;
-                                        selectedGroup = null;
-                                        selectedExternalGroup = null;
-                                        selectedExternalServer = null;
-                                        _selectedFavoriteId = null;
-                                      });
-                                    },
-                                  ),
-
-                                  if (_isPrimaryDevice)
-                                    ActiveSessionsTab(
-                                      serverBase: serverBase,
-                                      username: currentUsername,
-                                      onBack: () => _onTabSelected(4),
-                                    ),
-                                ][_index];
-
-                                if (navPos != 'bottom') return tabChild;
-                                return MediaQuery(
-                                  data: MediaQuery.of(context).copyWith(
-                                    padding: MediaQuery.of(context).padding +
-                                        const EdgeInsets.only(bottom: 76),
-                                  ),
-                                  child: tabChild,
-                                );
-                              },
-                            ),
-                          ),
-                          
-                          if (false) const SizedBox.shrink(),
-                        ],
-                      ),
-                    ),
-                    MouseRegion(
-                      cursor: SystemMouseCursors.resizeColumn,
-                      child: GestureDetector(
-                        onHorizontalDragUpdate: (details) {
-                          _chatsPanelWidthNotifier.value =
-                              (_chatsPanelWidthNotifier.value + details.delta.dx)
-                                  .clamp(200.0, MediaQuery.of(context).size.width * 0.6);
-                        },
-                        child: Container(
-                          width: 6,
-                          color:
-                              Theme.of(context).dividerColor.withOpacity(0.3),
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: ValueListenableBuilder<bool>(
-                        valueListenable: SettingsManager.applyGlobally,
-                        builder: (_, apply, __) {
-                          
-                          Widget content = (_selectedFavoriteId != null)
-                              ? getFavoritesScreen(
-                                  _selectedFavoriteId!,
-                                  _favorites
-                                      .firstWhere(
-                                          (f) => f.id == _selectedFavoriteId!)
-                                      .title,
-                                )
-                              : (selectedChatOther != null &&
-                                      currentUsername != null)
-                                  ? _chatScreenCache.putIfAbsent(
-                                      '${selectedChatOther!}:${currentUsername!}',
-                                      () => ChatScreen(
-                                        key: ValueKey<String>(
-                                            '${selectedChatOther!}:${currentUsername!}'),
-                                        myUsername: currentUsername!,
-                                        otherUsername: selectedChatOther!,
-                                        onSend: (t, replyTo) => _sendChatMessage(selectedChatOther!, t, replyTo),
-                                        onTyping: () => _handleSendTyping(
-                                            selectedChatOther!),
-                                        onRequestResend: (id) {
-                                          if (id != null) _requestResend(id);
-                                        },
-                                        onEditMessage: (id, text) => _editChatMessage(selectedChatOther!, id, text),
-                                        onDeleteMessage: (id) => _deleteChatMessage(id),
-                                      ),
-                                    )
-                                  : (selectedChatOther != null)
-                                      ? Center(
-                                          child: CircularProgressIndicator())
-                                      : (selectedGroup != null)
-                                          ? _groupChatScreenCache.putIfAbsent(
-                                              selectedGroup!.id,
-                                              () => GroupChatScreen(
-                                                key: ValueKey<int>(
-                                                    selectedGroup!.id),
-                                                group: selectedGroup!,
-                                              ),
-                                            )
-                                          : (selectedExternalGroup != null && selectedExternalServer != null)
-                                              ? _externalGroupChatScreenCache.putIfAbsent(
-                                                  'ext_${selectedExternalServer!.id}_${selectedExternalGroup!.id}',
-                                                  () => ExternalGroupChatScreen(
-                                                    key: ValueKey<String>(
-                                                        'ext_${selectedExternalServer!.id}_${selectedExternalGroup!.id}'),
-                                                    group: selectedExternalGroup!,
-                                                    server: selectedExternalServer!,
-                                                  ),
-                                                )
-                                          : Center(
-                                              child: glassCard(
-                                                context: context,
-                                                child: Padding(
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 24,
-                                                      vertical: 32),
-                                                  child: Column(
-                                                    mainAxisSize:
-                                                        MainAxisSize.min,
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .center,
-                                                    children: [
-                                                      Image.asset(
-                                                        'assets/onyx_icon.png',
-                                                        width: 56,
-                                                        height: 56,
-                                                        opacity: const AlwaysStoppedAnimation(0.85),
-                                                      ),
-                                                      const SizedBox(
-                                                          height: 16),
-                                                      ValueListenableBuilder<Locale>(
-                                                        valueListenable: SettingsManager.appLocale,
-                                                        builder: (_, locale, __) => Text(
-                                                          AppLocalizations(locale).localizeMotivationalHint(_motivationalHints[_motivationalHintIndex]),
-                                                          textAlign:
-                                                              TextAlign.center,
-                                                          style: TextStyle(
-                                                            fontSize: 16,
-                                                            fontWeight:
-                                                                FontWeight.w500,
-                                                            color:
-                                                                Theme.of(context)
-                                                                    .colorScheme
-                                                                    .onSurface,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ],
+                                title: isNavBottom
+                                    ? Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          ValueListenableBuilder<bool>(
+                                            valueListenable:
+                                                wsConnectedNotifier,
+                                            builder: (_, connected, __) {
+                                              final baseStyle = const TextStyle(
+                                                  fontSize: 20,
+                                                  fontWeight: FontWeight.bold);
+                                              final targetScale =
+                                                  (baseStyle.fontSize ?? 20) *
+                                                      1.2 /
+                                                      24.0;
+                                              return TweenAnimationBuilder<
+                                                  double>(
+                                                tween: Tween<double>(
+                                                    begin: 1.0,
+                                                    end: connected
+                                                        ? targetScale
+                                                        : 1.0),
+                                                duration: const Duration(
+                                                    milliseconds: 300),
+                                                curve: Curves.easeInOut,
+                                                builder: (_, scale, child) =>
+                                                    Transform.scale(
+                                                        scale: scale,
+                                                        child: child),
+                                                child: GestureDetector(
+                                                  onTap: () =>
+                                                      showAboutOnyxDialog(
+                                                          context),
+                                                  child: Padding(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                            top: 2),
+                                                    child: Image.asset(
+                                                        'assets/onyx-512.png',
+                                                        width: 25,
+                                                        height: 25,
+                                                        fit: BoxFit.contain),
                                                   ),
                                                 ),
+                                              );
+                                            },
+                                          ),
+                                          const SizedBox(width: 8),
+                                          GestureDetector(
+                                            onTap: () =>
+                                                showAboutOnyxDialog(context),
+                                            child: ConnectionTitle(
+                                              style: const TextStyle(
+                                                fontSize: 20,
+                                                fontWeight: FontWeight.bold,
                                               ),
-                                            );
-
-                          if (isDesktop && apply) {
-                            return Stack(
-                              children: [
-                                ValueListenableBuilder<String?>(
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          const ProxyShieldBadge(),
+                                        ],
+                                      )
+                                    : Center(
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            ValueListenableBuilder<bool>(
+                                              valueListenable:
+                                                  wsConnectedNotifier,
+                                              builder: (_, connected, __) {
+                                                final baseStyle =
+                                                    const TextStyle(
+                                                        fontSize: 20,
+                                                        fontWeight:
+                                                            FontWeight.bold);
+                                                final targetScale =
+                                                    (baseStyle.fontSize ?? 20) *
+                                                        1.2 /
+                                                        24.0;
+                                                return TweenAnimationBuilder<
+                                                    double>(
+                                                  tween: Tween<double>(
+                                                      begin: 1.0,
+                                                      end: connected
+                                                          ? targetScale
+                                                          : 1.0),
+                                                  duration: const Duration(
+                                                      milliseconds: 300),
+                                                  curve: Curves.easeInOut,
+                                                  builder: (_, scale, child) =>
+                                                      Transform.scale(
+                                                          scale: scale,
+                                                          child: child),
+                                                  child: GestureDetector(
+                                                    onTap: () =>
+                                                        showAboutOnyxDialog(
+                                                            context),
+                                                    child: Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                              top: 2),
+                                                      child: Image.asset(
+                                                          'assets/onyx-512.png',
+                                                          width: 25,
+                                                          height: 25,
+                                                          fit: BoxFit.contain),
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                            const SizedBox(width: 8),
+                                            GestureDetector(
+                                              onTap: () =>
+                                                  showAboutOnyxDialog(context),
+                                              child: ConnectionTitle(
+                                                style: const TextStyle(
+                                                  fontSize: 20,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            const ProxyShieldBadge(),
+                                          ],
+                                        ),
+                                      ),
+                                actions: [
+                                  IconButton(
+                                    icon: const Icon(Icons.search),
+                                    onPressed: _onSearchRequested,
+                                  ),
+                                ],
+                                backgroundColor:
+                                    Theme.of(context).colorScheme.surface,
+                                elevation: 0,
+                                scrolledUnderElevation: 0,
+                                shadowColor: Colors.transparent,
+                              ),
+                              Expanded(
+                                child: ValueListenableBuilder<String>(
                                   valueListenable:
-                                      SettingsManager.chatBackground,
-                                  builder: (_, path, __) {
-                                    if (path == null)
-                                      return const SizedBox.shrink();
-                                    final f = File(path);
-                                    if (!f.existsSync())
-                                      return const SizedBox.shrink();
-                                    return ValueListenableBuilder<bool>(
+                                      SettingsManager.desktopNavPosition,
+                                  builder: (context, navPos, _) {
+                                    final tabChild = <Widget>[
+                                      ChatsTab(
+                                        chats: chats,
+                                        username: currentUsername,
+                                        onOpenChat: (other) async {
+                                          if (_chatsLoadCompleter != null &&
+                                              !_chatsLoadCompleter!
+                                                  .isCompleted) {
+                                            await _chatsLoadCompleter!.future;
+                                          }
+                                          if (!mounted) return;
+                                          final chatId = chatIdForUser(other);
+                                          chats.putIfAbsent(chatId, () => []);
+                                          setState(() {
+                                            selectedChatOther = other;
+                                            selectedGroup = null;
+                                            selectedExternalGroup = null;
+                                            selectedExternalServer = null;
+                                            _selectedFavoriteId = null;
+                                          });
+
+                                          if (!isDesktop)
+                                            FocusScope.of(context)
+                                                .requestFocus(FocusNode());
+                                        },
+                                        onDeleteChat: _deleteChat,
+                                        onBlockUser: _blockUser,
+                                        onUnblockUser: _unblockUser,
+                                      ),
+                                      GroupsTab(
+                                        onOpenGroup: (group) {
+                                          if (group.isExternal) {
+                                            final server = ExternalServerManager
+                                                .servers.value
+                                                .where((s) =>
+                                                    s.id ==
+                                                    group.externalServerId)
+                                                .firstOrNull;
+                                            if (server == null) return;
+                                            setState(() {
+                                              selectedChatOther = null;
+                                              selectedGroup = null;
+                                              selectedExternalGroup = group;
+                                              selectedExternalServer = server;
+                                              _selectedFavoriteId = null;
+                                            });
+                                          } else {
+                                            setState(() {
+                                              selectedChatOther = null;
+                                              selectedGroup = group;
+                                              selectedExternalGroup = null;
+                                              selectedExternalServer = null;
+                                              _selectedFavoriteId = null;
+                                            });
+                                          }
+                                        },
+                                      ),
+                                      FavoritesTab(
+                                        favorites: _favorites,
+                                        onOpen: (id) {
+                                          setState(() {
+                                            selectedChatOther = null;
+                                            selectedGroup = null;
+                                            selectedExternalGroup = null;
+                                            selectedExternalServer = null;
+                                            _selectedFavoriteId = id;
+                                          });
+                                        },
+                                        onAdd: _addFavorite,
+                                        onDelete: _deleteFavorite,
+                                      ),
+                                      AccountsTab(
+                                        currentUsername: currentUsername,
+                                        currentUin: currentUin,
+                                        identityPubFp:
+                                            _identityPublicKey != null
+                                                ? _computePubkeyFpHex(
+                                                    _identityPublicKey!.bytes)
+                                                : null,
+                                        onLogin: _login,
+                                        onRegister: _register,
+                                        onSwitchAccount:
+                                            _switchToAccountWithAuth,
+                                        onDeleteAccount: _deleteAccount,
+                                        logs: _log,
+                                        currentTheme: widget.currentTheme,
+                                      ),
+                                      SettingsTab(
+                                        currentTheme: widget.currentTheme,
+                                        isDarkMode: widget.isDarkMode,
+                                        onThemeChanged: widget.onThemeChanged,
+                                        onGenerateIdentity: _generateIdentity,
+                                        onUploadPubkey: _uploadPubkeyToServer,
+                                        onRotateKey: rotateIdentityKey,
+                                        onFullSessionReset: fullSessionReset,
+                                        onConnectWs: _connectWs,
+                                        onDisconnectWs: _disconnectWs,
+                                        onLogout: _logout,
+                                        logs: _log,
+                                        isPrimaryDevice: _isPrimaryDevice,
+                                        onShowPassphrase: _showPassphrase,
+                                        onChangePassword: _changePassword,
+                                        onOpenSessions: _openSessions,
+                                        onOpenChat: (username) {
+                                          _onTabSelected(0);
+                                          final chatId =
+                                              chatIdForUser(username);
+                                          chats.putIfAbsent(chatId, () => []);
+                                          setState(() {
+                                            selectedChatOther = username;
+                                            selectedGroup = null;
+                                            selectedExternalGroup = null;
+                                            selectedExternalServer = null;
+                                            _selectedFavoriteId = null;
+                                          });
+                                        },
+                                      ),
+                                      if (_isPrimaryDevice)
+                                        ActiveSessionsTab(
+                                          serverBase: serverBase,
+                                          username: currentUsername,
+                                          onBack: () => _onTabSelected(4),
+                                        ),
+                                    ][_index];
+
+                                    if (navPos != 'bottom') return tabChild;
+                                    return MediaQuery(
+                                      data: MediaQuery.of(context).copyWith(
+                                        padding: MediaQuery.of(context)
+                                                .padding +
+                                            const EdgeInsets.only(bottom: 76),
+                                      ),
+                                      child: tabChild,
+                                    );
+                                  },
+                                ),
+                              ),
+                              if (false) const SizedBox.shrink(),
+                            ],
+                          ),
+                        ),
+                        MouseRegion(
+                          cursor: SystemMouseCursors.resizeColumn,
+                          child: GestureDetector(
+                            onHorizontalDragUpdate: (details) {
+                              _chatsPanelWidthNotifier
+                                  .value = (_chatsPanelWidthNotifier.value +
+                                      details.delta.dx)
+                                  .clamp(200.0,
+                                      MediaQuery.of(context).size.width * 0.6);
+                            },
+                            child: Container(
+                              width: 6,
+                              color: Theme.of(context)
+                                  .dividerColor
+                                  .withOpacity(0.3),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: ValueListenableBuilder<bool>(
+                            valueListenable: SettingsManager.applyGlobally,
+                            builder: (_, apply, __) {
+                              Widget content = (_selectedFavoriteId != null)
+                                  ? getFavoritesScreen(
+                                      _selectedFavoriteId!,
+                                      _favorites
+                                          .firstWhere((f) =>
+                                              f.id == _selectedFavoriteId!)
+                                          .title,
+                                    )
+                                  : (selectedChatOther != null &&
+                                          currentUsername != null)
+                                      ? _chatScreenCache.putIfAbsent(
+                                          '${selectedChatOther!}:${currentUsername!}',
+                                          () => ChatScreen(
+                                            key: ValueKey<String>(
+                                                '${selectedChatOther!}:${currentUsername!}'),
+                                            myUsername: currentUsername!,
+                                            otherUsername: selectedChatOther!,
+                                            onSend: (t, replyTo) =>
+                                                _sendChatMessage(
+                                                    selectedChatOther!,
+                                                    t,
+                                                    replyTo),
+                                            onTyping: () => _handleSendTyping(
+                                                selectedChatOther!),
+                                            onRequestResend: (id) {
+                                              if (id != null)
+                                                _requestResend(id);
+                                            },
+                                            onEditMessage: (id, text) =>
+                                                _editChatMessage(
+                                                    selectedChatOther!,
+                                                    id,
+                                                    text),
+                                            onDeleteMessage: (id) =>
+                                                _deleteChatMessage(id),
+                                          ),
+                                        )
+                                      : (selectedChatOther != null)
+                                          ? Center(
+                                              child:
+                                                  CircularProgressIndicator())
+                                          : (selectedGroup != null)
+                                              ? _groupChatScreenCache
+                                                  .putIfAbsent(
+                                                  selectedGroup!.id,
+                                                  () => GroupChatScreen(
+                                                    key: ValueKey<int>(
+                                                        selectedGroup!.id),
+                                                    group: selectedGroup!,
+                                                  ),
+                                                )
+                                              : (selectedExternalGroup !=
+                                                          null &&
+                                                      selectedExternalServer !=
+                                                          null)
+                                                  ? _externalGroupChatScreenCache
+                                                      .putIfAbsent(
+                                                      'ext_${selectedExternalServer!.id}_${selectedExternalGroup!.id}',
+                                                      () =>
+                                                          ExternalGroupChatScreen(
+                                                        key: ValueKey<String>(
+                                                            'ext_${selectedExternalServer!.id}_${selectedExternalGroup!.id}'),
+                                                        group:
+                                                            selectedExternalGroup!,
+                                                        server:
+                                                            selectedExternalServer!,
+                                                      ),
+                                                    )
+                                                  : ValueListenableBuilder<
+                                                      bool>(
+                                                      valueListenable:
+                                                          SettingsManager
+                                                              .showAccountGraph,
+                                                      builder:
+                                                          (_, showGraph, __) {
+                                                        if (showGraph &&
+                                                            isDesktop) {
+                                                          return AccountGraphView(
+                                                            onChatTap:
+                                                                (username) =>
+                                                                    setState(
+                                                                        () {
+                                                              selectedChatOther =
+                                                                  username;
+                                                            }),
+                                                            onGroupTap:
+                                                                (group) =>
+                                                                    setState(
+                                                                        () {
+                                                              selectedGroup =
+                                                                  group;
+                                                              selectedExternalGroup =
+                                                                  null;
+                                                              selectedExternalServer =
+                                                                  null;
+                                                            }),
+                                                            onExternalGroupTap:
+                                                                (group) {
+                                                              try {
+                                                                final srv = ExternalServerManager
+                                                                    .servers
+                                                                    .value
+                                                                    .firstWhere((s) =>
+                                                                        s.id ==
+                                                                        group
+                                                                            .externalServerId);
+                                                                setState(() {
+                                                                  selectedExternalGroup =
+                                                                      group;
+                                                                  selectedExternalServer =
+                                                                      srv;
+                                                                  selectedGroup =
+                                                                      null;
+                                                                });
+                                                              } catch (_) {}
+                                                            },
+                                                            onFavoriteTap:
+                                                                (favId) =>
+                                                                    setState(
+                                                                        () {
+                                                              _selectedFavoriteId =
+                                                                  favId;
+                                                            }),
+                                                          );
+                                                        }
+                                                        return Center(
+                                                          child: glassCard(
+                                                            context: context,
+                                                            child: Padding(
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                      horizontal:
+                                                                          24,
+                                                                      vertical:
+                                                                          32),
+                                                              child: Column(
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                mainAxisAlignment:
+                                                                    MainAxisAlignment
+                                                                        .center,
+                                                                children: [
+                                                                  Image.asset(
+                                                                    'assets/onyx_icon.png',
+                                                                    width: 56,
+                                                                    height: 56,
+                                                                    opacity:
+                                                                        const AlwaysStoppedAnimation(
+                                                                            0.85),
+                                                                  ),
+                                                                  const SizedBox(
+                                                                      height:
+                                                                          16),
+                                                                  ValueListenableBuilder<
+                                                                      Locale>(
+                                                                    valueListenable:
+                                                                        SettingsManager
+                                                                            .appLocale,
+                                                                    builder: (_,
+                                                                            locale,
+                                                                            __) =>
+                                                                        Text(
+                                                                      AppLocalizations(
+                                                                              locale)
+                                                                          .localizeMotivationalHint(
+                                                                              _motivationalHints[_motivationalHintIndex]),
+                                                                      textAlign:
+                                                                          TextAlign
+                                                                              .center,
+                                                                      style:
+                                                                          TextStyle(
+                                                                        fontSize:
+                                                                            16,
+                                                                        fontWeight:
+                                                                            FontWeight.w500,
+                                                                        color: Theme.of(context)
+                                                                            .colorScheme
+                                                                            .onSurface,
+                                                                      ),
+                                                                    ),
+                                                                  ),
+                                                                ],
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        );
+                                                      },
+                                                    );
+
+                              if (isDesktop && apply) {
+                                return Stack(
+                                  children: [
+                                    ValueListenableBuilder<String?>(
                                       valueListenable:
-                                          SettingsManager.blurBackground,
-                                      builder: (_, blur, __) {
-                                        return ValueListenableBuilder<double>(
+                                          SettingsManager.chatBackground,
+                                      builder: (_, path, __) {
+                                        if (path == null)
+                                          return const SizedBox.shrink();
+                                        final f = File(path);
+                                        if (!f.existsSync())
+                                          return const SizedBox.shrink();
+                                        return ValueListenableBuilder<bool>(
                                           valueListenable:
-                                              SettingsManager.blurSigma,
-                                          builder: (_, sigma, __) {
-                                            final provider = FileImage(f);
-                                            final child = blur
-                                                ? AdaptiveBlur(
-                                                    imageProvider: provider,
-                                                    sigma: sigma,
-                                                    fit: BoxFit.cover)
-                                                : Image(
-                                                    image: provider,
-                                                    fit: BoxFit.cover);
-                                            return Positioned.fill(
-                                              child: IgnorePointer(
-                                                child: Opacity(
-                                                    opacity: 0.95,
-                                                    child: child),
-                                              ),
+                                              SettingsManager.blurBackground,
+                                          builder: (_, blur, __) {
+                                            return ValueListenableBuilder<
+                                                double>(
+                                              valueListenable:
+                                                  SettingsManager.blurSigma,
+                                              builder: (_, sigma, __) {
+                                                final provider = FileImage(f);
+                                                final child = blur
+                                                    ? AdaptiveBlur(
+                                                        imageProvider: provider,
+                                                        sigma: sigma,
+                                                        fit: BoxFit.cover)
+                                                    : Image(
+                                                        image: provider,
+                                                        fit: BoxFit.cover);
+                                                return Positioned.fill(
+                                                  child: IgnorePointer(
+                                                    child: Opacity(
+                                                        opacity: 0.95,
+                                                        child: child),
+                                                  ),
+                                                );
+                                              },
                                             );
                                           },
                                         );
                                       },
-                                    );
-                                  },
-                                ),
-                                content,
-                              ],
-                            );
-                          }
+                                    ),
+                                    content,
+                                  ],
+                                );
+                              }
 
-                          return content;
-                        },
-                      ),
+                              return content;
+                            },
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
+                ],
+              ),
+            ),
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SizedBox(height: 42, child: CustomTitleBar()),
+            ),
+            if (currentUsername != null && !isNavBottom)
+              Positioned(
+                left: 8,
+                bottom: 8,
+                child: ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.showAccountIndicator,
+                  builder: (_, showInd, __) {
+                    if (!showInd) return const SizedBox.shrink();
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          currentDisplayName ?? currentUsername!,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey,
+                          ),
+                        ),
+                        Text(
+                          '@$currentUsername',
+                          style:
+                              const TextStyle(fontSize: 10, color: Colors.grey),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
-            ],
-          ),
-        ),
-
-        const Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: SizedBox(height: 42, child: CustomTitleBar()),
-        ),
-
-        if (currentUsername != null && !isNavBottom)
-          Positioned(
-            left: 8,
-            bottom: 8,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  currentDisplayName ?? currentUsername!,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey,
-                  ),
-                ),
-                Text(
-                  '@$currentUsername',
-                  style: const TextStyle(fontSize: 10, color: Colors.grey),
-                ),
-              ],
-            ),
-          ),
-        ],
-      );
+          ],
+        );
       },
     );
   }
@@ -6584,7 +7265,8 @@ class RootScreenState extends State<RootScreen>
                   color: baseColor.withValues(alpha: opacity),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
+                    color:
+                        Theme.of(context).dividerColor.withValues(alpha: 0.15),
                     width: 1,
                   ),
                 ),
@@ -6599,14 +7281,14 @@ class RootScreenState extends State<RootScreen>
 
   @override
   Widget build(BuildContext context) {
-    
     if (currentUsername == null) {
       return Scaffold(
         body: Stack(
           children: [
             SafeArea(
               child: Padding(
-                padding: EdgeInsets.fromLTRB(16, isDesktop ? 16 + 42 : 16, 16, 16),
+                padding:
+                    EdgeInsets.fromLTRB(16, isDesktop ? 16 + 42 : 16, 16, 16),
                 child: AccountsTab(
                   currentUsername: null,
                   currentUin: null,
@@ -6633,12 +7315,12 @@ class RootScreenState extends State<RootScreen>
     }
 
     final tabs = <Widget>[
-      
       ChatsTab(
         chats: chats,
         username: currentUsername,
         onOpenChat: (other) async {
-          if (_chatsLoadCompleter != null && !_chatsLoadCompleter!.isCompleted) {
+          if (_chatsLoadCompleter != null &&
+              !_chatsLoadCompleter!.isCompleted) {
             await _chatsLoadCompleter!.future;
           }
           if (!mounted) return;
@@ -6646,21 +7328,28 @@ class RootScreenState extends State<RootScreen>
           final chatId = chatIdForUser(other);
           chats.putIfAbsent(chatId, () => []);
           if (!isDesktop) {
-            if (mounted) setState(() { selectedChatOther = other; });
+            if (mounted)
+              setState(() {
+                selectedChatOther = other;
+              });
             await Navigator.of(context).push(
               _chatRoute((_) => ChatScreen(
-                  myUsername: currentUsername ?? 'me',
-                  otherUsername: other,
-                  onSend: (t, replyTo) => _sendChatMessage(other, t, replyTo),
-                  onTyping: () => _handleSendTyping(other),
-                  onRequestResend: (id) {
-                    if (id != null) _requestResend(id);
-                  },
-                  onEditMessage: (id, text) => _editChatMessage(other, id, text),
-                  onDeleteMessage: (id) => _deleteChatMessage(id),
-                )),
+                    myUsername: currentUsername ?? 'me',
+                    otherUsername: other,
+                    onSend: (t, replyTo) => _sendChatMessage(other, t, replyTo),
+                    onTyping: () => _handleSendTyping(other),
+                    onRequestResend: (id) {
+                      if (id != null) _requestResend(id);
+                    },
+                    onEditMessage: (id, text) =>
+                        _editChatMessage(other, id, text),
+                    onDeleteMessage: (id) => _deleteChatMessage(id),
+                  )),
             );
-            if (mounted) setState(() { selectedChatOther = null; });
+            if (mounted)
+              setState(() {
+                selectedChatOther = null;
+              });
             _sendPresence('online');
           }
         },
@@ -6668,7 +7357,6 @@ class RootScreenState extends State<RootScreen>
         onBlockUser: _blockUser,
         onUnblockUser: _unblockUser,
       ),
-
       GroupsTab(
         onOpenGroup: (group) {
           if (group.isExternal) {
@@ -6686,16 +7374,15 @@ class RootScreenState extends State<RootScreen>
               });
             } else {
               Navigator.of(context).push(
-                _chatRoute((_) => ExternalGroupChatScreen(group: group, server: server)),
+                _chatRoute((_) =>
+                    ExternalGroupChatScreen(group: group, server: server)),
               );
             }
           } else if (!isDesktop) {
-            
             Navigator.of(context).push(
               _chatRoute((_) => GroupChatScreen(group: group)),
             );
           } else {
-            
             setState(() {
               selectedChatOther = null;
               selectedGroup = group;
@@ -6705,7 +7392,6 @@ class RootScreenState extends State<RootScreen>
           }
         },
       ),
-
       FavoritesTab(
         favorites: _favorites,
         onOpen: (id) {
@@ -6722,7 +7408,6 @@ class RootScreenState extends State<RootScreen>
         onAdd: _addFavorite,
         onDelete: _deleteFavorite,
       ),
-      
       AccountsTab(
         currentUsername: currentUsername,
         currentUin: currentUin,
@@ -6736,7 +7421,6 @@ class RootScreenState extends State<RootScreen>
         logs: _log,
         currentTheme: widget.currentTheme,
       ),
-      
       SettingsTab(
         currentTheme: widget.currentTheme,
         isDarkMode: widget.isDarkMode,
@@ -6766,7 +7450,6 @@ class RootScreenState extends State<RootScreen>
           });
         },
       ),
-
       if (_isPrimaryDevice)
         ActiveSessionsTab(
           serverBase: serverBase,
@@ -6778,7 +7461,6 @@ class RootScreenState extends State<RootScreen>
     final Widget mainContent = isDesktop
         ? Listener(
             onPointerDown: (event) {
-              
               if (event.buttons == 16) {
                 _handleKeyOrMouseBack();
               }
@@ -6790,30 +7472,35 @@ class RootScreenState extends State<RootScreen>
           )
         : SafeArea(
             bottom: false,
-            child: Column(
+            child: Stack(
               children: [
-                _buildMobileAppBar(context),
-                const UpdateBanner(),
-                Expanded(
-                  
-                  child: MediaQuery(
-                    data: MediaQuery.of(context).copyWith(
-                      padding: MediaQuery.of(context).padding +
-                          const EdgeInsets.only(bottom: 76),
-                    ),
-                    child: ValueListenableBuilder<bool>(
-                      valueListenable: SettingsManager.swipeTabsEnabled,
-                      builder: (_, swipeTabs, __) => PageView(
-                        controller: _pageController,
-                        physics: swipeTabs
-                            ? const BouncingScrollPhysics()
-                            : const NeverScrollableScrollPhysics(),
-                        onPageChanged: _handlePageChanged,
-                        children: tabs,
+                Column(
+                  children: [
+                    _buildMobileAppBar(context),
+                    const UpdateBanner(),
+                    Expanded(
+                      child: MediaQuery(
+                        data: MediaQuery.of(context).copyWith(
+                          padding: MediaQuery.of(context).padding +
+                              const EdgeInsets.only(bottom: 76),
+                        ),
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable: SettingsManager.swipeTabsEnabled,
+                          builder: (_, swipeTabs, __) => PageView(
+                            controller: _pageController,
+                            physics: swipeTabs
+                                ? const BouncingScrollPhysics()
+                                : const NeverScrollableScrollPhysics(),
+                            onPageChanged: _handlePageChanged,
+                            children: tabs,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
+                if (_mobileGraphEnabled) _buildGraphOverlay(),
+                if (_mobileGraphEnabled) _buildGraphHandle(),
               ],
             ),
           );
@@ -6821,7 +7508,6 @@ class RootScreenState extends State<RootScreen>
     return Scaffold(
       body: Stack(
         children: [
-          
           ValueListenableBuilder<bool>(
             valueListenable: SettingsManager.applyGlobally,
             builder: (ctx, apply, _) {
@@ -6858,12 +7544,10 @@ class RootScreenState extends State<RootScreen>
               );
             },
           ),
-
           SafeArea(
             bottom: false,
             child: mainContent,
           ),
-          
           ValueListenableBuilder<String>(
             valueListenable: SettingsManager.desktopNavPosition,
             builder: (ctx, navPosition, _) {
@@ -6877,208 +7561,267 @@ class RootScreenState extends State<RootScreen>
                   return ValueListenableBuilder<double>(
                     valueListenable: SettingsManager.elementOpacity,
                     builder: (_, opacity, __) {
-                      
                       final panelW = _chatsPanelWidthNotifier.value;
                       final navWidth = isDesktop
                           ? min(panelW - 24.0, 420.0)
                           : MediaQuery.of(context).size.width / 1.8;
-                      final leftPad = isDesktop
-                          ? max(12.0, (panelW - navWidth) / 2)
-                          : 70.0;
+                      final leftPad =
+                          isDesktop ? max(12.0, (panelW - navWidth) / 2) : 70.0;
 
                       final scheme = Theme.of(context).colorScheme;
                       final navBackground = SettingsManager.getElementColor(
-                        scheme.surfaceContainerHighest,
-                        brightness
-                      ).withValues(alpha: opacity);
+                              scheme.surfaceContainerHighest, brightness)
+                          .withValues(alpha: opacity);
+                      final hideBottomNav = !isDesktop && _graphOverlayVisible;
 
-                  return Positioned.fill(
-                    child: Align(
-                      alignment: isDesktop ? Alignment.bottomLeft : Alignment.bottomCenter,
-                      child: TweenAnimationBuilder<double>(
-                        tween: Tween<double>(begin: 100.0, end: 0.0),
-                        duration: const Duration(milliseconds: 600),
-                        curve: Curves.easeOutCubic,
-                        builder: (context, offset, child) {
-                          return Transform.translate(
-                            offset: Offset(0, offset),
-                            child: Opacity(
-                              opacity: (1.0 - (offset / 100.0)).clamp(0.0, 1.0),
-                              child: child,
-                            ),
-                          );
-                        },
-                        child: SafeArea(
-                          bottom: true,
-                          child: Padding(
-                            padding: EdgeInsets.only(
-                              bottom: 18.0,
-                              left: leftPad,
-                              right: isDesktop ? 0 : 70,
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(20),
-                              child: Container(
-                              height: 58,
-                              width: isDesktop ? navWidth : navWidth + 20,
-                              
-                              decoration: BoxDecoration(
-                                color: navBackground,
-                                borderRadius: BorderRadius.circular(28),
-                                border: Border.all(
-                                  color: Theme.of(context)
-                                      .dividerColor
-                                      .withOpacity(0.15),
-                                  width: 1,
+                      return Positioned.fill(
+                        child: Align(
+                          alignment: isDesktop
+                              ? Alignment.bottomLeft
+                              : Alignment.bottomCenter,
+                          child: TweenAnimationBuilder<double>(
+                            tween: Tween<double>(begin: 100.0, end: 0.0),
+                            duration: const Duration(milliseconds: 600),
+                            curve: Curves.easeOutCubic,
+                            builder: (context, offset, child) {
+                              return Transform.translate(
+                                offset: Offset(0, offset),
+                                child: Opacity(
+                                  opacity:
+                                      (1.0 - (offset / 100.0)).clamp(0.0, 1.0),
+                                  child: AnimatedSlide(
+                                    offset: hideBottomNav
+                                        ? const Offset(0.0, 1.75)
+                                        : Offset.zero,
+                                    duration: const Duration(milliseconds: 280),
+                                    curve: hideBottomNav
+                                        ? Curves.easeInCubic
+                                        : Curves.easeOutCubic,
+                                    child: AnimatedOpacity(
+                                      opacity: hideBottomNav ? 0.0 : 1.0,
+                                      duration:
+                                          const Duration(milliseconds: 220),
+                                      curve: hideBottomNav
+                                          ? Curves.easeInCubic
+                                          : Curves.easeOutCubic,
+                                      child: child,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              child: Center(
-                                child: Padding(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: isDesktop ? 0 : 10,
-                                  ),
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.translucent,
-                                    onHorizontalDragUpdate: isDesktop ? null : (details) {
-                                      final tabWidth = navWidth / 5;
-                                      final newIndex = (details.localPosition.dx / tabWidth)
-                                          .floor()
-                                          .clamp(0, 4);
-                                      if (newIndex != _index) {
-                                        HapticFeedback.selectionClick();
-                                        setState(() => _index = newIndex);
-                                        if (_pageController.hasClients) {
-                                          
-                                          _pageController.jumpToPage(newIndex);
-                                        }
-                                      }
-                                    },
-                                    child: SizedBox(
-                                    width: navWidth,
+                              );
+                            },
+                            child: SafeArea(
+                              bottom: true,
+                              child: Padding(
+                                padding: EdgeInsets.only(
+                                  bottom: 18.0,
+                                  left: leftPad,
+                                  right: isDesktop ? 0 : 70,
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(20),
+                                  child: Container(
                                     height: 58,
-                                    child: NavigationBar(
-                                    selectedIndex: _index < 5 ? _index : 4,
-                                    onDestinationSelected: _onTabSelected,
-                                    height: 58,
-                                    labelBehavior:
-                                        NavigationDestinationLabelBehavior
-                                            .alwaysHide,
-                                    destinations: [
-                                      NavigationDestination(
-                                        icon: AnimatedNavIcon(
-                                          icon: Icons.chat_bubble,
-                                          size: 22,
-                                          isSelected: _index == 0,
-                                          animationType: NavIconAnimationType.bounce,
-                                          entryDelay: 300,
-                                        ),
-                                        selectedIcon: AnimatedNavIcon(
-                                          icon: Icons.chat_bubble,
-                                          size: 24,
-                                          color: Theme.of(context).colorScheme.primary,
-                                          isSelected: _index == 0,
-                                          animationType: NavIconAnimationType.bounce,
-                                          entryDelay: 300,
-                                        ),
-                                        label: '',
+                                    width: isDesktop ? navWidth : navWidth + 20,
+                                    decoration: BoxDecoration(
+                                      color: navBackground,
+                                      borderRadius: BorderRadius.circular(28),
+                                      border: Border.all(
+                                        color: Theme.of(context)
+                                            .dividerColor
+                                            .withOpacity(0.15),
+                                        width: 1,
                                       ),
-                                      NavigationDestination(
-                                        icon: AnimatedNavIcon(
-                                          icon: Icons.group,
-                                          size: 22,
-                                          isSelected: _index == 1,
-                                          animationType: NavIconAnimationType.bounce,
-                                          entryDelay: 400,
+                                    ),
+                                    child: Center(
+                                      child: Padding(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: isDesktop ? 0 : 10,
                                         ),
-                                        selectedIcon: AnimatedNavIcon(
-                                          icon: Icons.group,
-                                          size: 24,
-                                          color: Theme.of(context).colorScheme.primary,
-                                          isSelected: _index == 1,
-                                          animationType: NavIconAnimationType.bounce,
-                                          entryDelay: 400,
+                                        child: GestureDetector(
+                                          behavior: HitTestBehavior.translucent,
+                                          onHorizontalDragUpdate: isDesktop
+                                              ? null
+                                              : (details) {
+                                                  final tabWidth = navWidth / 5;
+                                                  final newIndex = (details
+                                                              .localPosition
+                                                              .dx /
+                                                          tabWidth)
+                                                      .floor()
+                                                      .clamp(0, 4);
+                                                  if (newIndex != _index) {
+                                                    HapticFeedback
+                                                        .selectionClick();
+                                                    setState(() =>
+                                                        _index = newIndex);
+                                                    if (_pageController
+                                                        .hasClients) {
+                                                      _pageController
+                                                          .jumpToPage(newIndex +
+                                                              _graphTabOffset);
+                                                    }
+                                                  }
+                                                },
+                                          child: SizedBox(
+                                            width: navWidth,
+                                            height: 58,
+                                            child: NavigationBar(
+                                              selectedIndex:
+                                                  _index < 5 ? _index : 4,
+                                              onDestinationSelected:
+                                                  _onTabSelected,
+                                              height: 58,
+                                              labelBehavior:
+                                                  NavigationDestinationLabelBehavior
+                                                      .alwaysHide,
+                                              destinations: [
+                                                NavigationDestination(
+                                                  icon: AnimatedNavIcon(
+                                                    icon: Icons.chat_bubble,
+                                                    size: 22,
+                                                    isSelected: _index == 0,
+                                                    animationType:
+                                                        NavIconAnimationType
+                                                            .bounce,
+                                                    entryDelay: 300,
+                                                  ),
+                                                  selectedIcon: AnimatedNavIcon(
+                                                    icon: Icons.chat_bubble,
+                                                    size: 24,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .primary,
+                                                    isSelected: _index == 0,
+                                                    animationType:
+                                                        NavIconAnimationType
+                                                            .bounce,
+                                                    entryDelay: 300,
+                                                  ),
+                                                  label: '',
+                                                ),
+                                                NavigationDestination(
+                                                  icon: AnimatedNavIcon(
+                                                    icon: Icons.group,
+                                                    size: 22,
+                                                    isSelected: _index == 1,
+                                                    animationType:
+                                                        NavIconAnimationType
+                                                            .bounce,
+                                                    entryDelay: 400,
+                                                  ),
+                                                  selectedIcon: AnimatedNavIcon(
+                                                    icon: Icons.group,
+                                                    size: 24,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .primary,
+                                                    isSelected: _index == 1,
+                                                    animationType:
+                                                        NavIconAnimationType
+                                                            .bounce,
+                                                    entryDelay: 400,
+                                                  ),
+                                                  label: '',
+                                                ),
+                                                NavigationDestination(
+                                                  icon: AnimatedNavIcon(
+                                                    icon:
+                                                        Icons.bookmark_outlined,
+                                                    size: 22,
+                                                    isSelected: _index == 2,
+                                                    animationType:
+                                                        NavIconAnimationType
+                                                            .bounce,
+                                                    entryDelay: 500,
+                                                  ),
+                                                  selectedIcon: AnimatedNavIcon(
+                                                    icon: Icons.bookmark,
+                                                    size: 24,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .primary,
+                                                    isSelected: _index == 2,
+                                                    animationType:
+                                                        NavIconAnimationType
+                                                            .bounce,
+                                                    entryDelay: 500,
+                                                  ),
+                                                  label: '',
+                                                ),
+                                                NavigationDestination(
+                                                  icon: AnimatedNavIcon(
+                                                    icon: Icons.person,
+                                                    size: 22,
+                                                    isSelected: _index == 3,
+                                                    animationType:
+                                                        NavIconAnimationType
+                                                            .bounce,
+                                                    entryDelay: 600,
+                                                  ),
+                                                  selectedIcon: AnimatedNavIcon(
+                                                    icon: Icons.person,
+                                                    size: 24,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .primary,
+                                                    isSelected: _index == 3,
+                                                    animationType:
+                                                        NavIconAnimationType
+                                                            .bounce,
+                                                    entryDelay: 600,
+                                                  ),
+                                                  label: '',
+                                                ),
+                                                NavigationDestination(
+                                                  icon: AnimatedNavIcon(
+                                                    icon: Icons.settings,
+                                                    size: 22,
+                                                    isSelected: _index == 4,
+                                                    animationType:
+                                                        NavIconAnimationType
+                                                            .spin,
+                                                    entryDelay: 700,
+                                                  ),
+                                                  selectedIcon: AnimatedNavIcon(
+                                                    icon: Icons.settings,
+                                                    size: 24,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .primary,
+                                                    isSelected: _index == 4,
+                                                    animationType:
+                                                        NavIconAnimationType
+                                                            .spin,
+                                                    entryDelay: 700,
+                                                  ),
+                                                  label: '',
+                                                ),
+                                              ],
+                                              backgroundColor:
+                                                  Colors.transparent,
+                                              indicatorColor: Theme.of(context)
+                                                  .colorScheme
+                                                  .primary
+                                                  .withOpacity(0.15),
+                                            ),
+                                          ),
                                         ),
-                                        label: '',
                                       ),
-                                      NavigationDestination(
-                                        icon: AnimatedNavIcon(
-                                          icon: Icons.bookmark_outlined,
-                                          size: 22,
-                                          isSelected: _index == 2,
-                                          animationType: NavIconAnimationType.bounce,
-                                          entryDelay: 500,
-                                        ),
-                                        selectedIcon: AnimatedNavIcon(
-                                          icon: Icons.bookmark,
-                                          size: 24,
-                                          color: Theme.of(context).colorScheme.primary,
-                                          isSelected: _index == 2,
-                                          animationType: NavIconAnimationType.bounce,
-                                          entryDelay: 500,
-                                        ),
-                                        label: '',
-                                      ),
-                                      NavigationDestination(
-                                        icon: AnimatedNavIcon(
-                                          icon: Icons.person,
-                                          size: 22,
-                                          isSelected: _index == 3,
-                                          animationType: NavIconAnimationType.bounce,
-                                          entryDelay: 600,
-                                        ),
-                                        selectedIcon: AnimatedNavIcon(
-                                          icon: Icons.person,
-                                          size: 24,
-                                          color: Theme.of(context).colorScheme.primary,
-                                          isSelected: _index == 3,
-                                          animationType: NavIconAnimationType.bounce,
-                                          entryDelay: 600,
-                                        ),
-                                        label: '',
-                                      ),
-                                      NavigationDestination(
-                                        icon: AnimatedNavIcon(
-                                          icon: Icons.settings,
-                                          size: 22,
-                                          isSelected: _index == 4,
-                                          animationType: NavIconAnimationType.spin,
-                                          entryDelay: 700,
-                                        ),
-                                        selectedIcon: AnimatedNavIcon(
-                                          icon: Icons.settings,
-                                          size: 24,
-                                          color: Theme.of(context).colorScheme.primary,
-                                          isSelected: _index == 4,
-                                          animationType: NavIconAnimationType.spin,
-                                          entryDelay: 700,
-                                        ),
-                                        label: '',
-                                      ),
-                                    ],
-                                    backgroundColor: Colors.transparent,
-                                    indicatorColor: Theme.of(context)
-                                        .colorScheme
-                                        .primary
-                                        .withOpacity(0.15),
+                                    ),
                                   ),
-                                  ), 
-                                ), 
+                                ),
                               ),
                             ),
                           ),
                         ),
-                        ),
-                      ),
-                      ),
-                    ),
-                    );
-                  },
-                );
+                      );
+                    },
+                  );
                 },
               );
             },
           ),
-
         ],
       ),
     );
@@ -7127,4 +7870,3 @@ _KeyPairData _decodeIdentity(Map<String, String> identity) {
   final pk = SimplePublicKey(pubBytes, type: KeyPairType.x25519);
   return _KeyPairData(kp, pk);
 }
-

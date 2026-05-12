@@ -42,6 +42,11 @@ class UserCache {
     updatedUsers.value = {...updatedUsers.value, username};
   }
 
+  static void seed(String username, String displayName) {
+    _cache[username] = UserProfile(username: username, displayName: displayName, description: '');
+    updatedUsers.value = {...updatedUsers.value, username};
+  }
+
   static UserProfile? getSync(String username) {
     return _cache[username];
   }

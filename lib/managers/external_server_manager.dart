@@ -95,6 +95,27 @@ class ExternalServerManager {
     return {};
   }
 
+  static Future<void> _refreshServerFeatures(String serverId) async {
+    final server = _getServer(serverId);
+    if (server == null) return;
+    try {
+      final resp = await http
+          .get(Uri.parse('${server.baseUrl}/info'))
+          .timeout(const Duration(seconds: 5));
+      if (resp.statusCode == 200) {
+        final body = jsonDecode(resp.body) as Map<String, dynamic>;
+        final newFeatures = (body['features'] as List<dynamic>?)?.cast<String>() ?? server.features;
+        if (newFeatures.join(',') == server.features.join(',')) return;
+        final updated = server.copyWith(features: newFeatures);
+        servers.value = servers.value.map((s) => s.id == serverId ? updated : s).toList();
+        await _saveServers();
+        debugPrint('[ext-ws] $serverId features refreshed: $newFeatures');
+      }
+    } catch (e) {
+      debugPrint('[ext-ws] _refreshServerFeatures error: $e');
+    }
+  }
+
   static final ValueNotifier<List<Group>> externalGroups = ValueNotifier([]);
 
   static final ValueNotifier<Set<String>> connectedServerIds = ValueNotifier({});
@@ -620,6 +641,7 @@ class ExternalServerManager {
                 connectedServerIds.value = {...connectedServerIds.value, serverId};
                 debugPrint('[ext-ws] $serverId connection confirmed via init_complete');
                 connectionEstablished.complete(true);
+                _refreshServerFeatures(serverId);
               }
             } catch (_) {}
           }

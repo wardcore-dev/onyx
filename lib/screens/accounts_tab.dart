@@ -10,6 +10,8 @@ import 'package:convert/convert.dart';
 import 'dart:convert';
 import 'dart:math';
 import '../managers/account_manager.dart';
+import '../managers/decoy_manager.dart';
+import 'decoy_setup_screen.dart' show DecoyAvatarPreview;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../widgets/auth_dialog.dart';
 import '../globals.dart';
@@ -46,7 +48,7 @@ class AccountsTab extends StatefulWidget {
   State<AccountsTab> createState() => _AccountsTabState();
 }
 
-Widget _glassCard({required BuildContext context, required Widget child}) {
+Widget _glassCard({required BuildContext context, required Widget child, VoidCallback? onTap}) {
   final colorScheme = Theme.of(context).colorScheme;
   return ValueListenableBuilder<double>(
     valueListenable: SettingsManager.elementBrightness,
@@ -58,6 +60,29 @@ Widget _glassCard({required BuildContext context, required Widget child}) {
             colorScheme.surfaceContainerHighest,
             brightness,
           );
+          final border = Border.all(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.15),
+            width: 1.0,
+          );
+          if (onTap != null) {
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Material(
+                color: baseColor.withValues(alpha: opacity),
+                child: InkWell(
+                  onTap: onTap,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(20),
+                      border: border,
+                    ),
+                    child: child,
+                  ),
+                ),
+              ),
+            );
+          }
           return ClipRRect(
             borderRadius: BorderRadius.circular(20),
             child: Container(
@@ -65,10 +90,7 @@ Widget _glassCard({required BuildContext context, required Widget child}) {
               decoration: BoxDecoration(
                 color: baseColor.withValues(alpha: opacity),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.15),
-                  width: 1.0,
-                ),
+                border: border,
               ),
               child: child,
             ),
@@ -141,7 +163,9 @@ class _AccountsTabState extends State<AccountsTab>
     
     AccountManager.ensureAccountsLoaded();
     AccountManager.accountsNotifier.addListener(_onAccountsChanged);
-    _accounts = List<String>.from(AccountManager.accountsNotifier.value);
+    if (!DecoyManager.isActive.value) {
+      _accounts = List<String>.from(AccountManager.accountsNotifier.value);
+    }
     _updatePubFingerprintsFor(_accounts);
     _refreshMetaAndSort();
 
@@ -191,7 +215,10 @@ class _AccountsTabState extends State<AccountsTab>
   }
 
   Future<void> _loadAccounts() async {
-    
+    if (DecoyManager.isActive.value) {
+      if (mounted) setState(() { _accounts = []; _pubFingerprints = {}; });
+      return;
+    }
     final accounts = await AccountManager.getAccountsList();
     final Map<String, String?> fps = {};
     for (final acc in accounts) {
@@ -220,6 +247,7 @@ class _AccountsTabState extends State<AccountsTab>
   }
 
   void _onAccountsChanged() {
+    if (DecoyManager.isActive.value) return;
     final accounts = AccountManager.accountsNotifier.value;
     
     _updatePubFingerprintsForNewAccounts(accounts);
@@ -722,17 +750,24 @@ class _AccountsTabState extends State<AccountsTab>
               context: context,
               child: Row(
                 children: [
-                  ValueListenableBuilder<int>(
-                    valueListenable: avatarVersion,
-                    builder: (context, _, __) => AvatarWidget(
-                      key: ValueKey('avatar-${widget.currentUsername ?? ''}'),
-                      username: widget.currentUsername ?? '',
-                      tokenProvider: avatarTokenProvider,
-                      avatarBaseUrl: serverBase,
-                      size: 52.0,
-                      editable: false, 
+                  if (DecoyManager.isActive.value)
+                    DecoyAvatarPreview(
+                      avatarPath: DecoyManager.avatarPath,
+                      displayName: DecoyManager.displayName,
+                      size: 52,
+                    )
+                  else
+                    ValueListenableBuilder<int>(
+                      valueListenable: avatarVersion,
+                      builder: (context, _, __) => AvatarWidget(
+                        key: ValueKey('avatar-${widget.currentUsername ?? ''}'),
+                        username: widget.currentUsername ?? '',
+                        tokenProvider: avatarTokenProvider,
+                        avatarBaseUrl: serverBase,
+                        size: 52.0,
+                        editable: false,
+                      ),
                     ),
-                  ),
                   const SizedBox(width: 12),
                   Flexible(
                     child: Column(
@@ -779,8 +814,45 @@ class _AccountsTabState extends State<AccountsTab>
 
           const SizedBox(height: 12),
 
+          // Session expired banner
+          if (!DecoyManager.isActive.value)
+            ValueListenableBuilder<bool>(
+              valueListenable: sessionExpiredNotifier,
+              builder: (_, expired, __) {
+                if (!expired) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.orange.withValues(alpha: 0.5), width: 1),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 20),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Session expired — please log in again',
+                            style: TextStyle(
+                              color: Colors.orange,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+
           // Token expiry banner
-          if (widget.currentUsername != null) ...[
+          if (widget.currentUsername != null && !DecoyManager.isActive.value) ...[
             Builder(builder: (ctx) {
               final banner = _buildTokenExpiryBanner(ctx);
               if (banner == null) return const SizedBox.shrink();
@@ -919,6 +991,69 @@ class _AccountsTabState extends State<AccountsTab>
             },
           ),
 
+          ValueListenableBuilder<bool>(
+            valueListenable: SettingsManager.pinEnabled,
+            builder: (_, pinOn, __) {
+              if (!pinOn && !DecoyManager.isActive.value) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(top: 16),
+                child: ValueListenableBuilder<double>(
+                  valueListenable: SettingsManager.elementBrightness,
+                  builder: (_, brightness, __) {
+                    final baseColor = SettingsManager.getElementColor(
+                      Theme.of(context).colorScheme.surfaceContainerHighest,
+                      brightness,
+                    );
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: baseColor.withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(
+                            color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: FilledButton.icon(
+                          onPressed: () => DecoyManager.onLockRequest?.call(),
+                          icon: Icon(
+                            Icons.lock_outline,
+                            size: 18,
+                            color: (widget.currentTheme == AppTheme.grey &&
+                                    Theme.of(context).colorScheme.brightness == Brightness.dark)
+                                ? const Color(0xFFA0A0A0)
+                                : Theme.of(context).colorScheme.secondary,
+                          ),
+                          label: Text(
+                            AppLocalizations.of(context).lock,
+                            style: TextStyle(
+                              fontSize: 15,
+                              color: (widget.currentTheme == AppTheme.grey &&
+                                      Theme.of(context).colorScheme.brightness == Brightness.dark)
+                                  ? const Color(0xFFA0A0A0)
+                                  : Theme.of(context).colorScheme.secondary,
+                            ),
+                          ),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: widget.currentTheme == AppTheme.grey
+                                ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.06)
+                                : Theme.of(context).colorScheme.secondary.withValues(alpha: 0.12),
+                            foregroundColor: Theme.of(context).colorScheme.secondary,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(24)),
+                            elevation: 0,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+
           const SizedBox(height: 16),
 
           if (_accounts.isNotEmpty)
@@ -956,10 +1091,17 @@ class _AccountsTabState extends State<AccountsTab>
                         ),
                         child: _glassCard(
                           context: context,
+                          onTap: () {
+                            if (isDesktop) {
+                              rootScreenKey.currentState?.hideDetailPanel();
+                            }
+                            widget.onSwitchAccount(acc);
+                          },
                           child: ListTile(
                             contentPadding: EdgeInsets.zero,
                             dense: true,
                             visualDensity: VisualDensity.compact,
+                            mouseCursor: SystemMouseCursors.click,
                             title: Text(
                               displayName ?? acc,
                               style: TextStyle(
@@ -1010,12 +1152,6 @@ class _AccountsTabState extends State<AccountsTab>
                                 }
                               },
                             ),
-                            onTap: () {
-                              if (isDesktop) {
-                                rootScreenKey.currentState?.hideDetailPanel();
-                              }
-                              widget.onSwitchAccount(acc);
-                            },
                           ),
                         ),
                       );

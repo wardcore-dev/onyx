@@ -39,6 +39,7 @@ import '../widgets/chat_search_bar.dart';
 import '../widgets/animated_message_bubble.dart';
 import '../widgets/message_reaction_bar.dart';
 import '../widgets/media_picker_sheet.dart';
+import '../widgets/chat_input_bar.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -3350,229 +3351,65 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                     colorScheme.surfaceContainerHighest,
                     brightness,
                   );
-                  return Container(
-                    decoration: BoxDecoration(
-                      color: baseColor.withValues(alpha: opacity),
-                      borderRadius: BorderRadius.circular(28),
-                      border: Border.all(
-                        color:
-                            colorScheme.outlineVariant.withValues(alpha: 0.15),
-                        width: 1,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: ValueListenableBuilder<bool>(
-                          valueListenable: recordingNotifier,
-                          builder: (context, isRecording, _) {
-                            return Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                AnimatedOpacity(
-                                  duration: const Duration(milliseconds: 180),
-                                  opacity: isRecording ? 1.0 : 0.0,
-                                  child: isRecording
-                                      ? Padding(
-                                          padding: const EdgeInsets.only(
-                                              bottom: 6.0),
-                                          child: Material(
-                                            shape: const CircleBorder(),
-                                            color: colorScheme.errorContainer,
-                                            child: IconButton(
-                                              icon: Icon(
-                                                Icons.delete,
-                                                color: colorScheme
-                                                    .onErrorContainer,
-                                                size: 18,
-                                              ),
-                                              onPressed: () {
-                                                debugPrint(
-                                                    '<<TRASH PRESSED>> cancel recording in group');
-                                                rootScreenKey.currentState
-                                                    ?.cancelRecording();
-                                              },
-                                              visualDensity:
-                                                  VisualDensity.compact,
-                                              padding: EdgeInsets.zero,
-                                              splashRadius: 20,
-                                            ),
-                                          ),
-                                        )
-                                      : const SizedBox.shrink(),
-                                ),
-                                Material(
-                                  shape: const CircleBorder(),
-                                  color: isRecording
-                                      ? colorScheme.error
-                                          .withValues(alpha: 0.12)
-                                      : Colors.transparent,
-                                  child: IconButton(
-                                    icon: Icon(
-                                      isRecording ? Icons.stop : Icons.mic,
-                                      color: isRecording
-                                          ? colorScheme.error
-                                          : colorScheme.onSurface
-                                              .withValues(alpha: 0.6),
-                                      size: 20,
-                                    ),
-                                    onPressed: () {
-                                      debugPrint(
-                                          '<<MIC BUTTON PRESSED>> isRecording=$isRecording in group');
-                                      if (isRecording) {
-                                        _stopRecordingAndUpload();
-                                      } else {
-                                        _startRecording();
-                                      }
-                                    },
-                                    visualDensity: VisualDensity.compact,
-                                    splashRadius: 20,
-                                    padding: EdgeInsets.zero,
-                                  ),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: IconButton(
-                            icon: Icon(
-                              Icons.attach_file,
-                              color: colorScheme.onSurface.withValues(alpha: 0.6),
-                              size: 20,
-                            ),
-                            onPressed: _pickAndUploadMedia,
-                            visualDensity: VisualDensity.compact,
-                            splashRadius: 20,
-                            padding: EdgeInsets.zero,
-                          ),
-                        ),
-                        Expanded(
-                          child: KeyboardListener(
-                            focusNode: FocusNode(),
-                            onKeyEvent: (event) {
-                              if (event is KeyDownEvent) {
-                                if (HardwareKeyboard.instance
-                                        .isLogicalKeyPressed(
-                                            LogicalKeyboardKey.keyV) &&
-                                    (HardwareKeyboard
-                                            .instance.isControlPressed ||
-                                        HardwareKeyboard
-                                            .instance.isMetaPressed)) {
-                                  _handlePasteFromClipboard();
-                                  return;
-                                }
-
-                                if (HardwareKeyboard.instance
-                                    .isLogicalKeyPressed(
-                                        LogicalKeyboardKey.enter)) {
-                                  if (!HardwareKeyboard
-                                      .instance.isShiftPressed) {
-                                    if (_textCtrl.text.trim().isNotEmpty) {
-                                      _sendMessage(_textCtrl.text);
-                                    }
-                                    return;
-                                  }
-                                  if (HardwareKeyboard
-                                          .instance.isShiftPressed &&
-                                      _textCtrl.text.isNotEmpty) {
-                                    final text = _textCtrl.text;
-                                    final selection = _textCtrl.selection;
-                                    _textCtrl.text =
-                                        '${text.substring(0, selection.start)}\n${text.substring(selection.start)}';
-                                    _textCtrl.selection =
-                                        TextSelection.fromPosition(TextPosition(
-                                            offset: selection.start + 1));
-                                  }
-                                }
-                              }
-                            },
-                            child: TextField(
-                              focusNode: _focusNode,
-                              controller: _textCtrl,
-                              onTap: () => _suppressAutoRefocus = false,
-                              minLines: 1,
-                              maxLines: 5,
-                              style: TextStyle(color: colorScheme.onSurface),
-                              decoration: InputDecoration(
-                                hintText: AppLocalizations.of(context)
-                                    .localizeHint(_inputHint),
-                                hintStyle: TextStyle(
-                                  color: colorScheme.onSurface
-                                      .withValues(alpha: 0.5),
-                                ),
-                                filled: false,
-                                fillColor: Colors.transparent,
-                                border: InputBorder.none,
-                                focusedBorder: InputBorder.none,
-                                enabledBorder: InputBorder.none,
-                                contentPadding: const EdgeInsets.symmetric(
-                                    vertical: 12, horizontal: 12),
-                              ),
-                              textInputAction: TextInputAction.none,
-                              contentInsertionConfiguration:
-                                  ContentInsertionConfiguration(
-                                allowedMimeTypes: const [
-                                  'image/png',
-                                  'image/jpeg',
-                                  'image/gif',
-                                  'image/webp',
-                                ],
-                                onContentInserted: (data) async {
-                                  try {
-                                    Uint8List? bytes = data.data;
-                                    if (bytes == null && data.uri.isNotEmpty) {
-                                      try {
-                                        bytes = await _clipboardChannel
-                                            .invokeMethod<Uint8List>(
-                                                'readContentUri',
-                                                {'uri': data.uri});
-                                      } catch (e) {
-                                        debugPrint('[err] $e');
-                                      }
-                                    }
-                                    if (bytes != null &&
-                                        bytes.isNotEmpty &&
-                                        mounted) {
-                                      final ext = data.mimeType.contains('/')
-                                          ? data.mimeType.split('/').last
-                                          : 'png';
-                                      final tempDir =
-                                          await getTemporaryDirectory();
-                                      final tempFile = File(
-                                          '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext');
-                                      await tempFile.writeAsBytes(bytes);
-                                      _handleGroupDroppedFiles([tempFile.path]);
-                                    }
-                                  } catch (e) {
-                                    debugPrint('[ContentInsert] Error: $e');
-                                  }
-                                },
-                              ),
-                            ),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: IconButton(
-                            icon: Icon(
-                              Icons.send,
-                              color: colorScheme.primary,
-                              size: 20,
-                            ),
-                            onPressed: () => _sendMessage(_textCtrl.text),
-                            visualDensity: VisualDensity.compact,
-                            splashRadius: 20,
-                            padding: EdgeInsets.zero,
-                          ),
-                        ),
+                  return ChatInputBar(
+                    controller: _textCtrl,
+                    textFocusNode: _focusNode,
+                    recordingListenable: recordingNotifier,
+                    onCancelRecording: () {
+                      rootScreenKey.currentState?.cancelRecording();
+                    },
+                    onMicPressed: (isRecording) {
+                      if (isRecording) {
+                        _stopRecordingAndUpload();
+                      } else {
+                        _startRecording();
+                      }
+                    },
+                    onAttachPressed: _pickAndUploadMedia,
+                    onSendPressed: () => _sendMessage(_textCtrl.text),
+                    onPaste: _handlePasteFromClipboard,
+                    hintText:
+                        AppLocalizations.of(context).localizeHint(_inputHint),
+                    backgroundColor: baseColor,
+                    opacity: opacity,
+                    borderColor:
+                        colorScheme.outlineVariant.withValues(alpha: 0.15),
+                    contentInsertionConfiguration:
+                        ContentInsertionConfiguration(
+                      allowedMimeTypes: const [
+                        'image/png',
+                        'image/jpeg',
+                        'image/gif',
+                        'image/webp',
                       ],
+                      onContentInserted: (data) async {
+                        try {
+                          Uint8List? bytes = data.data;
+                          if (bytes == null && data.uri.isNotEmpty) {
+                            try {
+                              bytes = await _clipboardChannel
+                                  .invokeMethod<Uint8List>(
+                                      'readContentUri', {'uri': data.uri});
+                            } catch (e) {
+                              debugPrint('[err] $e');
+                            }
+                          }
+                          if (bytes != null && bytes.isNotEmpty && mounted) {
+                            final ext = data.mimeType.contains('/')
+                                ? data.mimeType.split('/').last
+                                : 'png';
+                            final tempDir = await getTemporaryDirectory();
+                            final tempFile = File(
+                                '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext');
+                            await tempFile.writeAsBytes(bytes);
+                            _handleGroupDroppedFiles([tempFile.path]);
+                          }
+                        } catch (e) {
+                          debugPrint('[ContentInsert] Error: $e');
+                        }
+                      },
                     ),
+                    readOnly: _isReadOnlyChannel,
                   );
                 },
               ),
@@ -3763,24 +3600,20 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                 icon: const Icon(Icons.edit),
                                 onPressed: _showEditGroupDialog,
                               ),
-                            IconButton(
-                              icon: const Icon(Icons.link),
-                              onPressed: () {
-                                Clipboard.setData(ClipboardData(
-                                    text: widget.group.inviteLink
-                                        .split('/')
-                                        .last));
-                                if (mounted) {
-                                  rootScreenKey.currentState?.showSnack(
-                                      AppLocalizations(
-                                              SettingsManager.appLocale.value)
-                                          .tokenCopied);
-                                }
-                              },
-                            ),
                             PopupMenuButton<String>(
                               onSelected: (String value) async {
-                                if (value == 'leave') {
+                                if (value == 'copy_link') {
+                                  Clipboard.setData(ClipboardData(
+                                      text: widget.group.inviteLink
+                                          .split('/')
+                                          .last));
+                                  if (mounted) {
+                                    rootScreenKey.currentState?.showSnack(
+                                        AppLocalizations(
+                                                SettingsManager.appLocale.value)
+                                            .tokenCopied);
+                                  }
+                                } else if (value == 'leave') {
                                   final confirmed =
                                       await _showLeaveConfirmation(context);
                                   if (confirmed == true) {
@@ -3789,6 +3622,21 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                 }
                               },
                               itemBuilder: (context) => [
+                                if (widget.group.inviteLink.isNotEmpty)
+                                  PopupMenuItem<String>(
+                                    value: 'copy_link',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.copy,
+                                            size: 18,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurface),
+                                        const SizedBox(width: 10),
+                                        const Text('Token'),
+                                      ],
+                                    ),
+                                  ),
                                 PopupMenuItem<String>(
                                   value: 'leave',
                                   child: Text(AppLocalizations.of(context)

@@ -12,6 +12,8 @@ import '../widgets/external_server_badge.dart';
 import '../dialogs/server_connection_dialog.dart';
 import 'external_group_chat_screen.dart';
 import '../l10n/app_localizations.dart';
+import '../managers/decoy_manager.dart';
+import '../managers/decoy_data_manager.dart';
 
 List<Group> _parseGroupsJsonInBackground(Map<String, String?> params) {
   final jsonBody = params['jsonBody'] ?? '[]';
@@ -21,11 +23,13 @@ List<Group> _parseGroupsJsonInBackground(Map<String, String?> params) {
   List<Group> groups = [];
   if (decoded is List) {
     groups = decoded.map<Group>((g) {
-      final ownerUsername = g['owner'] ?? g['owner_id']?.toString() ?? 'unknown';
-      
-      final myRole = (currentUsername != null && ownerUsername == currentUsername)
-          ? 'owner'
-          : 'member';
+      final ownerUsername =
+          g['owner'] ?? g['owner_id']?.toString() ?? 'unknown';
+
+      final myRole =
+          (currentUsername != null && ownerUsername == currentUsername)
+              ? 'owner'
+              : 'member';
 
       return Group.fromJson({
         'id': g['id'],
@@ -82,15 +86,15 @@ class GroupsTab extends StatefulWidget {
   State<GroupsTab> createState() => _GroupsTabState();
 }
 
-class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
-  
+class _GroupsTabState extends State<GroupsTab>
+    with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
 
   List<Group> _groups = [];
   bool _loading = true;
   bool _hasInternet = true;
-  String? _loadedUsername; 
+  String? _loadedUsername;
   late final AnimationController _listAnimController;
   late final Animation<double> _listFadeAnim;
   late final AnimationController _screenFadeController;
@@ -118,16 +122,20 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
     );
 
     _loadedUsername = rootScreenKey.currentState?.currentUsername ?? '';
-    _loadGroupsFromCache().then((_) {
-      _loadGroupsFromNetwork();
-    });
+    if (DecoyManager.isActive.value) {
+      _loadDecoyGroups();
+    } else {
+      _loadGroupsFromCache().then((_) {
+        _loadGroupsFromNetwork();
+      });
+    }
 
     groupAvatarVersion.addListener(_onGroupAvatarUpdate);
-    
+
     groupsVersion.addListener(_onGroupsVersion);
-    
+
     ExternalServerManager.externalGroups.addListener(_onExternalGroupsChanged);
-    
+
     accountSwitchVersion.addListener(_onAccountSwitch);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -142,7 +150,8 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
   void dispose() {
     groupAvatarVersion.removeListener(_onGroupAvatarUpdate);
     groupsVersion.removeListener(_onGroupsVersion);
-    ExternalServerManager.externalGroups.removeListener(_onExternalGroupsChanged);
+    ExternalServerManager.externalGroups
+        .removeListener(_onExternalGroupsChanged);
     accountSwitchVersion.removeListener(_onAccountSwitch);
     _listAnimController.dispose();
     _screenFadeController.dispose();
@@ -152,7 +161,7 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _ensureLoadedForCurrentAccount();
@@ -160,15 +169,17 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
   }
 
   Future<void> _loadGroupsFromCache() async {
+    if (DecoyManager.isActive.value) return;
     final username = rootScreenKey.currentState?.currentUsername ?? '';
     final cached = await AccountManager.loadGroupsCache(username);
 
     final fixedGroups = cached.map((g) {
-      
       final shouldBeOwner = g.owner == username;
       final currentRole = g.myRole;
 
-      if (currentRole == null || (shouldBeOwner && currentRole != 'owner') || (!shouldBeOwner && currentRole == 'owner')) {
+      if (currentRole == null ||
+          (shouldBeOwner && currentRole != 'owner') ||
+          (!shouldBeOwner && currentRole == 'owner')) {
         return Group(
           id: g.id,
           name: g.name,
@@ -195,9 +206,11 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
   }
 
   void _ensureLoadedForCurrentAccount() {
+    if (DecoyManager.isActive.value) return;
     final username = rootScreenKey.currentState?.currentUsername ?? '';
     if (_loadedUsername == username) return;
-    debugPrint('[groups_tab] account changed: reloading groups for $username (was=$_loadedUsername)');
+    debugPrint(
+        '[groups_tab] account changed: reloading groups for $username (was=$_loadedUsername)');
     _loadedUsername = username;
 
     if (mounted) {
@@ -216,8 +229,102 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
     _ensureLoadedForCurrentAccount();
   }
 
+  void _loadDecoyGroups() {
+    if (!mounted) return;
+    setState(() {
+      _groups = List.of(DecoyDataManager.fakeGroups);
+      _loading = false;
+    });
+    if (_groups.isNotEmpty && !_listAnimController.isCompleted) {
+      _listAnimController.forward();
+    }
+  }
+
+  Future<void> _showAddGroupSheet() async {
+    final colorScheme = Theme.of(context).colorScheme;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      useRootNavigator: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => ValueListenableBuilder<double>(
+        valueListenable: SettingsManager.elementBrightness,
+        builder: (_, brightness, __) {
+          final sheetColor = SettingsManager.getElementColor(
+            colorScheme.surfaceContainerHighest,
+            brightness,
+          );
+          return SafeArea(
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              decoration: BoxDecoration(
+                color: sheetColor,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 8),
+                  Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: colorScheme.onSurface.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  ListTile(
+                    leading: Icon(
+                      Icons.add_circle_outline_rounded,
+                      color: colorScheme.primary,
+                    ),
+                    title: Text(AppLocalizations.of(ctx).createGroupOrChannel),
+                    onTap: () => Navigator.pop(ctx, 'create'),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      Icons.link_rounded,
+                      color: colorScheme.primary,
+                    ),
+                    title: Text(AppLocalizations.of(ctx).viewByToken),
+                    onTap: () => Navigator.pop(ctx, 'join'),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      Icons.dns_outlined,
+                      color: colorScheme.primary,
+                    ),
+                    title: Text(AppLocalizations.of(ctx).viewByIp),
+                    onTap: () => Navigator.pop(ctx, 'external'),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    if (choice == 'create') {
+      _createGroup();
+    } else if (choice == 'join') {
+      _joinGroup();
+    } else if (choice == 'external') {
+      _joinExternalServer();
+    }
+  }
+
   Future<void> _loadGroupsFromNetwork() async {
-    
+    if (DecoyManager.isActive.value) return;
     final username = rootScreenKey.currentState?.currentUsername ?? '';
 
     final token = await AccountManager.getToken(username);
@@ -227,31 +334,32 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
     }
 
     if ((rootScreenKey.currentState?.currentUsername ?? '') != username) {
-      debugPrint('[groups_tab] account changed before HTTP fetch, aborting for $username');
+      debugPrint(
+          '[groups_tab] account changed before HTTP fetch, aborting for $username');
       return;
     }
 
     try {
-      
       final res = await http.get(
         Uri.parse('$serverBase/groups'),
         headers: {'authorization': 'Bearer $token'},
       );
 
       if ((rootScreenKey.currentState?.currentUsername ?? '') != username) {
-        debugPrint('[groups_tab] account changed after HTTP response, discarding results for $username');
+        debugPrint(
+            '[groups_tab] account changed after HTTP response, discarding results for $username');
         return;
       }
 
       if (res.statusCode == 200) {
-        
         final groups = await compute(_parseGroupsJsonInBackground, {
           'jsonBody': res.body,
           'currentUsername': username,
         });
 
         if ((rootScreenKey.currentState?.currentUsername ?? '') != username) {
-          debugPrint('[groups_tab] account changed after parse, discarding results for $username');
+          debugPrint(
+              '[groups_tab] account changed after parse, discarding results for $username');
           return;
         }
 
@@ -266,7 +374,8 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
           _listAnimController.forward();
         }
       } else {
-        debugPrint('[groups_tab] GET /groups failed: ${res.statusCode} ${res.body}');
+        debugPrint(
+            '[groups_tab] GET /groups failed: ${res.statusCode} ${res.body}');
         throw Exception('HTTP ${res.statusCode}');
       }
     } catch (e) {
@@ -334,21 +443,24 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
       setState(() {
         _groups = newList;
       });
-      
+
       final username = rootScreenKey.currentState?.currentUsername ?? '';
       AccountManager.saveGroupsCache(username, _groups);
     }
   }
 
   void _onGroupsVersion() {
-    
+    if (DecoyManager.isActive.value) {
+      _loadDecoyGroups();
+      return;
+    }
     _loadGroupsFromCache();
   }
 
   void _onExternalGroupsChanged() {
     if (mounted) {
       setState(() {});
-      
+
       if (ExternalServerManager.externalGroups.value.isNotEmpty) {
         _listAnimController.forward();
       }
@@ -361,7 +473,7 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
       builder: (_) => const ServerConnectionDialog(),
     );
     if (result == true && mounted) {
-      setState(() {}); 
+      setState(() {});
     }
   }
 
@@ -385,10 +497,15 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setState) => AlertDialog(
-          backgroundColor: Theme.of(ctx).colorScheme.surface.withValues(alpha: SettingsManager.elementOpacity.value),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          backgroundColor: Theme.of(ctx)
+              .colorScheme
+              .surface
+              .withValues(alpha: SettingsManager.elementOpacity.value),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Text(AppLocalizations.of(ctx).createGroupChannel),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -411,14 +528,16 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                     textInputAction: TextInputAction.done,
                     decoration: InputDecoration(
                       hintText: AppLocalizations.of(ctx).groupNameHint,
-                      hintStyle: const TextStyle(fontSize: 13, color: Colors.grey),
+                      hintStyle:
+                          const TextStyle(fontSize: 13, color: Colors.grey),
                       filled: true,
                       fillColor: baseColor,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide.none,
                       ),
-                      contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                      contentPadding: const EdgeInsets.symmetric(
+                          vertical: 14, horizontal: 16),
                     ),
                   );
                 },
@@ -434,7 +553,8 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
               ),
             ],
           ),
-          actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          actionsPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
@@ -477,10 +597,14 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Theme.of(ctx).colorScheme.surface.withValues(alpha: SettingsManager.elementOpacity.value),
+        backgroundColor: Theme.of(ctx)
+            .colorScheme
+            .surface
+            .withValues(alpha: SettingsManager.elementOpacity.value),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(AppLocalizations.of(ctx).viewByToken),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -508,7 +632,8 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                       borderRadius: BorderRadius.circular(12),
                       borderSide: BorderSide.none,
                     ),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                    contentPadding: const EdgeInsets.symmetric(
+                        vertical: 14, horizontal: 16),
                   ),
                 );
               },
@@ -528,20 +653,18 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
               String inviteToken;
 
               if (raw.contains('://join/')) {
-                
                 inviteToken = raw.split('://join/').last;
               } else if (raw.contains('/group/')) {
-                
                 inviteToken = raw.split('/group/').last;
               } else {
-                
                 inviteToken = raw;
               }
 
               inviteToken = inviteToken.trim();
               if (inviteToken.isEmpty) {
                 final l = AppLocalizations(SettingsManager.appLocale.value);
-                rootScreenKey.currentState?.showSnack(l.invalidInviteLinkFormat);
+                rootScreenKey.currentState
+                    ?.showSnack(l.invalidInviteLinkFormat);
                 return;
               }
 
@@ -550,7 +673,9 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
               );
               if (userToken == null) {
                 Navigator.of(ctx).pop();
-                rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
+                rootScreenKey.currentState?.showSnack(
+                    AppLocalizations(SettingsManager.appLocale.value)
+                        .notLoggedIn);
                 return;
               }
               try {
@@ -565,7 +690,9 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                   _loadGroupsFromNetwork();
                 } else {
                   rootScreenKey.currentState?.showSnack(
-                    res.statusCode == 404 ? l.invalidInviteLink : l.failedAddGroup,
+                    res.statusCode == 404
+                        ? l.invalidInviteLink
+                        : l.failedAddGroup,
                   );
                 }
               } catch (e) {
@@ -584,8 +711,10 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(AppLocalizations.of(context).leaveGroupTitle(group.isChannel)),
-        content: Text(AppLocalizations.of(context).leaveGroupContent(group.name)),
+        title:
+            Text(AppLocalizations.of(context).leaveGroupTitle(group.isChannel)),
+        content:
+            Text(AppLocalizations.of(context).leaveGroupContent(group.name)),
         actions: [
           TextButton(
             onPressed: Navigator.of(context).pop,
@@ -606,7 +735,8 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
     );
   }
 
-  void _showRemoveExternalServerConfirmation(BuildContext context, Group group) {
+  void _showRemoveExternalServerConfirmation(
+      BuildContext context, Group group) {
     final server = ExternalServerManager.servers.value
         .where((s) => s.id == group.externalServerId)
         .firstOrNull;
@@ -616,7 +746,8 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
       context: context,
       builder: (context) => AlertDialog(
         title: Text(AppLocalizations.of(context).removeExternalServerTitle),
-        content: Text(AppLocalizations.of(context).removeExternalServerContent(serverName)),
+        content: Text(AppLocalizations.of(context)
+            .removeExternalServerContent(serverName)),
         actions: [
           TextButton(
             onPressed: Navigator.of(context).pop,
@@ -626,10 +757,12 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
             onPressed: () async {
               Navigator.of(context).pop();
               if (group.externalServerId != null) {
-                await ExternalServerManager.removeServer(group.externalServerId!);
+                await ExternalServerManager.removeServer(
+                    group.externalServerId!);
                 if (mounted) {
                   final l = AppLocalizations(SettingsManager.appLocale.value);
-                  rootScreenKey.currentState?.showSnack(l.serverRemoved(serverName));
+                  rootScreenKey.currentState
+                      ?.showSnack(l.serverRemoved(serverName));
                   setState(() {});
                 }
               }
@@ -646,14 +779,17 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); 
+    super.build(context);
     return FadeTransition(
-      opacity: _screenVisible ? _screenFadeAnimation : const AlwaysStoppedAnimation(0.0),
+      opacity: _screenVisible
+          ? _screenFadeAnimation
+          : const AlwaysStoppedAnimation(0.0),
       child: Scaffold(
         backgroundColor: Colors.transparent,
         body: _loading
             ? const Center(child: CircularProgressIndicator())
-            : (_groups.isEmpty && ExternalServerManager.externalGroups.value.isEmpty)
+            : (_groups.isEmpty &&
+                    ExternalServerManager.externalGroups.value.isEmpty)
                 ? Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -665,20 +801,21 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                         const SizedBox(height: 12),
                         Text(
                           AppLocalizations.of(context).noGroupsYet,
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w500),
                         ),
                         if (!_hasInternet)
                           const Padding(
                             padding: EdgeInsets.only(top: 8.0),
                             child: Text(
                               '(offline)',
-                              style: TextStyle(fontSize: 12, color: Colors.grey),
+                              style:
+                                  TextStyle(fontSize: 12, color: Colors.grey),
                             ),
                           ),
                       ],
                     ),
                   )
-                
                 : FadeTransition(
                     opacity: _listFadeAnim,
                     child: ValueListenableBuilder<List<Group>>(
@@ -686,13 +823,53 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                       builder: (context, extGroups, _) {
                         final allGroups = [..._groups, ...extGroups];
                         return ListView.separated(
-                          padding: EdgeInsets.fromLTRB(12, 8, 12, 8 + MediaQuery.paddingOf(context).bottom),
-                          itemCount: allGroups.length,
+                          padding: EdgeInsets.fromLTRB(12, 8, 12,
+                              8 + MediaQuery.paddingOf(context).bottom),
+                          itemCount: allGroups.length + 1,
                           cacheExtent: 500,
-                          physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-                          separatorBuilder: (_, __) => const SizedBox(height: 6),
+                          physics: const AlwaysScrollableScrollPhysics(
+                              parent: BouncingScrollPhysics()),
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 6),
                           itemBuilder: (context, i) {
-                            final g = allGroups[i];
+                            if (i == 0) {
+                              final colorScheme = Theme.of(context).colorScheme;
+                              return ClipRRect(
+                                borderRadius: BorderRadius.circular(14),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: colorScheme.surfaceVariant
+                                        .withOpacity(0.5),
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color: colorScheme.outlineVariant
+                                          .withOpacity(0.15),
+                                      width: 0.8,
+                                    ),
+                                  ),
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(14),
+                                    onTap: _showAddGroupSheet,
+                                    child: Container(
+                                      height: 44,
+                                      alignment: Alignment.center,
+                                      decoration: BoxDecoration(
+                                        color: colorScheme.primary
+                                            .withOpacity(0.12),
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                      child: Icon(
+                                        Icons.add,
+                                        size: 20,
+                                        color: colorScheme.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }
+
+                            final g = allGroups[i - 1];
 
                             String? avatarUrl;
                             if (g.isExternal) {
@@ -700,10 +877,12 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                                   .where((s) => s.id == g.externalServerId)
                                   .firstOrNull;
                               if (server != null) {
-                                avatarUrl = '${server.baseUrl}/groups/${g.id}/avatar?v=${g.avatarVersion}&sid=${server.id}';
+                                avatarUrl =
+                                    '${server.baseUrl}/groups/${g.id}/avatar?v=${g.avatarVersion}&sid=${server.id}';
                               }
                             } else {
-                              avatarUrl = '$serverBase/group/${g.id}/avatar?v=${g.avatarVersion}';
+                              avatarUrl =
+                                  '$serverBase/group/${g.id}/avatar?v=${g.avatarVersion}';
                             }
 
                             return RepaintBoundary(
@@ -718,8 +897,10 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                                     }
                                   } else if (isDesktop) {
                                     rootScreenKey.currentState?.setState(() {
-                                      rootScreenKey.currentState?.selectedGroup = g;
-                                      rootScreenKey.currentState?.selectedChatOther = null;
+                                      rootScreenKey
+                                          .currentState?.selectedGroup = g;
+                                      rootScreenKey.currentState
+                                          ?.selectedChatOther = null;
                                     });
                                   } else {
                                     widget.onOpenGroup(g);
@@ -727,7 +908,8 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                                 },
                                 onLongPress: () {
                                   if (g.isExternal) {
-                                    _showRemoveExternalServerConfirmation(context, g);
+                                    _showRemoveExternalServerConfirmation(
+                                        context, g);
                                   } else {
                                     _showLeaveGroupConfirmation(context, g);
                                   }
@@ -735,26 +917,36 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                                 child: _glassCard(
                                   context: context,
                                   child: Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 8, horizontal: 10),
                                     child: Row(
                                       children: [
                                         CircleAvatar(
-                                          key: ValueKey('list_avatar_${g.externalServerId ?? 'native'}_${g.id}_${g.name}_${g.avatarVersion}'),
+                                          key: ValueKey(
+                                              'list_avatar_${g.externalServerId ?? 'native'}_${g.id}_${g.name}_${g.avatarVersion}'),
                                           radius: 20,
-                                          backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl) : null,
+                                          backgroundImage: avatarUrl != null
+                                              ? NetworkImage(avatarUrl)
+                                              : null,
                                           child: avatarUrl == null
                                               ? Icon(
-                                                  g.isExternal ? Icons.dns_outlined : Icons.group,
+                                                  g.isExternal
+                                                      ? Icons.dns_outlined
+                                                      : Icons.group,
                                                   size: 20,
-                                                  color: g.isExternal ? Colors.orange.shade700 : null,
+                                                  color: g.isExternal
+                                                      ? Colors.orange.shade700
+                                                      : null,
                                                 )
                                               : null,
                                         ),
                                         const SizedBox(width: 12),
                                         Expanded(
                                           child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
                                             children: [
                                               Row(
                                                 mainAxisSize: MainAxisSize.min,
@@ -763,31 +955,54 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                                                     child: Text(
                                                       g.name,
                                                       style: TextStyle(
-                                                        fontWeight: FontWeight.w500,
-                                                        color: Theme.of(context).colorScheme.onSurface,
+                                                        fontWeight:
+                                                            FontWeight.w500,
+                                                        color: Theme.of(context)
+                                                            .colorScheme
+                                                            .onSurface,
                                                         fontSize: 15,
                                                       ),
                                                       maxLines: 1,
-                                                      overflow: TextOverflow.ellipsis,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
                                                     ),
                                                   ),
-                                                  if (g.inviteLink == '12e01467-c154-447b-84f8-133ae76684a1')
+                                                  if (g.inviteLink ==
+                                                      '12e01467-c154-447b-84f8-133ae76684a1')
                                                     Padding(
-                                                      padding: const EdgeInsets.only(left: 4),
-                                                      child: Icon(Icons.verified_rounded, size: 15, color: Colors.blue.shade400),
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                              left: 4),
+                                                      child: Icon(
+                                                          Icons
+                                                              .verified_rounded,
+                                                          size: 15,
+                                                          color: Colors
+                                                              .blue.shade400),
                                                     ),
                                                 ],
                                               ),
                                               const SizedBox(height: 2),
                                               if (g.isExternal)
-                                                ExternalServerBadge(isChannel: g.isChannel)
+                                                ExternalServerBadge(
+                                                    isChannel: g.isChannel)
                                               else
                                                 Text(
-                                                  g.isChannel ? AppLocalizations.of(context).channelAdminOnlySubtitle : AppLocalizations.of(context).groupSubtitle,
+                                                  g.isChannel
+                                                      ? AppLocalizations.of(
+                                                              context)
+                                                          .channelAdminOnlySubtitle
+                                                      : AppLocalizations.of(
+                                                              context)
+                                                          .groupSubtitle,
                                                   maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
                                                   style: TextStyle(
-                                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withOpacity(0.7),
                                                     fontSize: 12,
                                                   ),
                                                 ),
@@ -797,9 +1012,14 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                                         Align(
                                           alignment: Alignment.topRight,
                                           child: Icon(
-                                            g.isChannel ? Icons.ondemand_video_outlined : Icons.group_outlined,
+                                            g.isChannel
+                                                ? Icons.ondemand_video_outlined
+                                                : Icons.group_outlined,
                                             size: 16,
-                                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurface
+                                                .withOpacity(0.6),
                                           ),
                                         ),
                                       ],
@@ -813,92 +1033,6 @@ class _GroupsTabState extends State<GroupsTab> with TickerProviderStateMixin, Au
                       },
                     ),
                   ),
-        floatingActionButton: !_loading
-            ? Padding(
-                padding: EdgeInsets.only(
-                  bottom: MediaQuery.of(context).viewPadding.bottom + 70,
-                ),
-                child: FloatingActionButton(
-                  onPressed: () async {
-                    final colorScheme = Theme.of(context).colorScheme;
-                    final choice = await showModalBottomSheet<String>(
-                      context: context,
-                      useRootNavigator: true,
-                      backgroundColor: Colors.transparent,
-                      builder: (ctx) => ValueListenableBuilder<double>(
-                        valueListenable: SettingsManager.elementBrightness,
-                        builder: (_, brightness, __) {
-                          final sheetColor = SettingsManager.getElementColor(
-                            colorScheme.surfaceContainerHighest,
-                            brightness,
-                          );
-                          return SafeArea(
-                            child: Container(
-                              margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                              decoration: BoxDecoration(
-                                color: sheetColor,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const SizedBox(height: 8),
-                                  Container(
-                                    width: 36,
-                                    height: 4,
-                                    decoration: BoxDecoration(
-                                      color: colorScheme.onSurface
-                                          .withValues(alpha: 0.2),
-                                      borderRadius: BorderRadius.circular(2),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  ListTile(
-                                    leading: Icon(Icons.add_circle_outline_rounded,
-                                        color: colorScheme.primary),
-                                    title: Text(AppLocalizations.of(ctx).createGroupOrChannel),
-                                    onTap: () => Navigator.pop(ctx, 'create'),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12)),
-                                  ),
-                                  ListTile(
-                                    leading: Icon(Icons.link_rounded,
-                                        color: colorScheme.primary),
-                                    title: Text(AppLocalizations.of(ctx).viewByToken),
-                                    onTap: () => Navigator.pop(ctx, 'join'),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12)),
-                                  ),
-                                  ListTile(
-                                    leading: Icon(Icons.dns_outlined,
-                                        color: colorScheme.primary),
-                                    title: Text(AppLocalizations.of(ctx).viewByIp),
-                                    onTap: () => Navigator.pop(ctx, 'external'),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12)),
-                                  ),
-                                  const SizedBox(height: 4),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    );
-                    if (choice == 'create') {
-                      _createGroup();
-                    } else if (choice == 'join') {
-                      _joinGroup();
-                    } else if (choice == 'external') {
-                      _joinExternalServer();
-                    }
-                  },
-                  tooltip: AppLocalizations.of(context).newGroup,
-                  child: const Icon(Icons.add),
-                ),
-              )
-            : null,
-        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       ),
     );
   }

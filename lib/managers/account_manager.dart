@@ -130,11 +130,16 @@ class AccountManager {
 
     try {
       await SettingsManager.setAccountContext(username);
-      
+
       try {
         await loadStatusSettings();
       } catch (e) {
         debugPrint('Failed to load status settings after account switch: $e');
+      }
+      try {
+        await loadPrivacySettings();
+      } catch (e) {
+        debugPrint('Failed to load privacy settings after account switch: $e');
       }
     } catch (e) {
       debugPrint('Failed to set account context in SettingsManager: $e');
@@ -602,7 +607,7 @@ class AccountManager {
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
-        
+
         if (SettingsManager.statusVisibility.value == 'show') {
           await SettingsManager.setStatusVisibility(data['status_visibility'] ?? 'show');
         }
@@ -616,6 +621,29 @@ class AccountManager {
       }
     } catch (e) {
       debugPrint(' Failed to load status settings: $e');
+    }
+  }
+
+  static Future<void> loadPrivacySettings() async {
+    try {
+      final username = await getCurrentAccount();
+      if (username == null) return;
+
+      final token = await getToken(username);
+      if (token == null) return;
+
+      final res = await http.get(
+        Uri.parse('$serverBase/me/privacy-settings'),
+        headers: {'authorization': 'Bearer $token'},
+      );
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        await SettingsManager.setHideFromSearch(data['hide_from_search'] == true);
+        debugPrint(' Privacy settings loaded from server');
+      }
+    } catch (e) {
+      debugPrint(' Failed to load privacy settings: $e');
     }
   }
 }

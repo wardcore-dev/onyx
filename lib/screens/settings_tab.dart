@@ -18,6 +18,8 @@ import '../managers/settings_manager.dart';
 import '../l10n/app_localizations.dart';
 import '../utils/proxy_manager.dart';
 import 'pin_code_screen.dart';
+import 'decoy_setup_screen.dart';
+import 'cache_manager_screen.dart';
 import 'package:local_auth/local_auth.dart';
 import '../globals.dart';
 import '../widgets/adaptive_blur.dart';
@@ -344,6 +346,7 @@ class _SettingsTabState extends State<SettingsTab>
   String? _proxyTestResult; 
   
   late String _localStatusVisibility;
+  bool _localHideFromSearch = false;
 
   @override
   void initState() {
@@ -351,6 +354,7 @@ class _SettingsTabState extends State<SettingsTab>
     _randomTipIndex = Random().nextInt(6);
 
     _localStatusVisibility = SettingsManager.statusVisibility.value;
+    _localHideFromSearch = SettingsManager.hideFromSearch.value;
 
     _statusOnlineController = TextEditingController(
       text: SettingsManager.statusOnline.value,
@@ -461,73 +465,19 @@ class _SettingsTabState extends State<SettingsTab>
     });
   }
 
-  Future<void> _clearCache() async {
-    final l = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.clearLocalCacheDialogTitle),
-        content: Text(l.clearLocalCacheDialogContent),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(l.cancel),
-          ),
-          FilledButton.tonal(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(l.clearAll),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
+  Future<void> _openCacheManager() async {
+    final username = await AccountManager.getCurrentAccount();
+    if (!mounted) return;
+    final token = username != null ? await AccountManager.getToken(username) : null;
+    if (!mounted) return;
 
-    try {
-      final appSupport = await getApplicationSupportDirectory();
-      final baseDir = appSupport.path;
+    await showCacheManagerSheet(context, token: token);
 
-      final mediaDirs = [
-        '$baseDir/voice_cache',
-        '$baseDir/image_cache',
-        '$baseDir/video_cache',
-        '$baseDir/file_cache',
-        '$baseDir/document_cache',
-        '$baseDir/archive_cache',
-        '$baseDir/data_cache',
-        '$baseDir/audio_cache',
-      ];
-
-      int totalDeleted = 0;
-      for (final path in mediaDirs) {
-        final dir = Directory(path);
-        if (await dir.exists()) {
-          await dir.delete(recursive: true);
-          totalDeleted++;
-        }
-      }
-
-      for (final path in mediaDirs) {
-        await Directory(path).create(recursive: true);
-      }
-
-      if (mounted) {
-        setState(() {
-          _cacheSizeMb = null;
-          _cacheSizeLoaded = false;
-        });
-      }
-
-      await _loadTotalCacheSize();
-
-      rootScreenKey.currentState?.showSnack(
-        AppLocalizations(SettingsManager.appLocale.value).mediaCachesCleared(totalDeleted),
-      );
-    } catch (e, st) {
-      debugPrint(' _clearCache error: $e\n$st');
-      if (mounted) {
-        rootScreenKey.currentState?.showSnack(' $e');
-      }
-    }
+    setState(() {
+      _cacheSizeMb = null;
+      _cacheSizeLoaded = false;
+    });
+    _loadTotalCacheSize();
   }
 
   Future<void> _factoryReset() async {
@@ -885,53 +835,29 @@ class _SettingsTabState extends State<SettingsTab>
     }
   }
 
-  Future<void> _clearServerCache() async {
-    final l = AppLocalizations.of(context);
-    final notLoggedInMsg = l.notLoggedIn;
-    final clearedMsg = l.serverMediaCleared;
-    final netErrPrefix = l.networkError;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.clearServerCacheTitle),
-        content: Text(l.clearServerCacheContent),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(l.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(l.clearAll),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    final username = await AccountManager.getCurrentAccount();
-    if (username == null) return;
-
-    final token = await AccountManager.getToken(username);
-    if (token == null) {
-      _showSnack(notLoggedInMsg);
-      return;
-    }
-
+  Future<bool> _syncPrivacySettings() async {
     try {
+      final username = await AccountManager.getCurrentAccount();
+      if (username == null) return false;
+
+      final token = await AccountManager.getToken(username);
+      if (token == null) return false;
+
       final res = await http.post(
-        Uri.parse('$serverBase/me/cleanup'),
-        headers: {'authorization': 'Bearer $token'},
+        Uri.parse('$serverBase/me/privacy-settings'),
+        headers: {
+          'authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'hide_from_search': SettingsManager.hideFromSearch.value,
+        }),
       );
-      if (res.statusCode == 200) {
-        _showSnack(clearedMsg);
-        avatarVersion.value++;
-      } else {
-        final msg = jsonDecode(res.body)['detail'] ?? 'Unknown error';
-        _showSnack(' $msg');
-      }
+
+      return res.statusCode == 200;
     } catch (e) {
-      _showSnack('$netErrPrefix: $e');
+      debugPrint('[err] Privacy sync error: $e');
+      return false;
     }
   }
 
@@ -1274,7 +1200,6 @@ class _SettingsTabState extends State<SettingsTab>
         padding: EdgeInsets.fromLTRB(16, 16, 16, 8 + MediaQuery.paddingOf(context).bottom),
         physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
         children: [
-          
           GestureDetector(
             onTap: () => showModalBottomSheet(
               context: context,
@@ -1793,6 +1718,36 @@ class _SettingsTabState extends State<SettingsTab>
                 ),
                 const SizedBox(height: 16),
                 ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.showAccountIndicator,
+                  builder: (_, showInd, __) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(AppLocalizations.of(context).showAccountIndicator),
+                            const SizedBox(width: 12),
+                            Switch(
+                              value: showInd,
+                              onChanged: (val) async {
+                                await SettingsManager.setShowAccountIndicator(val);
+                              },
+                            ),
+                          ],
+                        ),
+                        Text(
+                          AppLocalizations.of(context).showAccountIndicatorSubtitle,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+                ValueListenableBuilder<bool>(
                   valueListenable: SettingsManager.smoothScrollEnabled,
                   builder: (_, smoothScroll, __) {
                     return Row(
@@ -2106,6 +2061,115 @@ class _SettingsTabState extends State<SettingsTab>
                       );
                     },
                   ),
+                ...[
+                  const SizedBox(height: 16),
+                  ValueListenableBuilder<bool>(
+                    valueListenable: SettingsManager.showAccountGraph,
+                    builder: (_, showGraph, __) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text(
+                            'Account Graph',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          subtitle: Text(
+                            showGraph
+                                ? (isDesktop
+                                    ? 'Shows a graph of your chats, groups and channels when no chat is open'
+                                    : 'Swipe left from the right edge in Chats to open the graph')
+                                : (isDesktop
+                                    ? 'Shows a hint when no chat is open'
+                                    : 'Account Graph is disabled'),
+                            style: TextStyle(
+                                fontSize: 13,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          ),
+                          value: showGraph,
+                          onChanged: (v) => SettingsManager.setShowAccountGraph(v),
+                        ),
+                        if (showGraph) ...[
+                          const SizedBox(height: 4),
+                          ValueListenableBuilder<double>(
+                            valueListenable: SettingsManager.graphOrbitSpeed,
+                            builder: (_, speed, __) {
+                              final label = speed < 60
+                                  ? '${speed.round()} sec/orbit'
+                                  : '${(speed / 60).round()} min/orbit';
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      const Text('Orbit Speed',
+                                          style: TextStyle(fontWeight: FontWeight.w600)),
+                                      Text(label,
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurfaceVariant)),
+                                    ],
+                                  ),
+                                  Slider(
+                                    min: 30.0,
+                                    max: 600.0,
+                                    value: speed,
+                                    onChanged: SettingsManager.setGraphOrbitSpeed,
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 4),
+                          ValueListenableBuilder<bool>(
+                            valueListenable: SettingsManager.graphAnimation,
+                            builder: (_, anim, __) => SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('Animate',
+                                  style: TextStyle(fontWeight: FontWeight.w600)),
+                              subtitle: Text(
+                                anim
+                                    ? 'Orbits rotate in real time'
+                                    : 'Graph is frozen / static',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant),
+                              ),
+                              value: anim,
+                              onChanged: SettingsManager.setGraphAnimation,
+                            ),
+                          ),
+                          ValueListenableBuilder<bool>(
+                            valueListenable: SettingsManager.graphPreservePosition,
+                            builder: (_, preserve, __) => SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('Preserve View',
+                                  style: TextStyle(fontWeight: FontWeight.w600)),
+                              subtitle: Text(
+                                preserve
+                                    ? 'Keeps zoom & position when leaving a chat'
+                                    : 'Resets to center when returning',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant),
+                              ),
+                              value: preserve,
+                              onChanged: SettingsManager.setGraphPreservePosition,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
                 if (!isDesktop) ...[
                   const SizedBox(height: 16),
                   ValueListenableBuilder<bool>(
@@ -2207,7 +2271,7 @@ class _SettingsTabState extends State<SettingsTab>
           
           Center( 
             child: Text(
-              'open-beta 1.4',
+              'open-beta 1.5',
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
@@ -3369,6 +3433,23 @@ class _SettingsTabState extends State<SettingsTab>
             onChanged: (val) => SettingsManager.setShowDisplayNameInGroups(val),
           ),
         ),
+        ValueListenableBuilder<bool>(
+          valueListenable: SettingsManager.hideFromSearch,
+          builder: (context, hideSearch, _) => SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(AppLocalizations.of(context).hideFromSearch, style: const TextStyle(fontSize: 14)),
+            subtitle: Text(AppLocalizations.of(context).hideFromSearchSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            value: hideSearch,
+            onChanged: (val) async {
+              final okMsg = AppLocalizations.of(context).hideFromSearchSavedOk;
+              final failMsg = AppLocalizations.of(context).hideFromSearchSavedFail;
+              await SettingsManager.setHideFromSearch(val);
+              setState(() => _localHideFromSearch = val);
+              final ok = await _syncPrivacySettings();
+              if (mounted) _showSnack(ok ? okMsg : failMsg);
+            },
+          ),
+        ),
         const SizedBox(height: 8),
         const Divider(),
         const SizedBox(height: 4),
@@ -3456,6 +3537,20 @@ class _SettingsTabState extends State<SettingsTab>
             );
           },
         ),
+        ValueListenableBuilder<bool>(
+          valueListenable: SettingsManager.pinEnabled,
+          builder: (context, pinOn, _) {
+            if (!pinOn) return const SizedBox.shrink();
+            return ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.theater_comedy_outlined),
+              title: Text(AppLocalizations.of(context).fakePinTitle, style: const TextStyle(fontSize: 14)),
+              subtitle: Text(AppLocalizations.of(context).fakePinSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              trailing: const Icon(Icons.chevron_right, size: 18),
+              onTap: () => showDecoySetupSheet(context),
+            );
+          },
+        ),
       ],
     );
   }
@@ -3501,34 +3596,29 @@ class _SettingsTabState extends State<SettingsTab>
   }
 
   Widget _buildCacheContent() {
+    final l = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '${AppLocalizations.of(context).mediaCacheSize}${_cacheSizeMb != null ? '${_cacheSizeMb!.toStringAsFixed(1)} MB' : AppLocalizations.of(context).loading}',
+          '${l.mediaCacheSize}${_cacheSizeMb != null ? '${_cacheSizeMb!.toStringAsFixed(1)} MB' : l.loading}',
           style: const TextStyle(color: Colors.grey),
         ),
         const SizedBox(height: 12),
-        _buildLiquidGlassButton(icon: Icons.delete_outline, label: AppLocalizations.of(context).clearLocalCache, fontSize: 14, onPressed: _clearCache),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            const Icon(Icons.cloud_rounded, size: 16),
-            const SizedBox(width: 6),
-            Text(AppLocalizations.of(context).serverMediaCache, style: const TextStyle(fontWeight: FontWeight.bold)),
-          ],
+        _buildLiquidGlassButton(
+          icon: Icons.storage_rounded,
+          label: l.manageCacheButton,
+          fontSize: 14,
+          onPressed: _openCacheManager,
         ),
-        Text(AppLocalizations.of(context).serverMediaCacheSubtitle, style: const TextStyle(color: Colors.grey, fontSize: 13)),
-        const SizedBox(height: 8),
-        _buildLiquidGlassButton(icon: Icons.delete_forever, label: AppLocalizations.of(context).clearServerCache, fontSize: 14, onPressed: _clearServerCache),
         const SizedBox(height: 16),
         const Divider(),
         const SizedBox(height: 12),
-        Text(AppLocalizations.of(context).dangerZone, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+        Text(l.dangerZone, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
         const SizedBox(height: 4),
-        Text(AppLocalizations.of(context).dangerZoneSubtitle, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+        Text(l.dangerZoneSubtitle, style: const TextStyle(color: Colors.grey, fontSize: 13)),
         const SizedBox(height: 8),
-        _buildLiquidGlassButton(icon: Icons.restore, label: AppLocalizations.of(context).factoryReset, fontSize: 14, onPressed: _factoryReset),
+        _buildLiquidGlassButton(icon: Icons.restore, label: l.factoryReset, fontSize: 14, onPressed: _factoryReset),
       ],
     );
   }

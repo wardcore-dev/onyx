@@ -40,6 +40,7 @@ import '../widgets/voice_channel_popup.dart';
 import '../voice/voice_channel_manager.dart';
 import '../widgets/message_reaction_bar.dart';
 import '../widgets/media_picker_sheet.dart';
+import '../widgets/chat_input_bar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const List<String> _randomHints = [
@@ -3181,216 +3182,63 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                   colorScheme.surfaceContainerHighest,
                   brightness,
                 );
-                return Container(
-                  decoration: BoxDecoration(
-                    color: baseColor.withValues(alpha: opacity),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(
-                      color: colorScheme.outlineVariant.withValues(alpha: 0.15),
-                      width: 1,
-                    ),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: ValueListenableBuilder<bool>(
-                        valueListenable: recordingNotifier,
-                        builder: (context, isRecording, _) {
-                          return Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              AnimatedOpacity(
-                                duration: const Duration(milliseconds: 180),
-                                opacity: isRecording ? 1.0 : 0.0,
-                                child: isRecording
-                                    ? Padding(
-                                        padding:
-                                            const EdgeInsets.only(bottom: 6.0),
-                                        child: Material(
-                                          shape: const CircleBorder(),
-                                          color: colorScheme.errorContainer,
-                                          child: IconButton(
-                                            icon: Icon(
-                                              Icons.delete,
-                                              color:
-                                                  colorScheme.onErrorContainer,
-                                              size: 18,
-                                            ),
-                                            onPressed: () {
-                                              rootScreenKey.currentState
-                                                  ?.cancelRecording();
-                                            },
-                                            visualDensity:
-                                                VisualDensity.compact,
-                                            padding: EdgeInsets.zero,
-                                            splashRadius: 20,
-                                          ),
-                                        ),
-                                      )
-                                    : const SizedBox.shrink(),
-                              ),
-                              Material(
-                                shape: const CircleBorder(),
-                                color: isRecording
-                                    ? colorScheme.error.withValues(alpha: 0.12)
-                                    : Colors.transparent,
-                                child: IconButton(
-                                  icon: Icon(
-                                    isRecording ? Icons.stop : Icons.mic,
-                                    color: isRecording
-                                        ? colorScheme.error
-                                        : colorScheme.onSurface
-                                            .withValues(alpha: 0.6),
-                                    size: 20,
-                                  ),
-                                  onPressed: () {
-                                    if (isRecording) {
-                                      _stopRecordingAndUpload();
-                                    } else {
-                                      _startRecording();
-                                    }
-                                  },
-                                  visualDensity: VisualDensity.compact,
-                                  splashRadius: 20,
-                                  padding: EdgeInsets.zero,
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                        ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: IconButton(
-                            icon: Icon(
-                              Icons.attach_file,
-                              color: colorScheme.onSurface.withValues(alpha: 0.6),
-                              size: 20,
-                            ),
-                            onPressed: _pickAndUploadMedia,
-                            visualDensity: VisualDensity.compact,
-                            splashRadius: 20,
-                            padding: EdgeInsets.zero,
-                          ),
-                        ),
-                      Expanded(
-                        child: KeyboardListener(
-                          focusNode: FocusNode(),
-                          onKeyEvent: (event) {
-                            if (event is KeyDownEvent) {
-                              if (HardwareKeyboard.instance.isLogicalKeyPressed(
-                                      LogicalKeyboardKey.keyV) &&
-                                  (HardwareKeyboard.instance.isControlPressed ||
-                                      HardwareKeyboard
-                                          .instance.isMetaPressed)) {
-                                _handlePasteFromClipboard();
-                                return;
-                              }
-
-                              if (HardwareKeyboard.instance.isLogicalKeyPressed(
-                                  LogicalKeyboardKey.enter)) {
-                                if (!HardwareKeyboard.instance.isShiftPressed) {
-                                  if (_textCtrl.text.trim().isNotEmpty) {
-                                    _sendMessage(_textCtrl.text);
-                                  }
-                                  return;
-                                }
-                                if (HardwareKeyboard.instance.isShiftPressed &&
-                                    _textCtrl.text.isNotEmpty) {
-                                  final text = _textCtrl.text;
-                                  final selection = _textCtrl.selection;
-                                  _textCtrl.text =
-                                      '${text.substring(0, selection.start)}\n${text.substring(selection.start)}';
-                                  _textCtrl.selection =
-                                      TextSelection.fromPosition(TextPosition(
-                                          offset: selection.start + 1));
-                                }
-                              }
-                            }
-                          },
-                          child: TextField(
-                            focusNode: _focusNode,
-                            controller: _textCtrl,
-                            onTap: () => _suppressAutoRefocus = false,
-                            minLines: 1,
-                            maxLines: 5,
-                            style: TextStyle(color: colorScheme.onSurface),
-                            decoration: InputDecoration(
-                              hintText: AppLocalizations.of(context)
-                                  .localizeHint(_inputHint),
-                              hintStyle: TextStyle(
-                                color: colorScheme.onSurface
-                                    .withValues(alpha: 0.5),
-                              ),
-                              filled: false,
-                              fillColor: Colors.transparent,
-                              border: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(
-                                  vertical: 12, horizontal: 12),
-                            ),
-                            textInputAction: TextInputAction.none,
-                            contentInsertionConfiguration:
-                                ContentInsertionConfiguration(
-                              allowedMimeTypes: const [
-                                'image/png',
-                                'image/jpeg',
-                                'image/gif',
-                                'image/webp',
-                              ],
-                              onContentInserted: (data) async {
-                                try {
-                                  Uint8List? bytes = data.data;
-                                  if (bytes == null && data.uri.isNotEmpty) {
-                                    try {
-                                      bytes = await _clipboardChannel
-                                          .invokeMethod<Uint8List>(
-                                              'readContentUri',
-                                              {'uri': data.uri});
-                                    } catch (e) {
-                                      debugPrint('[err] $e');
-                                    }
-                                  }
-                                  if (bytes != null &&
-                                      bytes.isNotEmpty &&
-                                      mounted) {
-                                    final ext = data.mimeType.contains('/')
-                                        ? data.mimeType.split('/').last
-                                        : 'png';
-                                    final tempDir =
-                                        await getTemporaryDirectory();
-                                    final tempFile = File(
-                                        '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext');
-                                    await tempFile.writeAsBytes(bytes);
-                                    _handleDroppedFiles([tempFile.path]);
-                                  }
-                                } catch (e) {
-                                  debugPrint('[ContentInsert] Error: $e');
-                                }
-                              },
-                            ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: IconButton(
-                          icon: Icon(
-                            Icons.send,
-                            color: colorScheme.primary,
-                            size: 20,
-                          ),
-                          onPressed: () => _sendMessage(_textCtrl.text),
-                          visualDensity: VisualDensity.compact,
-                          splashRadius: 20,
-                          padding: EdgeInsets.zero,
-                        ),
-                      ),
+                return ChatInputBar(
+                  controller: _textCtrl,
+                  textFocusNode: _focusNode,
+                  recordingListenable: recordingNotifier,
+                  onCancelRecording: () {
+                    rootScreenKey.currentState?.cancelRecording();
+                  },
+                  onMicPressed: (isRecording) {
+                    if (isRecording) {
+                      _stopRecordingAndUpload();
+                    } else {
+                      _startRecording();
+                    }
+                  },
+                  onAttachPressed: _pickAndUploadMedia,
+                  onSendPressed: () => _sendMessage(_textCtrl.text),
+                  onPaste: _handlePasteFromClipboard,
+                  hintText:
+                      AppLocalizations.of(context).localizeHint(_inputHint),
+                  backgroundColor: baseColor,
+                  opacity: opacity,
+                  borderColor:
+                      colorScheme.outlineVariant.withValues(alpha: 0.15),
+                  contentInsertionConfiguration:
+                      ContentInsertionConfiguration(
+                    allowedMimeTypes: const [
+                      'image/png',
+                      'image/jpeg',
+                      'image/gif',
+                      'image/webp',
                     ],
+                    onContentInserted: (data) async {
+                      try {
+                        Uint8List? bytes = data.data;
+                        if (bytes == null && data.uri.isNotEmpty) {
+                          try {
+                            bytes = await _clipboardChannel
+                                .invokeMethod<Uint8List>(
+                                    'readContentUri', {'uri': data.uri});
+                          } catch (e) {
+                            debugPrint('[err] $e');
+                          }
+                        }
+                        if (bytes != null && bytes.isNotEmpty && mounted) {
+                          final ext = data.mimeType.contains('/')
+                              ? data.mimeType.split('/').last
+                              : 'png';
+                          final tempDir = await getTemporaryDirectory();
+                          final tempFile = File(
+                              '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext');
+                          await tempFile.writeAsBytes(bytes);
+                          _handleDroppedFiles([tempFile.path]);
+                        }
+                      } catch (e) {
+                        debugPrint('[ContentInsert] Error: $e');
+                      }
+                    },
                   ),
                 );
               },
@@ -4115,11 +3963,23 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                         : Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              IconButton(
-                                icon: const Icon(Icons.headset_mic_rounded),
-                                tooltip: 'Voice channels',
-                                onPressed: () => showVoiceChannelPopup(
-                                    context, widget.server.id),
+                              ValueListenableBuilder<List<ExternalServer>>(
+                                valueListenable: ExternalServerManager.servers,
+                                builder: (context, serverList, _) {
+                                  final liveServer = serverList.firstWhere(
+                                    (s) => s.id == widget.server.id,
+                                    orElse: () => widget.server,
+                                  );
+                                  if (!liveServer.features.contains('voice')) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return IconButton(
+                                    icon: const Icon(Icons.headset_mic_rounded),
+                                    tooltip: 'Voice channels',
+                                    onPressed: () => showVoiceChannelPopup(
+                                        context, widget.server.id),
+                                  );
+                                },
                               ),
                               IconButton(
                                 icon: const Icon(Icons.search),
@@ -4302,8 +4162,9 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                           _cachedSearchMatches = [];
                           if (_searchStats.value.total != 0) {
                             WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted)
+                              if (mounted) {
                                 _searchStats.value = (current: 0, total: 0);
+                              }
                             });
                           }
                         }
