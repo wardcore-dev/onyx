@@ -27,6 +27,17 @@ flutter run
 
 The server component is available at: https://github.com/wardcore-dev/onyx-server
 
+## Support ONYX
+### BTC
+bc1qpw2amf3j7w4swunx8mdfvk703uq3uadg9748tm
+### LTC
+ltc1qx37f0k2mckxp2je3cplkfvg7473nq8udpk4kg9
+### XMR 
+88R9RYWEL38Aj7As8KnT9bia7HyQkPf7AC9XK8HuDofaevudWAkLw9sjMhkQ4aNvzVdjdgdWSpvTw8RyHePcuHov6cwBTT2
+
+
+*Your support helps maintain servers, infrastructure and development.*
+
 ## License
 
 Copyright (C) 2026 WARDCORE
