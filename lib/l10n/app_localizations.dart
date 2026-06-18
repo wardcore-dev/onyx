@@ -60,6 +60,12 @@ class AppLocalizations {
   String get useBiometrics => _ru ? 'Использовать биометрию' : 'Use Biometrics';
   String get useBiometricsSubtitle => _ru ? 'Разблокировать по отпечатку или лицу' : 'Unlock with fingerprint or face recognition';
   String get biometricsUnavailable => _ru ? 'Биометрия недоступна на этом устройстве' : 'Biometrics not available on this device';
+  String get lockOnResume => _ru ? 'Блокировать при сворачивании' : 'Lock when backgrounded';
+  String get lockOnResumeSubtitle => _ru ? 'Запрашивать PIN каждый раз при возврате в приложение' : 'Require PIN every time the app returns to foreground';
+  String get searchChatsHint => _ru ? 'Поиск чатов и сообщений…' : 'Search chats and messages…';
+  String get searchGroupsHint => _ru ? 'Поиск групп и сообщений…' : 'Search groups and messages…';
+  String get searchFavoritesHint => _ru ? 'Поиск избранного…' : 'Search favorites…';
+  String get searchSettingsHint => _ru ? 'Поиск в настройках…' : 'Search settings…';
   List<String> get securityTips => _ru
       ? [
           'Не используйте ONYX на рутованных устройствах — это ослабляет безопасность шифрования.',
@@ -167,7 +173,7 @@ class AppLocalizations {
   String get dangerZone => _ru ? 'Опасная зона' : 'Danger Zone';
   String get dangerZoneSubtitle => _ru ? 'Удалить аккаунт с сервера и/или стереть локальные данные.' : 'Delete account from server and/or wipe local data.';
   String get factoryReset => _ru ? 'Сброс' : 'Factory Reset';
-  String get factoryResetHint => _ru ? 'Выберите, что сбросить. Нужно выбрать хотя бы один пункт.' : 'Select what to reset. At least one option must be chosen.';
+  String get factoryResetHint => _ru ? 'Выберите что сбросить. Нужно выбрать хотя бы один пункт.' : 'Select what to reset. At least one option must be chosen.';
   String get resetDeleteAccount => _ru ? 'Удалить аккаунт с сервера' : 'Delete account from server';
   String resetDeleteAccountSubtitle(String username) => _ru
       ? 'Навсегда удалит @$username — все сообщения, медиа и ключи с сервера.'
@@ -203,12 +209,41 @@ class AppLocalizations {
   String get proxyPasswordOptional => _ru ? 'Пароль (необязательно)' : 'Password (optional)';
   String get proxyApplyReconnect => _ru ? 'Применить и переподключить' : 'Apply & Reconnect';
 
+  String get appDataTitle => _ru ? 'Папка данных ONYX' : 'ONYX data folder';
+  String get appDataSubtitle => _ru ? 'Перенос системной папки данных на другой диск' : 'Move the app data folder to another drive';
+  String get appDataCurrentPath => _ru ? 'Текущая папка' : 'Current folder';
+  String get appDataDefault => _ru ? 'По умолчанию (системная папка)' : 'Default (system folder)';
+  String get appDataMove => _ru ? 'Переместить…' : 'Move…';
+  String get appDataReset => _ru ? 'Сбросить' : 'Reset';
+  String get appDataMigrating => _ru ? 'Перемещение данных…' : 'Moving data…';
+  String get appDataMigrateError => _ru ? 'Ошибка при перемещении' : 'Error during move';
+  String get appDataRestartRequired => _ru
+      ? 'Папка изменена. Перезапустите ONYX, чтобы изменения вступили в силу.'
+      : 'Folder changed. Restart ONYX for the change to take effect.';
+  String get appDataRestart => _ru ? 'Перезапустить ONYX' : 'Restart ONYX';
+  String get appDataOpenFolder => _ru ? 'Открыть папку' : 'Open folder';
+  String get appDataDeleteOldFolder => _ru ? 'Удалить предыдущую папку' : 'Delete previous folder';
+  String get appDataDeleteOldFolderSubtitle => _ru
+      ? 'Удалить исходную системную папку данных, оставшуюся после переноса'
+      : 'Delete the original system data folder left after migration';
+  String get appDataDeleteOldFolderConfirm => _ru
+      ? 'Удалить исходную папку ONYX?\n\nЭто действие необратимо. Убедитесь, что данные успешно перенесены.'
+      : 'Delete the original ONYX data folder?\n\nThis cannot be undone. Make sure data was migrated successfully.';
+  String get appDataDeleteOldFolderSuccess => _ru ? 'Предыдущая папка удалена' : 'Previous folder deleted';
+  String get appDataDeleteOldFolderError => _ru ? 'Ошибка при удалении: ' : 'Error deleting: ';
+
   String get interactTitle => _ru ? 'Взаимодействие' : 'Interaction';
   String get interactSubtitle => _ru ? 'Подтверждение загрузки файлов' : 'File upload confirmations';
   String get confirmFileUpload => _ru ? 'Подтверждение отправки файла' : 'Confirm File Upload';
   String get confirmFileUploadSubtitle => _ru ? 'Показывать диалог подтверждения перед отправкой файлов' : 'Show confirmation dialog before sending files';
   String get confirmVoiceMessage => _ru ? 'Подтверждение голосового сообщения' : 'Confirm Voice Message';
   String get confirmVoiceSubtitle => _ru ? 'Показывать диалог подтверждения перед отправкой голосового' : 'Show confirmation dialog before sending voice';
+
+  String get downloadFolder => _ru ? 'Папка для сохранения файлов' : 'Download folder';
+  String get downloadFolderSubtitle => _ru ? 'Куда сохранять полученные файлы (по умолчанию: Загрузки/ONYX)' : 'Where to save received files (default: Downloads/ONYX)';
+  String get downloadFolderDefault => _ru ? 'По умолчанию (Загрузки/ONYX)' : 'Default (Downloads/ONYX)';
+  String get downloadFolderChange => _ru ? 'Выбрать папку' : 'Choose folder';
+  String get downloadFolderReset => _ru ? 'Сбросить' : 'Reset';
 
   String get contactTitle => _ru ? 'Контакты' : 'Contact';
   String get contactSubtitle => _ru ? 'Сайт, репозиторий и обратная связь' : 'Website, repository & feedback';
@@ -372,6 +407,7 @@ class AppLocalizations {
   String get view => _ru ? 'Просмотр' : 'View';
   String get leave => _ru ? 'Выйти' : 'Leave';
   String get remove => _ru ? 'Удалить' : 'Remove';
+  String get leaveGroupAction => _ru ? 'Покинуть' : 'Leave';
   String leaveGroupTitle(bool isChannel) => _ru
       ? 'Покинуть ${isChannel ? "канал" : "группу"}?'
       : 'Leave ${isChannel ? "channel" : "group"}?';
@@ -496,7 +532,19 @@ class AppLocalizations {
   String get showAvatarsInChats => _ru ? 'Аватары в чатах' : 'Show avatars in chats';
   String get smoothScrollDown => _ru ? 'Плавная прокрутка' : 'Smooth scroll down';
   String get messageAnimations => _ru ? 'Анимации сообщений' : 'Message animations';
-  String get loadOlderMessagesOnScroll => _ru ? 'Загружать старые сообщения' : 'Load older messages on scroll';
+  String get chatListMoveAnimations => _ru ? 'Анимация перемещения чатов' : 'Chat list move animations';
+  String get scrollDownButtonPosition => _ru ? 'Положение кнопки вниз' : 'Scroll-down button position';
+  String get scrollDownButtonPositionLeft => _ru ? 'Слева' : 'Left';
+  String get scrollDownButtonPositionCenter => _ru ? 'По центру' : 'Center';
+  String get scrollDownButtonPositionRight => _ru ? 'Справа' : 'Right';
+  String get scrollDownButtonSize => _ru ? 'Размер кнопки вниз' : 'Scroll-down button size';
+  String get loadOlderMessagesOnScroll => _ru ? 'Старые сообщения' : 'Load older messages on scroll';
+  String get showSnackbars => _ru ? 'Всплывающие уведомления' : 'Show snackbars';
+  String get autoLoadVideos => _ru ? 'Загружать видео сразу' : 'Auto-load videos';
+  String get autoLoadVideosSubtitle => _ru
+      ? 'Когда выключено, видео грузятся только по нажатию — меньше лагов при прокрутке'
+      : 'When off, videos load only on tap — smoother scrolling';
+  String get tapToLoadVideo => _ru ? 'Нажмите, чтобы загрузить' : 'Tap to load video';
   String get chooseBackground => _ru ? 'Выбрать' : 'Choose';
   String get presetsBackground => _ru ? 'Пресеты' : 'Presets';
   String get clearBackground2 => _ru ? 'Очистить' : 'Clear';
@@ -635,7 +683,7 @@ class AppLocalizations {
   String uploadingImages(int n) => _ru ? 'Загрузка $n изображений...' : 'Uploading $n images...';
   String get albumUploadFailed => _ru ? 'Ошибка загрузки альбома' : 'Album upload failed';
   String get message => _ru ? 'Написать' : 'Message';
-  String get noMessagesYet => _ru ? 'Сообщений пока нет' : 'No messages yet';
+  String get noMessagesYet => _ru ? 'Нет сообщений' : 'No messages yet';
   String get voiceCallsTitle => _ru ? 'Голосовые звонки' : 'Voice Calls';
   String get voiceCallsContent => _ru
       ? 'Голосовые звонки пока работают только через LAN (локальная сеть).\n\n'
@@ -650,6 +698,15 @@ class AppLocalizations {
       : 'Compare these emojis with $name.\nIf they match — your chat is secure.';
   String get failedToFetchPubkey => _ru ? 'Ошибка получения публичного ключа' : 'Failed to fetch pubkey';
   String get userHasNoPubkey => _ru ? 'У пользователя нет публичного ключа' : 'User has no pubkey';
+
+  String get galleryMenuLabel => _ru ? 'Галерея' : 'Gallery';
+  String get galleryTitle => _ru ? 'Галерея' : 'Gallery';
+  String get galleryTabMedia => _ru ? 'Медиа' : 'Media';
+  String get galleryTabVoice => _ru ? 'Голосовые' : 'Voice';
+  String get galleryTabFiles => _ru ? 'Файлы' : 'Files';
+  String get galleryEmptyMedia => _ru ? 'Нет фото и видео' : 'No photos or videos yet';
+  String get galleryEmptyVoice => _ru ? 'Нет голосовых сообщений' : 'No voice messages yet';
+  String get galleryEmptyFiles => _ru ? 'Нет файлов' : 'No files yet';
 
   String get failedDelete => _ru ? 'Не удалось удалить' : 'Failed to delete';
   String get failedEdit => _ru ? 'Не удалось изменить сообщение' : 'Failed to edit message';
@@ -868,6 +925,9 @@ class AppLocalizations {
   }
 
   // ── Token / session expiry ────────────────────────────────────────────────
+  String get sessionExpiredBanner => _ru
+      ? 'Сессия истекла — войдите заново'
+      : 'Session expired — please log in again';
   String get sessionExpiredTitle =>
       _ru ? 'Сессия истекла' : 'Session expired';
   String get sessionExpiredSubtitle =>
@@ -1029,14 +1089,167 @@ class AppLocalizations {
   String get receiveFavoritesConnected => _ru ? 'Подключено! Ожидание файлов…' : 'Connected! Waiting for files…';
   String get cancelTransfer => _ru ? 'Прервать передачу' : 'Cancel transfer';
 
+  // ── WardLink (passive local-network sync) ──────────────────────────────────
+  String get wardLinkTitle => _ru ? 'WardLink' : 'WardLink';
+  String get wardLinkSubtitle => _ru
+      ? 'Пассивная синхронизация между вашими устройствами в локальной сети'
+      : 'Passive sync between your devices on the local network';
+  String get wardLinkEnable => _ru ? 'Пассивная синхронизация' : 'Passive sync';
+  String get wardLinkEnableDesc => _ru
+      ? 'Автоматически синхронизировать данные с доверенными устройствами, когда они в одной сети. На телефоне работает, пока приложение открыто; на компьютере — постоянно.'
+      : 'Automatically sync with trusted devices on the same network. On phones this works while the app is open; on desktop it runs continuously.';
+  String get wardLinkPairedDevices => _ru ? 'Доверенные устройства' : 'Trusted devices';
+  String get wardLinkNoPairedDevices =>
+      _ru ? 'Нет сопряжённых устройств' : 'No paired devices yet';
+  String get wardLinkAddDevice => _ru ? 'Добавить' : 'Add';
+  String get wardLinkRemoveDevice => _ru ? 'Удалить' : 'Remove';
+  String get wardLinkRemoveConfirm => _ru
+      ? 'Перестать синхронизироваться с этим устройством?'
+      : 'Stop syncing with this device?';
+  String get wardLinkFavoritesOnlyNote => _ru
+      ? 'Синхронизируется содержимое «Избранного» — сообщения и медиа'
+      : 'Syncs your Favorites — their messages and media';
+  String get wardLinkMaxFileSize =>
+      _ru ? 'Лимит размера файла' : 'Max file size';
+  String get wardLinkPairTitle => _ru ? 'Сопряжение устройства' : 'Pair device';
+  String get wardLinkShowCode => _ru ? 'Показать код' : 'Show code';
+  String get wardLinkScanCode => _ru ? 'Сканировать код' : 'Scan code';
+  String get wardLinkShowInstruction => _ru
+      ? 'Откройте WardLink на другом своём устройстве и отсканируйте этот код'
+      : 'Open WardLink on your other device and scan this code';
+  String get wardLinkScanInstruction => _ru
+      ? 'Наведите камеру на код WardLink другого устройства'
+      : 'Point the camera at the WardLink code on the other device';
+  String get wardLinkPairedOk => _ru ? 'Устройство сопряжено' : 'Device paired';
+  String get wardLinkPairFailed =>
+      _ru ? 'Не удалось выполнить сопряжение' : 'Pairing failed';
+  String get wardLinkE2E => _ru
+      ? 'Сквозное шифрование · только LAN'
+      : 'End-to-end encrypted · LAN only';
+  String get wardLinkSyncingNow => _ru ? 'Синхронизация…' : 'Syncing…';
+  String get wardLinkDone => _ru ? 'Синхронизировано' : 'Synced';
+  String get wardLinkCurrentFile => _ru ? 'Текущий файл' : 'Current file';
+  String get wardLinkLog => _ru ? 'Журнал синхронизации' : 'Sync log';
+  String get wardLinkLogEmpty => _ru ? 'Событий пока нет' : 'No events yet';
+  String get wardLinkHoldForLog =>
+      _ru ? 'Удерживайте кружок для журнала' : 'Hold the bubble for the log';
+  String get wardLinkUpToDate => _ru ? 'Всё актуально' : 'Up to date';
+  String wardLinkFilesDone(int n) =>
+      _ru ? 'Передано файлов: $n' : 'Files transferred: $n';
+  String get wardLinkNoFilesYet =>
+      _ru ? 'Файлы не передавались' : 'No files transferred';
+  String wardLinkSyncedAgo(String when) =>
+      _ru ? 'Синхронизировано: $when' : 'Synced $when';
+  String get wardLinkNeverSynced => _ru ? 'Ещё не синхронизировано' : 'Not synced yet';
+  String get wardLinkFirewallHintWindows => _ru
+      ? 'Если телефон не может подключиться к ПК — разрешите ONYX в брандмауэре Windows (порт TCP ${'47832'}). ONYX пробует добавить правило автоматически, но при необходимости: Брандмауэр Windows → Дополнительные параметры → Входящие правила → Создать правило → Порт → TCP → 47832.'
+      : 'If the phone cannot reach this PC, allow ONYX in Windows Firewall (TCP port ${'47832'}). ONYX tries to add the rule automatically; if it fails: Windows Firewall → Advanced → Inbound Rules → New Rule → Port → TCP → 47832.';
+  String get wardLinkFirewallHintMac => _ru
+      ? 'Если телефон не может подключиться к Mac — убедитесь, что брандмауэр macOS не блокирует входящие соединения для ONYX: Системные настройки → Сеть → Брандмауэр → Параметры → добавьте ONYX.'
+      : 'If the phone cannot reach this Mac, make sure the macOS firewall is not blocking ONYX: System Settings → Network → Firewall → Options → add ONYX.';
+  String get wardLinkFirewallHintLinux => _ru
+      ? 'Если телефон не может подключиться — откройте порт TCP 47832 в вашем брандмауэре. Например: sudo ufw allow 47832/tcp  или  sudo firewall-cmd --add-port=47832/tcp --permanent'
+      : 'If the phone cannot connect, open TCP port 47832 in your firewall. Example: sudo ufw allow 47832/tcp  or  sudo firewall-cmd --add-port=47832/tcp --permanent';
+  String get wardLinkSyncFromBeginning =>
+      _ru ? 'Синхронизировать с начала' : 'Sync from beginning';
+  String get wardLinkSyncFromBeginningDesc => _ru
+      ? 'Подтянуть всю историю, которой нет на этом устройстве'
+      : 'Pull all history not yet on this device';
+  String get wardLinkSyncPending =>
+      _ru ? 'Синхронизация в процессе…' : 'Sync pending…';
+  String get wardLinkBubbleVisibility =>
+      _ru ? 'Кружок синхронизации' : 'Sync bubble';
+  String get wardLinkBubbleShowAlways =>
+      _ru ? 'Показывать всегда' : 'Show always';
+  String get wardLinkBubbleShowOnErrors =>
+      _ru ? 'Показывать только при ошибках' : 'Show on errors only';
+  String get wardLinkBubbleSize => _ru ? 'Размер кружка' : 'Bubble size';
+
+  // ── Backup ────────────────────────────────────────────────────────────────
+  String get backupTitle => _ru ? 'Бэкап' : 'Backup';
+  String get backupSubtitle => _ru
+      ? 'Локальное сохранение и восстановление данных'
+      : 'Local backup and restore of your data';
+  String get backupExport => _ru ? 'Сохранить все данные' : 'Save all data';
+  String get backupRestore =>
+      _ru ? 'Восстановить из бэкапа' : 'Restore from backup';
+  String get backupScope => _ru ? 'Что бэкапить' : 'What to back up';
+  String get backupFavorites => _ru ? 'Избранные чаты' : 'Favorite chats';
+  String get backupPersonal => _ru ? 'Личные чаты' : 'Personal chats';
+  String get backupIncludeMedia => _ru ? 'Включать медиа' : 'Include media';
+  String get backupMediaImages => _ru ? 'Изображения' : 'Images';
+  String get backupMediaVideos => _ru ? 'Видео' : 'Videos';
+  String get backupMediaVoice => _ru ? 'Голосовые и аудио' : 'Voice & audio';
+  String get backupMediaOther => _ru ? 'Другие файлы' : 'Other files';
+  String get backupSchedule => _ru ? 'Запланированный бэкап' : 'Scheduled backup';
+  String get backupFreqOff => _ru ? 'Выкл' : 'Off';
+  String get backupFreqDaily => _ru ? 'Каждый день' : 'Daily';
+  String get backupFreqWeekly => _ru ? 'Каждую неделю' : 'Weekly';
+  String get backupFreqMonthly => _ru ? 'Каждый месяц' : 'Monthly';
+  String get backupFolder => _ru ? 'Папка авто-бэкапов' : 'Auto-backup folder';
+  String get backupChangeFolder => _ru ? 'Изменить' : 'Change';
+  String get backupLastAuto => _ru ? 'Последний авто-бэкап' : 'Last auto-backup';
+  String get backupNever => _ru ? 'ещё не было' : 'never';
+  String get backupInProgress => _ru ? 'Создание бэкапа…' : 'Creating backup…';
+  String get backupRestoring => _ru ? 'Восстановление…' : 'Restoring…';
+  String get backupSelectScope => _ru
+      ? 'Выберите хотя бы одну категорию'
+      : 'Select at least one category';
+  String get backupNoAccount =>
+      _ru ? 'Нет активного аккаунта' : 'No active account';
+  String get backupNoPermission => _ru
+      ? 'Нет доступа к хранилищу. Разрешите «Доступ ко всем файлам» в настройках приложения.'
+      : 'Storage access denied. Grant "All files access" in app settings.';
+  String get backupOpenFolder => _ru ? 'Открыть папку' : 'Open folder';
+  String get backupFolderUnsupported => _ru
+      ? 'Эта папка недоступна. Выберите папку во внутреннем хранилище.'
+      : 'This folder is not accessible. Please pick a folder on internal storage.';
+  String get backupRestoreConfirmTitle =>
+      _ru ? 'Восстановить из бэкапа?' : 'Restore from backup?';
+  String get backupRestoreConfirmBody => _ru
+      ? 'Данные из файла будут восстановлены поверх текущих (чаты, избранное, настройки).'
+      : 'Data from the file will be restored over your current data (chats, favorites, settings).';
+  String get backupRestartHint => _ru
+      ? 'Перезапустите приложение, чтобы увидеть изменения'
+      : 'Restart the app to see the changes';
+
+  // ── Recycle bin / deletion safety ──────────────────────────────────────────
+  String get recycleBinTitle => _ru ? 'Корзина' : 'Trash';
+  String get recycleBinSubtitle => _ru
+      ? 'Удалённые чаты и защита от случайных удалений по синхронизации'
+      : 'Deleted chats and protection from accidental sync deletions';
+  String get recycleBinPendingTitle => _ru
+      ? 'Запросы на удаление'
+      : 'Deletion requests';
+  String recycleBinPendingDesc(String device, int count) => _ru
+      ? 'Устройство «$device» предлагает удалить $count чат(ов). Применить или оставить?'
+      : 'Device "$device" wants to delete $count chat(s). Apply or keep?';
+  String get recycleBinApply => _ru ? 'Удалить' : 'Apply delete';
+  String get recycleBinKeep => _ru ? 'Оставить мои чаты' : 'Keep my chats';
+  String get recycleBinNoPending => _ru
+      ? 'Нет ожидающих запросов на удаление'
+      : 'No pending deletion requests';
+  String get recycleBinResetTitle =>
+      _ru ? 'Сбросить записи об удалениях' : 'Reset deletion records';
+  String get recycleBinResetDesc => _ru
+      ? 'Очищает список удалённых чатов. После этого синхронизация перестанет повторно удалять их на других устройствах и сможет вернуть их обратно.'
+      : 'Clears the list of deleted chats. Sync will stop re-deleting them on other devices and can bring them back.';
+  String get recycleBinResetButton =>
+      _ru ? 'Очистить список удалённых' : 'Clear deleted list';
+  String get recycleBinResetDone =>
+      _ru ? 'Записи об удалениях очищены' : 'Deletion records cleared';
+  String get recycleBinResetConfirm => _ru
+      ? 'Очистить все записи об удалениях для этого аккаунта?'
+      : 'Clear all deletion records for this account?';
+
   // ── Account Graph settings ────────────────────────────────────────────────
   String get accountGraph => _ru ? 'График аккаунта' : 'Account Graph';
   String get accountGraphSubtitleDesktopOn => _ru
       ? 'Показывает граф чатов, групп и каналов, когда чат не открыт'
       : 'Shows a graph of your chats, groups and channels when no chat is open';
   String get accountGraphSubtitleMobileOn => _ru
-      ? 'Проведите влево от правого края во вкладке Чаты, чтобы открыть граф'
-      : 'Swipe left from the right edge in Chats to open the graph';
+      ? 'Визуализация вашего аккаунта в планетарном виде'
+      : 'Visualizing your account in planetary view';
   String get accountGraphSubtitleDesktopOff => _ru
       ? 'Показывает подсказку, когда чат не открыт'
       : 'Shows a hint when no chat is open';
@@ -1050,6 +1263,37 @@ class AppLocalizations {
   String get preserveView => _ru ? 'Сохранять вид' : 'Preserve View';
   String get preserveViewOn => _ru ? 'Сохраняет масштаб и позицию при выходе из чата' : 'Keeps zoom & position when leaving a chat';
   String get preserveViewOff => _ru ? 'Сбрасывает в центр при возврате' : 'Resets to center when returning';
+
+  // Migration dialog
+  String get migrationTitle => _ru ? 'Миграция хранилища' : 'Storage Migration';
+  String get migrationBody => _ru
+      ? 'ONYX переходит на новый высокоскоростной движок хранения данных. Чаты и медиа будут загружаться значительно быстрее.'
+      : 'ONYX is switching to a new high-speed storage engine. Chats and media will load much faster.';
+  String get migrationAccounts => _ru ? 'Аккаунтов' : 'Accounts';
+  String get migrationDataSize => _ru ? 'Размер данных' : 'Data size';
+  String get migrationBackupNote => _ru
+      ? 'Перед миграцией будет создана резервная копия. Во время этого приложение может временно не отвечать.'
+      : 'A backup will be created before migration. The app may be temporarily unresponsive during this process.';
+  String get migrationStart => _ru ? 'Начать миграцию' : 'Start Migration';
+  String get migrationSkip => _ru ? 'Пропустить' : 'Skip';
+  String get migrationPhaseBackup => _ru ? 'Создание резервной копии' : 'Creating backup';
+  String get migrationPhaseImport => _ru ? 'Импорт данных' : 'Importing data';
+  String get migrationPhaseVerify => _ru ? 'Проверка' : 'Verifying';
+  String get migrationPhasePreparing => _ru ? 'Подготовка' : 'Preparing';
+  String get migrationDontClose => _ru ? 'Не закрывайте приложение' : 'Do not close the app';
+  String get migrationDoneTitle => _ru ? 'Готово!' : 'Done!';
+  String get migrationDoneBody => _ru
+      ? 'Хранилище обновлено. Резервная копия сохранена в папке Backups.'
+      : 'Storage updated. A backup has been saved to the Backups folder.';
+  String get migrationDoneNote => _ru
+      ? 'После того как убедитесь, что всё работает — можете удалить её вручную.'
+      : 'Once you confirm everything works — you can delete it manually.';
+  String get migrationDoneButton => _ru ? 'Отлично!' : 'Great!';
+  String get migrationErrorTitle => _ru ? 'Ошибка миграции' : 'Migration Error';
+  String get migrationErrorBody => _ru
+      ? 'Приложение продолжит работу на старой системе. Повторная попытка будет при следующем запуске.'
+      : 'The app will continue on the old system. Migration will be retried on next launch.';
+  String get migrationErrorButton => _ru ? 'Понятно' : 'Got it';
 
   // ── Audio settings ────────────────────────────────────────────────────────
   String get audioTitle => _ru ? 'Аудио' : 'Audio';
@@ -1105,6 +1349,47 @@ class AppLocalizations {
     if (mod10 >= 2 && mod10 <= 4) return '$n файла';
     return '$n файлов';
   }
+
+  // ── About ONYX dialog ─────────────────────────────────────────────────────
+  String get aboutServer => _ru ? 'СЕРВЕР' : 'SERVER';
+  String get aboutWhatsNew => _ru ? "ЧТО НОВОГО" : "WHAT'S NEW";
+  String get aboutConnected => _ru ? 'Подключено' : 'Connected';
+  String get aboutConnecting => _ru ? 'Подключение...' : 'Connecting...';
+  String get aboutLoadingLocation => _ru ? 'Загрузка...' : 'Loading...';
+  String get aboutNoReleaseNotes => _ru ? 'Нет информации об обновлении.' : 'No release notes available.';
+  String get aboutCheckForUpdates => _ru ? 'Проверить обновления' : 'Check for updates';
+  String get aboutChecking => _ru ? 'Проверка...' : 'Checking...';
+  String get aboutUpToDate => _ru ? 'Версия актуальна!' : "You're up to date!";
+  String aboutUpdateAvailable(String v) => _ru ? 'Доступно обновление: $v' : 'Update available: $v';
+
+  // ── Download Update dialog ────────────────────────────────────────────────
+  String get downloadUpdateTitle => _ru ? 'Скачать обновление' : 'Download Update';
+  String get downloadUpdateVersion => _ru ? 'Версия' : 'Version';
+  String get downloadUpdateWhatsNew => _ru ? "ЧТО НОВОГО" : "WHAT'S NEW";
+  String get downloadUpdateReady => _ru ? 'Готово к загрузке' : 'Ready to download';
+  String get downloadUpdateDownloading => _ru ? 'Загрузка...' : 'Downloading...';
+  String get downloadUpdateComplete => _ru ? 'Загрузка завершена!' : 'Download complete!';
+  String get downloadUpdateNoPlatform => _ru ? 'Нет загрузки для этой платформы' : 'No download available for this platform';
+  String get downloadUpdateInstall => _ru ? 'Скачать и установить' : 'Download & Install';
+  String get downloadUpdateOpen => _ru ? 'Открыть' : 'Open';
+  String get downloadUpdateRetry => _ru ? 'Повторить' : 'Retry';
+  String get downloadUpdateCancel => _ru ? 'Отменить загрузку' : 'Cancel download';
+
+  // ── Edit chat / folder / group dialogs ────────────────────────────────────
+  String get editChat => _ru ? 'Редактировать чат' : 'Edit chat';
+  String get chatNameLabel => _ru ? 'Название чата' : 'Chat name';
+  String get editFolder => _ru ? 'Редактировать папку' : 'Edit folder';
+  String get folderNameLabel => _ru ? 'Название папки' : 'Folder name';
+  String get createChat => _ru ? 'Новый чат' : 'New chat';
+
+  // ── User profile dialog ───────────────────────────────────────────────────
+  String get profileMessage => _ru ? 'Написать' : 'Message';
+
+  // ── Profile edit dialog ───────────────────────────────────────────────────
+  String get tapAvatarHint => _ru ? 'Нажмите на аватар • Удержите чтобы удалить' : 'Tap avatar to change • Long-press to remove';
+
+  // ── Folder dialogs ────────────────────────────────────────────────────────
+  String get tapAvatarLongRemove => _ru ? 'Нажмите чтобы сменить • Удержите чтобы удалить' : 'Tap to change • Long-press to remove';
 }
 
 class _AppLocalizationsDelegate

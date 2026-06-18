@@ -1,4 +1,6 @@
 // lib/screens/groups_tab.dart
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show compute;
 import 'package:http/http.dart' as http;
@@ -15,8 +17,51 @@ import '../l10n/app_localizations.dart';
 import '../managers/decoy_manager.dart';
 import '../managers/decoy_data_manager.dart';
 import '../widgets/adaptive_glass_card.dart';
+import '../widgets/animated_reorder_list.dart';
+import '../widgets/tab_pull_search.dart';
+import '../widgets/inline_search_bar.dart';
 import '../managers/lock_manager.dart';
 import '../dialogs/pin_lock_dialog.dart';
+import '../utils/onyx_base_dir.dart' show getOnyxSupportDirectory, getOnyxDocumentsDirectory;
+import '../managers/trash_manager.dart';
+
+/// Reads and scans group-history JSON files for a content match — run via
+/// `compute` so the (potentially large) `jsonDecode` doesn't block the UI
+/// isolate and make the search field stutter while the user types.
+/// Returns, per requested history file, up to 5 `{id, snippet}` matches —
+/// `id` is the raw message id (matches `_scrollToGroupMessageById`'s lookup)
+/// so a tapped search result can land the user directly on that message.
+List<List<Map<String, String>>> _findGroupContentMatchesInBackground(Map<String, dynamic> params) {
+  final paths = (params['paths'] as List).cast<String?>();
+  final lowerQuery = params['lowerQuery'] as String;
+  return paths.map((path) {
+    final matches = <Map<String, String>>[];
+    if (path == null) return matches;
+    try {
+      final file = File(path);
+      if (!file.existsSync()) return matches;
+      final data = jsonDecode(file.readAsStringSync());
+      if (data is! List) return matches;
+      for (var i = data.length - 1; i >= 0; i--) {
+        final item = data[i];
+        if (item is! Map) continue;
+        final content = (item['content'] ?? '').toString();
+        if (content.toLowerCase().contains(lowerQuery)) {
+          final id = item['id']?.toString();
+          if (id == null) continue;
+          matches.add({
+            'id': id,
+            'snippet': content.length > 140 ? '${content.substring(0, 140)}…' : content,
+          });
+          if (matches.length >= 5) break;
+        }
+      }
+    } catch (_) {
+      // Cache file unreadable/corrupt — skip silently, name match still applies.
+    }
+    return matches;
+  }).toList();
+}
 
 List<Group> _parseGroupsJsonInBackground(Map<String, String?> params) {
   final jsonBody = params['jsonBody'] ?? '[]';
@@ -65,6 +110,11 @@ class _GroupsTabState extends State<GroupsTab>
   bool _loading = true;
   bool _hasInternet = true;
   String? _loadedUsername;
+
+  final TextEditingController _searchCtrl = TextEditingController();
+  final GlobalKey _searchBarKey = GlobalKey();
+  String _searchQuery = '';
+  List<TabSearchResult> _searchResults = [];
   late final AnimationController _listAnimController;
   late final Animation<double> _listFadeAnim;
   late final AnimationController _screenFadeController;
@@ -123,6 +173,7 @@ class _GroupsTabState extends State<GroupsTab>
     ExternalServerManager.externalGroups
         .removeListener(_onExternalGroupsChanged);
     accountSwitchVersion.removeListener(_onAccountSwitch);
+    _searchCtrl.dispose();
     _listAnimController.dispose();
     _screenFadeController.dispose();
     super.dispose();
@@ -359,17 +410,25 @@ class _GroupsTabState extends State<GroupsTab>
     }
   }
 
-  Future<void> _leaveGroup(int groupId) async {
+  Future<void> _leaveGroup(Group group) async {
     final token = await AccountManager.getToken(
       rootScreenKey.currentState?.currentUsername ?? '',
     );
     if (token == null) return;
     try {
       final res = await http.post(
-        Uri.parse('$serverBase/group/$groupId/leave'),
+        Uri.parse('$serverBase/group/${group.id}/leave'),
         headers: {'authorization': 'Bearer $token'},
       );
       if (res.statusCode == 200) {
+        TrashManager.instance.addDeletedChat(TrashedChat(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          chatId: 'group:${group.id}',
+          displayName: group.name,
+          type: TrashedChatType.group,
+          messages: const [],
+          deletedAt: DateTime.now(),
+        ));
         if (mounted) {
           final l = AppLocalizations(SettingsManager.appLocale.value);
           rootScreenKey.currentState?.showSnack(l.leftGroup);
@@ -463,223 +522,533 @@ class _GroupsTabState extends State<GroupsTab>
   Future<void> _createGroup() async {
     final nameController = TextEditingController();
     bool isChannel = false;
+    const btnShape = RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(50)));
+    const btnPadding = EdgeInsets.symmetric(vertical: 13);
     await showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setState) => AlertDialog(
-          backgroundColor: Theme.of(ctx)
-              .colorScheme
-              .surface
-              .withValues(alpha: SettingsManager.elementOpacity.value),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(AppLocalizations.of(ctx).createGroupChannel),
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                AppLocalizations.of(ctx).groupNameLabel,
-                style: const TextStyle(fontSize: 14, color: Colors.grey),
-              ),
-              const SizedBox(height: 8),
-              ValueListenableBuilder<double>(
-                valueListenable: SettingsManager.elementBrightness,
-                builder: (_, brightness, __) {
-                  final baseColor = SettingsManager.getElementColor(
-                    Theme.of(context).colorScheme.surfaceContainerHighest,
-                    brightness,
-                  );
-                  return TextField(
-                    controller: nameController,
-                    maxLines: 1,
-                    textInputAction: TextInputAction.done,
-                    decoration: InputDecoration(
-                      hintText: AppLocalizations.of(ctx).groupNameHint,
-                      hintStyle:
-                          const TextStyle(fontSize: 13, color: Colors.grey),
-                      filled: true,
-                      fillColor: baseColor,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
+        builder: (ctx, setDialogState) {
+          final cs = Theme.of(ctx).colorScheme;
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 400),
+                child: Material(
+                  color: cs.surface,
+                  borderRadius: BorderRadius.circular(28),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Header
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(20, 18, 16, 16),
+                        decoration: BoxDecoration(
+                          color: cs.primary.withValues(alpha: 0.06),
+                          border: Border(
+                            bottom: BorderSide(
+                                color: cs.primary.withValues(alpha: 0.10),
+                                width: 0.8),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: cs.primary.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(Icons.group_add_rounded,
+                                  size: 18, color: cs.primary),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                AppLocalizations.of(ctx).createGroupChannel,
+                                style: TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold,
+                                  color: cs.onSurface,
+                                ),
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: () => Navigator.pop(ctx),
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: cs.onSurface.withValues(alpha: 0.07),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(Icons.close_rounded,
+                                    size: 18,
+                                    color: cs.onSurface
+                                        .withValues(alpha: 0.55)),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      contentPadding: const EdgeInsets.symmetric(
-                          vertical: 14, horizontal: 16),
-                    ),
-                  );
-                },
+                      // Content
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ValueListenableBuilder<double>(
+                              valueListenable: SettingsManager.elementBrightness,
+                              builder: (_, brightness, __) {
+                                final baseColor =
+                                    SettingsManager.getElementColor(
+                                  cs.surfaceContainerHighest,
+                                  brightness,
+                                );
+                                return TextField(
+                                  controller: nameController,
+                                  autofocus: true,
+                                  maxLines: 1,
+                                  textInputAction: TextInputAction.done,
+                                  decoration: InputDecoration(
+                                    labelText:
+                                        AppLocalizations.of(ctx).groupNameLabel,
+                                    hintText:
+                                        AppLocalizations.of(ctx).groupNameHint,
+                                    filled: true,
+                                    fillColor: baseColor.withValues(alpha: 0.5),
+                                    border: OutlineInputBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(14)),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide(
+                                          color: cs.outlineVariant
+                                              .withValues(alpha: 0.3),
+                                          width: 0.8),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide(
+                                          color: cs.primary, width: 1.4),
+                                    ),
+                                    contentPadding:
+                                        const EdgeInsets.symmetric(
+                                            vertical: 14, horizontal: 16),
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(height: 8),
+                            CheckboxListTile(
+                              title:
+                                  Text(AppLocalizations.of(ctx).channelAdminOnly),
+                              controlAffinity: ListTileControlAffinity.leading,
+                              value: isChannel,
+                              onChanged: (bool? v) =>
+                                  setDialogState(() => isChannel = v ?? false),
+                              contentPadding: EdgeInsets.zero,
+                              visualDensity: VisualDensity.compact,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8)),
+                            ),
+                            const SizedBox(height: 16),
+                            FilledButton(
+                              style: FilledButton.styleFrom(
+                                padding: btnPadding,
+                                shape: btnShape,
+                              ),
+                              onPressed: () async {
+                                final name = nameController.text.trim();
+                                if (name.isEmpty) return;
+                                final token = await AccountManager.getToken(
+                                  rootScreenKey.currentState?.currentUsername ??
+                                      '',
+                                );
+                                if (token == null) return;
+                                final res = await http.post(
+                                  Uri.parse('$serverBase/group/create'),
+                                  headers: {
+                                    'authorization': 'Bearer $token',
+                                    'content-type': 'application/json',
+                                  },
+                                  body: jsonEncode(
+                                      {'name': name, 'is_channel': isChannel}),
+                                );
+                                Navigator.pop(ctx);
+                                if (res.statusCode == 200) {
+                                  _loadGroupsFromNetwork();
+                                } else {
+                                  final l = AppLocalizations(
+                                      SettingsManager.appLocale.value);
+                                  rootScreenKey.currentState
+                                      ?.showSnack(l.failedCreateGroup);
+                                }
+                              },
+                              child: Text(AppLocalizations.of(ctx).create),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              const SizedBox(height: 16),
-              CheckboxListTile(
-                title: Text(AppLocalizations.of(ctx).channelAdminOnly),
-                controlAffinity: ListTileControlAffinity.leading,
-                value: isChannel,
-                onChanged: (bool? v) => setState(() => isChannel = v ?? false),
-                contentPadding: EdgeInsets.zero,
-                visualDensity: VisualDensity.compact,
-              ),
-            ],
-          ),
-          actionsPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(AppLocalizations.of(ctx).cancel),
             ),
-            FilledButton.tonal(
-              onPressed: () async {
-                final name = nameController.text.trim();
-                if (name.isEmpty) return;
-                final token = await AccountManager.getToken(
-                  rootScreenKey.currentState?.currentUsername ?? '',
-                );
-                if (token == null) return;
-                final res = await http.post(
-                  Uri.parse('$serverBase/group/create'),
-                  headers: {
-                    'authorization': 'Bearer $token',
-                    'content-type': 'application/json',
-                  },
-                  body: jsonEncode({'name': name, 'is_channel': isChannel}),
-                );
-                Navigator.pop(ctx);
-                if (res.statusCode == 200) {
-                  _loadGroupsFromNetwork();
-                } else {
-                  final l = AppLocalizations(SettingsManager.appLocale.value);
-                  rootScreenKey.currentState?.showSnack(l.failedCreateGroup);
-                }
-              },
-              child: Text(AppLocalizations.of(ctx).create),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
 
   Future<void> _joinGroup() async {
     final tokenController = TextEditingController();
+    const btnShape = RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(50)));
+    const btnPadding = EdgeInsets.symmetric(vertical: 13);
     await showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Theme.of(ctx)
-            .colorScheme
-            .surface
-            .withValues(alpha: SettingsManager.elementOpacity.value),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(AppLocalizations.of(ctx).viewByToken),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              AppLocalizations.of(ctx).pasteToken,
-              style: TextStyle(fontSize: 14, color: Colors.grey),
-            ),
-            const SizedBox(height: 8),
-            ValueListenableBuilder<double>(
-              valueListenable: SettingsManager.elementBrightness,
-              builder: (_, brightness, __) {
-                final baseColor = SettingsManager.getElementColor(
-                  Theme.of(context).colorScheme.surfaceContainerHighest,
-                  brightness,
-                );
-                return TextField(
-                  controller: tokenController,
-                  maxLines: 1,
-                  textInputAction: TextInputAction.done,
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: baseColor,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: Material(
+                color: cs.surface,
+                borderRadius: BorderRadius.circular(28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Header
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(20, 18, 16, 16),
+                      decoration: BoxDecoration(
+                        color: cs.primary.withValues(alpha: 0.06),
+                        border: Border(
+                          bottom: BorderSide(
+                              color: cs.primary.withValues(alpha: 0.10),
+                              width: 0.8),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: cs.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(Icons.link_rounded,
+                                size: 18, color: cs.primary),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              AppLocalizations.of(ctx).viewByToken,
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                                color: cs.onSurface,
+                              ),
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () => Navigator.of(ctx).pop(),
+                            child: Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: cs.onSurface.withValues(alpha: 0.07),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(Icons.close_rounded,
+                                  size: 18,
+                                  color: cs.onSurface.withValues(alpha: 0.55)),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    contentPadding: const EdgeInsets.symmetric(
-                        vertical: 14, horizontal: 16),
-                  ),
-                );
-              },
+                    // Content
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            AppLocalizations.of(ctx).pasteToken,
+                            style: TextStyle(
+                                fontSize: 13,
+                                color: cs.onSurface.withValues(alpha: 0.6)),
+                          ),
+                          const SizedBox(height: 10),
+                          ValueListenableBuilder<double>(
+                            valueListenable: SettingsManager.elementBrightness,
+                            builder: (_, brightness, __) {
+                              final baseColor = SettingsManager.getElementColor(
+                                cs.surfaceContainerHighest,
+                                brightness,
+                              );
+                              return TextField(
+                                controller: tokenController,
+                                autofocus: true,
+                                maxLines: 1,
+                                textInputAction: TextInputAction.done,
+                                decoration: InputDecoration(
+                                  filled: true,
+                                  fillColor: baseColor.withValues(alpha: 0.5),
+                                  border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14)),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: BorderSide(
+                                        color: cs.outlineVariant
+                                            .withValues(alpha: 0.3),
+                                        width: 0.8),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: BorderSide(
+                                        color: cs.primary, width: 1.4),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      vertical: 14, horizontal: 16),
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          FilledButton(
+                            style: FilledButton.styleFrom(
+                              padding: btnPadding,
+                              shape: btnShape,
+                            ),
+                            onPressed: () async {
+                              String raw = tokenController.text.trim();
+                              if (raw.isEmpty) return;
+                              String inviteToken;
+                              if (raw.contains('://join/')) {
+                                inviteToken = raw.split('://join/').last;
+                              } else if (raw.contains('/group/')) {
+                                inviteToken = raw.split('/group/').last;
+                              } else {
+                                inviteToken = raw;
+                              }
+                              inviteToken = inviteToken.trim();
+                              if (inviteToken.isEmpty) {
+                                final l = AppLocalizations(
+                                    SettingsManager.appLocale.value);
+                                rootScreenKey.currentState
+                                    ?.showSnack(l.invalidInviteLinkFormat);
+                                return;
+                              }
+                              final userToken = await AccountManager.getToken(
+                                rootScreenKey.currentState?.currentUsername ??
+                                    '',
+                              );
+                              if (userToken == null) {
+                                Navigator.of(ctx).pop();
+                                rootScreenKey.currentState?.showSnack(
+                                    AppLocalizations(
+                                            SettingsManager.appLocale.value)
+                                        .notLoggedIn);
+                                return;
+                              }
+                              try {
+                                final res = await http.post(
+                                  Uri.parse(
+                                      '$serverBase/group/join/$inviteToken'),
+                                  headers: {
+                                    'authorization': 'Bearer $userToken'
+                                  },
+                                );
+                                Navigator.of(ctx).pop();
+                                final l = AppLocalizations(
+                                    SettingsManager.appLocale.value);
+                                if (res.statusCode == 200) {
+                                  rootScreenKey.currentState
+                                      ?.showSnack(l.groupAddedForViewing);
+                                  _loadGroupsFromNetwork();
+                                } else {
+                                  rootScreenKey.currentState?.showSnack(
+                                    res.statusCode == 404
+                                        ? l.invalidInviteLink
+                                        : l.failedAddGroup,
+                                  );
+                                }
+                              } catch (e) {
+                                final l = AppLocalizations(
+                                    SettingsManager.appLocale.value);
+                                rootScreenKey.currentState
+                                    ?.showSnack(l.networkError);
+                              }
+                            },
+                            child: Text(AppLocalizations.of(ctx).view),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ],
-        ),
-        actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(AppLocalizations.of(ctx).cancel),
           ),
-          FilledButton.tonal(
-            onPressed: () async {
-              String raw = tokenController.text.trim();
-              if (raw.isEmpty) return;
-              String inviteToken;
-
-              if (raw.contains('://join/')) {
-                inviteToken = raw.split('://join/').last;
-              } else if (raw.contains('/group/')) {
-                inviteToken = raw.split('/group/').last;
-              } else {
-                inviteToken = raw;
-              }
-
-              inviteToken = inviteToken.trim();
-              if (inviteToken.isEmpty) {
-                final l = AppLocalizations(SettingsManager.appLocale.value);
-                rootScreenKey.currentState
-                    ?.showSnack(l.invalidInviteLinkFormat);
-                return;
-              }
-
-              final userToken = await AccountManager.getToken(
-                rootScreenKey.currentState?.currentUsername ?? '',
-              );
-              if (userToken == null) {
-                Navigator.of(ctx).pop();
-                rootScreenKey.currentState?.showSnack(
-                    AppLocalizations(SettingsManager.appLocale.value)
-                        .notLoggedIn);
-                return;
-              }
-              try {
-                final res = await http.post(
-                  Uri.parse('$serverBase/group/join/$inviteToken'),
-                  headers: {'authorization': 'Bearer $userToken'},
-                );
-                Navigator.of(ctx).pop();
-                final l = AppLocalizations(SettingsManager.appLocale.value);
-                if (res.statusCode == 200) {
-                  rootScreenKey.currentState?.showSnack(l.groupAddedForViewing);
-                  _loadGroupsFromNetwork();
-                } else {
-                  rootScreenKey.currentState?.showSnack(
-                    res.statusCode == 404
-                        ? l.invalidInviteLink
-                        : l.failedAddGroup,
-                  );
-                }
-              } catch (e) {
-                final l = AppLocalizations(SettingsManager.appLocale.value);
-                rootScreenKey.currentState?.showSnack(l.networkError);
-              }
-            },
-            child: Text(AppLocalizations.of(ctx).view),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
   String _lockId(Group g) => g.isExternal
       ? 'eg_${g.externalServerId}_${g.id}'
       : 'ng_${g.id}';
+
+  Future<void> _onSearchChanged(String query) async {
+    final trimmed = query.trim();
+    if (trimmed == _searchQuery) return;
+    if (trimmed.isEmpty) {
+      setState(() { _searchQuery = ''; _searchResults = []; });
+      return;
+    }
+    final results = await _searchGroups(trimmed);
+    if (!mounted) return;
+    setState(() { _searchQuery = trimmed; _searchResults = results; });
+  }
+
+  Future<List<TabSearchResult>> _searchGroups(String query) async {
+    final lower = query.toLowerCase();
+    final username = rootScreenKey.currentState?.currentUsername ?? '';
+    final allGroups = [..._groups, ...ExternalServerManager.externalGroups.value];
+
+    Widget Function(BuildContext, double) avatarBuilderFor(Group g) {
+      String? avatarUrl;
+      if (g.isExternal) {
+        final server = ExternalServerManager.servers.value
+            .where((s) => s.id == g.externalServerId)
+            .firstOrNull;
+        if (server != null) {
+          avatarUrl = '${server.baseUrl}/groups/${g.id}/avatar?v=${g.avatarVersion}&sid=${server.id}';
+        }
+      } else {
+        avatarUrl = '$serverBase/group/${g.id}/avatar?v=${g.avatarVersion}';
+      }
+      return (context, size) => CircleAvatar(
+            key: ValueKey('search_avatar_${g.isExternal ? (g.externalServerId ?? 'ext') : 'native'}_${g.id}_${g.avatarVersion}'),
+            radius: size / 2,
+            backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl) : null,
+            child: avatarUrl == null
+                ? Icon(g.isExternal ? Icons.dns_outlined : Icons.group, size: size * 0.5,
+                       color: g.isExternal ? Colors.orange.shade700 : null)
+                : null,
+          );
+    }
+
+    final nameHits = <TabSearchResult>[];
+    final contentCandidates = <Group>[];
+    for (final g in allGroups) {
+      if (g.name.toLowerCase().contains(lower)) {
+        nameHits.add(TabSearchResult(
+          id: '${g.isExternal ? (g.externalServerId ?? 'ext') : 'native'}:${g.id}',
+          title: g.name,
+          subtitle: g.isChannel ? 'Канал' : 'Группа',
+          icon: g.isChannel ? Icons.campaign_outlined : Icons.groups_outlined,
+          avatarBuilder: avatarBuilderFor(g),
+        ));
+      } else {
+        contentCandidates.add(g);
+      }
+    }
+
+    if (query.trim().length < 2 || username.isEmpty) {
+      return nameHits.take(30).toList();
+    }
+
+    // Resolve each candidate's history-file path up front (cheap, async dir
+    // lookups), then hand the actual read+decode+scan to a background isolate
+    // in one shot — `jsonDecode`-ing potentially large history files on the
+    // UI isolate is what made the search field stutter while typing.
+    final paths = <String?>[];
+    for (final g in contentCandidates) {
+      try {
+        final dir = g.isExternal
+            ? await getOnyxDocumentsDirectory()
+            : await getOnyxSupportDirectory();
+        final file = g.isExternal
+            ? File('${dir.path}/ext_group_${g.externalServerId}_${g.id}_history.json')
+            : File('${dir.path}/group_${username}_${g.id}_history.json');
+        paths.add(file.path);
+      } catch (_) {
+        paths.add(null);
+      }
+    }
+
+    final matchLists = contentCandidates.isEmpty
+        ? const <List<Map<String, String>>>[]
+        : await compute(_findGroupContentMatchesInBackground, {
+            'paths': paths,
+            'lowerQuery': lower,
+          });
+
+    // One card per matching message — chats are intentionally not deduped,
+    // so a chat with several hits shows up as several separate cards.
+    final contentHits = <TabSearchResult>[];
+    outer:
+    for (var i = 0; i < matchLists.length; i++) {
+      final g = contentCandidates[i];
+      final groupKey = '${g.isExternal ? (g.externalServerId ?? 'ext') : 'native'}:${g.id}';
+      final avatarBuilder = avatarBuilderFor(g);
+      for (var j = 0; j < matchLists[i].length; j++) {
+        final match = matchLists[i][j];
+        contentHits.add(TabSearchResult(
+          id: '$groupKey#$j',
+          title: g.name,
+          subtitle: g.isChannel ? 'Канал' : 'Группа',
+          snippet: match['snippet'],
+          icon: Icons.forum_outlined,
+          avatarBuilder: avatarBuilder,
+          messageId: match['id'],
+        ));
+        if (nameHits.length + contentHits.length >= 30) break outer;
+      }
+    }
+
+    return [...nameHits, ...contentHits].take(30).toList();
+  }
+
+  void _onSearchResultTap(TabSearchResult result) {
+    _searchCtrl.clear();
+    setState(() { _searchQuery = ''; _searchResults = []; });
+    // Content-match cards carry a "#<index>" suffix to stay unique per
+    // matching message — strip it before resolving the underlying group id.
+    final rawId = result.id.split('#').first;
+    final parts = rawId.split(':');
+    if (parts.length != 2) return;
+    final scope = parts[0];
+    final id = int.tryParse(parts[1]);
+    if (id == null) return;
+    final allGroups = [..._groups, ...ExternalServerManager.externalGroups.value];
+    final g = allGroups.where((g) =>
+        '${g.isExternal ? (g.externalServerId ?? 'ext') : 'native'}:${g.id}' ==
+        '$scope:$id').firstOrNull;
+    if (g == null) return;
+    if (result.messageId != null) {
+      // Only GroupChatScreen (native groups) currently consumes this — it's
+      // harmless to set for external groups too, just never picked up.
+      setPendingMessageScrollTarget('$scope:$id', result.messageId!);
+    }
+    _openGroupWithLockCheck(context, g);
+  }
 
   Future<void> _openGroupWithLockCheck(BuildContext ctx, Group g) async {
     final lockId = _lockId(g);
@@ -856,7 +1225,7 @@ class _GroupsTabState extends State<GroupsTab>
             onPressed: () {
               Navigator.of(context).pop();
               LockManager.removeLock('ng_${group.id}');
-              _leaveGroup(group.id);
+              _leaveGroup(group);
             },
             child: Text(
               AppLocalizations.of(context).leave,
@@ -923,35 +1292,71 @@ class _GroupsTabState extends State<GroupsTab>
           : const AlwaysStoppedAnimation(0.0),
       child: Scaffold(
         backgroundColor: Colors.transparent,
+        // The host root_screen Scaffold already resizes for the keyboard;
+        // letting this nested one do it too double-shrinks the tab's content
+        // and is exactly what made the search panel/list area get squashed
+        // and overlapped by the chat-background layer behind it once the
+        // IME opened.
+        resizeToAvoidBottomInset: false,
         body: _loading
             ? const Center(child: CircularProgressIndicator())
             : (_groups.isEmpty &&
                     ExternalServerManager.externalGroups.value.isEmpty)
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Opacity(
-                          opacity: 0.4,
-                          child: Icon(Icons.group_outlined, size: 48),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          AppLocalizations.of(context).noGroupsYet,
-                          style: const TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w500),
-                        ),
-                        if (!_hasInternet)
-                          const Padding(
-                            padding: EdgeInsets.only(top: 8.0),
-                            child: Text(
-                              '(offline)',
-                              style:
-                                  TextStyle(fontSize: 12, color: Colors.grey),
+                ? Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                        child: Builder(builder: (context) {
+                          final colorScheme = Theme.of(context).colorScheme;
+                          return AdaptiveGlassCard(
+                            borderRadius: 14,
+                            padding: EdgeInsets.zero,
+                            onTap: _showAddGroupSheet,
+                            child: Container(
+                              height: 44,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: colorScheme.primary.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Icon(
+                                Icons.add,
+                                size: 20,
+                                color: colorScheme.primary,
+                              ),
                             ),
+                          );
+                        }),
+                      ),
+                      Expanded(
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Opacity(
+                                opacity: 0.4,
+                                child: Icon(Icons.group_outlined, size: 48),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                AppLocalizations.of(context).noGroupsYet,
+                                style: const TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.w500),
+                              ),
+                              if (!_hasInternet)
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 8.0),
+                                  child: Text(
+                                    '(offline)',
+                                    style: TextStyle(
+                                        fontSize: 12, color: Colors.grey),
+                                  ),
+                                ),
+                            ],
                           ),
-                      ],
-                    ),
+                        ),
+                      ),
+                    ],
                   )
                 : FadeTransition(
                     opacity: _listFadeAnim,
@@ -959,39 +1364,105 @@ class _GroupsTabState extends State<GroupsTab>
                       valueListenable: ExternalServerManager.externalGroups,
                       builder: (context, extGroups, _) {
                         final allGroups = [..._groups, ...extGroups];
-                        return ListView.separated(
-                          padding: EdgeInsets.fromLTRB(12, 8, 12,
-                              8 + MediaQuery.paddingOf(context).bottom),
-                          itemCount: allGroups.length + 1,
-                          cacheExtent: 500,
-                          physics: const AlwaysScrollableScrollPhysics(
-                              parent: BouncingScrollPhysics()),
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 6),
-                          itemBuilder: (context, i) {
-                            if (i == 0) {
-                              final colorScheme = Theme.of(context).colorScheme;
-                              return AdaptiveGlassCard(
-                                borderRadius: 14,
-                                padding: EdgeInsets.zero,
-                                onTap: _showAddGroupSheet,
-                                child: Container(
-                                  height: 44,
-                                  alignment: Alignment.center,
-                                  decoration: BoxDecoration(
-                                    color: colorScheme.primary.withValues(alpha: 0.12),
-                                    borderRadius: BorderRadius.circular(14),
+                        return Column(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                              child: Builder(builder: (context) {
+                                final colorScheme = Theme.of(context).colorScheme;
+                                return AdaptiveGlassCard(
+                                  borderRadius: 14,
+                                  padding: EdgeInsets.zero,
+                                  onTap: _showAddGroupSheet,
+                                  child: Container(
+                                    height: 44,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: colorScheme.primary.withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    child: Icon(
+                                      Icons.add,
+                                      size: 20,
+                                      color: colorScheme.primary,
+                                    ),
                                   ),
-                                  child: Icon(
-                                    Icons.add,
-                                    size: 20,
-                                    color: colorScheme.primary,
-                                  ),
-                                ),
+                                );
+                              }),
+                            ),
+                            Expanded(
+                              child: Builder(builder: (context) {
+                              final cs = Theme.of(context).colorScheme;
+                              final bottomPad = 8 + MediaQuery.paddingOf(context).bottom;
+                              final searchBar = InlineSearchBar(
+                                key: _searchBarKey,
+                                controller: _searchCtrl,
+                                onChanged: _onSearchChanged,
+                                hintText: AppLocalizations.of(context).searchGroupsHint,
+                                hasText: _searchQuery.isNotEmpty,
                               );
-                            }
-
-                            final g = allGroups[i - 1];
+                              if (_searchQuery.isNotEmpty) {
+                                return CustomScrollView(
+                                  keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                                  physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+                                  slivers: [
+                                    SliverToBoxAdapter(child: searchBar),
+                                    SliverPadding(
+                                      padding: EdgeInsets.fromLTRB(12, 4, 12, bottomPad),
+                                      sliver: SliverList.builder(
+                                        itemCount: _searchResults.length,
+                                        itemBuilder: (ctx, i) {
+                                          final r = _searchResults[i];
+                                          return Padding(
+                                            padding: const EdgeInsets.only(bottom: 6),
+                                            child: GestureDetector(
+                                              onTap: () => _onSearchResultTap(r),
+                                              child: Container(
+                                                decoration: BoxDecoration(
+                                                  color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                                                  borderRadius: BorderRadius.circular(14),
+                                                ),
+                                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                                child: Row(
+                                                  children: [
+                                                    r.avatarBuilder?.call(ctx, 40) ??
+                                                        CircleAvatar(
+                                                          radius: 20,
+                                                          backgroundColor: cs.primary.withValues(alpha: 0.15),
+                                                          child: Icon(r.icon, size: 18, color: cs.primary),
+                                                        ),
+                                                    const SizedBox(width: 12),
+                                                    Expanded(
+                                                      child: Column(
+                                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                                        children: [
+                                                          Text(r.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                                          if (r.snippet != null)
+                                                            Text(r.snippet!, style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.55)), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              }
+                              return AnimatedReorderList<Group>(
+                                items: allGroups,
+                                keyOf: (g) =>
+                                    '${g.isExternal ? (g.externalServerId ?? 'ext') : 'native'}:${g.id}',
+                                header: searchBar,
+                                padding: EdgeInsets.fromLTRB(12, 4, 12, bottomPad),
+                                physics: const AlwaysScrollableScrollPhysics(
+                                    parent: BouncingScrollPhysics()),
+                                separatorHeight: 6,
+                                itemBuilder: (context, g, i) {
 
                             String? avatarUrl;
                             if (g.isExternal) {
@@ -1151,7 +1622,11 @@ class _GroupsTabState extends State<GroupsTab>
                               ),
                               ),
                             );
-                          },
+                                },
+                              );
+                              }),
+                            ),
+                          ],
                         );
                       },
                     ),

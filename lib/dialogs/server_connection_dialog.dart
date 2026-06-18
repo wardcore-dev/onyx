@@ -171,33 +171,90 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
+    const btnShape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.all(Radius.circular(50)),
+    );
+    const btnPadding = EdgeInsets.symmetric(vertical: 13);
+
     return ValueListenableBuilder<double>(
       valueListenable: SettingsManager.elementBrightness,
       builder: (context, brightness, child) {
-        final dialogColor = SettingsManager.getElementColor(
-          colorScheme.surface,
-          brightness,
-        );
         return Dialog(
-          backgroundColor: dialogColor.withValues(alpha: SettingsManager.elementOpacity.value),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          constraints: const BoxConstraints(
-            maxWidth: 420,
-            maxHeight: 600,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              
-              Text(
-                AppLocalizations.of(context).joinExternalServer,
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 20),
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420, maxHeight: 680),
+              child: Material(
+                color: colorScheme.surface,
+                borderRadius: BorderRadius.circular(28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // ── Header ──────────────────────────────────────────
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(20, 18, 16, 16),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary.withValues(alpha: 0.06),
+                        border: Border(
+                          bottom: BorderSide(
+                            color: colorScheme.primary.withValues(alpha: 0.10),
+                            width: 0.8,
+                          ),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: colorScheme.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(Icons.dns_rounded,
+                                size: 18, color: colorScheme.primary),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              AppLocalizations.of(context).joinExternalServer,
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () => Navigator.of(context).pop(false),
+                            child: Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: colorScheme.onSurface.withValues(alpha: 0.07),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(Icons.close_rounded,
+                                  size: 18,
+                                  color: colorScheme.onSurface
+                                      .withValues(alpha: 0.55)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // ── Content ──────────────────────────────────────────
+                    Flexible(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const SizedBox(height: 4),
 
               if (!_infoLoaded) ...[
                 Text(
@@ -418,56 +475,64 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
                 const SizedBox(height: 12),
               ],
 
+              const SizedBox(height: 8),
               if (!_infoLoaded)
                 FilledButton.icon(
                   onPressed: _loading ? null : _fetchInfo,
+                  style: FilledButton.styleFrom(
+                    padding: btnPadding,
+                    shape: btnShape,
+                  ),
                   icon: _loading
                       ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.search),
-                  label: Text(_loading ? AppLocalizations.of(context).connecting : AppLocalizations.of(context).connectBtn),
+                      : const Icon(Icons.search, size: 18),
+                  label: Text(_loading
+                      ? AppLocalizations.of(context).connecting
+                      : AppLocalizations.of(context).connectBtn),
                 )
-              else
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          setState(() {
-                            _infoLoaded = false;
-                            _serverInfo = null;
-                          });
-                        },
-                        child: Text(AppLocalizations.of(context).back),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 2,
-                      child: FilledButton.icon(
-                        onPressed: _loading ? null : _connect,
-                        icon: _loading
-                            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                            : Icon(_serverInfo?['is_channel'] == true && _serverInfo?['public_channel_token'] != null
-                                ? Icons.visibility
-                                : Icons.login),
-                        label: Text(_loading
-                            ? AppLocalizations.of(context).connecting
-                            : (_serverInfo?['is_channel'] == true && _serverInfo?['public_channel_token'] != null ? AppLocalizations.of(context).view : AppLocalizations.of(context).join)),
-                      ),
-                    ),
-                  ],
+              else ...[
+                FilledButton.icon(
+                  onPressed: _loading ? null : _connect,
+                  style: FilledButton.styleFrom(
+                    padding: btnPadding,
+                    shape: btnShape,
+                  ),
+                  icon: _loading
+                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                      : Icon(_serverInfo?['is_channel'] == true &&
+                              _serverInfo?['public_channel_token'] != null
+                          ? Icons.visibility
+                          : Icons.login),
+                  label: Text(_loading
+                      ? AppLocalizations.of(context).connecting
+                      : (_serverInfo?['is_channel'] == true &&
+                              _serverInfo?['public_channel_token'] != null
+                          ? AppLocalizations.of(context).view
+                          : AppLocalizations.of(context).join)),
                 ),
-
-              const SizedBox(height: 12),
-              OutlinedButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: Text(AppLocalizations.of(context).cancel),
-              ),
-            ],
-          ),
-        ),
-          ),
-        );
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: () => setState(() {
+                    _infoLoaded = false;
+                    _serverInfo = null;
+                  }),
+                  style: OutlinedButton.styleFrom(
+                    padding: btnPadding,
+                    shape: btnShape,
+                  ),
+                  child: Text(AppLocalizations.of(context).back),
+                ),
+              ],
+            ],          // inner Column children
+          ),            // inner Column
+        ),              // SingleChildScrollView
+        ),              // Flexible
+      ],                // outer Column children
+    ),                  // outer Column
+  ),                    // Material
+  ),                    // ConstrainedBox
+  ),                    // ClipRRect
+);                      // Dialog
       },
     );
   }
@@ -484,44 +549,80 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
           brightness,
         );
         return Container(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: baseColor.withValues(alpha: 0.5),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+            color: baseColor.withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+              width: 0.8,
+            ),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Icon(Icons.dns, color: colorScheme.primary, size: 20),
-                  const SizedBox(width: 8),
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: colorScheme.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(Icons.dns_rounded,
+                        color: colorScheme.primary, size: 17),
+                  ),
+                  const SizedBox(width: 10),
                   Expanded(
-                    child: Text(
-                      info['group_name'] ?? info['name'] ?? 'Unknown',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colorScheme.onSurface),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          info['group_name'] ?? info['name'] ?? 'Unknown',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.onSurface),
+                        ),
+                        Text(
+                          '$_parsedHost:$_parsedPort',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: colorScheme.onSurface
+                                  .withValues(alpha: 0.5)),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-              Text(
-                '$_parsedHost:$_parsedPort',
-                style: TextStyle(fontSize: 11, color: colorScheme.onSurface.withValues(alpha: 0.6)),
-              ),
               if ((info['description'] ?? '').toString().isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(info['description'], style: TextStyle(fontSize: 12, color: colorScheme.onSurface.withValues(alpha: 0.8))),
+                const SizedBox(height: 8),
+                Text(info['description'],
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurface.withValues(alpha: 0.75))),
               ],
               if ((info['motd'] ?? '').toString().isNotEmpty) ...[
                 const SizedBox(height: 4),
-                Text(info['motd'], style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: colorScheme.onSurface.withValues(alpha: 0.6))),
+                Text(info['motd'],
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                        color: colorScheme.onSurface.withValues(alpha: 0.55))),
               ],
-              const Divider(height: 12),
-              _infoRow(AppLocalizations.of(context).serverInfoGroups, '${info['groups_count'] ?? 0}'),
-              _infoRow(AppLocalizations.of(context).serverInfoMembers, '${info['total_members'] ?? 0}'),
-              _infoRow(AppLocalizations.of(context).serverInfoMedia, '${info['media_provider'] ?? 'none'}'),
-              _infoRow(AppLocalizations.of(context).serverInfoMaxFile, '${info['max_file_size_mb'] ?? 0} MB'),
+              Divider(
+                  height: 16,
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+              _infoRow(AppLocalizations.of(context).serverInfoGroups,
+                  '${info['groups_count'] ?? 0}'),
+              _infoRow(AppLocalizations.of(context).serverInfoMembers,
+                  '${info['total_members'] ?? 0}'),
+              _infoRow(AppLocalizations.of(context).serverInfoMedia,
+                  '${info['media_provider'] ?? 'none'}'),
+              _infoRow(AppLocalizations.of(context).serverInfoMaxFile,
+                  '${info['max_file_size_mb'] ?? 0} MB'),
             ],
           ),
         );

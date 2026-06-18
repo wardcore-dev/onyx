@@ -3,30 +3,38 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:file_picker/file_picker.dart';
 import '../utils/image_file_cache.dart';
 import '../utils/file_utils.dart';
-import '../utils/image_size_cache.dart';
+import '../utils/image_loader.dart';
 import '../globals.dart';
-import '../managers/external_server_manager.dart';
 import 'chat_images_scope.dart';
+import 'blur_placeholder.dart';
+import '../utils/blurhash_cache.dart';
 
 class AlbumItem {
-  final String filename; 
-  final String orig; 
-  final String? owner; 
-  final String? mediaKeyB64; 
+  final String filename;
+  final String orig;
+  final String? owner;
+  final String? mediaKeyB64;
+  /// BlurHash for a blurred preview while the image downloads (null if absent).
+  final String? blurHash;
 
-  const AlbumItem({required this.filename, required this.orig, this.owner, this.mediaKeyB64});
+  const AlbumItem({
+    required this.filename,
+    required this.orig,
+    this.owner,
+    this.mediaKeyB64,
+    this.blurHash,
+  });
 
   factory AlbumItem.fromJson(Map<String, dynamic> json) => AlbumItem(
         filename: json['filename'] as String? ?? json['url'] as String? ?? '',
         orig: json['orig'] as String? ?? 'image',
         owner: json['owner'] as String?,
         mediaKeyB64: json['key'] as String?,
+        blurHash: json['blur'] as String?,
       );
 }
 
@@ -177,6 +185,10 @@ class AlbumMessageWidget extends StatelessWidget {
     required double h,
   }) =>
       _AlbumThumb(
+        // Key by filename so Flutter never recycles one thumb's State for a
+        // different image during a rebuild — that recycling used to leave the
+        // first albums stuck on the blurred placeholder after a chat opened.
+        key: ValueKey(allItems[index].filename),
         item: allItems[index],
         allItems: allItems,
         index: index,
@@ -215,25 +227,78 @@ class _AlbumThumbState extends State<_AlbumThumb> {
   File? _file;
   bool _loading = true;
   bool _error = false;
+  // Filename this thumb is currently subscribed to via ImageLoader's per-file
+  // listeners (null when not subscribed).
+  String? _listeningFilename;
 
   @override
   void initState() {
     super.initState();
     final cached = imageFileCache[widget.item.filename];
-    if (cached != null && cached.file.existsSync()) {
+    final hit = cached != null && cached.file.existsSync();
+    if (hit) {
       _file = cached.file;
       _loading = false;
+      BlurHashCache.instance.ensureFor(widget.item.filename, cached.file);
     } else {
+      // Listen for THIS file landing in the cache (e.g. via the preloader or a
+      // sibling) so we display it even if our own _loadFile setState is starved
+      // when many thumbnails load at once — that left favorites albums stuck on
+      // the placeholder until an unrelated rebuild (opening the app bar) ran.
+      _startListeningCache();
       _loadFile();
     }
+  }
+
+  void _onCacheChanged() {
+    if (!mounted || _file != null) return;
+    // Trust the cache entry (ImageLoader verified the file exists before adding
+    // it); avoid an existsSync here — this runs once per cached image across all
+    // listening thumbs, so a syscall each time would itself jank a big album.
+    final cached = imageFileCache[widget.item.filename];
+    if (cached != null) {
+      BlurHashCache.instance.ensureFor(widget.item.filename, cached.file);
+      _stopListeningCache();
+      setState(() {
+        _file = cached.file;
+        _loading = false;
+        _error = false;
+      });
+    }
+  }
+
+  void _startListeningCache() {
+    if (_listeningFilename == widget.item.filename) return;
+    _stopListeningCache();
+    ImageLoader.addFileListener(widget.item.filename, _onCacheChanged);
+    _listeningFilename = widget.item.filename;
+  }
+
+  void _stopListeningCache() {
+    final fn = _listeningFilename;
+    if (fn != null) {
+      ImageLoader.removeFileListener(fn, _onCacheChanged);
+      _listeningFilename = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _stopListeningCache();
+    super.dispose();
   }
 
   @override
   void didUpdateWidget(covariant _AlbumThumb old) {
     super.didUpdateWidget(old);
+    // Thumbs are keyed by filename, so the State is never reused for a
+    // different image — but keep this defensive in case the key strategy
+    // changes.
     if (old.item.filename != widget.item.filename) {
       final cached = imageFileCache[widget.item.filename];
       if (cached != null && cached.file.existsSync()) {
+        _stopListeningCache();
+        BlurHashCache.instance.ensureFor(widget.item.filename, cached.file);
         setState(() {
           _file = cached.file;
           _loading = false;
@@ -241,6 +306,8 @@ class _AlbumThumbState extends State<_AlbumThumb> {
         });
         return;
       }
+      // Re-subscribe to the new filename before kicking off its load.
+      _startListeningCache();
       setState(() {
         _loading = true;
         _error = false;
@@ -251,71 +318,36 @@ class _AlbumThumbState extends State<_AlbumThumb> {
   }
 
   Future<void> _loadFile() async {
-    try {
-      final appSupport = await getApplicationSupportDirectory();
-      final cacheDir = Directory('${appSupport.path}/image_cache');
-      await cacheDir.create(recursive: true);
-
-      File? resolved;
-      final filename = widget.item.filename;
-
-      if (filename.startsWith('lan://')) {
-        final lanFilename = filename.substring(6);
-        final appDoc = await getApplicationDocumentsDirectory();
-        resolved = File('${appDoc.path}/lan_media/$lanFilename');
-        if (!await resolved.exists()) throw Exception('LAN file not found');
-      } else if (filename.startsWith('fav://')) {
-        final favFilename = filename.substring(6);
-        final appDoc = await getApplicationDocumentsDirectory();
-        resolved = File('${appDoc.path}/fav_media/$favFilename');
-        if (!await resolved.exists()) throw Exception('Favorites file not found');
-      } else if (filename.startsWith('http')) {
-        var url = filename;
-        final pathSeg = Uri.parse(url).pathSegments.last;
-        final safeName = pathSeg.replaceAll(RegExp(r'[^\w\-.]'), '_');
-        final ext = _guessExt(url) ?? '.jpg';
-        resolved = File('${cacheDir.path}/$safeName$ext');
-        if (!await resolved.exists()) {
-          final uri = Uri.parse(url);
-          if (!url.contains('?token=') && !url.contains('&token=')) {
-            final servers = ExternalServerManager.servers.value;
-            if (servers.any((s) => s.host == uri.host && s.port == uri.port)) {
-              final srv = servers.firstWhere(
-                  (s) => s.host == uri.host && s.port == uri.port);
-              url = '$url?token=${Uri.encodeComponent(srv.token)}';
-            }
-          }
-          final res = await http.get(Uri.parse(url));
-          if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
-          await resolved.writeAsBytes(res.bodyBytes);
-        }
-      } else {
-        resolved = File('${cacheDir.path}/$filename');
-        if (!await resolved.exists()) {
-          final root = rootScreenKey.currentState;
-          if (root == null) throw Exception('RootScreen not ready');
-          final dl = await root.downloadImageToCache(
-            filename,
-            peerUsername: widget.peerUsername,
-            owner: widget.item.owner,
-            mediaKeyB64: widget.item.mediaKeyB64,
-          );
-          if (dl == null) throw Exception('File not available');
-          resolved = dl;
-        }
-      }
-
-      if (!mounted) return;
-      final ar = await ImageSizeCache().getOrComputeAspectRatio(resolved);
-      imageFileCache[widget.item.filename] = (
-        file: resolved,
-        size: resolved.lengthSync(),
-        aspectRatio: ar,
-      );
-      if (mounted) setState(() { _file = resolved; _loading = false; });
-    } catch (e) {
-      if (mounted) setState(() { _error = true; _loading = false; });
+    // Load exactly like a single photo (ImageMessageWidget): resolve from local
+    // disk or download. ImageLoader handles lan://, fav://, http and standard
+    // files, dedups concurrent requests for the same filename, populates
+    // imageFileCache and computes the aspect ratio. Only `mounted` guards the
+    // result — no generation counter, which previously dropped a completed
+    // load during chat-open churn and left the first albums stuck.
+    final entry = await ImageLoader.load(
+      widget.item.filename,
+      peerUsername: widget.peerUsername,
+      owner: widget.item.owner,
+      mediaKeyB64: widget.item.mediaKeyB64,
+      // Album thumbs render at a fixed size — skip the per-image header read
+      // that was throttling chat open.
+      computeMetadata: false,
+    );
+    if (!mounted) return;
+    if (entry != null) {
+      BlurHashCache.instance.ensureFor(widget.item.filename, entry.file);
+      _stopListeningCache();
     }
+    setState(() {
+      if (entry != null) {
+        _file = entry.file;
+        _loading = false;
+        _error = false;
+      } else {
+        _error = true;
+        _loading = false;
+      }
+    });
   }
 
   void _openGallery() {
@@ -351,6 +383,19 @@ class _AlbumThumbState extends State<_AlbumThumb> {
 
   @override
   Widget build(BuildContext context) {
+    // Self-heal: if the file became available through any path (our own load,
+    // the preloader, or a sibling thumb) adopt it on the next rebuild even if
+    // our own load callback never fired. Cheap O(1) cache check; no setState
+    // needed since we're already rebuilding.
+    if (_file == null) {
+      final cached = imageFileCache[widget.item.filename];
+      if (cached != null && cached.file.existsSync()) {
+        _file = cached.file;
+        _loading = false;
+        _error = false;
+        _stopListeningCache();
+      }
+    }
     return GestureDetector(
       onTap: _file != null ? _openGallery : null,
       child: SizedBox(
@@ -362,32 +407,38 @@ class _AlbumThumbState extends State<_AlbumThumb> {
   }
 
   Widget _content() {
+    final hash = widget.item.blurHash ??
+        BlurHashCache.instance.get(widget.item.filename);
     if (_loading) {
-      return Container(
-        color: Colors.black12,
-        child: const Center(
-          child: SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      );
+      return BlurPlaceholder(blurHash: hash, loading: true);
     }
     if (_error || _file == null) {
-      return Container(
-        color: Colors.black12,
-        child: const Center(
-          child: Icon(Icons.broken_image, size: 24, color: Colors.grey),
-        ),
+      return BlurPlaceholder(
+        blurHash: hash,
+        icon: Icons.refresh,
+        onTap: () {
+          setState(() {
+            _error = false;
+            _loading = true;
+            _file = null;
+          });
+          _loadFile();
+        },
       );
     }
+    // Decode at roughly the displayed pixel size (capped at 560) instead of the
+    // image's full resolution — a 4K photo into a ~90px cell would otherwise
+    // decode a ~50 MB raster on the main isolate and jank the whole list.
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cacheW = (widget.width * dpr).round().clamp(64, 560);
     return Image.file(
       _file!,
       width: widget.width,
       height: widget.height,
       fit: BoxFit.cover,
       gaplessPlayback: true,
+      cacheWidth: cacheW,
+      filterQuality: FilterQuality.medium,
     );
   }
 }
@@ -877,11 +928,3 @@ class _NavArrowState extends State<_NavArrow> {
 }
 
 enum _SaveChoice { cancel, current, all }
-
-String? _guessExt(String url) {
-  final lower = url.toLowerCase().split('?').first;
-  for (final ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']) {
-    if (lower.endsWith(ext)) return ext;
-  }
-  return null;
-}

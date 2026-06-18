@@ -1,4 +1,9 @@
 // lib/screens/favorites_screen.dart
+import '../widgets/marquee_text.dart';
+import '../widgets/empty_chat_placeholder.dart';
+import '../utils/chat_image_preloader.dart';
+import '../utils/gallery_extractor.dart';
+import 'media_gallery_screen.dart';
 import 'dart:math' as math;
 import 'dart:convert';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
@@ -15,6 +20,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart' show getOnyxSupportDirectory;
 import 'package:crypto/crypto.dart';
 
 import 'package:image_picker/image_picker.dart';
@@ -24,19 +30,24 @@ import '../widgets/avatar_widget.dart';
 import '../widgets/avatar_crop_screen.dart';
 import '../widgets/chat_background_layer.dart';
 import '../models/chat_message.dart';
+import '../services/wardlink/wardlink_tombstones.dart';
+import '../services/wardlink/wardlink_sync_service.dart';
 import '../managers/settings_manager.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/chat_images_scope.dart';
+import '../widgets/album_message_widget.dart' show AlbumItem;
 import '../models/favorite_chat.dart';
 import '../widgets/drag_drop_zone.dart';
 import '../widgets/file_preview_dialog.dart';
 import '../widgets/album_preview_dialog.dart';
+import '../utils/clipboard_image.dart';
 import '../utils/file_utils.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import '../utils/image_file_cache.dart';
-import '../utils/clipboard_image.dart';
 import '../utils/upload_task.dart';
+import '../utils/blurhash_util.dart';
+import '../utils/video_info.dart';
 import '../widgets/pending_upload_card.dart';
 import '../widgets/chat_search_bar.dart';
 import '../widgets/animated_message_bubble.dart';
@@ -44,6 +55,8 @@ import '../widgets/message_reaction_bar.dart';
 import '../widgets/swipeable_message_wrapper.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../widgets/chat_input_bar.dart';
+import '../widgets/measure_size.dart';
+import '../enums/scroll_down_button_position.dart';
 
 abstract class _ListItem {}
 
@@ -184,7 +197,14 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   bool _shouldPreserveExternalFocus = false;
   bool _suppressAutoRefocus = false;
   final ValueNotifier<bool> _showScrollDownButton = ValueNotifier<bool>(false);
+  final ValueNotifier<double> _bottomBarHeight = ValueNotifier<double>(76.0);
   final Set<String> _alreadyRenderedMessageIds = {};
+  // True once the message list has painted at least one frame. Entry
+  // animations are suppressed until then — closes a race where messages
+  // (e.g. from WardLink or disk cache) finish loading asynchronously after
+  // the pre-seed snapshot above was taken, which would otherwise make the
+  // whole history "appear new" and animate in on open.
+  bool _hasBuiltMessageListOnce = false;
   
   late AnimationController _inputEntryController;
   late Animation<double> _inputEntryScaleX;
@@ -193,6 +213,15 @@ class _FavoritesScreenState extends State<FavoritesScreen>
 
   List<_ListItem>? _cachedDaySeparatorItems;
   int _cachedDaySeparatorHash = 0;
+
+  List<AlbumItem>? _cachedAllImages;
+  int _cachedAllImagesHash = 0;
+
+  int _cachedDragHash = 0;
+
+  // Fingerprint of the message list last handed to the image preloader.
+  int _preloadStampCount = -1;
+  String _preloadStampLast = '';
 
   final List<UploadTask> _pendingUploads = [];
 
@@ -229,6 +258,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     HardwareKeyboard.instance.addHandler(_handleGlobalKey);
     _scroll.addListener(_onScroll);
     _loadPinnedMessage();
+    _consumePendingFavScrollTarget();
 
     _inputEntryController = AnimationController(
       duration: const Duration(milliseconds: 600),
@@ -250,6 +280,14 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     );
 
     _checkInputAnimationState();
+
+    // Pre-seed rendered-ids so existing messages don't all animate on open —
+    // only messages added during this session will get an entry animation.
+    final existingMsgs =
+        rootScreenKey.currentState?.chats['fav:${widget.favoriteId}'] ?? const [];
+    for (final m in existingMsgs) {
+      _alreadyRenderedMessageIds.add(m.id);
+    }
 
     Future.microtask(() => rootScreenKey.currentState
         ?.ensureMediaCachedForFavorite(widget.favoriteId));
@@ -292,6 +330,10 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.favoriteId != widget.favoriteId) {
       _alreadyRenderedMessageIds.clear();
+      _hasBuiltMessageListOnce = false;
+      if (_scroll.hasClients) {
+        _scroll.jumpTo(0.0);
+      }
       // Reset pinned message immediately so the old chat's banner doesn't flash,
       // then load the correct one for the new chat.
       setState(() => _pinnedMessage = null);
@@ -426,6 +468,24 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         return;
       }
     }
+  }
+
+  /// If a search-result tap asked to land on a specific message in this
+  /// favorite (see [setPendingMessageScrollTarget]), scroll to and highlight
+  /// it once the message list is laid out — instead of opening at the bottom.
+  void _consumePendingFavScrollTarget() {
+    final pendingId = consumePendingMessageScrollTarget('fav:${widget.favoriteId}');
+    if (pendingId == null) return;
+    void attempt([int retries = 6]) {
+      if (!mounted) return;
+      if (_scroll.hasClients) {
+        _scrollToFavMessageById(pendingId);
+      } else if (retries > 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => attempt(retries - 1));
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => attempt());
   }
 
   Widget _buildFavPinnedBanner(BuildContext context) {
@@ -744,8 +804,15 @@ class _FavoritesScreenState extends State<FavoritesScreen>
       root.chats[chatId]?.removeWhere((m) => m.id == msg.id);
       _invalidateDaySeparatorCache();
     });
-    root.persistChats();
+    root.schedulePersistChats(chatId: chatId);
+    bumpChatMessageVersion(chatId);
     chatsVersion.value++;
+    // Tombstone so WardLink removes this message on paired devices too, and
+    // poke them now so it applies immediately.
+    WardLinkTombstones.recordMsgDeleted(chatId, msg.id);
+    WardLinkSyncService.instance.pokeNow();
+    // Clean up any media file the deleted message referenced locally.
+    root.cleanupOrphanedMessages([msg]);
   }
 
   void _onScroll() {
@@ -776,6 +843,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     _searchStats.dispose();
     _searchFocusNode.dispose();
     _showScrollDownButton.dispose();
+    _bottomBarHeight.dispose();
     _stopDragAutoScroll();
     HardwareKeyboard.instance.removeHandler(_handleGlobalKey);
     super.dispose();
@@ -871,11 +939,14 @@ class _FavoritesScreenState extends State<FavoritesScreen>
       _cancelEditingMessage();
       final root = rootScreenKey.currentState;
       if (root != null) {
+        final chatId = _chatId();
         setState(() {
           editing.updateContent(value.trim());
+          editing.editedAt = DateTime.now();
           _invalidateDaySeparatorCache();
         });
-        root.persistChats();
+        root.schedulePersistChats(chatId: chatId);
+        bumpChatMessageVersion(chatId);
         chatsVersion.value++;
       }
       return;
@@ -912,10 +983,13 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     });
     final root = rootScreenKey.currentState;
     if (root != null) {
-      root.chats.putIfAbsent(_chatId(), () => []).add(msg);
-      root.persistChats();
+      final chatId = _chatId();
+      root.chats.putIfAbsent(chatId, () => []).add(msg);
+      root.schedulePersistChats(chatId: chatId);
+      bumpChatMessageVersion(chatId);
       chatsVersion.value++;
       root.bumpFavToTop(widget.favoriteId);
+      unawaited(WardLinkSyncService.instance.pokeNow());
     }
     _textCtrl.clear();
 
@@ -1122,6 +1196,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
       final filePaths = rawPaths?.whereType<String>().where((s) => s.isNotEmpty).toList();
       if (filePaths != null && filePaths.isNotEmpty) {
         debugPrint('[clipboard] File paths from clipboard: $filePaths');
+        if (!mounted) return;
         _handleDroppedFiles(filePaths);
         return;
       }
@@ -1135,6 +1210,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         final tempFile = File('${tempDir.path}/clipboard_${DateTime.now().millisecondsSinceEpoch}.png');
         await tempFile.writeAsBytes(imageBytes);
         debugPrint('[clipboard] Image pasted from native clipboard: ${tempFile.path}');
+        if (!mounted) return;
         _handleDroppedFiles([tempFile.path]);
         return;
       }
@@ -1158,6 +1234,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           final ext = p.extension(basename).toLowerCase();
           final type = FileTypeDetector.getFileType(filePath);
           debugPrint('[clipboard] File URI pasted: $filePath');
+          if (!mounted) return;
           _showFilePreviewAndSend(filePath, basename, ext, type);
           return;
         }
@@ -1210,27 +1287,41 @@ class _FavoritesScreenState extends State<FavoritesScreen>
 
       if (type == 'IMAGE') {
         cacheDir =
-            '${(await getApplicationSupportDirectory()).path}/image_cache';
-        content = 'IMAGEv1:$contentJson';
+            '${(await getOnyxSupportDirectory()).path}/image_cache';
+        final blur = task.previewBytes != null
+            ? await computeBlurHash(task.previewBytes!)
+            : null;
+        content = 'IMAGEv1:${jsonEncode({
+              'filename': basename,
+              'orig': basename,
+              if (blur != null) 'blur': blur.hash,
+              if (blur != null) 'ar': blur.aspectRatio,
+            })}';
       } else if (type == 'VIDEO') {
         cacheDir =
-            '${(await getApplicationSupportDirectory()).path}/video_cache';
-        content = 'VIDEOv1:$contentJson';
+            '${(await getOnyxSupportDirectory()).path}/video_cache';
+        final videoInfo = await extractVideoInfo(filePath);
+        content = 'VIDEOv1:${jsonEncode({
+          'filename': basename,
+          'orig': basename,
+          if (videoInfo?.hash != null) 'blur': videoInfo!.hash,
+          if (videoInfo != null) 'ar': videoInfo.ar,
+        })}';
       } else if (type == 'AUDIO') {
         cacheDir =
-            '${(await getApplicationSupportDirectory()).path}/audio_cache';
+            '${(await getOnyxSupportDirectory()).path}/audio_cache';
         content = 'AUDIOv1:$contentJson';
       } else if (type == 'DOCUMENT') {
         cacheDir =
-            '${(await getApplicationSupportDirectory()).path}/document_cache';
+            '${(await getOnyxSupportDirectory()).path}/document_cache';
         content = 'DOCUMENTv1:$contentJson';
       } else if (type == 'ARCHIVE') {
         cacheDir =
-            '${(await getApplicationSupportDirectory()).path}/archive_cache';
+            '${(await getOnyxSupportDirectory()).path}/archive_cache';
         content = 'ARCHIVEv1:$contentJson';
       } else {
         cacheDir =
-            '${(await getApplicationSupportDirectory()).path}/data_cache';
+            '${(await getOnyxSupportDirectory()).path}/data_cache';
         content = 'DATAv1:$contentJson';
       }
 
@@ -1271,10 +1362,13 @@ class _FavoritesScreenState extends State<FavoritesScreen>
       final root = rootScreenKey.currentState;
       setState(() => _pendingUploads.remove(task));
       if (root != null) {
-        root.chats.putIfAbsent(_chatId(), () => []).add(msg);
-        root.persistChats();
+        final chatId = _chatId();
+        root.chats.putIfAbsent(chatId, () => []).add(msg);
+        root.schedulePersistChats(chatId: chatId);
+        bumpChatMessageVersion(chatId);
         chatsVersion.value++;
         root.bumpFavToTop(widget.favoriteId);
+        unawaited(WardLinkSyncService.instance.pokeNow());
         root.showSnack(
             ' ${type.toLowerCase().replaceFirst(type[0], type[0].toUpperCase())} added');
       }
@@ -1304,15 +1398,25 @@ class _FavoritesScreenState extends State<FavoritesScreen>
 
     try {
       final cacheDir = Directory(
-          '${(await getApplicationSupportDirectory()).path}/image_cache');
+          '${(await getOnyxSupportDirectory()).path}/image_cache');
       await cacheDir.create(recursive: true);
 
-      final albumItems = <Map<String, String>>[];
+      final albumItems = <Map<String, dynamic>>[];
       for (final filePath in filePaths) {
         final basename = p.basename(filePath);
         final cachePath = '${cacheDir.path}/$basename';
-        await File(filePath).copy(cachePath);
-        albumItems.add({'filename': basename, 'orig': basename});
+        final srcFile = File(filePath);
+        await srcFile.copy(cachePath);
+        BlurResult? blur;
+        try {
+          blur = await computeBlurHash(await srcFile.readAsBytes());
+        } catch (_) {}
+        albumItems.add({
+          'filename': basename,
+          'orig': basename,
+          if (blur != null) 'blur': blur.hash,
+          if (blur != null) 'ar': blur.aspectRatio,
+        });
       }
 
       if (albumItems.isEmpty) return;
@@ -1333,8 +1437,10 @@ class _FavoritesScreenState extends State<FavoritesScreen>
 
       final root = rootScreenKey.currentState;
       if (root != null) {
-        root.chats.putIfAbsent(_chatId(), () => []).add(msg);
-        root.persistChats();
+        final chatId = _chatId();
+        root.chats.putIfAbsent(chatId, () => []).add(msg);
+        root.schedulePersistChats(chatId: chatId);
+        bumpChatMessageVersion(chatId);
         chatsVersion.value++;
         root.bumpFavToTop(widget.favoriteId);
         root.showSnack('Album saved (${albumItems.length} images)');
@@ -1435,11 +1541,6 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                     actionTile(Icons.save_alt_rounded, 'Save', () {
                       Navigator.pop(ctx);
                       _saveMediaFromMessage(text);
-                    }),
-                  if (isImage)
-                    actionTile(Icons.copy_all_rounded, 'Copy Image', () {
-                      Navigator.pop(ctx);
-                      copyMessageImageToClipboard(text, (m) => rootScreenKey.currentState?.showSnack(m));
                     }),
                   if (!isMedia)
                     actionTile(Icons.copy_rounded, 'Copy', () {
@@ -1549,7 +1650,8 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         DesktopMenuItem(
           icon: Icons.copy_all_rounded,
           label: l.copyImage,
-          onPressed: () => copyMessageImageToClipboard(text, (m) => rootScreenKey.currentState?.showSnack(m)),
+          onPressed: () => copyMessageImageToClipboard(
+              text, (m) => rootScreenKey.currentState?.showSnack(m)),
         ),
       if (!isMedia)
         DesktopMenuItem(
@@ -1679,10 +1781,8 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           final saved = await GallerySaver.saveVideo(file.path, albumName: 'ONYX');
           rootScreenKey.currentState?.showSnack(saved == true ? 'Saved to gallery' : 'Failed to save to gallery');
         } else {
-          final dl = await getDownloadsDirectory();
-          if (dl == null) { rootScreenKey.currentState?.showSnack('Cannot access Downloads directory'); return; }
-          final onyxDir = Directory('${dl.path}/ONYX');
-          await onyxDir.create(recursive: true);
+          final onyxDir = await getOnyxSaveDirectory();
+          if (onyxDir == null) { rootScreenKey.currentState?.showSnack('Cannot access Downloads directory'); return; }
           final destPath = '${onyxDir.path}/$originalName';
           await file.copy(destPath);
           rootScreenKey.currentState?.showSnack('Saved to: $destPath');
@@ -1770,6 +1870,9 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   void _invalidateDaySeparatorCache() {
     _cachedDaySeparatorItems = null;
     _cachedDaySeparatorHash = 0;
+    _cachedAllImages = null;
+    _cachedAllImagesHash = 0;
+    _cachedDragHash = 0;
   }
 
   Widget _buildDaySeparator(BuildContext context, DateTime date) {
@@ -1857,7 +1960,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           setDialogState(() => isUploading = false);
           return;
         }
-        final appSupport = await getApplicationSupportDirectory();
+        final appSupport = await getOnyxSupportDirectory();
         final avatarDir = Directory('${appSupport.path}/fav_avatars');
         await avatarDir.create(recursive: true);
         final hash = md5.convert(cropped).toString().substring(0, 12);
@@ -1913,129 +2016,232 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Edit chat'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                alignment: Alignment.center,
-                children: [
-                  GestureDetector(
-                    onTap: () => changeAvatarInDialog(setDialogState),
-                    onLongPress: () => removeAvatarInDialog(setDialogState),
-                    child: Container(
-                      width: 100,
-                      height: 100,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .outline
-                              .withOpacity(0.2),
-                          width: 2,
-                        ),
-                      ),
-                      child: ClipOval(
-                        child: currentAvatarPath != null &&
-                                File(currentAvatarPath!).existsSync()
-                            ? Image.file(File(currentAvatarPath!),
-                                fit: BoxFit.cover)
-                            : ValueListenableBuilder<double>(
-                                valueListenable: SettingsManager.elementBrightness,
-                                builder: (_, brightness, ___) {
-                                  final baseColor = SettingsManager.getElementColor(
-                                    Theme.of(context).colorScheme.surfaceContainerHighest,
-                                    brightness,
-                                  );
-                                  return Container(
-                                    color: baseColor.withValues(alpha: 0.3),
-                                    child: Icon(
-                                      Icons.bookmark,
-                                      size: 48,
-                                      color:
-                                          Theme.of(context).colorScheme.primary,
-                                    ),
-                                  );
-                                },
-                              ),
-                      ),
-                    ),
-                  ),
-                  if (isUploading)
-                    Positioned.fill(
-                      child: Container(
+        builder: (context, setDialogState) {
+          final cs = Theme.of(context).colorScheme;
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 400),
+                child: Material(
+                  color: cs.surface,
+                  borderRadius: BorderRadius.circular(28),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // ── Header ──────────────────────────────────────────
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(20, 18, 16, 16),
                         decoration: BoxDecoration(
-                          color: Colors.black54,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Center(
-                          child: SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white),
+                          color: cs.primary.withValues(alpha: 0.06),
+                          border: Border(
+                            bottom: BorderSide(
+                              color: cs.primary.withValues(alpha: 0.10),
+                              width: 0.8,
+                            ),
                           ),
                         ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: cs.primary.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(Icons.bookmark_rounded,
+                                  size: 18, color: cs.primary),
+                            ),
+                            const SizedBox(width: 12),
+                            const Expanded(
+                              child: Text(
+                                'Edit chat',
+                                style: TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: () => Navigator.of(ctx).pop(false),
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: cs.onSurface.withValues(alpha: 0.07),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(Icons.close_rounded,
+                                    size: 18,
+                                    color: cs.onSurface.withValues(alpha: 0.55)),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                ],
+                      // ── Content ───────────────────────────────────────────
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Center(
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                alignment: Alignment.center,
+                                children: [
+                                  GestureDetector(
+                                    onTap: () => changeAvatarInDialog(setDialogState),
+                                    onLongPress: () => removeAvatarInDialog(setDialogState),
+                                    child: Container(
+                                      width: 90,
+                                      height: 90,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: cs.outline.withValues(alpha: 0.2),
+                                          width: 2,
+                                        ),
+                                      ),
+                                      child: ClipOval(
+                                        child: currentAvatarPath != null &&
+                                                File(currentAvatarPath!).existsSync()
+                                            ? Image.file(File(currentAvatarPath!),
+                                                fit: BoxFit.cover)
+                                            : ValueListenableBuilder<double>(
+                                                valueListenable: SettingsManager.elementBrightness,
+                                                builder: (_, brightness, ___) {
+                                                  final baseColor = SettingsManager.getElementColor(
+                                                    cs.surfaceContainerHighest,
+                                                    brightness,
+                                                  );
+                                                  return Container(
+                                                    color: baseColor.withValues(alpha: 0.3),
+                                                    child: Icon(
+                                                      Icons.bookmark,
+                                                      size: 42,
+                                                      color: cs.primary,
+                                                    ),
+                                                  );
+                                                },
+                                              ),
+                                      ),
+                                    ),
+                                  ),
+                                  if (isUploading)
+                                    Positioned.fill(
+                                      child: Container(
+                                        decoration: const BoxDecoration(
+                                          color: Colors.black54,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Center(
+                                          child: SizedBox(
+                                            width: 24,
+                                            height: 24,
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2, color: Colors.white),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            ValueListenableBuilder<double>(
+                              valueListenable: SettingsManager.elementBrightness,
+                              builder: (_, brightness, ___) {
+                                final baseColor = SettingsManager.getElementColor(
+                                  cs.surfaceContainerHighest,
+                                  brightness,
+                                );
+                                return TextField(
+                                  controller: controller,
+                                  autofocus: true,
+                                  maxLength: 50,
+                                  decoration: InputDecoration(
+                                    labelText: 'Chat name',
+                                    hintText: 'Enter chat name',
+                                    counterText: '',
+                                    filled: true,
+                                    fillColor: baseColor.withValues(alpha: 0.3),
+                                    border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(14)),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide(
+                                          color: cs.outlineVariant.withValues(alpha: 0.3),
+                                          width: 0.8),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide(color: cs.primary, width: 1.4),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: () => Navigator.of(ctx).pop(false),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(vertical: 13),
+                                      shape: const RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.all(Radius.circular(50)),
+                                      ),
+                                    ),
+                                    child: const Text('Cancel'),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: FilledButton(
+                                    onPressed: isUploading
+                                        ? null
+                                        : () {
+                                            final newName = controller.text.trim();
+                                            if (newName.isEmpty) {
+                                              root.showSnack('Name cannot be empty');
+                                              return;
+                                            }
+                                            final hasTitleChanged = newName != currentTitle;
+                                            final hasAvatarChanged =
+                                                currentAvatarPath != currentFav.avatarPath;
+                                            if (!hasTitleChanged && !hasAvatarChanged) {
+                                              Navigator.of(ctx).pop(false);
+                                              return;
+                                            }
+                                            Navigator.of(ctx).pop(true);
+                                          },
+                                    style: FilledButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(vertical: 13),
+                                      shape: const RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.all(Radius.circular(50)),
+                                      ),
+                                    ),
+                                    child: const Text('Save'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              const SizedBox(height: 24),
-              ValueListenableBuilder<double>(
-                valueListenable: SettingsManager.elementBrightness,
-                builder: (_, brightness, ___) {
-                  final baseColor = SettingsManager.getElementColor(
-                    Theme.of(context).colorScheme.surfaceContainerHighest,
-                    brightness,
-                  );
-                  return TextField(
-                    controller: controller,
-                    autofocus: true,
-                    maxLength: 50,
-                    decoration: InputDecoration(
-                      labelText: 'Chat name',
-                      hintText: 'Enter chat name',
-                      counterText: '',
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      filled: true,
-                      fillColor: baseColor.withValues(alpha: 0.3),
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('Cancel')),
-            FilledButton(
-              onPressed: isUploading
-                  ? null
-                  : () {
-                      final newName = controller.text.trim();
-                      if (newName.isEmpty) {
-                        root.showSnack('Name cannot be empty');
-                        return;
-                      }
-                      final hasTitleChanged = newName != currentTitle;
-                      final hasAvatarChanged =
-                          currentAvatarPath != currentFav.avatarPath;
-                      if (!hasTitleChanged && !hasAvatarChanged) {
-                        Navigator.of(ctx).pop(false);
-                        return;
-                      }
-                      Navigator.of(ctx).pop(true);
-                    },
-              child: const Text('Save'),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
     _shouldPreserveExternalFocus = false;
@@ -2194,12 +2400,10 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                               widget.title;
                           return GestureDetector(
                             onTap: _showEditNameDialog,
-                            child: Text(
-                              currentTitle,
+                            child: MarqueeText(
+                              text: currentTitle,
                               style: const TextStyle(
                                   fontWeight: FontWeight.bold, fontSize: 17),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                             ),
                           );
                         },
@@ -2231,11 +2435,40 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                       onPressed: sel.selected.isNotEmpty ? _confirmDeleteSelectedFav : null,
                     ),
                   ])
-                : IconButton(
-                    icon: const Icon(Icons.search),
-                    tooltip: 'Search (Ctrl+F)',
-                    onPressed: () { if (_showSearch) { _closeSearch(); } else { _openSearch(); } },
-                  ),
+                : Row(mainAxisSize: MainAxisSize.min, children: [
+                    IconButton(
+                      icon: const Icon(Icons.search),
+                      tooltip: 'Search (Ctrl+F)',
+                      onPressed: () { if (_showSearch) { _closeSearch(); } else { _openSearch(); } },
+                    ),
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert),
+                      onSelected: (value) {
+                        if (value == 'gallery') {
+                          final msgs =
+                              rootScreenKey.currentState?.chats[_chatId()] ??
+                                  const <ChatMessage>[];
+                          showMediaGalleryDialog(
+                            context,
+                            items: extractGalleryItemsFromChatMessages(msgs),
+                            peerUsername: widget.title,
+                          );
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        PopupMenuItem<String>(
+                          value: 'gallery',
+                          child: Row(
+                            children: [
+                              const Icon(Icons.photo_library_outlined, size: 18),
+                              const SizedBox(width: 10),
+                              Text(AppLocalizations.of(context).galleryMenuLabel),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ]),
           ),
         ],
       ),
@@ -2246,17 +2479,30 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           children: [
             const ChatBackgroundLayer(),
             ValueListenableBuilder<int>(
-              valueListenable: chatsVersion,
+              valueListenable: getChatMessageVersion(_chatId()),
               builder: (_, __, ___) {
                 final rootState = rootScreenKey.currentState;
                 if (rootState == null) return const SizedBox();
+                if (!_hasBuiltMessageListOnce) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    _hasBuiltMessageListOnce = true;
+                  });
+                }
                 final msgs = rootState.chats[_chatId()] ?? [];
 
                 if (msgs.isEmpty) {
-                  return const Center(child: Text('No messages yet'));
+                  return EmptyChatPlaceholder(
+                      label: AppLocalizations.of(context).noMessagesYet);
+                }
+                final msgsHash = msgs.length.hashCode ^
+                    (msgs.isNotEmpty ? msgs.last.id.hashCode : 0) ^
+                    (msgs.isNotEmpty ? msgs.last.content.hashCode : 0);
+                if (_cachedAllImages == null || _cachedAllImagesHash != msgsHash) {
+                  _cachedAllImages = ChatImagesScope.computeFromChatMessages(msgs);
+                  _cachedAllImagesHash = msgsHash;
                 }
                 return ChatImagesScope(
-                  allImages: ChatImagesScope.computeFromChatMessages(msgs),
+                  allImages: _cachedAllImages!,
                   child: ValueListenableBuilder<bool>(
                   valueListenable: SettingsManager.showAvatarInChats,
                   builder: (_, showAvatar, __) {
@@ -2268,6 +2514,19 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                               SettingsManager.alignAllMessagesRight,
                           builder: (_, alignRight, __) {
                             final items = _buildMessagesWithDaySeparators(msgs);
+
+                            // Only re-preload when the list actually changes,
+                            // not on every unrelated rebuild.
+                            final stampLast =
+                                msgs.isEmpty ? '' : msgs.last.id;
+                            if (msgs.length != _preloadStampCount ||
+                                stampLast != _preloadStampLast) {
+                              _preloadStampCount = msgs.length;
+                              _preloadStampLast = stampLast;
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                ChatImagePreloader.preload(msgs);
+                              });
+                            }
 
                             // Compute search matches
                             if (_showSearch && _searchQuery.isNotEmpty) {
@@ -2296,20 +2555,23 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                 });
                               }
                             }
-                            final dragMessages = items
-                                .whereType<_MessageItem>()
-                                .map((item) => item.message)
-                                .toList(growable: false);
-                            _dragSelectionOrder = dragMessages
-                                .map(_selectionKeyForMessage)
-                                .toList(growable: false);
-                            _dragSelectionLookup = {
-                              for (final msg in dragMessages) _selectionKeyForMessage(msg): msg,
-                            };
-                            _dragSelectionIndices = {
-                              for (int idx = 0; idx < _dragSelectionOrder.length; idx++)
-                                _dragSelectionOrder[idx]: idx,
-                            };
+                            if (_cachedDragHash != _cachedDaySeparatorHash) {
+                              _cachedDragHash = _cachedDaySeparatorHash;
+                              final dragMessages = items
+                                  .whereType<_MessageItem>()
+                                  .map((item) => item.message)
+                                  .toList(growable: false);
+                              _dragSelectionOrder = dragMessages
+                                  .map(_selectionKeyForMessage)
+                                  .toList(growable: false);
+                              _dragSelectionLookup = {
+                                for (final msg in dragMessages) _selectionKeyForMessage(msg): msg,
+                              };
+                              _dragSelectionIndices = {
+                                for (int idx = 0; idx < _dragSelectionOrder.length; idx++)
+                                  _dragSelectionOrder[idx]: idx,
+                              };
+                            }
 
                             return Listener(
                               key: _messageListViewportKey,
@@ -2327,7 +2589,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                               child: ListView.builder(
                                   controller: _scroll,
                                   reverse: true,
-                                  cacheExtent: 800,
+                                  cacheExtent: SettingsManager.chatCacheExtent.value,
                                   addRepaintBoundaries: true,
                                   addAutomaticKeepAlives: true,
                                   padding: EdgeInsets.only(
@@ -2391,11 +2653,25 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                       onReplyTap: msg.replyToId != null
                                           ? () => _scrollToFavMessageById(msg.replyToId.toString())
                                           : null,
+                                      onRightClick: isDesktop
+                                          ? (offset) {
+                                              debugPrint('[RightClickMenu] favorites onRightClick invoked, msgId=${msg.id}');
+                                              final items =
+                                                  _buildDesktopMenuItems(msg);
+                                              debugPrint('[RightClickMenu] favorites items=${items?.length}');
+                                              if (items != null &&
+                                                  items.isNotEmpty) {
+                                                showMessageDesktopMenu(
+                                                    context, offset, items);
+                                              }
+                                            }
+                                          : null,
                                     );
                                     final expensiveChild = AnimatedMessageBubble(
                                         key: ValueKey<String>(animKey),
                                         outgoing: msg.outgoing,
-                                        animate: isFirstAppearance &&
+                                        animate: _hasBuiltMessageListOnce &&
+                                            isFirstAppearance &&
                                             SettingsManager.messageAnimationsEnabled.value,
                                         child: RepaintBoundary(child: msgBubble),
                                       );
@@ -2498,7 +2774,10 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                                           : CrossAxisAlignment.end,
                                                       mainAxisSize: MainAxisSize.min,
                                                       children: [
-                                                        bubbleChild!,
+                                                        AbsorbPointer(
+                                                          absorbing: sel.active,
+                                                          child: bubbleChild!,
+                                                        ),
                                                         MessageReactionBar(
                                                           reactions: reactionsFor(uniqueKey),
                                                           myUsername: rootScreenKey.currentState?.currentUsername ?? msg.from,
@@ -2546,19 +2825,37 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                 right: 16,
                 child: _buildFavPinnedBanner(context),
               ),
-            if (_showSearch)
               Positioned(
                 top: MediaQuery.of(context).padding.top + kToolbarHeight + (_pinnedMessage != null ? 68.0 : 8.0),
                 left: 16,
                 right: 16,
-                child: ChatSearchBar(
-                  controller: _searchController,
-                  focusNode: _searchFocusNode,
-                  statsNotifier: _searchStats,
-                  onChanged: _onSearchChanged,
-                  onPrevious: _navigateSearchPrev,
-                  onNext: _navigateSearchNext,
-                  onClose: _closeSearch,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  reverseDuration: const Duration(milliseconds: 180),
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: CurvedAnimation(
+                        parent: animation, curve: Curves.easeOut),
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, -0.4),
+                        end: Offset.zero,
+                      ).animate(CurvedAnimation(
+                          parent: animation, curve: Curves.easeOutCubic)),
+                      child: child,
+                    ),
+                  ),
+                  child: _showSearch
+                      ? ChatSearchBar(
+                          key: const ValueKey('csb'),
+                          controller: _searchController,
+                          focusNode: _searchFocusNode,
+                          statsNotifier: _searchStats,
+                          onChanged: _onSearchChanged,
+                          onPrevious: _navigateSearchPrev,
+                          onNext: _navigateSearchNext,
+                          onClose: _closeSearch,
+                        )
+                      : const SizedBox.shrink(),
                 ),
               ),
             Align(
@@ -2574,7 +2871,13 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                     return ValueListenableBuilder<double>(
                       valueListenable: SettingsManager.inputBarMaxWidth,
                       builder: (_, width, __) {
-                        return Column(
+                        return MeasureSize(
+                          onChange: (size) {
+                            if ((_bottomBarHeight.value - size.height).abs() > 0.5) {
+                              _bottomBarHeight.value = size.height;
+                            }
+                          },
+                          child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             
@@ -2899,6 +3202,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                               ),
                         ),
                           ],
+                          ),
                         );
                       },
                     );
@@ -2913,49 +3217,69 @@ class _FavoritesScreenState extends State<FavoritesScreen>
               duration: const Duration(milliseconds: 200),
               child: IgnorePointer(
                 ignoring: !show,
-                child: Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 80),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: ValueListenableBuilder<double>(
-                        valueListenable: SettingsManager.elementBrightness,
-                        builder: (_, brightness, ___) {
-                          final baseColor = SettingsManager.getElementColor(
-                            Theme.of(context).colorScheme.surfaceContainerHighest,
-                            brightness,
-                          );
-                          return IconButton(
-                            splashRadius: 20,
-                            padding: EdgeInsets.zero,
-                            icon: Container(
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: baseColor.withValues(alpha: 0.5),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .outlineVariant
-                                      .withValues(alpha: 0.15),
-                                  width: 1,
-                                ),
-                              ),
-                              child: Icon(
-                                Icons.arrow_downward,
-                                size: 18,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurface
-                                    .withValues(alpha: 0.7),
+                child: ValueListenableBuilder<double>(
+                  valueListenable: _bottomBarHeight,
+                  builder: (_, barHeight, __) => ValueListenableBuilder<ScrollDownButtonPosition>(
+                    valueListenable: SettingsManager.scrollDownButtonPosition,
+                    builder: (_, position, __) => ValueListenableBuilder<double>(
+                      valueListenable: SettingsManager.scrollDownButtonSize,
+                      builder: (_, btnSize, __) {
+                        final alignment = switch (position) {
+                          ScrollDownButtonPosition.left => Alignment.bottomLeft,
+                          ScrollDownButtonPosition.center => Alignment.bottomCenter,
+                          ScrollDownButtonPosition.right => Alignment.bottomRight,
+                        };
+                        return Align(
+                          alignment: alignment,
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                              bottom: barHeight + 12.0 + MediaQuery.of(context).padding.bottom + 16,
+                              left: position == ScrollDownButtonPosition.left ? 16 : 0,
+                              right: position == ScrollDownButtonPosition.right ? 16 : 0,
+                            ),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: ValueListenableBuilder<double>(
+                                valueListenable: SettingsManager.elementBrightness,
+                                builder: (_, brightness, ___) {
+                                  final baseColor = SettingsManager.getElementColor(
+                                    Theme.of(context).colorScheme.surfaceContainerHighest,
+                                    brightness,
+                                  );
+                                  return IconButton(
+                                    splashRadius: btnSize / 2 + 4,
+                                    padding: EdgeInsets.zero,
+                                    icon: Container(
+                                      width: btnSize,
+                                      height: btnSize,
+                                      decoration: BoxDecoration(
+                                        color: baseColor.withValues(alpha: 0.5),
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .outlineVariant
+                                              .withValues(alpha: 0.15),
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: Icon(
+                                        Icons.arrow_downward,
+                                        size: btnSize * 0.56,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withValues(alpha: 0.7),
+                                      ),
+                                    ),
+                                    onPressed: _scrollToBottom,
+                                  );
+                                },
                               ),
                             ),
-                            onPressed: _scrollToBottom,
-                          );
-                        },
-                      ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ),

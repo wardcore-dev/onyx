@@ -6,6 +6,8 @@ import 'dart:math' show min;
 import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import '../utils/file_utils.dart' show getOnyxSaveDirectory;
+import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory;
 import 'package:just_audio/just_audio.dart';
 import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
@@ -26,6 +28,12 @@ class VoiceMessagePlayer extends StatefulWidget {
   final String? mediaKeyB64;
   final bool isFile;
   final String? origName;
+  /// When true, the slider stretches to fill the available width instead of
+  /// the fixed 110px used inside a chat bubble. For standalone contexts
+  /// (e.g. a gallery list tile) where the player isn't constrained to bubble
+  /// width, the fixed-width slider otherwise leaves the row looking
+  /// awkwardly tiny inside a much wider container.
+  final bool expand;
   const VoiceMessagePlayer({
     Key? key,
     required this.filename,
@@ -35,6 +43,7 @@ class VoiceMessagePlayer extends StatefulWidget {
     this.mediaKeyB64,
     this.isFile = false,
     this.origName,
+    this.expand = false,
   }) : super(key: key);
 
   @override
@@ -321,6 +330,11 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
           await p.setPitch(s);
         } catch (_) {}
       },
+      onSetVolume: (v) async {
+        try {
+          await p.setVolume(v);
+        } catch (_) {}
+      },
       chatId: widget.peerUsername,
       filename: widget.filename,
     );
@@ -372,7 +386,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
       setState(() => _isLoading = true);
       try {
         
-        final appSupport = await getApplicationDocumentsDirectory();
+        final appSupport = await getOnyxDocumentsDirectory();
         final cacheDir = Directory(p.join(appSupport.path, 'voice_cache'));
         await cacheDir.create(recursive: true);
 
@@ -466,7 +480,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
         if (widget.filename.startsWith('lan://')) {
           debugPrint('[VoiceWidget] LAN file detected: ${widget.filename}');
           final lanFilename = widget.filename.substring(6);
-          final appDocuments = await getApplicationDocumentsDirectory();
+          final appDocuments = await getOnyxDocumentsDirectory();
           final lanFile = File('${appDocuments.path}/lan_media/$lanFilename');
           if (await lanFile.exists()) {
             return lanFile;
@@ -479,7 +493,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
         if (widget.filename.startsWith('fav://')) {
           debugPrint('[VoiceWidget] Favorites local file: ${widget.filename}');
           final favFilename = widget.filename.substring(6);
-          final appDocuments = await getApplicationDocumentsDirectory();
+          final appDocuments = await getOnyxDocumentsDirectory();
           final voiceCacheFile = File('${appDocuments.path}/voice_cache/$favFilename');
           if (await voiceCacheFile.exists()) {
             return voiceCacheFile;
@@ -493,7 +507,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
           return null;
         }
 
-        final appSupport = await getApplicationDocumentsDirectory();
+        final appSupport = await getOnyxDocumentsDirectory();
         final cacheDir = Directory('${appSupport.path}/voice_cache');
         await cacheDir.create(recursive: true);
         final displayDir = await MediaCache.instance.displayDirFor('voice');
@@ -636,7 +650,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
 
         if (widget.filename.startsWith('lan://')) {
           final lanFilename = widget.filename.substring(6);
-          final appDocuments = await getApplicationDocumentsDirectory();
+          final appDocuments = await getOnyxDocumentsDirectory();
           final lanFile = File('${appDocuments.path}/lan_media/$lanFilename');
           if (await lanFile.exists()) {
             found = lanFile;
@@ -657,7 +671,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
             _lastEnsureError = 'RootScreen not ready';
           }
         } else {
-          final appSupport = await getApplicationDocumentsDirectory();
+          final appSupport = await getOnyxDocumentsDirectory();
           final cacheDir = Directory('${appSupport.path}/voice_cache');
           await cacheDir.create(recursive: true);
           final possibleExts = ['', '.ogg', '.opus', '.m4a', '.mp3', '.wav'];
@@ -772,23 +786,23 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
 
         if (destPath == null) {
           if (dialogSupported) {
-            
+
             rootScreenKey.currentState?.showSnack('Save cancelled');
             return;
           }
-          
-          final dl = await getDownloadsDirectory();
-          if (dl == null) {
+
+          final onyxDir = await getOnyxSaveDirectory();
+          if (onyxDir == null) {
             rootScreenKey.currentState?.showSnack('Cannot access save directory');
             return;
           }
-          destPath = '${dl.path}/$basename';
+          destPath = '${onyxDir.path}/$basename';
         }
 
         final savedFile = File(destPath);
         await File(_cachedFilePath!).copy(savedFile.path);
         rootScreenKey.currentState?.showSnack('Saved to: ${savedFile.path}');
-        return; 
+        return;
       }
 
       if (kIsWeb) {
@@ -800,9 +814,9 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
       if (Platform.isAndroid) {
         targetDir = await getExternalStorageDirectory();
       } else if (Platform.isIOS) {
-        targetDir = await getApplicationDocumentsDirectory();
+        targetDir = await getOnyxDocumentsDirectory();
       } else {
-        targetDir = await getDownloadsDirectory();
+        targetDir = await getOnyxSaveDirectory();
       }
       if (targetDir == null) {
         rootScreenKey.currentState?.showSnack('Cannot access save directory');
@@ -881,7 +895,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
       GestureDetector(
         behavior: HitTestBehavior.opaque,
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: widget.expand ? MainAxisSize.max : MainAxisSize.min,
           children: [
             IconButton(
               icon: _isLoading
@@ -895,34 +909,9 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
               padding: EdgeInsets.zero,
               visualDensity: VisualDensity.compact,
             ),
-            
+
             const SizedBox(width: 6),
-            SizedBox(
-              width: 110,
-              child: SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  trackHeight: 2,
-                  thumbShape: const RoundSliderThumbShape(
-                    enabledThumbRadius: 5,
-                  ),
-                ),
-                child: Slider(
-                  value: _duration.inMilliseconds > 0
-                      ? _position.inMilliseconds.toDouble()
-                      : 0,
-                  max: _duration.inMilliseconds.toDouble(),
-                  onChanged: (value) async {
-                    final newPosition = Duration(milliseconds: value.toInt());
-                    if (_duration == Duration.zero || _player == null) return;
-                    await _player!.seek(newPosition);
-                    if (!_isPlaying) {
-                      await Future.delayed(const Duration(milliseconds: 10));
-                      await _player!.pause();
-                    }
-                  },
-                ),
-              ),
-            ),
+            _buildSlider(),
           ],
         ),
       ),
@@ -935,6 +924,33 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
         ),
       ],
     );
+  }
+
+  Widget _buildSlider() {
+    final slider = SliderTheme(
+      data: SliderTheme.of(context).copyWith(
+        trackHeight: 2,
+        thumbShape: const RoundSliderThumbShape(
+          enabledThumbRadius: 5,
+        ),
+      ),
+      child: Slider(
+        value: _duration.inMilliseconds > 0
+            ? _position.inMilliseconds.toDouble()
+            : 0,
+        max: _duration.inMilliseconds.toDouble(),
+        onChanged: (value) async {
+          final newPosition = Duration(milliseconds: value.toInt());
+          if (_duration == Duration.zero || _player == null) return;
+          await _player!.seek(newPosition);
+          if (!_isPlaying) {
+            await Future.delayed(const Duration(milliseconds: 10));
+            await _player!.pause();
+          }
+        },
+      ),
+    );
+    return widget.expand ? Expanded(child: slider) : SizedBox(width: 110, child: slider);
   }
 
   String _formatDuration(Duration d) {

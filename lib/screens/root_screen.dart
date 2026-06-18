@@ -10,6 +10,7 @@ import 'package:ONYX/background/notification_service.dart';
 import 'package:ONYX/background/register_sync.dart';
 import 'package:ONYX/models/favorite_chat.dart';
 import 'package:ONYX/models/fav_folder.dart';
+import 'package:ONYX/services/backup/backup_service.dart';
 import 'package:ONYX/screens/favorites_tab.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode, compute;
 import 'package:flutter/material.dart';
@@ -22,6 +23,7 @@ import '../managers/secure_store.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:record/record.dart';
@@ -43,6 +45,7 @@ import '../utils/upload_task.dart';
 import '../widgets/chat_background_layer.dart';
 import '../voice/voice_channel_manager.dart';
 import '../managers/settings_manager.dart';
+import '../utils/settings_backup.dart';
 import '../managers/unread_manager.dart';
 import '../models/group.dart';
 import '../models/app_themes.dart';
@@ -61,6 +64,8 @@ import '../managers/account_manager.dart';
 import '../models/chat_message.dart';
 import '../enums/delivery_mode.dart';
 import '../managers/lan_message_manager.dart';
+import '../services/wardlink/wardlink_sync_service.dart';
+import '../services/wardlink/wardlink_tombstones.dart';
 import '../widgets/avatar_widget.dart';
 import '../widgets/adaptive_nav_bar.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
@@ -75,8 +80,11 @@ import '../screens/group_chat_screen.dart';
 import '../screens/external_group_chat_screen.dart';
 import '../managers/user_cache.dart';
 import '../utils/optimized_message_sender.dart';
+import '../utils/app_paths.dart';
+import '../utils/decrypt_worker.dart';
 import '../utils/media_cache.dart';
 import '../utils/image_file_cache.dart';
+import '../utils/image_loader.dart';
 import '../managers/windows_notification_popup.dart';
 import '../l10n/app_localizations.dart';
 import '../utils/update_checker.dart';
@@ -86,11 +94,14 @@ import '../widgets/account_graph_view.dart';
 import '../screens/pin_code_screen.dart';
 import '../managers/decoy_manager.dart';
 import '../managers/decoy_data_manager.dart';
+import '../managers/trash_manager.dart';
 import 'package:local_auth/local_auth.dart';
 
 final Map<String, List<int>> _pubkeyCache = {};
 
 final Map<String, List<Map<String, dynamic>>> _devicePubkeysCache = {};
+final Map<String, DateTime> _devicePubkeysCacheAge = {};
+const Duration _kDeviceCacheTTL = Duration(minutes: 5);
 DateTime? _lastPubkeyUploadTime;
 final X25519 _x25519 = X25519();
 final Cipher _xchacha = Xchacha20.poly1305Aead();
@@ -113,6 +124,9 @@ Route<T> _chatRoute<T>(Widget Function(BuildContext) builder) {
     },
   );
 }
+
+// Media decryption now runs on a reusable pool of isolates — see
+// [DecryptWorker] in lib/utils/decrypt_worker.dart.
 
 class RootScreen extends StatefulWidget {
   final AppTheme currentTheme;
@@ -161,6 +175,9 @@ class RootScreenState extends State<RootScreen>
   List<FavoriteChat> _favorites = [];
   List<FavFolder> _favFolders = [];
   List<String> _favTopOrder = [];
+  // When the favourites layout (order + folders) last changed locally. Used by
+  // WardLink to decide whose layout is newer when syncing the arrangement.
+  DateTime _favStructureUpdatedAt = DateTime.fromMillisecondsSinceEpoch(0);
   String? _selectedFavoriteId;
 
   final Set<String> _favoritesMediaPrefetched = {};
@@ -201,8 +218,8 @@ class RootScreenState extends State<RootScreen>
   bool _graphOverlayMounted = false;
   bool _isSearchOpen = false;
   Timer? _graphUnmountTimer;
-  static double _savedHandleY = 100.0;
   double _handleY = 100.0;
+  bool _handleYInitialized = false;
   SimpleKeyPair? _identityKeyPair;
   SimplePublicKey? _identityPublicKey;
   String? identityPubKeyBase64;
@@ -300,6 +317,7 @@ class RootScreenState extends State<RootScreen>
   String? get lastRecordedPathForUpload => _lastRecordedPathForUpload;
 
   void _handlePageChanged(int newIndex) {
+    if (mounted) FocusScope.of(context).unfocus(disposition: UnfocusDisposition.scope);
     if (newIndex == 5 + _graphTabOffset && !_isPrimaryDevice) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _pageController.hasClients) {
@@ -322,6 +340,7 @@ class RootScreenState extends State<RootScreen>
 
   void showSnack(String text) {
     if (!mounted) return;
+    if (!SettingsManager.snackbarEnabled.value) return;
     final colorScheme = Theme.of(context).colorScheme;
     final brightness = SettingsManager.elementBrightness.value;
     final opacity = SettingsManager.elementOpacity.value;
@@ -373,7 +392,7 @@ class RootScreenState extends State<RootScreen>
       time: DateTime.now(),
     );
     chats.putIfAbsent(chatId, () => []).add(msg);
-    persistChats();
+    schedulePersistChats(chatId: chatId);
     chatsVersion.value++;
   }
 
@@ -507,18 +526,52 @@ class RootScreenState extends State<RootScreen>
   /// Merge favourites received via LAN sync into the app state.
   /// New favourites are inserted at the top of the order list.
   /// Existing favourites with the same id get their messages merged.
-  void importFavorites(
+  /// Returns true if any new favourites or messages were actually added.
+  bool importFavorites(
     List<FavoriteChat> incoming,
-    Map<String, List<ChatMessage>> incomingChats,
-  ) {
+    Map<String, List<ChatMessage>> incomingChats, {
+    bool cascade = true,
+  }) {
     bool changed = false;
+    final Set<String> bumpedFavIds = {};
     setState(() {
       for (final fav in incoming) {
-        final exists = _favorites.any((f) => f.id == fav.id);
-        if (!exists) {
+        final existingIdx = _favorites.indexWhere((f) => f.id == fav.id);
+        if (existingIdx < 0) {
           _favorites.add(fav);
-          if (!_favTopOrder.contains(fav.id)) _favTopOrder.insert(0, fav.id);
+          // Don't surface it at the top level if a synced folder layout already
+          // places this chat inside a folder — that would duplicate it.
+          final inAnyFolder =
+              _favFolders.any((fo) => fo.chatIds.contains(fav.id));
+          if (!inAnyFolder && !_favTopOrder.contains(fav.id)) {
+            if (cascade) {
+              // Local change (e.g. manual forward): new chat goes to top.
+              _favTopOrder.insert(0, fav.id);
+            } else {
+              // WardLink per-chat import: append so manifest order is preserved.
+              // applyFavStructure (called after the full sync loop) sets the
+              // canonical order, so we just need to avoid reversing it here.
+              _favTopOrder.add(fav.id);
+            }
+          }
           changed = true;
+        } else {
+          // Existing favourite — sync title and avatar from peer if changed.
+          final existing = _favorites[existingIdx];
+          final newTitle = fav.title.isNotEmpty && fav.title != existing.title
+              ? fav.title
+              : null;
+          final newAvatar = fav.avatarPath != null &&
+                  fav.avatarPath != existing.avatarPath
+              ? fav.avatarPath
+              : null;
+          if (newTitle != null || newAvatar != null) {
+            _favorites[existingIdx] = existing.copyWith(
+              title: newTitle,
+              avatarPath: newAvatar,
+            );
+            changed = true;
+          }
         }
       }
     });
@@ -527,6 +580,10 @@ class RootScreenState extends State<RootScreen>
       if (!chats.containsKey(entry.key)) {
         chats[entry.key] = entry.value;
         changed = true;
+        bumpChatMessageVersion(entry.key);
+        if (entry.key.startsWith('fav:')) {
+          bumpedFavIds.add(entry.key.substring('fav:'.length));
+        }
       } else {
         // Merge incoming messages that are not yet present locally.
         final existing = chats[entry.key]!;
@@ -537,16 +594,72 @@ class RootScreenState extends State<RootScreen>
           existing.addAll(newMessages);
           existing.sort((a, b) => a.time.compareTo(b.time));
           changed = true;
+          // Open chat screens rebuild off this per-chat notifier, not
+          // chatsVersion — without it, a chat synced in via WardLink while
+          // open stays stale until the user re-enters it.
+          bumpChatMessageVersion(entry.key);
+          if (entry.key.startsWith('fav:')) {
+            bumpedFavIds.add(entry.key.substring('fav:'.length));
+          }
         }
       }
     }
 
     if (changed) {
       _saveFavorites();
-      _saveFavStructure();
+      // Touch the structure timestamp only for local changes (cascade=true).
+      // WardLink per-chat imports (cascade=false) must NOT advance the timestamp
+      // — otherwise applyFavStructure sees our timestamp as newer than the peer's
+      // and refuses to apply the correct order.
+      _saveFavStructure(touch: cascade);
       schedulePersistChats();
       favoritesVersion.value++;
       chatsVersion.value++;
+      // Cascade: poke all other paired devices immediately so they pull
+      // the new data — this is what propagates A→B→C without manual action.
+      // Suppressed when cascade==false because the caller will poke once
+      // after a multi-chat batch, avoiding N pokes for N imported chats.
+      if (cascade) unawaited(WardLinkSyncService.instance.pokeNow());
+    }
+
+    // New messages synced into a favourite should bring it to the top of the
+    // list, same as sending/forwarding a message locally does.
+    // During a WardLink pull (cascade=false) we skip this: bumpFavToTop would
+    // update _favStructureUpdatedAt to DateTime.now(), making our in-progress
+    // (scrambled) layout appear newer than peers' correct layout, causing A and
+    // B to adopt our broken order. The canonical order is set by applyFavStructure
+    // immediately after importFavorites returns.
+    if (cascade) {
+      for (final favId in bumpedFavIds) {
+        bumpFavToTop(favId);
+      }
+    }
+
+    return changed;
+  }
+
+  /// Apply content updates received via WardLink for already-present messages.
+  /// Only updates a message when the incoming editedAt is newer than the local one.
+  void applyMessageEdits(String chatId, List<ChatMessage> updatedMsgs) {
+    final msgs = chats[chatId];
+    if (msgs == null || updatedMsgs.isEmpty) return;
+    final byId = {for (final m in msgs) m.id: m};
+    bool changed = false;
+    for (final updated in updatedMsgs) {
+      final local = byId[updated.id];
+      if (local == null) continue;
+      final remoteEt = updated.editedAt;
+      if (remoteEt == null) continue;
+      final localEt = local.editedAt;
+      if (localEt != null && !remoteEt.isAfter(localEt)) continue;
+      local.updateContent(updated.content);
+      local.editedAt = remoteEt;
+      changed = true;
+    }
+    if (changed) {
+      bumpChatMessageVersion(chatId);
+      schedulePersistChats(chatId: chatId);
+      if (mounted) setState(() {});
     }
   }
 
@@ -607,6 +720,7 @@ class RootScreenState extends State<RootScreen>
     final prefs = await SharedPreferences.getInstance();
     final list = _favorites.map((f) => f.toJson()).toList();
     await prefs.setString('favorites_${currentUsername}', jsonEncode(list));
+    unawaited(SettingsBackup.save(prefs));
   }
 
   // ── Folder structure load / save ─────────────────────────────────────────
@@ -617,6 +731,7 @@ class RootScreenState extends State<RootScreen>
     final str = prefs.getString('fav_structure_$currentUsername');
     List<FavFolder> folders = [];
     List<String> topOrder = [];
+    DateTime updatedAt = DateTime.fromMillisecondsSinceEpoch(0);
     if (str != null) {
       try {
         final j = jsonDecode(str) as Map<String, dynamic>;
@@ -625,11 +740,14 @@ class RootScreenState extends State<RootScreen>
             .map(FavFolder.fromJson)
             .toList();
         topOrder = (j['topOrder'] as List? ?? []).cast<String>();
+        updatedAt = DateTime.tryParse(j['updatedAt'] as String? ?? '') ??
+            updatedAt;
       } catch (_) {}
     }
     setState(() {
       _favFolders = folders;
       _favTopOrder = topOrder;
+      _favStructureUpdatedAt = updatedAt;
       _ensureFavTopOrder();
     });
   }
@@ -637,7 +755,17 @@ class RootScreenState extends State<RootScreen>
   // Ensures _favTopOrder is consistent with _favorites and _favFolders.
   // Call inside setState.
   void _ensureFavTopOrder() {
-    final inFolders = _favFolders.expand((f) => f.chatIds).toSet();
+    // A chat may belong to at most one folder. Merging a peer's layout can
+    // leave the same id in two folders (e.g. moved to folder A here, folder B
+    // there) — keep the first membership, drop the rest.
+    final inFolders = <String>{};
+    for (final folder in _favFolders) {
+      folder.chatIds.removeWhere((id) => !inFolders.add(id));
+    }
+    // Invariant: a chat inside a folder must never also sit at the top level.
+    // Folder membership wins — otherwise the chat renders twice (once in the
+    // folder, once outside) and deleting either copy nukes the one favourite.
+    _favTopOrder.removeWhere((id) => inFolders.contains(id));
     final inTop = _favTopOrder.toSet();
     // Collect missing favorites (not yet in top order and not in a folder)
     final missing = _favorites
@@ -661,20 +789,118 @@ class RootScreenState extends State<RootScreen>
     }
   }
 
-  Future<void> _saveFavStructure() async {
+  Future<void> _saveFavStructure({bool touch = true}) async {
     if (currentUsername == null) return;
+    // A local edit (reorder, folder change…) marks the layout as freshly
+    // changed so WardLink propagates it; syncing in a peer's layout passes
+    // touch:false to preserve the originating timestamp.
+    if (touch) _favStructureUpdatedAt = DateTime.now();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
         'fav_structure_$currentUsername',
         jsonEncode({
           'folders': _favFolders.map((f) => f.toJson()).toList(),
           'topOrder': _favTopOrder,
+          'updatedAt': _favStructureUpdatedAt.toIso8601String(),
         }));
+  }
+
+  // ── WardLink: favourites layout sync ──────────────────────────────────────
+
+  /// Snapshot of the favourites arrangement (order + folders) for WardLink.
+  Map<String, dynamic> exportFavStructure() => {
+        'folders': _favFolders.map((f) => f.toJson()).toList(),
+        'topOrder': _favTopOrder,
+        'updatedAt': _favStructureUpdatedAt.toIso8601String(),
+      };
+
+  /// Merge a peer's favourites layout into ours.
+  ///
+  /// Rules:
+  /// - Folders that exist on peer but not locally → added.
+  /// - Folders that exist on both sides → chatIds are unioned (no removal).
+  /// - Local folders the peer doesn't know about → kept as-is.
+  /// - topOrder: peer's order is used as the base; local-only items are
+  ///   appended at the end so nothing disappears.
+  /// - Only applies when the peer's timestamp is newer than ours, unless
+  ///   [force] is set (a freshly-paired device adopting an established fleet's
+  ///   arrangement regardless of local timestamp).
+  ///
+  /// Returns true if anything changed.
+  bool applyFavStructure(Map<String, dynamic> data, {bool force = false}) {
+    final ts = DateTime.tryParse(data['updatedAt'] as String? ?? '') ??
+        DateTime.fromMillisecondsSinceEpoch(0);
+    if (!force && !ts.isAfter(_favStructureUpdatedAt)) return false;
+
+    final peerFolders = (data['folders'] as List? ?? [])
+        .cast<Map<String, dynamic>>()
+        .map(FavFolder.fromJson)
+        .toList();
+    final peerTopOrder = (data['topOrder'] as List? ?? []).cast<String>();
+
+    // Build merged folder list: start from local, apply peer additions.
+    final mergedFolders = [..._favFolders];
+    for (final pf in peerFolders) {
+      final localIdx = mergedFolders.indexWhere((f) => f.id == pf.id);
+      if (localIdx >= 0) {
+        // Folder exists locally — union the chatIds, keep local name/avatar.
+        final lf = mergedFolders[localIdx];
+        final union = {...lf.chatIds, ...pf.chatIds}.toList();
+        // Preserve peer's chatId order for items that appear in peer's list,
+        // then append local-only items at the end.
+        final ordered = [
+          for (final id in pf.chatIds) if (union.contains(id)) id,
+          for (final id in lf.chatIds) if (!pf.chatIds.contains(id)) id,
+        ];
+        lf.chatIds
+          ..clear()
+          ..addAll(ordered);
+      } else {
+        // New folder from peer — add it.
+        mergedFolders.add(pf);
+      }
+    }
+
+    // Merge topOrder: peer's order as base, local-only items appended.
+    final peerTopSet = peerTopOrder.toSet();
+    final mergedTopOrder = [...peerTopOrder];
+    for (final id in _favTopOrder) {
+      if (!peerTopSet.contains(id)) mergedTopOrder.add(id);
+    }
+
+    // Skip the write if nothing actually changed (same folders, same order,
+    // same timestamp). This prevents a false favoritesVersion bump that would
+    // poke peers and re-trigger the sync loop.
+    final foldersUnchanged = mergedFolders.length == _favFolders.length &&
+        mergedFolders.asMap().entries.every((e) {
+          final lf = _favFolders[e.key];
+          return e.value.id == lf.id &&
+              e.value.chatIds.length == lf.chatIds.length &&
+              e.value.chatIds.asMap().entries
+                  .every((ce) => ce.value == lf.chatIds[ce.key]);
+        });
+    final orderUnchanged = mergedTopOrder.length == _favTopOrder.length &&
+        mergedTopOrder.asMap().entries
+            .every((e) => e.value == _favTopOrder[e.key]);
+
+    if (foldersUnchanged && orderUnchanged && ts == _favStructureUpdatedAt) {
+      return false;
+    }
+
+    setState(() {
+      _favFolders = mergedFolders;
+      _favTopOrder = mergedTopOrder;
+      _favStructureUpdatedAt = ts;
+      _ensureFavTopOrder();
+    });
+    _saveFavStructure(touch: false);
+    favoritesVersion.value++;
+    return true;
   }
 
   // ── Public folder API ────────────────────────────────────────────────────
 
-  void createFavFolder(String name, {String? avatarPath}) {
+  String createFavFolder(String name, {String? avatarPath}) {
     final folder = FavFolder.create(name)..avatarPath = avatarPath;
     setState(() {
       _favFolders.add(folder);
@@ -682,6 +908,7 @@ class RootScreenState extends State<RootScreen>
     });
     _saveFavStructure();
     favoritesVersion.value++;
+    return folder.id;
   }
 
   void renameFavFolder(String id, String newName) {
@@ -752,6 +979,7 @@ class RootScreenState extends State<RootScreen>
       _favTopOrder.insert(newIndex, item);
     });
     _saveFavStructure();
+    favoritesVersion.value++;
   }
 
   void reorderFavInFolder(String folderId, int oldIndex, int newIndex) {
@@ -763,6 +991,7 @@ class RootScreenState extends State<RootScreen>
       _favFolders[idx].chatIds.insert(newIndex, item);
     });
     _saveFavStructure();
+    favoritesVersion.value++;
   }
 
   void setFavTopOrder(List<String> orderedIds) {
@@ -915,7 +1144,7 @@ class RootScreenState extends State<RootScreen>
     bool includeImageCache = true,
   }) async {
     try {
-      final appSupport = await getApplicationSupportDirectory();
+      final appSupport = await getOnyxSupportDirectory();
       final voiceDir = Directory('${appSupport.path}/voice_cache');
 
       final imageCacheDir = Directory('${appSupport.path}/image_cache');
@@ -1244,7 +1473,7 @@ class RootScreenState extends State<RootScreen>
       debugPrint(
           '<<_performVoiceUpload>> upload confirmed, filename=$filename');
 
-      final voiceCacheDir = await getApplicationSupportDirectory();
+      final voiceCacheDir = await getOnyxSupportDirectory();
       final cachePath = '${voiceCacheDir.path}/voice_cache';
       await Directory(cachePath).create(recursive: true);
       final cachedPath = '$cachePath/$filename';
@@ -1326,7 +1555,7 @@ class RootScreenState extends State<RootScreen>
 
       final filename = 'voice_${DateTime.now().millisecondsSinceEpoch}.$format';
 
-      final appDocuments = await getApplicationDocumentsDirectory();
+      final appDocuments = await getOnyxDocumentsDirectory();
       final lanMediaDir = Directory('${appDocuments.path}/lan_media');
       if (!await lanMediaDir.exists()) {
         await lanMediaDir.create(recursive: true);
@@ -1435,7 +1664,7 @@ class RootScreenState extends State<RootScreen>
       onTaskCreated?.call(voiceTask);
 
       // Copy to local voice cache — no server involved.
-      final appDocuments = await getApplicationDocumentsDirectory();
+      final appDocuments = await getOnyxDocumentsDirectory();
       final cacheDir = '${appDocuments.path}/voice_cache';
       await Directory(cacheDir).create(recursive: true);
       final cachedPath = '$cacheDir/$filename';
@@ -1515,7 +1744,7 @@ class RootScreenState extends State<RootScreen>
     debugPrint('[_downloadAndPlayVoice] entry -> $filename');
 
     try {
-      final appSupport = await getApplicationDocumentsDirectory();
+      final appSupport = await getOnyxDocumentsDirectory();
 
       Directory cacheDir;
       String actualFilename;
@@ -1743,10 +1972,9 @@ class RootScreenState extends State<RootScreen>
     String? owner,
     String? mediaKeyB64,
   }) async {
-    final appSupport = await getApplicationSupportDirectory();
-    final cacheDir = Directory('${appSupport.path}/image_cache');
-    await cacheDir.create(recursive: true);
-    final displayDir = await MediaCache.instance.displayDirFor('image');
+    await AppPaths.ensureInit();
+    final cacheDir = Directory(AppPaths.imageCache);
+    final displayDir = Directory(AppPaths.imageDisplay);
 
     final existing = await MediaCache.instance
         .findCachedDisplay(cacheDir, [filename], displayDir);
@@ -1761,7 +1989,9 @@ class RootScreenState extends State<RootScreen>
     final res = await http.get(
       Uri.parse(urlPath),
       headers: {'authorization': 'Bearer $token'},
-    );
+    ).timeout(const Duration(seconds: 30), onTimeout: () {
+      throw Exception('Image download timed out');
+    });
     if (res.statusCode != 200) {
       throw Exception('HTTP ${res.statusCode}');
     }
@@ -1777,17 +2007,16 @@ class RootScreenState extends State<RootScreen>
     );
 
     await MediaCache.instance.writeEncrypted(cacheDir, filename, plainBytes);
-    final displayFile = File('${displayDir.path}/$filename');
+    final displayFile = File('${AppPaths.imageDisplay}/$filename');
     await displayFile.writeAsBytes(plainBytes, flush: true);
     return displayFile;
   }
 
   Future<File?> downloadVoiceToCache(String filename,
       {required String peerUsername, String? mediaKeyB64}) async {
-    final appSupport = await getApplicationSupportDirectory();
-    final cacheDir = Directory('${appSupport.path}/voice_cache');
-    await cacheDir.create(recursive: true);
-    final displayDir = await MediaCache.instance.displayDirFor('voice');
+    await AppPaths.ensureInit();
+    final cacheDir = Directory('${AppPaths.support}/voice_cache');
+    final displayDir = Directory(AppPaths.voiceDisplay);
 
     final possibleExts = ['', '.ogg', '.opus', '.m4a', '.mp3', '.wav'];
     final candidateNames = possibleExts
@@ -1822,17 +2051,16 @@ class RootScreenState extends State<RootScreen>
     final safeName = _sanitizeFilename(outName);
 
     await MediaCache.instance.writeEncrypted(cacheDir, safeName, bytes);
-    final displayFile = File('${displayDir.path}/$safeName');
+    final displayFile = File('${AppPaths.voiceDisplay}/$safeName');
     await displayFile.writeAsBytes(bytes, flush: true);
     return displayFile;
   }
 
   Future<File?> downloadVideoToCache(String filename,
       {required String peerUsername, String? mediaKeyB64}) async {
-    final appSupport = await getApplicationSupportDirectory();
-    final cacheDir = Directory('${appSupport.path}/video_cache');
-    await cacheDir.create(recursive: true);
-    final displayDir = await MediaCache.instance.displayDirFor('video');
+    await AppPaths.ensureInit();
+    final cacheDir = Directory('${AppPaths.support}/video_cache');
+    final displayDir = Directory(AppPaths.videoDisplay);
 
     final existing = await MediaCache.instance
         .findCachedDisplay(cacheDir, [filename], displayDir);
@@ -1853,7 +2081,7 @@ class RootScreenState extends State<RootScreen>
         kind: 'video', mediaKeyB64: mediaKeyB64);
 
     await MediaCache.instance.writeEncrypted(cacheDir, filename, bytes);
-    final displayFile = File('${displayDir.path}/$filename');
+    final displayFile = File('${AppPaths.videoDisplay}/$filename');
     await displayFile.writeAsBytes(bytes, flush: true);
     return displayFile;
   }
@@ -1863,10 +2091,9 @@ class RootScreenState extends State<RootScreen>
       String? owner,
       String? mediaKeyB64,
       void Function(double)? onProgress}) async {
-    final appSupport = await getApplicationSupportDirectory();
-    final cacheDir = Directory('${appSupport.path}/file_cache');
-    await cacheDir.create(recursive: true);
-    final displayDir = await MediaCache.instance.displayDirFor('file');
+    await AppPaths.ensureInit();
+    final cacheDir = Directory('${AppPaths.support}/file_cache');
+    final displayDir = Directory(AppPaths.fileDisplay);
 
     final existing = await MediaCache.instance
         .findCachedDisplay(cacheDir, [filename], displayDir);
@@ -1883,7 +2110,7 @@ class RootScreenState extends State<RootScreen>
       'audio_cache',
     ];
     for (final name in legacyCacheNames) {
-      final f = File('${appSupport.path}/$name/$filename');
+      final f = File('${AppPaths.support}/$name/$filename');
       if (await f.exists()) {
         debugPrint(
             '[downloadFileToCache] found local cached file in $name: ${f.path}');
@@ -1931,7 +2158,7 @@ class RootScreenState extends State<RootScreen>
           kind: 'file', mediaKeyB64: mediaKeyB64);
 
       await MediaCache.instance.writeEncrypted(cacheDir, filename, bytes);
-      final displayFile = File('${displayDir.path}/$filename');
+      final displayFile = File('${AppPaths.fileDisplay}/$filename');
       await displayFile.writeAsBytes(bytes, flush: true);
       return displayFile;
     } finally {
@@ -1952,7 +2179,7 @@ class RootScreenState extends State<RootScreen>
         '[fav.prefetch] starting for $favId with ${msgs.length} messages');
 
     final List<Future<void>> tasks = [];
-    for (final m in msgs) {
+    for (final m in _recentPrefetchMessages(msgs, limit: 12)) {
       try {
         final text = m.content;
         if (text.startsWith('IMAGEv1:')) {
@@ -1961,6 +2188,8 @@ class RootScreenState extends State<RootScreen>
           final filename = (data['filename'] as String?)?.trim();
           final keyB64 = data['key'] as String?;
           if (filename != null && filename.isNotEmpty) {
+            // Skip if ImageLoader already has this file cached or in-flight.
+            if (ImageLoader.isKnown(filename)) continue;
             tasks.add(downloadImageToCache(filename,
                     peerUsername: m.from, mediaKeyB64: keyB64)
                 .then((_) {
@@ -1970,6 +2199,9 @@ class RootScreenState extends State<RootScreen>
             }));
           }
         } else if (text.toUpperCase().startsWith('VIDEOV1:')) {
+          // Respect the auto-load-video setting: when off, don't pull videos in
+          // the background — downloading them is a source of jank.
+          if (!SettingsManager.autoLoadVideoEnabled.value) continue;
           final prefixLen = 'VIDEOv1:'.length;
           final meta =
               jsonDecode(text.substring(prefixLen)) as Map<String, dynamic>;
@@ -2012,21 +2244,7 @@ class RootScreenState extends State<RootScreen>
             }));
           }
         } else if (text.startsWith('FILEv1:')) {
-          try {
-            final data = jsonDecode(text.substring('FILEv1:'.length))
-                as Map<String, dynamic>;
-            final filename = (data['filename'] as String?)?.trim();
-            final keyB64 = data['key'] as String?;
-            if (filename != null && filename.isNotEmpty) {
-              tasks.add(downloadFileToCache(filename,
-                      peerUsername: m.from, mediaKeyB64: keyB64)
-                  .then((_) {
-                _appendLog('[fav.prefetch] file cached: $filename');
-              }).catchError((e) {
-                _appendLog('[fav.prefetch] file $filename failed: $e');
-              }));
-            }
-          } catch (e) {}
+          continue; // skip generic files — see chat prefetch for rationale
         } else if (text.startsWith('MEDIA_PROXYv1:')) {
           try {
             final data = jsonDecode(text.substring('MEDIA_PROXYv1:'.length))
@@ -2037,7 +2255,7 @@ class RootScreenState extends State<RootScreen>
               if (typ == 'voice') {
                 tasks.add(http.get(Uri.parse(url)).then((res) async {
                   if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
-                    final appSupport = await getApplicationSupportDirectory();
+                    final appSupport = await getOnyxSupportDirectory();
                     final cacheDir =
                         Directory('${appSupport.path}/voice_cache');
                     await cacheDir.create(recursive: true);
@@ -2053,7 +2271,7 @@ class RootScreenState extends State<RootScreen>
               } else {
                 tasks.add(http.get(Uri.parse(url)).then((res) async {
                   if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
-                    final appSupport = await getApplicationSupportDirectory();
+                    final appSupport = await getOnyxSupportDirectory();
                     final isImage = (data['orig'] as String? ?? '')
                             .toLowerCase()
                             .contains('jpg') ||
@@ -2141,6 +2359,8 @@ class RootScreenState extends State<RootScreen>
           if (filename != null && filename.isNotEmpty) {
             final prefetchKey = _prefetchMediaKey('image', filename);
             if (_missingPrefetchMedia.contains(prefetchKey)) continue;
+            // Skip if ImageLoader already has this file cached or in-flight.
+            if (ImageLoader.isKnown(filename)) continue;
             tasks.add(downloadImageToCache(filename,
                     peerUsername: m.from, mediaKeyB64: keyB64)
                 .then((_) {
@@ -2154,6 +2374,9 @@ class RootScreenState extends State<RootScreen>
             }));
           }
         } else if (text.toUpperCase().startsWith('VIDEOV1:')) {
+          // Respect the auto-load-video setting: skip background video pulls
+          // when off (avoids the jank of downloading videos unprompted).
+          if (!SettingsManager.autoLoadVideoEnabled.value) continue;
           final prefixLen = 'VIDEOv1:'.length;
           final meta =
               jsonDecode(text.substring(prefixLen)) as Map<String, dynamic>;
@@ -2218,31 +2441,11 @@ class RootScreenState extends State<RootScreen>
             }));
           }
         } else if (text.startsWith('FILEv1:')) {
-          try {
-            final data = jsonDecode(text.substring('FILEv1:'.length))
-                as Map<String, dynamic>;
-            final filename = (data['filename'] as String?)?.trim();
-            final keyB64 = data['key'] as String?;
-            if (filename != null && filename.isNotEmpty) {
-              final prefetchKey = _prefetchMediaKey('file', filename);
-              if (_missingPrefetchMedia.contains(prefetchKey)) continue;
-              tasks.add(downloadFileToCache(filename,
-                      peerUsername: m.from, mediaKeyB64: keyB64)
-                  .then((file) {
-                if (file == null) {
-                  _missingPrefetchMedia.add(prefetchKey);
-                  return;
-                }
-                _appendLog('[chat.prefetch] file cached: $filename');
-              }).catchError((e) {
-                if (_isHttp404Error(e)) {
-                  _missingPrefetchMedia.add(prefetchKey);
-                  return;
-                }
-                _appendLog('[chat.prefetch] file $filename failed: $e');
-              }));
-            }
-          } catch (e) {}
+          // Generic file attachments (archives, scripts, documents, etc.) are
+          // not displayed inline and are only opened by explicit user action.
+          // Pre-downloading them during prefetch blocks the UI isolate during
+          // decryption of large files — skip entirely.
+          continue;
         } else if (text.startsWith('MEDIA_PROXYv1:')) {
           try {
             final data = jsonDecode(text.substring('MEDIA_PROXYv1:'.length))
@@ -2258,7 +2461,7 @@ class RootScreenState extends State<RootScreen>
               if (typ == 'voice') {
                 tasks.add(http.get(Uri.parse(url)).then((res) async {
                   if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
-                    final appSupport = await getApplicationSupportDirectory();
+                    final appSupport = await getOnyxSupportDirectory();
                     final cacheDir =
                         Directory('${appSupport.path}/voice_cache');
                     await cacheDir.create(recursive: true);
@@ -2280,7 +2483,7 @@ class RootScreenState extends State<RootScreen>
               } else {
                 tasks.add(http.get(Uri.parse(url)).then((res) async {
                   if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
-                    final appSupport = await getApplicationSupportDirectory();
+                    final appSupport = await getOnyxSupportDirectory();
                     final isImage = (data['orig'] as String? ?? '')
                             .toLowerCase()
                             .contains('jpg') ||
@@ -2341,6 +2544,8 @@ class RootScreenState extends State<RootScreen>
     }
   }
 
+  bool _autoBackupChecked = false;
+
   Future<void> _loadChatsFromCacheNow([String? username]) async {
     final uname =
         username ?? currentUsername ?? await AccountManager.getCurrentAccount();
@@ -2380,6 +2585,15 @@ class RootScreenState extends State<RootScreen>
         });
         chatsVersion.value++;
         unawaited(_warmRecentUserProfiles());
+        // Scheduled local backup — runs at most once per session, only if the
+        // configured interval has elapsed (no-op otherwise).
+        if (!_autoBackupChecked) {
+          _autoBackupChecked = true;
+          Future.delayed(const Duration(seconds: 5), () {
+            unawaited(BackupService.runScheduledIfDue(
+                username: uname, chats: chats));
+          });
+        }
         Future.delayed(const Duration(seconds: 20), () {
           if (mounted) _prefetchTopChatsMedia(1);
         });
@@ -2408,10 +2622,22 @@ class RootScreenState extends State<RootScreen>
 
     // Capture before deletion so cleanup can run asynchronously
     String? avatarPath;
+    String favTitle = id;
     try {
-      avatarPath = _favorites.firstWhere((f) => f.id == id).avatarPath;
+      final fav = _favorites.firstWhere((f) => f.id == id);
+      avatarPath = fav.avatarPath;
+      favTitle = fav.title;
     } catch (_) {}
     final deletedMessages = List<ChatMessage>.from(chats[chatId] ?? []);
+
+    TrashManager.instance.addDeletedChat(TrashedChat(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      chatId: chatId,
+      displayName: favTitle,
+      type: TrashedChatType.favorite,
+      messages: deletedMessages,
+      deletedAt: DateTime.now(),
+    ));
 
     setState(() {
       _favorites.removeWhere((f) => f.id == id);
@@ -2425,10 +2651,97 @@ class RootScreenState extends State<RootScreen>
     _saveFavStructure();
 
     chats.remove(chatId);
+    // Remove the on-disk chat file too, otherwise the messages linger as an
+    // orphan and reload on next launch (saveChats only writes, never deletes).
+    if (currentUsername != null) {
+      unawaited(AccountManager.deleteChatFile(currentUsername!, chatId));
+    }
     persistChats();
     chatsVersion.value++;
 
+    // Record a tombstone so WardLink propagates this deletion to paired devices,
+    // and poke them now so it applies immediately.
+    WardLinkTombstones.recordFavDeleted(id);
+    WardLinkSyncService.instance.pokeNow();
+
     _cleanupFavoriteCache(deletedMessages, avatarPath);
+  }
+
+  /// Apply favourite/message deletions received via WardLink. The tombstones are
+  /// already merged into [WardLinkTombstones] by the sync engine; here we just
+  /// remove the items locally. Cache cleanup runs for removed favourites.
+  void applyRemoteDeletions(
+    Set<String> favIds,
+    Map<String, Set<String>> msgsByChat,
+  ) {
+    bool changed = false;
+    final List<ChatMessage> orphanedMessages = [];
+    final Set<String> bumpedChatIds = {};
+
+    setState(() {
+      for (final favId in favIds) {
+        final chatId = 'fav:$favId';
+        if (_favorites.any((f) => f.id == favId)) {
+          _favorites.removeWhere((f) => f.id == favId);
+          if (_selectedFavoriteId == favId) _selectedFavoriteId = null;
+          _favTopOrder.remove(favId);
+          for (final folder in _favFolders) {
+            folder.chatIds.remove(favId);
+          }
+          changed = true;
+        }
+        final removed = chats.remove(chatId);
+        if (removed != null) {
+          orphanedMessages.addAll(removed);
+          changed = true;
+        }
+        if (currentUsername != null) {
+          unawaited(AccountManager.deleteChatFile(currentUsername!, chatId));
+        }
+      }
+      for (final entry in msgsByChat.entries) {
+        final list = chats[entry.key];
+        if (list == null) continue;
+        final before = list.length;
+        list.removeWhere((m) {
+          if (entry.value.contains(m.id)) {
+            orphanedMessages.add(m);
+            return true;
+          }
+          return false;
+        });
+        if (list.length != before) {
+          changed = true;
+          bumpedChatIds.add(entry.key);
+        }
+      }
+    });
+
+    if (changed) {
+      // Notify open chat screens immediately so deleted messages disappear in
+      // real-time without requiring the user to leave and re-enter the chat.
+      for (final chatId in bumpedChatIds) {
+        bumpChatMessageVersion(chatId);
+      }
+      _saveFavorites();
+      _saveFavStructure(touch: false);
+      // Force a full save: incremental saves (scheduled by concurrent importFavorites
+      // calls) would skip the chat(s) where messages were just removed, leaving the
+      // old data on disk and causing deleted messages to reappear after app restart.
+      _fullSaveRequested = true;
+      unawaited(persistChats());
+      favoritesVersion.value++;
+      chatsVersion.value++;
+      if (orphanedMessages.isNotEmpty) {
+        unawaited(_cleanupFavoriteCache(orphanedMessages, null));
+      }
+    }
+  }
+
+  /// Public entry point used by [FavoritesScreen._deleteMessage] to clean up
+  /// media for a single deleted message without having a full favourite to drop.
+  void cleanupOrphanedMessages(List<ChatMessage> msgs) {
+    _cleanupFavoriteCache(msgs, null);
   }
 
   // Deletes cached media files that are no longer referenced by any chat.
@@ -2436,7 +2749,8 @@ class RootScreenState extends State<RootScreen>
       List<ChatMessage> deletedMessages, String? avatarPath) async {
     try {
       if (deletedMessages.isEmpty && avatarPath == null) return;
-      final appDir = (await getApplicationSupportDirectory()).path;
+      final appDir = (await getOnyxSupportDirectory()).path;
+      final docDir = (await getOnyxDocumentsDirectory()).path;
 
       // Files referenced by the deleted chat
       final candidates = <({String basename, List<String> cacheDirs})>[];
@@ -2454,15 +2768,29 @@ class RootScreenState extends State<RootScreen>
         }
       }
 
-      // Delete orphaned files from disk and runtime caches
+      // Delete orphaned files from disk and runtime caches.
+      // Search both applicationSupport and applicationDocuments because:
+      //   • regular cached files live in appSupport/<type>_cache
+      //   • fav:// files written by WardLink/LanFavSync live in
+      //     appDocuments/fav_media  (non-voice) or appDocuments/voice_cache
       for (final f in candidates) {
         if (stillUsed.contains(f.basename)) continue;
         imageFileCache.remove(f.basename);
         mediaFilePathRegistry.remove(f.basename);
-        for (final dir in f.cacheDirs) {
+        mediaFilePathRegistry.remove('fav://${f.basename}');
+        // All candidate directories across both storage roots.
+        final searchPaths = [
+          for (final dir in f.cacheDirs) ...[
+            '$appDir/$dir',
+            '$docDir/$dir',
+          ],
+          // fav_media holds fav:// assets regardless of media type.
+          '$docDir/fav_media',
+        ];
+        for (final dir in searchPaths) {
           for (final name in [f.basename, '${f.basename}.enc']) {
             try {
-              final file = File('$appDir/$dir/$name');
+              final file = File('$dir/$name');
               if (await file.exists()) await file.delete();
             } catch (_) {}
           }
@@ -2549,8 +2877,37 @@ class RootScreenState extends State<RootScreen>
 
   /// Scans all cache directories and deletes files not referenced by any chat.
   /// Returns the number of deleted files and total freed bytes.
+  Future<int> scanOrphanedCacheBytes() async {
+    final appDir = (await getOnyxSupportDirectory()).path;
+    final kept = <String>{};
+    for (final msgs in chats.values) {
+      for (final msg in msgs) {
+        for (final f in _parseMsgFiles(msg.content)) {
+          kept.add(f.basename);
+        }
+      }
+    }
+    for (final fav in _favorites) {
+      if (fav.avatarPath != null) kept.add(p.basename(fav.avatarPath!));
+    }
+    const dirs = ['image_cache', 'video_cache', 'audio_cache', 'voice_cache', 'document_cache', 'archive_cache', 'data_cache', 'fav_avatars'];
+    int totalBytes = 0;
+    for (final dirName in dirs) {
+      final dir = Directory('$appDir/$dirName');
+      if (!await dir.exists()) continue;
+      await for (final entity in dir.list()) {
+        if (entity is! File) continue;
+        var base = p.basename(entity.path);
+        if (base.endsWith('.enc')) base = base.substring(0, base.length - 4);
+        if (kept.contains(base)) continue;
+        try { totalBytes += await entity.length(); } catch (_) {}
+      }
+    }
+    return totalBytes;
+  }
+
   Future<({int files, int bytes})> purgeOrphanedCache() async {
-    final appDir = (await getApplicationSupportDirectory()).path;
+    final appDir = (await getOnyxSupportDirectory()).path;
 
     // Collect every basename referenced by any chat message
     final kept = <String>{};
@@ -2608,6 +2965,7 @@ class RootScreenState extends State<RootScreen>
 
   void _onTabSelected(int i) {
     if (!mounted) return;
+    FocusScope.of(context).unfocus(disposition: UnfocusDisposition.scope);
 
     if (i == 0 || i == 1 || i == 2 || i == 3) {
       if (isDesktop) {
@@ -2636,7 +2994,6 @@ class RootScreenState extends State<RootScreen>
   @override
   void initState() {
     super.initState();
-    _handleY = _savedHandleY;
     HardwareKeyboard.instance.addHandler(_onGlobalKeyEvent);
     _motivationalHintIndex = Random().nextInt(_motivationalHints.length);
 
@@ -2946,7 +3303,6 @@ class RootScreenState extends State<RootScreen>
 
     _pageChangeDebounce?.cancel();
     _graphUnmountTimer?.cancel();
-    _savedHandleY = _handleY;
 
     try {
       _notificationSubscription?.cancel();
@@ -3012,6 +3368,9 @@ class RootScreenState extends State<RootScreen>
     chats.addAll(fakeChats);
     setState(() {
       _favorites = List.from(DecoyDataManager.fakeFavorites);
+      // FavoritesTab renders from _favTopOrder, not _favorites directly —
+      // without this the fake favorites would never actually appear.
+      _ensureFavTopOrder();
     });
 
     // Now safe to bump — ChatsTab's widget.chats already has the data.
@@ -3074,6 +3433,13 @@ class RootScreenState extends State<RootScreen>
             debugPrint('[LAN] Key rotated for $username: $fingerprint');
           }
         };
+
+        // Load deletion tombstones so removals are recorded even before any
+        // sync, then start WardLink passive sync if the user enabled it.
+        unawaited(WardLinkTombstones.load(currentUsername!));
+        if (SettingsManager.wardLinkEnabled.value) {
+          unawaited(WardLinkSyncService.instance.start(currentUsername!));
+        }
       }
 
       final wsReadyFuture = _ensurePubkeyAndWsReady(
@@ -3117,6 +3483,7 @@ class RootScreenState extends State<RootScreen>
     identityPubKeyBase64 = null;
     currentUsername = username;
     currentUin = null;
+    unawaited(TrashManager.instance.load(username));
 
     final uinPrefs = await SharedPreferences.getInstance();
     final cachedUin = uinPrefs.getString('uin_$username');
@@ -3277,7 +3644,18 @@ class RootScreenState extends State<RootScreen>
     setState(() {});
 
     try {
-      await _disconnectWs(manual: true, suppressPresence: true);
+      // Tell the server the OLD account is going offline before tearing the
+      // socket down — suppressing this left "Fixedcode"-style ghosts online
+      // (server only learned of the disconnect via its own timeout) and let
+      // messages sent to the old account arrive back on its still-registered
+      // session, undecryptable with the new account's identity keys.
+      await _disconnectWs(manual: true, suppressPresence: false);
+
+      // Stop WardLink before swapping account state — otherwise it keeps
+      // broadcasting/serving under the old username while root_screen's
+      // favorites/chats already reflect the new account, letting a still-
+      // trusted peer pull the new account's data under the old identity.
+      await WardLinkSyncService.instance.stop();
 
       ExternalServerManager.disconnectAll();
       _appendLog(
@@ -3321,6 +3699,14 @@ class RootScreenState extends State<RootScreen>
           username); // identity loaded here — WS can connect after this
       await _loadChatsFromCacheNow(username);
       _appendLog('[account] switched to $username');
+
+      // Restart WardLink scoped to the new account (reloads its trusted-
+      // device list and starts broadcasting the new username), mirroring
+      // the startup path in _loadCurrentAccount.
+      unawaited(WardLinkTombstones.load(username));
+      if (SettingsManager.wardLinkEnabled.value) {
+        unawaited(WardLinkSyncService.instance.start(username));
+      }
 
       accountSwitchVersion.value++;
 
@@ -3693,6 +4079,7 @@ class RootScreenState extends State<RootScreen>
     _lastPubkeyUploadTime = null;
     _pubkeyCache.clear();
     _devicePubkeysCache.clear();
+    _devicePubkeysCacheAge.clear();
     await _uploadPubkeyToServer();
 
     if (_ws != null) {
@@ -4228,6 +4615,18 @@ class RootScreenState extends State<RootScreen>
             alpha: (_graphOverlayVisible ? 1.0 : 0.88).clamp(0.0, 1.0),
           );
 
+          final screenH = MediaQuery.of(context).size.height;
+          if (!_handleYInitialized) {
+            // First layout: derive the pixel position from the persisted
+            // fraction (defaults near the bottom of the screen) rather than
+            // a fixed pixel offset, so it lands in the same relative spot
+            // on any screen size.
+            _handleY =
+                (SettingsManager.graphHandlePositionFraction.value * screenH)
+                    .clamp(40.0, screenH - 100.0);
+            _handleYInitialized = true;
+          }
+
           return Positioned(
             left: 0,
             top: _handleY,
@@ -4236,13 +4635,17 @@ class RootScreenState extends State<RootScreen>
                   ? _closeGraphOverlay()
                   : _openGraphOverlay(),
               onVerticalDragUpdate: (d) {
-                final screenH = MediaQuery.of(context).size.height;
                 setState(() {
                   _handleY =
                       (_handleY + d.delta.dy).clamp(40.0, screenH - 100.0);
                 });
               },
-              onVerticalDragEnd: (_) => _savedHandleY = _handleY,
+              onVerticalDragEnd: (_) {
+                if (screenH > 0) {
+                  SettingsManager.setGraphHandlePositionFraction(
+                      _handleY / screenH);
+                }
+              },
               child: Container(
                 width: 30,
                 height: 54,
@@ -4276,6 +4679,7 @@ class RootScreenState extends State<RootScreen>
   Future<void> _logout() async {
     _disconnectWs();
     ExternalServerManager.disconnectAll();
+    unawaited(WardLinkSyncService.instance.stop());
 
     currentUsername = null;
     currentDisplayName = null;
@@ -4345,8 +4749,10 @@ class RootScreenState extends State<RootScreen>
       _appendLog('[ws.connect] proxy=$proxyInfo');
       _appendLog('[ws.connect] Connecting to: $wsUri');
 
+      WebSocketChannel boundWs;
       try {
         _ws = WebSocketChannel.connect(Uri.parse(wsUri));
+        boundWs = _ws!;
 
         _ws!.sink.add(jsonEncode({'type': 'auth', 'token': token}));
         _appendLog('[ws.connect] Auth frame sent');
@@ -4356,8 +4762,19 @@ class RootScreenState extends State<RootScreen>
         return;
       }
 
+      // This connection was authenticated for `boundUsername`. If the user
+      // switches accounts before it's torn down (or a stale event is already
+      // queued when we cancel the old subscription), events from this socket
+      // must not be processed against the new account's identity/keys —
+      // that produced "online" ghosts and undecryptable self-deliveries.
+      final boundUsername = currentUsername;
+
       _wsSub = _ws!.stream.listen(
         (event) async {
+          if (!identical(_ws, boundWs) || currentUsername != boundUsername) {
+            _appendLog('[ws] dropping event from stale connection ($boundUsername)');
+            return;
+          }
           try {
             if (event is String) {
               final obj = jsonDecode(event) as Map<String, dynamic>;
@@ -4366,6 +4783,13 @@ class RootScreenState extends State<RootScreen>
               if (typ == 'init_complete') {
                 wsConnectedNotifier.value = true;
                 sessionExpiredNotifier.value = false;
+                // Server just accepted our stored token — re-baseline the
+                // local expiry heuristic so an account that stays logged in
+                // past _tokenLifetime stops showing a false "expired" banner.
+                if (currentUsername != null) {
+                  unawaited(
+                      AccountManager.touchTokenValidated(currentUsername!));
+                }
                 _appendLog(
                     '[ws] server init complete — WS tunnel established (proxy=${SettingsManager.proxyEnabled.value ? "${SettingsManager.proxyType.value.toUpperCase()} ${SettingsManager.proxyHost.value}:${SettingsManager.proxyPort.value}" : "none"})');
                 _appendLog('[ws] sending presence...');
@@ -4632,8 +5056,29 @@ class RootScreenState extends State<RootScreen>
                 if (u != null) {
                   _pubkeyCache.remove(u);
                   _devicePubkeysCache.remove(u);
+                  _devicePubkeysCacheAge.remove(u);
                   _appendLog('[ws] pubkey_updated: cleared cache for $u');
                   _showKeyChangedWarning(u);
+                }
+                return;
+              }
+
+              if (typ == 'device_list_stale') {
+                final u = obj['username'] as String?;
+                if (u != null) {
+                  _devicePubkeysCache.remove(u);
+                  _devicePubkeysCacheAge.remove(u);
+                  _appendLog('[ws] device_list_stale: silently cleared device cache for $u');
+                }
+                return;
+              }
+
+              if (typ == 'device_list_updated') {
+                final u = obj['username'] as String?;
+                if (u != null) {
+                  _devicePubkeysCache.remove(u);
+                  _devicePubkeysCacheAge.remove(u);
+                  _appendLog('[ws] device_list_updated: contact $u added a trusted device, cache cleared');
                 }
                 return;
               }
@@ -4694,6 +5139,7 @@ class RootScreenState extends State<RootScreen>
                 _appendLog('[ws] device_approved: $deviceName');
 
                 _devicePubkeysCache.clear();
+                _devicePubkeysCacheAge.clear();
                 if (!mounted) return;
                 showSnack('Device "$deviceName" approved for encryption');
                 return;
@@ -5340,6 +5786,119 @@ class RootScreenState extends State<RootScreen>
     await _loadCurrentAccount();
   }
 
+  /// Pops any pushed chat/group/settings screen and returns to the root tab
+  /// list, mirroring what a fresh app launch looks like. Used when switching
+  /// the running session into/out of decoy mode so the user doesn't end up
+  /// stranded on a now-empty chat screen that belonged to the other account.
+  void _resetNavigationToRoot() {
+    if (!mounted) return;
+    if (isDesktop) {
+      setState(() {
+        selectedChatOther = null;
+        selectedGroup = null;
+        selectedExternalGroup = null;
+        selectedExternalServer = null;
+        _selectedFavoriteId = null;
+        _index = 0;
+      });
+    } else {
+      Navigator.of(context, rootNavigator: true)
+          .popUntil((route) => route.isFirst);
+      setState(() => _index = 0);
+    }
+    if (_pageController.hasClients) {
+      _pageController.jumpToPage(0 + _graphTabOffset);
+    }
+  }
+
+  /// Switches the already-running RootScreen into decoy mode — used when the
+  /// app was backgrounded while showing the real account and the user enters
+  /// the fake PIN on the resume lock screen. Without this, RootScreen (kept
+  /// alive across lock/unlock via its GlobalKey) would just keep displaying
+  /// the real account's chats with `DecoyManager.isActive` flipped on
+  /// underneath, i.e. the fake PIN would appear to do nothing.
+  Future<void> enterDecoyMode() async {
+    if (_isSwitchingAccount) return;
+    _isSwitchingAccount = true;
+    setState(() {});
+    try {
+      _resetNavigationToRoot();
+      await _disconnectWs(manual: true, suppressPresence: false);
+      await WardLinkSyncService.instance.stop();
+      ExternalServerManager.disconnectAll();
+
+      _persistChatsTimer?.cancel();
+      if (_hasPendingPersist && currentUsername != null) {
+        await persistChats();
+      }
+
+      setState(() {
+        _favorites.clear();
+        _favFolders = [];
+        _favTopOrder = [];
+        _selectedFavoriteId = null;
+        chats.clear();
+        _serverMsgIndex.clear();
+        selectedChatOther = null;
+        _chatScreenCache.clear();
+        _groupChatScreenCache.clear();
+        _externalGroupChatScreenCache.clear();
+        selectedGroup = null;
+        selectedExternalGroup = null;
+        selectedExternalServer = null;
+      });
+      chatsVersion.value++;
+
+      currentUsername = DecoyManager.username;
+      currentDisplayName = DecoyManager.displayName;
+
+      await _initDecoyMode();
+      accountSwitchVersion.value++;
+      _appendLog('[decoy] switched running session into decoy mode');
+    } finally {
+      _isSwitchingAccount = false;
+      setState(() {});
+    }
+  }
+
+  /// Reverses [enterDecoyMode] — used when the app was backgrounded while
+  /// showing the decoy account and the user proves their real identity
+  /// (real PIN or biometrics) on the resume lock screen.
+  Future<void> exitDecoyMode() async {
+    if (_isSwitchingAccount) return;
+    _isSwitchingAccount = true;
+    setState(() {});
+    try {
+      _resetNavigationToRoot();
+      DecoyManager.deactivate();
+      wsConnectedNotifier.value = false;
+
+      setState(() {
+        _favorites.clear();
+        _favFolders = [];
+        _favTopOrder = [];
+        _selectedFavoriteId = null;
+        chats.clear();
+        _serverMsgIndex.clear();
+        selectedChatOther = null;
+        _chatScreenCache.clear();
+        _groupChatScreenCache.clear();
+        _externalGroupChatScreenCache.clear();
+        selectedGroup = null;
+        selectedExternalGroup = null;
+        selectedExternalServer = null;
+      });
+      chatsVersion.value++;
+
+      await _loadCurrentAccount();
+      accountSwitchVersion.value++;
+      _appendLog('[decoy] switched running session back to the real account');
+    } finally {
+      _isSwitchingAccount = false;
+      setState(() {});
+    }
+  }
+
   Future<void> disconnectWs() async {
     await _disconnectWs(manual: true);
   }
@@ -5543,18 +6102,7 @@ class RootScreenState extends State<RootScreen>
     }
 
     try {
-      final offset = prefixBytes.length;
-      final nonce = data.sublist(offset, offset + 24);
-      final ctAndTag = data.sublist(offset + 24);
-
-      if (ctAndTag.length < 16) {
-        _appendLog('[media.decrypt.$kind] ctAndTag too short');
-        return data;
-      }
-
-      final cipherText = ctAndTag.sublist(0, ctAndTag.length - 16);
-      final tag = ctAndTag.sublist(ctAndTag.length - 16);
-
+      // ── Resolve the AEAD key on the main isolate (needs network + key store) ─
       final Uint8List aeadKeyBytes;
       if (mediaKeyB64 != null) {
         aeadKeyBytes = base64Decode(mediaKeyB64);
@@ -5600,25 +6148,24 @@ class RootScreenState extends State<RootScreen>
         aeadKeyBytes = _hkdfSha256(sharedBytes, info, 32);
       }
 
-      final secretKey = SecretKey(aeadKeyBytes);
-
-      final box = SecretBox(
-        Uint8List.fromList(cipherText),
-        nonce: Uint8List.fromList(nonce),
-        mac: Mac(Uint8List.fromList(tag)),
+      // ── Offload the actual XChaCha20-Poly1305 decrypt to a POOLED background
+      //    isolate. The pool is spawned once and reused, so many images
+      //    arriving at once no longer each pay a fresh-isolate spawn cost.    ─
+      final plain = await DecryptWorker.instance.decrypt(
+        cipherData: data,
+        aeadKey: aeadKeyBytes,
+        prefixLen: prefixBytes.length,
       );
 
-      final plain = await _xchacha.decrypt(
-        box,
-        secretKey: secretKey,
-        aad: <int>[],
-      );
+      if (plain == null) {
+        _appendLog('[media.decrypt.$kind] isolate returned null – keeping ciphertext');
+        return data;
+      }
 
       _appendLog('[media.decrypt.$kind] ok ${data.length} → ${plain.length}');
-      return Uint8List.fromList(plain);
+      return plain;
     } catch (e, st) {
       _appendLog('[media.decrypt.$kind] error: $e\n$st');
-
       return data;
     }
   }
@@ -5776,7 +6323,9 @@ class RootScreenState extends State<RootScreen>
 
   Future<List<Map<String, dynamic>>> _fetchAllDevicePubkeys(
       String recipient) async {
-    if (_devicePubkeysCache.containsKey(recipient)) {
+    final age = _devicePubkeysCacheAge[recipient];
+    final isFresh = age != null && DateTime.now().difference(age) < _kDeviceCacheTTL;
+    if (isFresh && _devicePubkeysCache.containsKey(recipient)) {
       return _devicePubkeysCache[recipient]!;
     }
     try {
@@ -5793,6 +6342,7 @@ class RootScreenState extends State<RootScreen>
             .where((d) => d['pubkey'] != null && d['fp'] != null)
             .toList();
         _devicePubkeysCache[recipient] = devices;
+        _devicePubkeysCacheAge[recipient] = DateTime.now();
         return devices;
       }
     } catch (e) {
@@ -5979,6 +6529,13 @@ class RootScreenState extends State<RootScreen>
       return;
     }
 
+    // Re-assert "online" on send: with multiple devices on the same account,
+    // another device's offline presence (e.g. it switched accounts) can leave
+    // the server showing us offline here even while this device is active.
+    // Sending refreshes the server's view without waiting on its timeout —
+    // purely a client-side nudge, no server changes needed.
+    sendOnlineStatus();
+
     try {
       unawaited(_updateRecipientStatus(to));
     } catch (e) {
@@ -6079,7 +6636,7 @@ class RootScreenState extends State<RootScreen>
     final chatId = chatIdForUser(from);
 
     try {
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await getOnyxDocumentsDirectory();
       final mediaDir = Directory('${dir.path}/lan_media');
       if (!await mediaDir.exists()) {
         await mediaDir.create(recursive: true);
@@ -6221,6 +6778,7 @@ class RootScreenState extends State<RootScreen>
       for (int attempt = 0; attempt <= retryDelays.length; attempt++) {
         if (attempt > 0) {
           _devicePubkeysCache.remove(to);
+          _devicePubkeysCacheAge.remove(to);
           _pubkeyCache.remove(to);
           await Future.delayed(Duration(seconds: retryDelays[attempt - 1]));
         }
@@ -6397,20 +6955,56 @@ class RootScreenState extends State<RootScreen>
         final msgs = chats[removedChatId];
         if (msgs != null) {
           final before = msgs.length;
+          ChatMessage? toTrash;
+          for (final m in msgs) {
+            if (m.serverMessageId == messageId) { toTrash = m; break; }
+          }
           msgs.removeWhere((m) => m.serverMessageId == messageId);
           if (msgs.length != before) {
             _serverMsgIndex.remove(messageId);
             removed = true;
+            if (toTrash != null) {
+              final me = currentUsername ?? '';
+              final parts = removedChatId.split(':');
+              final other = parts.length == 2
+                  ? parts.firstWhere((p) => p != me, orElse: () => removedChatId)
+                  : removedChatId;
+              TrashManager.instance.addDeletedMessage(TrashedMessage(
+                id: DateTime.now().microsecondsSinceEpoch.toString(),
+                chatId: removedChatId,
+                chatDisplayName: other,
+                message: toTrash,
+                deletedAt: DateTime.now(),
+              ));
+            }
           }
         }
       } else {
         // Fallback: index miss, scan all chats
         for (final entry in chats.entries) {
           final before = entry.value.length;
+          ChatMessage? toTrash;
+          for (final m in entry.value) {
+            if (m.serverMessageId == messageId) { toTrash = m; break; }
+          }
           entry.value.removeWhere((m) => m.serverMessageId == messageId);
           if (entry.value.length != before) {
             _serverMsgIndex.remove(messageId);
             removed = true;
+            if (toTrash != null) {
+              final me = currentUsername ?? '';
+              final parts = entry.key.split(':');
+              final other = parts.length == 2
+                  ? parts.firstWhere((p) => p != me, orElse: () => entry.key)
+                  : entry.key;
+              TrashManager.instance.addDeletedMessage(TrashedMessage(
+                id: DateTime.now().microsecondsSinceEpoch.toString(),
+                chatId: entry.key,
+                chatDisplayName: other,
+                message: toTrash,
+                deletedAt: DateTime.now(),
+              ));
+            }
           }
         }
       }
@@ -6634,7 +7228,43 @@ class RootScreenState extends State<RootScreen>
     }
   }
 
-  void _deleteChat(String chatId) {
+  void restoreDeletedChat(TrashedChat chat) {
+    if (chat.type == TrashedChatType.dm) {
+      final msgs = chats.putIfAbsent(chat.chatId, () => []);
+      msgs.addAll(chat.messages);
+      msgs.sort((a, b) => a.time.compareTo(b.time));
+      chatsVersion.value++;
+      setState(() {});
+      schedulePersistChats(chatId: chat.chatId);
+    }
+    TrashManager.instance.permanentlyDeleteChat(chat.id);
+  }
+
+  void restoreDeletedMessage(TrashedMessage item) {
+    final msgs = chats[item.chatId];
+    if (msgs != null) {
+      final alreadyExists = msgs.any((m) => m.id == item.message.id);
+      if (!alreadyExists) {
+        msgs.add(item.message);
+        msgs.sort((a, b) => a.time.compareTo(b.time));
+        _bumpForChat(item.chatId);
+        schedulePersistChats(chatId: item.chatId);
+      }
+    }
+    TrashManager.instance.permanentlyDeleteMessage(item.id);
+  }
+
+  void _deleteChat(String chatId, String displayName) {
+    final messages = List<ChatMessage>.from(chats[chatId] ?? []);
+    TrashManager.instance.addDeletedChat(TrashedChat(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      chatId: chatId,
+      displayName: displayName,
+      type: TrashedChatType.dm,
+      messages: messages,
+      deletedAt: DateTime.now(),
+    ));
+
     chats.remove(chatId);
 
     chatsVersion.value++;
@@ -7362,6 +7992,7 @@ class RootScreenState extends State<RootScreen>
                                         onShowPassphrase: _showPassphrase,
                                         onChangePassword: _changePassword,
                                         onOpenSessions: _openSessions,
+                                        isActive: _index == 4,
                                         onOpenChat: (username) {
                                           _onTabSelected(0);
                                           final chatId =
@@ -7892,6 +8523,7 @@ class RootScreenState extends State<RootScreen>
         onShowPassphrase: _showPassphrase,
         onChangePassword: _changePassword,
         onOpenSessions: _openSessions,
+        isActive: _index == 4,
         onOpenChat: (username) {
           _onTabSelected(0);
           final chatId = chatIdForUser(username);
@@ -7988,6 +8620,9 @@ class RootScreenState extends State<RootScreen>
                   return ValueListenableBuilder<double>(
                     valueListenable: SettingsManager.elementOpacity,
                     builder: (_, opacity, __) {
+                      return ValueListenableBuilder<bool>(
+                        valueListenable: tabPullSearchOpen,
+                        builder: (_, pullSearchOpen, __) {
                       final panelW = _chatsPanelWidthNotifier.value;
                       final navWidth = isDesktop
                           ? min(panelW - 24.0, 420.0)
@@ -8002,7 +8637,12 @@ class RootScreenState extends State<RootScreen>
                       final hideBottomNav = !isDesktop && _graphOverlayVisible;
                       final isLiquidGlass = !isDesktop &&
                           SettingsManager.liquidGlassOnNavBar.value;
-                      final hideForSearch = !isDesktop && _isSearchOpen;
+                      // The Scaffold resizes for the keyboard, which would
+                      // otherwise drag this floating bottom nav bar up over
+                      // the per-tab pull-search panel — hide it the same way
+                      // the global search dialog does.
+                      final hideForSearch =
+                          !isDesktop && (_isSearchOpen || pullSearchOpen);
 
                       return Positioned.fill(
                         child: Align(
@@ -8062,6 +8702,8 @@ class RootScreenState extends State<RootScreen>
                             ),
                           ),
                         ),
+                      );
+                        },
                       );
                     },
                   );

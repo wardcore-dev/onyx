@@ -1,4 +1,7 @@
 // lib/screens/group_chat_screen.dart
+import '../widgets/marquee_text.dart';
+import '../widgets/empty_chat_placeholder.dart';
+import '../utils/chat_image_preloader.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import '../enums/liquid_glass_quality.dart';
 import 'package:ONYX/screens/forward_screen.dart';
@@ -24,18 +27,20 @@ import '../models/group.dart';
 import '../managers/account_manager.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/chat_images_scope.dart';
+import '../widgets/album_message_widget.dart' show AlbumItem;
 import '../widgets/avatar_widget.dart';
 import '../widgets/avatar_crop_screen.dart';
 import '../widgets/cached_remote_avatar.dart';
 import '../enums/media_provider.dart';
 import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart' show getOnyxSupportDirectory;
 import '../widgets/drag_drop_zone.dart';
 import '../widgets/file_preview_dialog.dart';
 import '../widgets/album_preview_dialog.dart';
 import '../widgets/voice_confirm_dialog.dart';
+import '../utils/clipboard_image.dart';
 import '../utils/file_utils.dart';
 import '../utils/image_file_cache.dart';
-import '../utils/clipboard_image.dart';
 import '../utils/upload_task.dart';
 import '../widgets/pending_upload_card.dart';
 import '../widgets/chat_search_bar.dart';
@@ -44,8 +49,12 @@ import '../widgets/message_reaction_bar.dart';
 import '../widgets/swipeable_message_wrapper.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../widgets/chat_input_bar.dart';
+import '../widgets/measure_size.dart';
+import '../enums/scroll_down_button_position.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/gallery_extractor.dart';
+import 'media_gallery_screen.dart';
 
 const List<String> _randomHints = [
   'Say something!',
@@ -79,6 +88,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   final TextEditingController _textCtrl = TextEditingController();
   late final FocusNode _focusNode;
   List<Map<String, dynamic>> _messages = [];
+  // Fingerprint of the message list last handed to the image preloader.
+  int _preloadStampCount = -1;
+  String _preloadStampLast = '';
   final ScrollController _scroll = ScrollController();
   String? _currentUsername;
   // msgId → reaction mixin key ('gm_<id>'), populated during rendering
@@ -88,6 +100,12 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   late final String _inputHint;
   final Set<String> _allMessageIds = {};
   final Set<String> _alreadyRenderedMessageIds = {};
+  // True once the message list has painted at least one frame. Entry
+  // animations are suppressed until then — closes a race where the initial
+  // cache/server load finishes asynchronously after the pre-seed below ran,
+  // which would otherwise make the whole history "appear new" and animate
+  // in on open.
+  bool _hasBuiltMessageListOnce = false;
   final Map<String, String> _pendingMessageIds = {};
   final List<UploadTask> _pendingUploads = [];
   bool _loadedFromCache = false;
@@ -98,6 +116,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   String? _editingMsgId;
   String? _editingOriginalContent;
   final ValueNotifier<bool> _showScrollDownButton = ValueNotifier<bool>(false);
+  final ValueNotifier<double> _bottomBarHeight = ValueNotifier<double>(76.0);
 
 
 
@@ -213,6 +232,10 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   String? _scrollTargetId;
 
   // ── Day-separator display items ─────────────────────────────────────────
+  List<AlbumItem>? _cachedAllImages;
+  int _cachedAllImagesHash = 0;
+  int _cachedDragHash = 0;
+
   List<Object> _groupDisplayItems =
       []; // elements: Map<String,dynamic> | DateTime
   int _groupDisplayHash = -1;
@@ -336,6 +359,26 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     }
 
     tryEnsureVisible();
+  }
+
+  /// If a search-result tap asked to land on a specific message in this group
+  /// (see [setPendingMessageScrollTarget]), scroll to and highlight it once
+  /// the message list is laid out — instead of opening at the bottom.
+  void _consumePendingGroupScrollTarget() {
+    final groupKey =
+        '${widget.group.isExternal ? (widget.group.externalServerId ?? 'ext') : 'native'}:${widget.group.id}';
+    final pendingId = consumePendingMessageScrollTarget(groupKey);
+    if (pendingId == null) return;
+    void attempt([int retries = 6]) {
+      if (!mounted) return;
+      if (_scroll.hasClients) {
+        _scrollToGroupMessageById(pendingId);
+      } else if (retries > 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => attempt(retries - 1));
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => attempt());
   }
 
   Widget _buildGroupPinnedBanner(BuildContext context) {
@@ -678,6 +721,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     _currentUsername = rootScreenKey.currentState?.currentUsername;
     _currentDisplayName = rootScreenKey.currentState?.currentDisplayName;
     _loadPinnedMessage();
+    _consumePendingGroupScrollTarget();
     _loadHistoryFromCache().then((_) {
       _loadHistoryFromNetwork();
     });
@@ -1089,6 +1133,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     ];
   }
 
+
   void _copyGroupProxyImage(String content) {
     try {
       final data = jsonDecode(content.substring('MEDIA_PROXYv1:'.length))
@@ -1387,15 +1432,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
             saved == true ? 'Saved to gallery' : 'Failed to save to gallery',
           );
         } else {
-          // Audio / documents / archives — copy to Downloads/ONYX
-          final dl = await getDownloadsDirectory();
-          if (dl == null) {
+          // Audio / documents / archives — copy to configured ONYX folder
+          final onyxDir = await getOnyxSaveDirectory();
+          if (onyxDir == null) {
             rootScreenKey.currentState
                 ?.showSnack('Cannot access Downloads directory');
             return;
           }
-          final onyxDir = Directory('${dl.path}/ONYX');
-          await onyxDir.create(recursive: true);
           final destPath = '${onyxDir.path}/$originalName';
           await file.copy(destPath);
           rootScreenKey.currentState?.showSnack('Saved to: $destPath');
@@ -1560,6 +1603,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     _pendingMessageIds.clear();
     groupAvatarVersion.removeListener(_onGroupAvatarUpdate);
     _showScrollDownButton.dispose();
+    _bottomBarHeight.dispose();
     _inputEntryController.dispose();
     _wsFlushTimer?.cancel();
     _searchController.dispose();
@@ -1675,6 +1719,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       _pendingMessageIds.clear();
       _messages.clear();
       _alreadyRenderedMessageIds.clear();
+      _hasBuiltMessageListOnce = false;
       _wsIncomingBuffer.clear();
       _wsFlushTimer?.cancel();
       _wsFlushTimer = null;
@@ -1735,7 +1780,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     final username = _currentUsername ?? '';
     if (username.isEmpty) return;
     try {
-      final appDir = await getApplicationSupportDirectory();
+      final appDir = await getOnyxSupportDirectory();
       if (_isDisposed) return;
       final file = File(
           '${appDir.path}/group_${username}_${widget.group.id}_history.json');
@@ -1778,6 +1823,12 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           _messages = newMessages;
           _allMessageIds.addAll(seenIds);
           _loadedFromCache = true;
+          if (_alreadyRenderedMessageIds.isEmpty) {
+            _alreadyRenderedMessageIds.addAll(newMessages
+                .map((m) =>
+                    m['animationId']?.toString() ?? m['id']?.toString() ?? '')
+                .where((id) => id.isNotEmpty));
+          }
         });
         final reactionBatch = <String, Map<String, dynamic>>{};
         for (final m in newMessages) {
@@ -1928,7 +1979,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     try {
       final username = _currentUsername ?? '';
       if (username.isEmpty) return;
-      final appDir = await getApplicationSupportDirectory();
+      final appDir = await getOnyxSupportDirectory();
       final file = File(
           '${appDir.path}/group_${username}_${widget.group.id}_history.json');
       await file.create(recursive: true);
@@ -2051,6 +2102,10 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
     final token = await AccountManager.getToken(_currentUsername ?? '');
     if (token == null) return;
+
+    // Re-assert "online" presence on send — see root_screen._sendChatMessage
+    // for why (multi-device offline-presence races showing us as offline).
+    rootScreenKey.currentState?.sendOnlineStatus();
 
     final replyInfo = _replyingToMessage != null
         ? Map<String, dynamic>.from(_replyingToMessage!)
@@ -2764,7 +2819,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         if (mounted) {
           try {
             final username = _currentUsername ?? '';
-            final appDir = await getApplicationSupportDirectory();
+            final appDir = await getOnyxSupportDirectory();
             final file = File(
                 '${appDir.path}/group_${username}_${widget.group.id}_history.json');
             if (await file.exists()) await file.delete();
@@ -3121,105 +3176,211 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: Theme.of(context)
-              .colorScheme
-              .surface
-              .withValues(alpha: SettingsManager.elementOpacity.value),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(widget.group.isChannel
-              ? AppLocalizations.of(context).editChannelTitle
-              : AppLocalizations.of(context).editGroupTitle),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  alignment: Alignment.center,
-                  children: [
-                    GestureDetector(
-                      onTap: () => changeAvatarInDialog(setDialogState),
-                      onLongPress: () => removeAvatarInDialog(setDialogState),
-                      child: CircleAvatar(
-                        radius: 40,
-                        backgroundImage: NetworkImage(
-                            '$serverBase/group/${widget.group.id}/avatar?v=${_avatarVersion}'),
-                      ),
-                    ),
-                    if (isUploading)
-                      Positioned.fill(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black54,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Center(
-                            child: SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white),
+        builder: (context, setDialogState) {
+          final cs = Theme.of(context).colorScheme;
+          const btnShape = RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(50)),
+          );
+          const btnPadding = EdgeInsets.symmetric(vertical: 13);
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 400),
+                child: Material(
+                  color: cs.surface,
+                  borderRadius: BorderRadius.circular(28),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // ── Header ─────────────────────────────────────
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(20, 18, 16, 16),
+                        decoration: BoxDecoration(
+                          color: cs.primary.withValues(alpha: 0.06),
+                          border: Border(
+                            bottom: BorderSide(
+                              color: cs.primary.withValues(alpha: 0.10),
+                              width: 0.8,
                             ),
                           ),
                         ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: cs.primary.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(
+                                widget.group.isChannel
+                                    ? Icons.campaign_rounded
+                                    : Icons.group_rounded,
+                                size: 18,
+                                color: cs.primary,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                widget.group.isChannel
+                                    ? AppLocalizations.of(context)
+                                        .editChannelTitle
+                                    : AppLocalizations.of(context)
+                                        .editGroupTitle,
+                                style: TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold,
+                                  color: cs.onSurface,
+                                ),
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: () => Navigator.of(ctx).pop(false),
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color:
+                                      cs.onSurface.withValues(alpha: 0.07),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(Icons.close_rounded,
+                                    size: 18,
+                                    color: cs.onSurface
+                                        .withValues(alpha: 0.55)),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              ValueListenableBuilder<double>(
-                valueListenable: SettingsManager.elementBrightness,
-                builder: (_, brightness, ___) {
-                  final baseColor = SettingsManager.getElementColor(
-                    Theme.of(context).colorScheme.surfaceContainerHighest,
-                    brightness,
-                  );
-                  return TextField(
-                    controller: controller,
-                    maxLength: 50,
-                    decoration: InputDecoration(
-                      labelText: widget.group.isChannel
-                          ? AppLocalizations.of(context).channelNameLabel
-                          : AppLocalizations.of(context).groupNameLabel,
-                      hintText: widget.group.isChannel
-                          ? AppLocalizations.of(context).channelNameHint
-                          : AppLocalizations.of(context).groupNameHint,
-                      counterText: '',
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      filled: true,
-                      fillColor: baseColor.withValues(alpha: 0.3),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-              Center(
-                child: TextButton.icon(
-                  icon: const Icon(Icons.copy),
-                  label: Text(AppLocalizations.of(context).copyLink),
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(
-                        text: widget.group.inviteLink.split('/').last));
-                    if (mounted) {
-                      rootScreenKey.currentState?.showSnack(
-                          AppLocalizations(SettingsManager.appLocale.value)
-                              .tokenCopied);
-                    }
-                  },
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: Text(AppLocalizations.of(context).cancel)),
-            FilledButton(
-              onPressed: () async {
+                      // ── Content ─────────────────────────────────────
+                      Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Center(
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                alignment: Alignment.center,
+                                children: [
+                                  GestureDetector(
+                                    onTap: () => changeAvatarInDialog(
+                                        setDialogState),
+                                    onLongPress: () =>
+                                        removeAvatarInDialog(setDialogState),
+                                    child: CircleAvatar(
+                                      radius: 44,
+                                      backgroundImage: NetworkImage(
+                                          '$serverBase/group/${widget.group.id}/avatar?v=${_avatarVersion}'),
+                                    ),
+                                  ),
+                                  if (isUploading)
+                                    Positioned.fill(
+                                      child: Container(
+                                        decoration: const BoxDecoration(
+                                          color: Colors.black54,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Center(
+                                          child: SizedBox(
+                                            width: 24,
+                                            height: 24,
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Colors.white),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            ValueListenableBuilder<double>(
+                              valueListenable:
+                                  SettingsManager.elementBrightness,
+                              builder: (_, brightness, ___) {
+                                final baseColor =
+                                    SettingsManager.getElementColor(
+                                  cs.surfaceContainerHighest,
+                                  brightness,
+                                );
+                                return TextField(
+                                  controller: controller,
+                                  maxLength: 50,
+                                  decoration: InputDecoration(
+                                    labelText: widget.group.isChannel
+                                        ? AppLocalizations.of(context)
+                                            .channelNameLabel
+                                        : AppLocalizations.of(context)
+                                            .groupNameLabel,
+                                    hintText: widget.group.isChannel
+                                        ? AppLocalizations.of(context)
+                                            .channelNameHint
+                                        : AppLocalizations.of(context)
+                                            .groupNameHint,
+                                    counterText: '',
+                                    filled: true,
+                                    fillColor:
+                                        baseColor.withValues(alpha: 0.3),
+                                    border: OutlineInputBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(14)),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(14),
+                                      borderSide: BorderSide(
+                                          color: cs.outlineVariant
+                                              .withValues(alpha: 0.3),
+                                          width: 0.8),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(14),
+                                      borderSide: BorderSide(
+                                          color: cs.primary, width: 1.4),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(height: 8),
+                            Center(
+                              child: TextButton.icon(
+                                icon: const Icon(Icons.copy, size: 16),
+                                label: Text(
+                                    AppLocalizations.of(context).copyLink),
+                                onPressed: () {
+                                  Clipboard.setData(ClipboardData(
+                                      text: widget.group.inviteLink
+                                          .split('/')
+                                          .last));
+                                  if (mounted) {
+                                    rootScreenKey.currentState?.showSnack(
+                                        AppLocalizations(
+                                                SettingsManager
+                                                    .appLocale.value)
+                                            .tokenCopied);
+                                  }
+                                },
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            FilledButton(
+                              style: FilledButton.styleFrom(
+                                padding: btnPadding,
+                                shape: btnShape,
+                              ),
+                              onPressed: () async {
                 final newName = controller.text.trim();
                 if (newName.isEmpty || newName.length > 50) {
                   if (mounted) {
@@ -3308,12 +3469,20 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                   }
                 }
               },
-              child: Text(AppLocalizations.of(context).save),
-            ),
-          ],
-        ),
-      ),
-    );
+                              child: Text(AppLocalizations.of(context).save),
+                            ),
+                          ],        // inner Column children
+                        ),          // inner Column
+                      ),            // Padding
+                    ],              // outer Column children
+                  ),                // outer Column
+                ),                  // Material
+              ),                    // ConstrainedBox
+            ),                      // ClipRRect
+          );                        // Dialog return
+        },                          // StatefulBuilder.builder
+      ),                            // StatefulBuilder
+    );                              // showDialog
 
     _shouldPreserveExternalFocus = false;
     if (mounted && isDesktop && !recordingNotifier.value) {
@@ -3330,7 +3499,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     return ValueListenableBuilder<double>(
       valueListenable: SettingsManager.elementOpacity,
       builder: (_, opacity, __) {
-        return Column(
+        return MeasureSize(
+          onChange: (size) {
+            if ((_bottomBarHeight.value - size.height).abs() > 0.5) {
+              _bottomBarHeight.value = size.height;
+            }
+          },
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             AnimatedSize(
@@ -3623,6 +3798,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
               ),
             ),
           ],
+          ),
         );
       },
     );
@@ -3734,12 +3910,11 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       Flexible(
-                                        child: Text(
-                                          widget.group.name,
+                                        child: MarqueeText(
+                                          text: widget.group.name,
                                           style: const TextStyle(
                                               fontWeight: FontWeight.bold,
                                               fontSize: 16),
-                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
                                       if (widget.group.inviteLink == '12e01467-c154-447b-84f8-133ae76684a1')
@@ -3810,7 +3985,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                               ),
                             PopupMenuButton<String>(
                               onSelected: (String value) async {
-                                if (value == 'copy_link') {
+                                if (value == 'gallery') {
+                                  showMediaGalleryDialog(
+                                    context,
+                                    items: extractGalleryItemsFromMaps(_messages),
+                                    peerUsername: widget.group.name,
+                                  );
+                                } else if (value == 'copy_link') {
                                   Clipboard.setData(ClipboardData(
                                       text: widget.group.inviteLink
                                           .split('/')
@@ -3830,6 +4011,18 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                 }
                               },
                               itemBuilder: (context) => [
+                                PopupMenuItem<String>(
+                                  value: 'gallery',
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.photo_library_outlined,
+                                          size: 18),
+                                      const SizedBox(width: 10),
+                                      Text(AppLocalizations.of(context)
+                                          .galleryMenuLabel),
+                                    ],
+                                  ),
+                                ),
                                 if (widget.group.inviteLink.isNotEmpty)
                                   PopupMenuItem<String>(
                                     value: 'copy_link',
@@ -3847,8 +4040,18 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                   ),
                                 PopupMenuItem<String>(
                                   value: 'leave',
-                                  child: Text(AppLocalizations.of(context)
-                                      .leaveGroupTitle(false)),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.logout_rounded,
+                                          size: 18,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .error),
+                                      const SizedBox(width: 10),
+                                      Text(AppLocalizations.of(context)
+                                          .leaveGroupAction),
+                                    ],
+                                  ),
                                 ),
                               ],
                             ),
@@ -3872,9 +4075,36 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                               valueListenable:
                                   SettingsManager.alignAllMessagesRight,
                               builder: (_, alignRight, __) {
+                                if (!_hasBuiltMessageListOnce) {
+                                  WidgetsBinding.instance
+                                      .addPostFrameCallback((_) {
+                                    _hasBuiltMessageListOnce = true;
+                                  });
+                                }
+                                if (_messages.isEmpty) {
+                                  return EmptyChatPlaceholder(
+                                      label: AppLocalizations.of(context)
+                                          .noMessagesYet);
+                                }
+
                                 // Compute search matches (indices into display items)
                                 final displayItems =
                                     _rebuildGroupDisplayItems();
+
+                                final stampLast = _messages.isEmpty
+                                    ? ''
+                                    : '${_messages.last['id']}';
+                                if (_messages.length != _preloadStampCount ||
+                                    stampLast != _preloadStampLast) {
+                                  _preloadStampCount = _messages.length;
+                                  _preloadStampLast = stampLast;
+                                  WidgetsBinding.instance
+                                      .addPostFrameCallback((_) {
+                                    ChatImagePreloader
+                                        .preloadGroupMessages(_messages);
+                                  });
+                                }
+
                                 if (_showSearch && _searchQuery.isNotEmpty) {
                                   final newMatches = <int>[];
                                   for (int j = 0;
@@ -3919,24 +4149,31 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                     });
                                   }
                                 }
-                                final dragMessages = displayItems
-                                    .whereType<Map<String, dynamic>>()
-                                    .toList(growable: false);
-                                _dragSelectionOrder = dragMessages
-                                    .map(_selectionKeyForGroupMessage)
-                                    .toList(growable: false);
-                                _dragSelectionLookup = {
-                                  for (final msg in dragMessages)
-                                    _selectionKeyForGroupMessage(msg): msg,
-                                };
-                                _dragSelectionIndices = {
-                                  for (int idx = 0;
-                                      idx < _dragSelectionOrder.length;
-                                      idx++)
-                                    _dragSelectionOrder[idx]: idx,
-                                };
+                                if (_cachedDragHash != _groupDisplayHash) {
+                                  _cachedDragHash = _groupDisplayHash;
+                                  final dragMessages = displayItems
+                                      .whereType<Map<String, dynamic>>()
+                                      .toList(growable: false);
+                                  _dragSelectionOrder = dragMessages
+                                      .map(_selectionKeyForGroupMessage)
+                                      .toList(growable: false);
+                                  _dragSelectionLookup = {
+                                    for (final msg in dragMessages)
+                                      _selectionKeyForGroupMessage(msg): msg,
+                                  };
+                                  _dragSelectionIndices = {
+                                    for (int idx = 0;
+                                        idx < _dragSelectionOrder.length;
+                                        idx++)
+                                      _dragSelectionOrder[idx]: idx,
+                                  };
+                                }
+                                if (_cachedAllImages == null || _cachedAllImagesHash != _groupDisplayHash) {
+                                  _cachedAllImages = ChatImagesScope.computeFromGroupMessages(_messages);
+                                  _cachedAllImagesHash = _groupDisplayHash;
+                                }
                                 return ChatImagesScope(
-                                  allImages: ChatImagesScope.computeFromGroupMessages(_messages),
+                                  allImages: _cachedAllImages!,
                                   child: Listener(
                                   key: _messageListViewportKey,
                                   onPointerDown: (_) {
@@ -3955,7 +4192,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                     reverse: true,
                                     itemCount: _pendingUploads.length +
                                         displayItems.length,
-                                    cacheExtent: 800,
+                                    cacheExtent: SettingsManager.chatCacheExtent.value,
                                     addRepaintBoundaries: true,
                                     padding: EdgeInsets.only(
                                       top: MediaQuery.of(context).padding.top +
@@ -4095,6 +4332,21 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                                         msg['reply_to_id']
                                                             .toString())
                                                 : null,
+                                            onRightClick: isDesktop
+                                                ? (offset) {
+                                                    debugPrint('[RightClickMenu] group_chat onRightClick invoked, msgId=${msg['id']}');
+                                                    final items =
+                                                        _buildGroupDesktopMenuItems(
+                                                            msg);
+                                                    debugPrint('[RightClickMenu] group_chat items=${items.length}');
+                                                    if (items.isNotEmpty) {
+                                                      showMessageDesktopMenu(
+                                                          context,
+                                                          offset,
+                                                          items);
+                                                    }
+                                                  }
+                                                : null,
                                           ),
                                         ),
                                         ),
@@ -4123,7 +4375,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                           AnimatedMessageBubble(
                                               key: ValueKey<String>(animKey),
                                               outgoing: isMe,
-                                              animate: isFirstAppearance &&
+                                              animate: _hasBuiltMessageListOnce &&
+                                                  isFirstAppearance &&
                                                   !suppressed &&
                                                   SettingsManager.messageAnimationsEnabled.value,
                                               child: RepaintBoundary(
@@ -4400,7 +4653,10 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                                     if (sel.active)
                                                       groupCheckmark,
                                                     Expanded(
-                                                        child: contentChild!),
+                                                        child: AbsorbPointer(
+                                                          absorbing: sel.active,
+                                                          child: contentChild!,
+                                                        )),
                                                   ],
                                                 ),
                                               ),
@@ -4428,21 +4684,41 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                         right: 16,
                         child: _buildGroupPinnedBanner(context),
                       ),
-                    if (_showSearch)
                       Positioned(
                         top: MediaQuery.of(context).padding.top +
                             kToolbarHeight +
                             (_pinnedMessage != null ? 68.0 : 8.0),
                         left: 16,
                         right: 16,
-                        child: ChatSearchBar(
-                          controller: _searchController,
-                          focusNode: _searchFocusNode,
-                          statsNotifier: _searchStats,
-                          onChanged: _onSearchChanged,
-                          onPrevious: _navigateSearchPrev,
-                          onNext: _navigateSearchNext,
-                          onClose: _closeSearch,
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          reverseDuration: const Duration(milliseconds: 180),
+                          transitionBuilder: (child, animation) =>
+                              FadeTransition(
+                            opacity: CurvedAnimation(
+                                parent: animation, curve: Curves.easeOut),
+                            child: SlideTransition(
+                              position: Tween<Offset>(
+                                begin: const Offset(0, -0.4),
+                                end: Offset.zero,
+                              ).animate(CurvedAnimation(
+                                  parent: animation,
+                                  curve: Curves.easeOutCubic)),
+                              child: child,
+                            ),
+                          ),
+                          child: _showSearch
+                              ? ChatSearchBar(
+                                  key: const ValueKey('csb'),
+                                  controller: _searchController,
+                                  focusNode: _searchFocusNode,
+                                  statsNotifier: _searchStats,
+                                  onChanged: _onSearchChanged,
+                                  onPrevious: _navigateSearchPrev,
+                                  onNext: _navigateSearchNext,
+                                  onClose: _closeSearch,
+                                )
+                              : const SizedBox.shrink(),
                         ),
                       ),
                     Positioned(
@@ -4559,54 +4835,74 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                         duration: const Duration(milliseconds: 200),
                         child: IgnorePointer(
                           ignoring: !show,
-                          child: Align(
-                            alignment: Alignment.bottomCenter,
-                            child: Padding(
-                              padding: const EdgeInsets.only(bottom: 80),
-                              child: Material(
-                                color: Colors.transparent,
-                                child: ValueListenableBuilder<double>(
-                                  valueListenable:
-                                      SettingsManager.elementBrightness,
-                                  builder: (_, brightness, ___) {
-                                    final baseColor =
-                                        SettingsManager.getElementColor(
-                                      Theme.of(context)
-                                          .colorScheme
-                                          .surfaceContainerHighest,
-                                      brightness,
-                                    );
-                                    return IconButton(
-                                      splashRadius: 20,
-                                      padding: EdgeInsets.zero,
-                                      icon: Container(
-                                        width: 32,
-                                        height: 32,
-                                        decoration: BoxDecoration(
-                                          color:
-                                              baseColor.withValues(alpha: 0.5),
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .outlineVariant
-                                                .withValues(alpha: 0.15),
-                                            width: 1,
-                                          ),
-                                        ),
-                                        child: Icon(
-                                          Icons.arrow_downward,
-                                          size: 18,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface
-                                              .withValues(alpha: 0.7),
+                          child: ValueListenableBuilder<double>(
+                            valueListenable: _bottomBarHeight,
+                            builder: (_, barHeight, __) => ValueListenableBuilder<ScrollDownButtonPosition>(
+                              valueListenable: SettingsManager.scrollDownButtonPosition,
+                              builder: (_, position, __) => ValueListenableBuilder<double>(
+                                valueListenable: SettingsManager.scrollDownButtonSize,
+                                builder: (_, btnSize, __) {
+                                  final alignment = switch (position) {
+                                    ScrollDownButtonPosition.left => Alignment.bottomLeft,
+                                    ScrollDownButtonPosition.center => Alignment.bottomCenter,
+                                    ScrollDownButtonPosition.right => Alignment.bottomRight,
+                                  };
+                                  return Align(
+                                    alignment: alignment,
+                                    child: Padding(
+                                      padding: EdgeInsets.only(
+                                        bottom: barHeight + 12 + MediaQuery.of(context).padding.bottom + 16,
+                                        left: position == ScrollDownButtonPosition.left ? 16 : 0,
+                                        right: position == ScrollDownButtonPosition.right ? 16 : 0,
+                                      ),
+                                      child: Material(
+                                        color: Colors.transparent,
+                                        child: ValueListenableBuilder<double>(
+                                          valueListenable:
+                                              SettingsManager.elementBrightness,
+                                          builder: (_, brightness, ___) {
+                                            final baseColor =
+                                                SettingsManager.getElementColor(
+                                              Theme.of(context)
+                                                  .colorScheme
+                                                  .surfaceContainerHighest,
+                                              brightness,
+                                            );
+                                            return IconButton(
+                                              splashRadius: btnSize / 2 + 4,
+                                              padding: EdgeInsets.zero,
+                                              icon: Container(
+                                                width: btnSize,
+                                                height: btnSize,
+                                                decoration: BoxDecoration(
+                                                  color:
+                                                      baseColor.withValues(alpha: 0.5),
+                                                  shape: BoxShape.circle,
+                                                  border: Border.all(
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .outlineVariant
+                                                        .withValues(alpha: 0.15),
+                                                    width: 1,
+                                                  ),
+                                                ),
+                                                child: Icon(
+                                                  Icons.arrow_downward,
+                                                  size: btnSize * 0.56,
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurface
+                                                      .withValues(alpha: 0.7),
+                                                ),
+                                              ),
+                                              onPressed: _scrollToBottom,
+                                            );
+                                          },
                                         ),
                                       ),
-                                      onPressed: _scrollToBottom,
-                                    );
-                                  },
-                                ),
+                                    ),
+                                  );
+                                },
                               ),
                             ),
                           ),

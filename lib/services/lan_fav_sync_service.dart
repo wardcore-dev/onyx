@@ -28,6 +28,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
 
 import '../globals.dart';
 import '../models/chat_message.dart';
@@ -499,14 +500,24 @@ class LanFavSyncService {
 
   static Future<String> _saveFileForType(
       Uint8List bytes, String key, String type) async {
-    final appDir = (await getApplicationSupportDirectory()).path;
+    final path = await targetPathForKey(key, type);
+    await File(path).writeAsBytes(bytes, flush: true);
+    registerSavedFile(key, type, path, bytes.length);
+    return path;
+  }
+
+  /// Compute the on-disk destination for a file [key] of the given [type],
+  /// creating its parent directory. Mirrors the original favorites storage
+  /// layout. Shared with WardLink so a single source of truth governs where
+  /// each media kind is written.
+  static Future<String> targetPathForKey(String key, String type) async {
+    final appDir = (await getOnyxSupportDirectory()).path;
     final basename = p.basename(key);
 
     // Files with the fav:// prefix are favorites-local files. Each widget
-    // type expects them in a specific subfolder under applicationDocumentsDirectory,
-    // mirroring the original favorites storage layout.
+    // type expects them in a specific subfolder under applicationDocumentsDirectory.
     if (key.startsWith('fav://')) {
-      final docDir = (await getApplicationDocumentsDirectory()).path;
+      final docDir = (await getOnyxDocumentsDirectory()).path;
       final String favDir;
       switch (type) {
         case 'voice':
@@ -516,13 +527,7 @@ class LanFavSyncService {
           favDir = '$docDir/fav_media';
       }
       await Directory(favDir).create(recursive: true);
-      final path = '$favDir/$basename';
-      await File(path).writeAsBytes(bytes, flush: true);
-      if (type != 'avatar') {
-        mediaFilePathRegistry[basename] = path;
-        mediaFilePathRegistry[key] = path;
-      }
-      return path;
+      return '$favDir/$basename';
     }
 
     String cacheDir;
@@ -543,19 +548,77 @@ class LanFavSyncService {
       default:
         cacheDir = '$appDir/data_cache';
     }
-
     await Directory(cacheDir).create(recursive: true);
-    final path = '$cacheDir/$basename';
-    await File(path).writeAsBytes(bytes, flush: true);
+    return '$cacheDir/$basename';
+  }
 
-    // Register in runtime caches so the UI can render immediately
+  /// Register an already-written file in the runtime caches so the UI can
+  /// render it immediately. Shared with WardLink.
+  static void registerSavedFile(String key, String type, String path, int size) {
+    final basename = p.basename(key);
+    if (key.startsWith('fav://')) {
+      if (type != 'avatar') {
+        mediaFilePathRegistry[basename] = path;
+        mediaFilePathRegistry[key] = path;
+      }
+      return;
+    }
     if (type == 'image') {
-      imageFileCache[basename] = (file: File(path), size: bytes.length, aspectRatio: null);
+      imageFileCache[basename] = (file: File(path), size: size, aspectRatio: null);
     } else if (type != 'avatar') {
       mediaFilePathRegistry[basename] = path;
     }
+  }
 
-    return path;
+  /// Locate local files referenced by message [content]. Returns the files that
+  /// actually exist on this device as (key, path, type). Used by WardLink to
+  /// serve a requested file. Reuses the canonical extraction logic.
+  static Future<List<({String key, String path, String type})>>
+      locateFilesForContent(String content) async {
+    final appDir = (await getOnyxSupportDirectory()).path;
+    final entries = await _extractFileEntries(content, appDir);
+    return [for (final e in entries) (key: e.key, path: e.path, type: e.type)];
+  }
+
+  /// Parse message [content] and return every file it references as (key, type),
+  /// regardless of whether the file exists locally. Used by WardLink to decide
+  /// which media a freshly-received message still needs to fetch.
+  static List<({String key, String type})> referencedKeys(String content) {
+    final out = <({String key, String type})>[];
+    void add(String? fn, String type) {
+      if (fn != null && fn.isNotEmpty) out.add((key: fn, type: type));
+    }
+
+    ({String tag, String type})? match;
+    for (final m in const [
+      (tag: 'IMAGEv1:', type: 'image'),
+      (tag: 'VIDEOv1:', type: 'video'),
+      (tag: 'VOICEv1:', type: 'voice'),
+      (tag: 'AUDIOv1:', type: 'audio'),
+      (tag: 'FILEv1:', type: 'file'),
+      (tag: 'DOCUMENTv1:', type: 'document'),
+      (tag: 'ARCHIVEv1:', type: 'archive'),
+      (tag: 'DATAv1:', type: 'file'),
+    ]) {
+      if (content.startsWith(m.tag)) {
+        match = m;
+        break;
+      }
+    }
+
+    try {
+      if (content.startsWith('ALBUMv1:')) {
+        final list = jsonDecode(content.substring('ALBUMv1:'.length)) as List;
+        for (final item in list.cast<Map<String, dynamic>>()) {
+          add((item['filename'] ?? item['orig'])?.toString(), 'image');
+        }
+      } else if (match != null) {
+        final d = jsonDecode(content.substring(match.tag.length))
+            as Map<String, dynamic>;
+        add((d['filename'] ?? d['orig'])?.toString(), match.type);
+      }
+    } catch (_) {}
+    return out;
   }
 
   // ─────────────────────────── SENDER HANDSHAKE (desktop → phone) ───────────
@@ -812,7 +875,7 @@ class LanFavSyncService {
     // ── Collect data ───────────────────────────────────────────────────────────
     emit(LanFavSyncStatus('Preparing data…'));
 
-    final appDir = (await getApplicationSupportDirectory()).path;
+    final appDir = (await getOnyxSupportDirectory()).path;
     final favsToSend = root.favorites.where((f) => favIds.contains(f.id)).toList();
 
     if (favsToSend.isEmpty) {
@@ -1013,7 +1076,7 @@ class LanFavSyncService {
 
       // 1a. fav:// prefixed files live under applicationDocumentsDirectory
       if (key.startsWith('fav://')) {
-        final docDir = (await getApplicationDocumentsDirectory()).path;
+        final docDir = (await getOnyxDocumentsDirectory()).path;
         final List<String> favCandidates;
         if (type == 'voice' || type == 'audio') {
           favCandidates = ['$docDir/voice_cache/$basename', '$docDir/fav_media/$basename'];

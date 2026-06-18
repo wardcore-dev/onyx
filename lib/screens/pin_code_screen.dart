@@ -266,7 +266,12 @@ class _PinCodeScreenState extends State<PinCodeScreen>
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Focus(
+    // Lock-verification screens (no Cancel button) must never be dismissible
+    // via the Android back button/gesture — that would bypass PIN entry
+    // entirely and expose the app's content.
+    return PopScope(
+      canPop: widget.onCancel != null,
+      child: Focus(
       focusNode: _focusNode,
       autofocus: _isDesktop,
       onKeyEvent: _isDesktop ? _handleKeyEvent : null,
@@ -368,8 +373,9 @@ class _PinCodeScreenState extends State<PinCodeScreen>
           ],
         ),
       ),
-    ),   
-    );   
+    ),
+    ),
+    );
   }
 
   Widget _buildNumpad(ColorScheme cs) {

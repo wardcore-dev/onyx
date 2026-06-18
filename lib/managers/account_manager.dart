@@ -5,12 +5,15 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart'; 
 import 'package:http/http.dart' as http; 
-import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart';
 
-import '../globals.dart'; 
+import '../database/app_database.dart';
+import '../database/db_provider.dart';
+import '../globals.dart' show serverBase, kAppVersion, unawaited;
 import '../enums/media_provider.dart';
 import '../models/chat_message.dart';
 import '../models/group.dart';
+import '../services/migration/migration_service.dart';
 import 'settings_manager.dart';
 import 'secure_store.dart';
 
@@ -61,6 +64,18 @@ class AccountManager {
 
   static final ValueNotifier<List<String>> accountsNotifier =
       ValueNotifier<List<String>>([]);
+
+  // ── SQLite delegation ────────────────────────────────────────────────────
+  // Cached once per process — migration status never changes at runtime.
+  static bool? _sqliteActive;
+
+  static Future<bool> _isSqliteActive() async {
+    _sqliteActive ??=
+        (await MigrationService.getStatus()) == MigrationStatus.done;
+    return _sqliteActive!;
+  }
+
+  static void activateSqlite() => _sqliteActive = true;
 
   static Future<void> ensureAccountsLoaded() async {
     final list = await getAccountsList();
@@ -141,6 +156,7 @@ class AccountManager {
       } catch (e) {
         debugPrint('Failed to load privacy settings after account switch: $e');
       }
+      unawaited(pingServer());
     } catch (e) {
       debugPrint('Failed to set account context in SettingsManager: $e');
     }
@@ -174,7 +190,7 @@ class AccountManager {
   }
 
   static Future<String> _metaFilePath() async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await getOnyxSupportDirectory();
     return '${dir.path}/accounts_meta_${_serverHost()}.json';
   }
 
@@ -279,6 +295,18 @@ class AccountManager {
     );
   }
 
+  // Re-baselines the local expiry heuristic to "now" whenever the server
+  // accepts the stored token (e.g. on init_complete) — proof the token is
+  // still valid. Without this, an account that stays logged in past the
+  // assumed _tokenLifetime keeps showing a false "session expired" banner
+  // even though the server keeps authenticating it just fine.
+  static Future<void> touchTokenValidated(String username) async {
+    await SecureStore.write(
+      _key('token_created_at', username),
+      DateTime.now().toIso8601String(),
+    );
+  }
+
   static Future<String?> getToken(String username) async {
     return SecureStore.read(_key('token', username));
   }
@@ -362,7 +390,7 @@ class AccountManager {
       encoded.replaceAll('%3A', ':').replaceAll('%25', '%');
 
   static Future<Directory> _chatsDirFor(String username) async {
-    final base = await getApplicationSupportDirectory();
+    final base = await getOnyxSupportDirectory();
     final dir = Directory(
         '${base.path}/chats_${_serverHost()}_$username');
     if (!await dir.exists()) {
@@ -389,6 +417,25 @@ class AccountManager {
     String username,
     Map<String, List<ChatMessage>> chats,
   ) async {
+    if (await _isSqliteActive()) {
+      final host = _serverHost();
+      final db = DbProvider.db;
+      final entries = chats.entries.expand((e) => e.value.map(
+            (m) => MessageDao.fromChatMessage(m, e.key, username, host),
+          )).toList();
+      // Replace each chat atomically: delete stale rows first so removed
+      // messages don't survive as zombie rows in SQLite.
+      await db.transaction(() async {
+        for (final chatId in chats.keys) {
+          await db.messageDao.deleteChat(chatId, username, host);
+        }
+        if (entries.isNotEmpty) {
+          await db.messageDao.upsertMessages(entries);
+        }
+      });
+      debugPrint('[AccountManager] saveChats: replaced ${chats.length} chats in SQLite for $username');
+      return;
+    }
     final dir = await _chatsDirFor(username);
     await Future.wait(chats.entries
         .map((e) => _writeChatFile(dir, e.key, e.value)));
@@ -401,6 +448,22 @@ class AccountManager {
     String chatId,
     List<ChatMessage> messages,
   ) async {
+    if (await _isSqliteActive()) {
+      final host = _serverHost();
+      final db = DbProvider.db;
+      final companions = messages
+          .map((m) => MessageDao.fromChatMessage(m, chatId, username, host))
+          .toList();
+      // Delete then re-insert so removed messages don't survive as zombie rows.
+      await db.transaction(() async {
+        await db.messageDao.deleteChat(chatId, username, host);
+        if (companions.isNotEmpty) {
+          await db.messageDao.upsertMessages(companions);
+        }
+      });
+      debugPrint('[AccountManager] saveSingleChat: replaced $chatId (${messages.length} msgs) in SQLite for $username');
+      return;
+    }
     final dir = await _chatsDirFor(username);
     await _writeChatFile(dir, chatId, messages);
     debugPrint(
@@ -409,6 +472,11 @@ class AccountManager {
 
   static Future<void> deleteChatFile(
       String username, String chatId) async {
+    if (await _isSqliteActive()) {
+      await DbProvider.db.messageDao.deleteChat(chatId, username, _serverHost());
+      debugPrint('[AccountManager] deleteChatFile: deleted $chatId from SQLite for $username');
+      return;
+    }
     try {
       final dir = await _chatsDirFor(username);
       final file = File(
@@ -425,6 +493,28 @@ class AccountManager {
 
   static Future<Map<String, List<ChatMessage>>> loadChats(
       String username) async {
+    if (await _isSqliteActive()) {
+      try {
+        final host = _serverHost();
+        final db = DbProvider.db;
+        final chatList = await db.messageDao.getChatList(username, host);
+        final result = <String, List<ChatMessage>>{};
+        for (final info in chatList) {
+          final rows = await db.messageDao.getMessagesPage(
+            info.chatId, username, host,
+            limit: 1000000,
+          );
+          result[info.chatId] =
+              rows.map(MessageDao.toChatMessage).toList()
+                ..sort((a, b) => a.time.compareTo(b.time));
+        }
+        debugPrint('[AccountManager] loadChats: loaded ${result.length} chats from SQLite for $username');
+        return result;
+      } catch (e) {
+        debugPrint('[AccountManager] loadChats SQLite failed, falling back to JSON: $e');
+      }
+    }
+
     try {
       final dir = await _chatsDirFor(username);
       final result = <String, List<ChatMessage>>{};
@@ -492,7 +582,6 @@ class AccountManager {
         debugPrint(
             '[AccountManager] loadChats: migrating ${result.length} chats to per-file storage');
         await saveChats(username, result);
-        
         try { await SecureStore.delete(newKey); } catch (e) { debugPrint('[err] $e'); }
       }
 
@@ -507,7 +596,12 @@ class AccountManager {
 
   static Future<void> saveGroupsCache(
       String username, List<Group> groups) async {
-    final dir = await getApplicationSupportDirectory();
+    if (await _isSqliteActive()) {
+      await DbProvider.db.groupDao.upsertGroups(username, _serverHost(), groups);
+      debugPrint('[AccountManager] saveGroupsCache: upserted ${groups.length} groups to SQLite for $username');
+      return;
+    }
+    final dir = await getOnyxSupportDirectory();
     final file =
         File('${dir.path}/groups_cache_${_serverHost()}_$username.json');
     final jsonList = groups
@@ -525,10 +619,17 @@ class AccountManager {
   }
 
   static Future<List<Group>> loadGroupsCache(String username) async {
-    final dir = await getApplicationSupportDirectory();
+    if (await _isSqliteActive()) {
+      try {
+        return await DbProvider.db.groupDao.getGroups(username, _serverHost());
+      } catch (e) {
+        debugPrint('[AccountManager] loadGroupsCache SQLite failed, falling back: $e');
+      }
+    }
+    final dir = await getOnyxSupportDirectory();
     final file =
         File('${dir.path}/groups_cache_${_serverHost()}_$username.json');
-    
+
     final legacy = File('${dir.path}/groups_cache_$username.json');
     if (!await file.exists() && await legacy.exists()) {
       try {
@@ -538,15 +639,13 @@ class AccountManager {
         debugPrint(
             '[AccountManager] migrate: groups_cache migrated for $username');
       } catch (e) {
-      debugPrint('[err] $e');
-    }
+        debugPrint('[err] $e');
+      }
     }
     if (!await file.exists()) return [];
     try {
       final contents = await file.readAsString();
-
       final jsonList = await compute(_parseJsonListInIsolate, contents);
-
       return jsonList
           .map((e) => Group.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -557,7 +656,12 @@ class AccountManager {
 
   static Future<void> saveGroupHistory(
       String username, int groupId, List<Map<String, dynamic>> messages) async {
-    final dir = await getApplicationSupportDirectory();
+    if (await _isSqliteActive()) {
+      await DbProvider.db.groupMessageDao
+          .saveGroupMessages(groupId, username, _serverHost(), messages);
+      return;
+    }
+    final dir = await getOnyxSupportDirectory();
     final file = File(
         '${dir.path}/group_history_${_serverHost()}_${username}_$groupId.json');
     await file.writeAsString(jsonEncode(messages));
@@ -565,7 +669,15 @@ class AccountManager {
 
   static Future<List<Map<String, dynamic>>> loadGroupHistory(
       String username, int groupId) async {
-    final dir = await getApplicationSupportDirectory();
+    if (await _isSqliteActive()) {
+      try {
+        return await DbProvider.db.groupMessageDao
+            .getGroupMessages(groupId, username, _serverHost());
+      } catch (e) {
+        debugPrint('[AccountManager] loadGroupHistory SQLite failed, falling back: $e');
+      }
+    }
+    final dir = await getOnyxSupportDirectory();
     final file = File(
         '${dir.path}/group_history_${_serverHost()}_${username}_$groupId.json');
     final legacy = File('${dir.path}/group_history_${username}_$groupId.json');
@@ -577,8 +689,8 @@ class AccountManager {
         debugPrint(
             '[AccountManager] migrate: group_history migrated for $username group=$groupId');
       } catch (e) {
-      debugPrint('[err] $e');
-    }
+        debugPrint('[err] $e');
+      }
     }
     if (!await file.exists()) return [];
     try {
@@ -644,6 +756,26 @@ class AccountManager {
       }
     } catch (e) {
       debugPrint(' Failed to load privacy settings: $e');
+    }
+  }
+
+  static Future<void> pingServer() async {
+    try {
+      final username = await getCurrentAccount();
+      if (username == null) return;
+      final token = await getToken(username);
+      if (token == null) return;
+
+      await http.post(
+        Uri.parse('$serverBase/me/ping'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'app_version': kAppVersion}),
+      ).timeout(const Duration(seconds: 5));
+    } catch (e) {
+      debugPrint('[AccountManager] pingServer failed (non-fatal): $e');
     }
   }
 }

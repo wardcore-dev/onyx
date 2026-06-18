@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform, kIsWeb;
 import 'package:flutter/services.dart';
 
 class SwipeableMessageWrapper extends StatefulWidget {
@@ -111,12 +112,18 @@ class _SwipeableMessageWrapperState extends State<SwipeableMessageWrapper>
     });
   }
 
+  static bool get _isDesktop => !kIsWeb && (
+    defaultTargetPlatform == TargetPlatform.windows ||
+    defaultTargetPlatform == TargetPlatform.macOS ||
+    defaultTargetPlatform == TargetPlatform.linux);
+
   @override
   Widget build(BuildContext context) {
+    final disabled = widget.disabled || _isDesktop;
     return GestureDetector(
-      onHorizontalDragStart: widget.disabled ? null : _onDragStart,
-      onHorizontalDragUpdate: widget.disabled ? null : _onDragUpdate,
-      onHorizontalDragEnd: widget.disabled ? null : _onDragEnd,
+      onHorizontalDragStart: disabled ? null : _onDragStart,
+      onHorizontalDragUpdate: disabled ? null : _onDragUpdate,
+      onHorizontalDragEnd: disabled ? null : _onDragEnd,
       child: AnimatedBuilder(
         animation: _offsetAnimation,
         builder: (context, child) {

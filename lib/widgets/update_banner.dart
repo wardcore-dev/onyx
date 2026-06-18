@@ -9,6 +9,132 @@ import 'package:url_launcher/url_launcher.dart';
 import '../utils/update_checker.dart';
 import '../l10n/app_localizations.dart';
 
+// ── Simple inline Markdown renderer (no external package needed) ────────────
+class MarkdownText extends StatelessWidget {
+  final String data;
+  final Color textColor;
+  final double baseFontSize;
+
+  const MarkdownText({
+    super.key,
+    required this.data,
+    required this.textColor,
+    this.baseFontSize = 13,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = data.split('\n');
+    final widgets = <Widget>[];
+
+    for (final rawLine in lines) {
+      final line = rawLine.trimRight();
+
+      if (line.startsWith('### ')) {
+        widgets.add(_headingLine(line.substring(4), baseFontSize + 0, FontWeight.w700));
+      } else if (line.startsWith('## ')) {
+        widgets.add(_headingLine(line.substring(3), baseFontSize + 1, FontWeight.w700));
+      } else if (line.startsWith('# ')) {
+        widgets.add(_headingLine(line.substring(2), baseFontSize + 2, FontWeight.bold));
+      } else if (line.startsWith('* ') || line.startsWith('- ')) {
+        widgets.add(_bulletLine(line.substring(2)));
+      } else if (line.trim().isEmpty) {
+        widgets.add(const SizedBox(height: 4));
+      } else {
+        widgets.add(Padding(
+          padding: const EdgeInsets.only(bottom: 2),
+          child: _inlineText(line, baseFontSize, FontWeight.normal),
+        ));
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: widgets,
+    );
+  }
+
+  Widget _headingLine(String text, double size, FontWeight weight) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 2),
+      child: _inlineText(text, size, weight),
+    );
+  }
+
+  Widget _bulletLine(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 5, right: 6),
+            child: Container(
+              width: 4,
+              height: 4,
+              decoration: BoxDecoration(
+                color: textColor.withValues(alpha: 0.6),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          Expanded(child: _inlineText(text, baseFontSize, FontWeight.normal)),
+        ],
+      ),
+    );
+  }
+
+  Widget _inlineText(String text, double size, FontWeight defaultWeight) {
+    final spans = <InlineSpan>[];
+    final regex = RegExp(r'\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`');
+    int cursor = 0;
+
+    for (final match in regex.allMatches(text)) {
+      if (match.start > cursor) {
+        spans.add(TextSpan(text: text.substring(cursor, match.start)));
+      }
+      if (match.group(1) != null) {
+        spans.add(TextSpan(
+          text: match.group(1),
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ));
+      } else if (match.group(2) != null) {
+        spans.add(TextSpan(
+          text: match.group(2),
+          style: const TextStyle(fontStyle: FontStyle.italic),
+        ));
+      } else if (match.group(3) != null) {
+        spans.add(TextSpan(
+          text: match.group(3),
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontSize: size - 1,
+            color: textColor.withValues(alpha: 0.8),
+          ),
+        ));
+      }
+      cursor = match.end;
+    }
+    if (cursor < text.length) {
+      spans.add(TextSpan(text: text.substring(cursor)));
+    }
+
+    return RichText(
+      text: TextSpan(
+        style: TextStyle(
+          fontSize: size,
+          fontWeight: defaultWeight,
+          color: textColor,
+          height: 1.5,
+        ),
+        children: spans,
+      ),
+    );
+  }
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 class UpdateBanner extends StatelessWidget {
   const UpdateBanner({super.key});
 
@@ -103,10 +229,23 @@ class _UpdateBannerContent extends StatelessWidget {
   }
 
   void _showDownloadDialog(BuildContext context, UpdateInfo info) {
-    showDialog(
+    showGeneralDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _DownloadDialog(info: info),
+      barrierLabel: 'Download Update',
+      barrierColor: Colors.black.withValues(alpha: 0.55),
+      transitionDuration: const Duration(milliseconds: 200),
+      transitionBuilder: (ctx, anim, _, child) {
+        final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+        return FadeTransition(
+          opacity: CurvedAnimation(parent: anim, curve: Curves.easeIn),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (_, __, ___) => _DownloadDialog(info: info),
     );
   }
 }
@@ -122,12 +261,22 @@ class _DownloadDialog extends StatefulWidget {
 
 class _DownloadDialogState extends State<_DownloadDialog> {
   double _progress = 0;
-  String _status = 'Ready to download';
+  late String _status;
+  bool _statusInitialized = false;
   bool _downloading = false;
   bool _done = false;
   String? _savedPath;
   bool _cancelled = false;
   http.Client? _client;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_statusInitialized) {
+      _status = AppLocalizations.of(context).downloadUpdateReady;
+      _statusInitialized = true;
+    }
+  }
 
   @override
   void dispose() {
@@ -137,14 +286,14 @@ class _DownloadDialogState extends State<_DownloadDialog> {
   }
 
   Future<void> _startDownload() async {
+    final l = AppLocalizations.of(context);
     setState(() {
       _downloading = true;
-      _status = 'Downloading...';
+      _status = l.downloadUpdateDownloading;
       _progress = 0;
     });
 
     try {
-      // iOS — открываем браузер (App Store не позволяет sideload)
       if (!kIsWeb && Platform.isIOS) {
         final url = Uri.parse(widget.info.downloadUrl ?? '');
         if (await canLaunchUrl(url)) {
@@ -157,13 +306,12 @@ class _DownloadDialogState extends State<_DownloadDialog> {
       final url = widget.info.downloadUrl;
       if (url == null) {
         setState(() {
-          _status = 'No download available for this platform';
+          _status = l.downloadUpdateNoPlatform;
           _downloading = false;
         });
         return;
       }
 
-      // Выбираем папку для сохранения
       Directory saveDir;
       if (Platform.isWindows) {
         saveDir = await getTemporaryDirectory();
@@ -179,13 +327,11 @@ class _DownloadDialogState extends State<_DownloadDialog> {
       final savePath =
           '${saveDir.path}${Platform.isWindows ? r'\' : '/'}${widget.info.assetName ?? 'onyx_update'}';
 
-      // Стриминговая загрузка с прогрессом
       _client = http.Client();
       final request = http.Request('GET', Uri.parse(url));
       final response = await _client!.send(request);
 
-      final totalBytes =
-          response.contentLength ?? widget.info.fileSize;
+      final totalBytes = response.contentLength ?? widget.info.fileSize;
       int receivedBytes = 0;
 
       final file = File(savePath);
@@ -210,13 +356,12 @@ class _DownloadDialogState extends State<_DownloadDialog> {
       if (mounted) {
         setState(() {
           _progress = 1.0;
-          _status = 'Download complete!';
+          _status = l.downloadUpdateComplete;
           _downloading = false;
           _done = true;
         });
       }
 
-      // На Windows и Android — сразу запускаем установщик
       if (!kIsWeb && (Platform.isWindows || Platform.isAndroid) && mounted) {
         await _launchInstaller();
       }
@@ -238,7 +383,8 @@ class _DownloadDialogState extends State<_DownloadDialog> {
         await Process.start(path, [], mode: ProcessStartMode.detached);
         exit(0);
       } else if (!kIsWeb && Platform.isAndroid) {
-        await OpenFilex.open(path, type: 'application/vnd.android.package-archive');
+        await OpenFilex.open(path,
+            type: 'application/vnd.android.package-archive');
         if (mounted) Navigator.of(context).pop();
       } else if (!kIsWeb && Platform.isMacOS) {
         await Process.run('open', [path]);
@@ -260,154 +406,269 @@ class _DownloadDialogState extends State<_DownloadDialog> {
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
+  void _cancel() {
+    _cancelled = true;
+    _client?.close();
+    Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
     final colorScheme = Theme.of(context).colorScheme;
     final fileSizeStr = _formatBytes(widget.info.fileSize);
+    final hasNotes = widget.info.releaseNotes != null &&
+        widget.info.releaseNotes!.trim().isNotEmpty;
 
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Row(
-        children: [
-          Icon(Icons.autorenew_rounded, color: colorScheme.primary, size: 22),
-          const SizedBox(width: 8),
-          const Text('Download Update'),
-        ],
-      ),
-      content: SizedBox(
-        width: 340,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 400),
+          child: Material(
+            color: colorScheme.surface,
+            borderRadius: BorderRadius.circular(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  'Version: ',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: colorScheme.onSurface.withValues(alpha: 0.6),
-                  ),
-                ),
-                Text(
-                  widget.info.version,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                if (fileSizeStr.isNotEmpty) ...[
-                  const SizedBox(width: 12),
-                  Text(
-                    fileSizeStr,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: colorScheme.onSurface.withValues(alpha: 0.45),
+                // ── Header ──────────────────────────────────────────────
+                Container(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 16, 20),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primary.withValues(alpha: 0.07),
+                    border: Border(
+                      bottom: BorderSide(
+                        color: colorScheme.primary.withValues(alpha: 0.10),
+                        width: 0.8,
+                      ),
                     ),
                   ),
-                ],
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: colorScheme.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          Icons.system_update_rounded,
+                          color: colorScheme.primary,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              l.downloadUpdateTitle,
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: colorScheme.primary
+                                        .withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    widget.info.version,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: colorScheme.primary,
+                                    ),
+                                  ),
+                                ),
+                                if (fileSizeStr.isNotEmpty) ...[
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    fileSizeStr,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: colorScheme.onSurface
+                                          .withValues(alpha: 0.45),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      // X кнопка
+                      if (!_downloading)
+                        GestureDetector(
+                          onTap: _cancel,
+                          child: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: colorScheme.onSurface.withValues(alpha: 0.07),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(
+                              Icons.close_rounded,
+                              size: 18,
+                              color: colorScheme.onSurface.withValues(alpha: 0.55),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
+                // ── Release notes ────────────────────────────────────────
+                if (hasNotes)
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 240),
+                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          l.downloadUpdateWhatsNew,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.9,
+                            color: colorScheme.onSurface.withValues(alpha: 0.38),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Flexible(
+                          child: SingleChildScrollView(
+                            child: MarkdownText(
+                              data: widget.info.releaseNotes!,
+                              textColor: colorScheme.onSurface
+                                  .withValues(alpha: 0.65),
+                              baseFontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // ── Progress / status ────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (_downloading || _done) ...[
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: LinearProgressIndicator(
+                            value: _progress > 0 ? _progress : null,
+                            minHeight: 6,
+                            backgroundColor:
+                                colorScheme.surfaceContainerHighest,
+                            valueColor:
+                                AlwaysStoppedAnimation(colorScheme.primary),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _downloading
+                              ? '${(_progress * 100).toStringAsFixed(0)}%  —  $_status'
+                              : _status,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: _done
+                                ? colorScheme.primary
+                                : colorScheme.onSurface.withValues(alpha: 0.55),
+                          ),
+                        ),
+                      ] else
+                        Text(
+                          _status,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colorScheme.onSurface.withValues(alpha: 0.5),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
+                // ── Action buttons ───────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (!_downloading && !_done)
+                        FilledButton.icon(
+                          onPressed: _startDownload,
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: const StadiumBorder(),
+                          ),
+                          icon: const Icon(Icons.download_rounded, size: 18),
+                          label: Text(
+                            l.downloadUpdateInstall,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      if (_downloading)
+                        OutlinedButton(
+                          onPressed: _cancel,
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: const StadiumBorder(),
+                          ),
+                          child: Text(l.downloadUpdateCancel),
+                        ),
+                      if (_done && !kIsWeb && !Platform.isWindows)
+                        FilledButton(
+                          onPressed: _launchInstaller,
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: const StadiumBorder(),
+                          ),
+                          child: Text(
+                            l.downloadUpdateOpen,
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      if (!_downloading && !_done && _status.startsWith('Error'))
+                        FilledButton.icon(
+                          onPressed: _startDownload,
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: const StadiumBorder(),
+                          ),
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          label: Text(l.downloadUpdateRetry),
+                        ),
+                    ],
+                  ),
+                ),
               ],
             ),
-            if (widget.info.releaseNotes != null &&
-                widget.info.releaseNotes!.trim().isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(
-                'What\'s new:',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
-                  color: colorScheme.onSurface.withValues(alpha: 0.6),
-                ),
-              ),
-              const SizedBox(height: 4),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 110),
-                child: SingleChildScrollView(
-                  child: Text(
-                    widget.info.releaseNotes!,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: colorScheme.onSurface.withValues(alpha: 0.55),
-                      height: 1.45,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            if (_downloading || _done) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: _progress > 0 ? _progress : null,
-                  minHeight: 5,
-                  backgroundColor:
-                      colorScheme.surfaceContainerHighest,
-                  valueColor:
-                      AlwaysStoppedAnimation(colorScheme.primary),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _downloading
-                    ? '${(_progress * 100).toStringAsFixed(0)}%'
-                    : _status,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: _done
-                      ? colorScheme.primary
-                      : colorScheme.onSurface.withValues(alpha: 0.55),
-                ),
-              ),
-            ] else ...[
-              Text(
-                _status,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: colorScheme.onSurface.withValues(alpha: 0.5),
-                ),
-              ),
-            ],
-          ],
+          ),
         ),
       ),
-      actions: [
-        if (!_downloading && !_done) ...[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton.icon(
-            onPressed: _startDownload,
-            icon: const Icon(Icons.download_rounded, size: 17),
-            label: const Text('Download & Install'),
-          ),
-        ],
-        if (_done && !kIsWeb && !Platform.isWindows) ...[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-          FilledButton(
-            onPressed: _launchInstaller,
-            child: const Text('Open'),
-          ),
-        ],
-        if (_downloading)
-          TextButton(
-            onPressed: () {
-              _cancelled = true;
-              _client?.close();
-              Navigator.of(context).pop();
-            },
-            child: const Text('Cancel'),
-          ),
-        if (!_downloading && !_done && _status.startsWith('Error'))
-          FilledButton(
-            onPressed: _startDownload,
-            child: const Text('Retry'),
-          ),
-      ],
     );
   }
 }

@@ -5,29 +5,57 @@ import '../utils/global_audio_controller.dart';
 class FullPlayerSheet extends StatelessWidget {
   const FullPlayerSheet({super.key});
 
+  /// Presented as a large centered dialog (Spotify/Apple Music "Now Playing"
+  /// style) instead of a sheet sliding up from the bottom.
   static Future<void> show(BuildContext context) {
-    return showModalBottomSheet(
+    return showGeneralDialog(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      useSafeArea: true,
-      builder: (_) => const FullPlayerSheet(),
+      barrierDismissible: true,
+      barrierLabel: 'Now Playing',
+      barrierColor: Colors.black.withValues(alpha: 0.55),
+      transitionDuration: const Duration(milliseconds: 200),
+      transitionBuilder: (ctx, anim, _, child) {
+        final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+        return FadeTransition(
+          opacity: CurvedAnimation(parent: anim, curve: Curves.easeIn),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.94, end: 1.0).animate(curved),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (_, __, ___) => const FullPlayerSheet(),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final h = MediaQuery.of(context).size.height;
-    return Container(
-      height: h * 0.88,
-      decoration: BoxDecoration(
-        color: cs.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+    final mq = MediaQuery.of(context);
+    final isWide = mq.size.width > 700;
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: isWide ? 40 : 20,
+        vertical: 32,
       ),
-      child: AnimatedBuilder(
-        animation: globalAudioController,
-        builder: (context, _) => _buildContent(context),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 420,
+            maxHeight: mq.size.height * 0.88,
+          ),
+          child: Material(
+            color: cs.surface,
+            borderRadius: BorderRadius.circular(28),
+            child: AnimatedBuilder(
+              animation: globalAudioController,
+              builder: (context, _) => _buildContent(context),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -41,82 +69,145 @@ class FullPlayerSheet extends StatelessWidget {
             .clamp(0.0, 1.0)
         : 0.0;
 
-    return Column(
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final glowColor = cs.primary;
+
+    return Stack(
       children: [
-        // ── Drag handle ────────────────────────────────────────────────────
-        Center(
-          child: Container(
-            margin: const EdgeInsets.only(top: 12, bottom: 4),
-            width: 40,
-            height: 4,
+        // ── Ambient glow backdrop (stand-in for blurred album art) ─────────
+        Positioned.fill(
+          child: DecoratedBox(
             decoration: BoxDecoration(
-              color: cs.onSurface.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(2),
+              gradient: RadialGradient(
+                center: const Alignment(0, -0.6),
+                radius: 1.1,
+                colors: [
+                  glowColor.withValues(alpha: isDark ? 0.22 : 0.12),
+                  cs.surface.withValues(alpha: 0),
+                ],
+              ),
             ),
           ),
         ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Column(
-              children: [
-                const SizedBox(height: 24),
-
-                // ── Large art / icon ───────────────────────────────────────
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  child: Container(
-                    key: ValueKey(ctrl.isPlaying),
-                    width: 190,
-                    height: 190,
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ── Header ────────────────────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 18, 16, 16),
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.06),
+                border: Border(
+                  bottom: BorderSide(color: cs.primary.withValues(alpha: 0.10), width: 0.8),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
                     decoration: BoxDecoration(
-                      color: cs.primaryContainer,
-                      borderRadius: BorderRadius.circular(22),
-                      boxShadow: [
-                        BoxShadow(
-                          color: cs.primary.withValues(
-                              alpha: ctrl.isPlaying ? 0.4 : 0.15),
-                          blurRadius: ctrl.isPlaying ? 48 : 24,
-                          offset: const Offset(0, 14),
-                        ),
-                      ],
+                      color: cs.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Icon(
-                      ctrl.isPlaying
-                          ? Icons.graphic_eq_rounded
-                          : (ctrl.isFile
-                              ? Icons.music_note_rounded
-                              : Icons.mic_rounded),
-                      size: 84,
-                      color: cs.onPrimaryContainer,
-                    ),
+                    child: Icon(Icons.graphic_eq_rounded, size: 18, color: cs.primary),
                   ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // ── Track name ─────────────────────────────────────────────
-                Text(
-                  ctrl.trackName ?? '',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.4,
-                        fontSize: 20,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text('Now Playing',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: cs.onSurface)),
+                  ),
+                  GestureDetector(
+                    onTap: () => Navigator.of(context).pop(),
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: cs.onSurface.withValues(alpha: 0.07),
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  ctrl.isFile ? 'Audio file' : 'Voice message',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: cs.onSurface.withValues(alpha: 0.45),
+                      child: Icon(Icons.close_rounded, size: 18, color: cs.onSurface.withValues(alpha: 0.55)),
+                    ),
                   ),
-                ),
+                ],
+              ),
+            ),
+            // Flexible (not Expanded) so this only takes as much height as its
+            // content actually needs, up to the dialog's max — Expanded was
+            // forcing it to always fill the full 88%-of-screen bound, leaving
+            // an empty stretch below the controls whenever content was shorter.
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 14),
 
-                const SizedBox(height: 24),
+                    // ── Large art / icon ───────────────────────────────────────
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 300),
+                      child: Container(
+                        key: ValueKey(ctrl.isPlaying),
+                        width: 196,
+                        height: 196,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              cs.primary.withValues(alpha: 0.9),
+                              cs.primary.withValues(alpha: 0.55),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(32),
+                          boxShadow: [
+                            BoxShadow(
+                              color: glowColor.withValues(
+                                  alpha: ctrl.isPlaying ? 0.45 : 0.2),
+                              blurRadius: ctrl.isPlaying ? 56 : 28,
+                              offset: const Offset(0, 16),
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                                ctrl.isFile
+                                    ? Icons.music_note_rounded
+                                    : Icons.mic_rounded,
+                                size: 80,
+                                color: cs.onPrimary.withValues(alpha: 0.95),
+                              ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // ── Track name ─────────────────────────────────────────────
+                    Text(
+                      ctrl.isFile
+                          ? (ctrl.trackName?.isNotEmpty == true
+                              ? ctrl.trackName!
+                              : 'Audio')
+                          : 'Voice Message',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.3,
+                        fontSize: 21,
+                      ),
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      ctrl.isFile ? 'Audio file' : 'Voice message',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: cs.onSurface.withValues(alpha: 0.45),
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
 
                 // ── Progress slider ────────────────────────────────────────
                 SliderTheme(
@@ -169,7 +260,7 @@ class FullPlayerSheet extends StatelessWidget {
                   ),
                 ),
 
-                const SizedBox(height: 28),
+                const SizedBox(height: 20),
 
                 // ── Transport: prev / -10s / play-pause / +10s / next ──────
                 Row(
@@ -381,39 +472,89 @@ class FullPlayerSheet extends StatelessWidget {
                   ],
                 ),
 
-                const Spacer(),
+                const SizedBox(height: 20),
 
-                // ── Close row ──────────────────────────────────────────────
+                // ── Volume ───────────────────────────────────────────────────
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    TextButton.icon(
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.keyboard_arrow_down_rounded,
-                          size: 22),
-                      label: const Text('Minimize'),
-                      style: TextButton.styleFrom(
-                        foregroundColor:
-                            cs.onSurface.withValues(alpha: 0.5),
+                    Icon(
+                      ctrl.volume <= 0.0
+                          ? Icons.volume_off_rounded
+                          : (ctrl.volume < 0.5
+                              ? Icons.volume_down_rounded
+                              : Icons.volume_up_rounded),
+                      size: 18,
+                      color: cs.onSurface.withValues(alpha: 0.55),
+                    ),
+                    Expanded(
+                      child: SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 3,
+                          thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 7),
+                          overlayShape: const RoundSliderOverlayShape(
+                              overlayRadius: 14),
+                          activeTrackColor: cs.primary,
+                          inactiveTrackColor:
+                              cs.primary.withValues(alpha: 0.15),
+                          thumbColor: cs.primary,
+                          overlayColor: cs.primary.withValues(alpha: 0.1),
+                        ),
+                        child: Slider(
+                          value: ctrl.volume.clamp(0.0, 1.0),
+                          onChanged: globalAudioController.setVolume,
+                        ),
                       ),
                     ),
-                    TextButton.icon(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        globalAudioController.stopAndClose();
-                      },
-                      icon: const Icon(Icons.close_rounded, size: 18),
-                      label: const Text('Stop'),
-                      style: TextButton.styleFrom(
-                        foregroundColor: cs.error.withValues(alpha: 0.7),
-                      ),
-                    ),
+                    Icon(Icons.volume_up_rounded,
+                        size: 18, color: cs.onSurface.withValues(alpha: 0.55)),
                   ],
                 ),
-                const SizedBox(height: 12),
-              ],
+                const SizedBox(height: 20),
+
+                // ── Stop ─────────────────────────────────────────────────────
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: cs.surfaceContainerHighest.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
+                        width: 0.8,
+                      ),
+                    ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: () {
+                          globalAudioController.stopAndClose();
+                          Navigator.of(context).pop();
+                        },
+                        icon: const Icon(Icons.stop_rounded, size: 18, color: Colors.red),
+                        label: const Text(
+                          'Stop',
+                          style: TextStyle(fontSize: 15, color: Colors.red),
+                        ),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Colors.red.withValues(alpha: 0.12),
+                          foregroundColor: Colors.red,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          elevation: 0,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                  ],
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ],
     );
@@ -478,21 +619,18 @@ class _PresetChip extends StatelessWidget {
       onTap: () => globalAudioController.setPlaybackSpeed(speed),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 140),
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: selected ? cs.primaryContainer : Colors.transparent,
+          color: selected ? cs.primary : cs.onSurface.withValues(alpha: 0.06),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: selected ? cs.primary : cs.onSurface.withValues(alpha: 0.2),
-          ),
         ),
         child: Text(
           label,
           style: TextStyle(
             fontSize: 12,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
             color: selected
-                ? cs.onPrimaryContainer
+                ? cs.onPrimary
                 : cs.onSurface.withValues(alpha: 0.55),
           ),
         ),

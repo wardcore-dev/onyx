@@ -144,6 +144,7 @@ class _ChatPinScreenState extends State<_ChatPinScreen>
       }
     } else {
       if (LockManager.verifyPin(widget.chatId, _pin)) {
+        LockManager.sessionUnlock(widget.chatId);
         if (mounted) Navigator.of(context).pop(true);
       } else {
         _shake();

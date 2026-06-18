@@ -6,6 +6,7 @@ import '../managers/decoy_manager.dart';
 import '../globals.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/auth_dialog.dart';
+import '../widgets/migration_dialog.dart';
 import 'root_screen.dart';
 import 'device_auth_screen.dart';
 import '../models/app_themes.dart';
@@ -27,6 +28,14 @@ class RootScreenWrapper extends StatefulWidget {
 }
 
 class _RootScreenWrapperState extends State<RootScreenWrapper> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) showMigrationDialogIfNeeded(context);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(

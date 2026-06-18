@@ -119,6 +119,11 @@ class _AccountsTabState extends State<AccountsTab>
     
     AccountManager.ensureAccountsLoaded();
     AccountManager.accountsNotifier.addListener(_onAccountsChanged);
+    // Re-read token_created_at whenever the session gets (re)confirmed —
+    // root_screen re-baselines it on init_complete, so a stale, already-
+    // loaded _tokenExpiresAt would otherwise keep showing a false "expired"
+    // banner for an account that just proved it's still valid.
+    sessionExpiredNotifier.addListener(_onSessionConfirmedValid);
     if (!DecoyManager.isActive.value) {
       _accounts = List<String>.from(AccountManager.accountsNotifier.value);
     }
@@ -141,6 +146,12 @@ class _AccountsTabState extends State<AccountsTab>
     });
 
     _loadTokenExpiry();
+  }
+
+  void _onSessionConfirmedValid() {
+    if (!sessionExpiredNotifier.value) {
+      _loadTokenExpiry();
+    }
   }
 
   Future<void> _loadTokenExpiry() async {
@@ -166,6 +177,7 @@ class _AccountsTabState extends State<AccountsTab>
   @override
   void dispose() {
     AccountManager.accountsNotifier.removeListener(_onAccountsChanged);
+    sessionExpiredNotifier.removeListener(_onSessionConfirmedValid);
     _fadeController.dispose();
     super.dispose();
   }
@@ -285,186 +297,248 @@ class _AccountsTabState extends State<AccountsTab>
 
     bool avatarChanged = false;
 
-    final result = await showDialog<bool>(
+    final result = await showGeneralDialog<bool>(
       context: context,
-      builder: (ctx) {
-        return ValueListenableBuilder<double>(
-          valueListenable: SettingsManager.elementBrightness,
-          builder: (_, brightness, __) {
-            final surfaceVariantColor = SettingsManager.getElementColor(
-              Theme.of(ctx).colorScheme.surfaceVariant,
-              brightness,
-            );
-            final keyboardInset = MediaQuery.of(ctx).viewInsets.bottom;
-            return Padding(
-              padding: EdgeInsets.only(bottom: keyboardInset),
-              child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 400),
-                child: SingleChildScrollView(
-                  child: Dialog(
-                  backgroundColor: Theme.of(ctx).colorScheme.surfaceContainerHighest.withValues(alpha: SettingsManager.elementOpacity.value),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  child: Padding(
-                padding: const EdgeInsets.all(16.0),
+      barrierDismissible: true,
+      barrierLabel: 'Profile',
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      transitionDuration: const Duration(milliseconds: 187),
+      transitionBuilder: (ctx, anim, _, child) {
+        final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+        return FadeTransition(
+          opacity: CurvedAnimation(parent: anim, curve: Curves.easeIn),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.93, end: 1.0).animate(curved),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (ctx, _, __) {
+        final cs = Theme.of(ctx).colorScheme;
+        final l = AppLocalizations.of(ctx);
+        const btnShape = RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(50)));
+        const btnPadding = EdgeInsets.symmetric(vertical: 13);
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: Material(
+                color: cs.surface,
+                borderRadius: BorderRadius.circular(28),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      AppLocalizations.of(ctx).editProfile,
-                      style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    Center(
-                      child: Column(
+                    // ── Header tinted ──────────────────────────────────
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(20, 18, 16, 16),
+                      decoration: BoxDecoration(
+                        color: cs.primary.withValues(alpha: 0.06),
+                        border: Border(
+                          bottom: BorderSide(
+                              color: cs.primary.withValues(alpha: 0.10),
+                              width: 0.8),
+                        ),
+                      ),
+                      child: Row(
                         children: [
-                          AvatarWidget(
-                            username: username,
-                            tokenProvider: avatarTokenProvider,
-                            avatarBaseUrl: serverBase,
-                            size: 96.0,
-                            editable: true,
-                            onUploaded: (url) {
-                              avatarChanged = true;
-                              
-                              _showSnack(AppLocalizations.of(context).avatarUpdated);
-                            },
-                            onDeleted: () {
-                              avatarChanged = true;
-                              _showSnack(AppLocalizations.of(context).avatarRemoved);
-                            },
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: cs.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(Icons.person_rounded,
+                                size: 18, color: cs.primary),
                           ),
-                          const SizedBox(height: 8),
-                          Column(
-                            children: [
-                              TextButton(
-                                style: TextButton.styleFrom(
-                                  padding: EdgeInsets.zero,
-                                  minimumSize: Size(0, 0),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                ),
-                                onPressed: () {
-                                  _copyToClipboard(ctx, '@$username');
-                                  _showSnack(AppLocalizations.of(context).copiedUsername(username));
-                                },
-                                child: Text(
-                                  '@$username',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: Theme.of(ctx).colorScheme.primary,
-                                    decoration: TextDecoration.underline,
-                                  ),
-                                ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              l.editProfile,
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                                color: cs.onSurface,
                               ),
-                              if (widget.currentUin != null) ...[
-                                const SizedBox(height: 4),
-                                GestureDetector(
-                                  onTap: () {
-                                    _copyToClipboard(ctx, widget.currentUin!);
-                                    _showSnack('${AppLocalizations.of(context).uinCopied}: ${widget.currentUin}');
-                                  },
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                                    decoration: BoxDecoration(
-                                      color: Theme.of(ctx).colorScheme.primary.withValues(alpha: 0.1),
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Text(
-                                      '#${widget.currentUin}',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w600,
-                                        color: Theme.of(ctx).colorScheme.primary.withValues(alpha: 0.8),
-                                        letterSpacing: 0.5,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ],
+                            ),
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Tap avatar to change • Long-press to remove',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Theme.of(ctx).colorScheme.onSurface.withValues(alpha: 0.55),
+                          GestureDetector(
+                            onTap: () => Navigator.of(ctx).pop(false),
+                            child: Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: cs.onSurface.withValues(alpha: 0.07),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(Icons.close_rounded,
+                                  size: 18,
+                                  color: cs.onSurface.withValues(alpha: 0.55)),
                             ),
                           ),
                         ],
                       ),
                     ),
-
-                    const SizedBox(height: 20),
-
-                    Text(
-                      AppLocalizations.of(ctx).displayName,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(ctx).colorScheme.onSurface,
+                    // ── Content ────────────────────────────────────────
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Center(
+                            child: Column(
+                              children: [
+                                AvatarWidget(
+                                  username: username,
+                                  tokenProvider: avatarTokenProvider,
+                                  avatarBaseUrl: serverBase,
+                                  size: 88.0,
+                                  editable: true,
+                                  onUploaded: (url) {
+                                    avatarChanged = true;
+                                    _showSnack(l.avatarUpdated);
+                                  },
+                                  onDeleted: () {
+                                    avatarChanged = true;
+                                    _showSnack(l.avatarRemoved);
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                GestureDetector(
+                                  onTap: () {
+                                    _copyToClipboard(ctx, '@$username');
+                                    _showSnack(l.copiedUsername(username));
+                                  },
+                                  child: Text(
+                                    '@$username',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      color: cs.primary,
+                                      decoration: TextDecoration.underline,
+                                      decorationColor: cs.primary
+                                          .withValues(alpha: 0.4),
+                                    ),
+                                  ),
+                                ),
+                                if (widget.currentUin != null) ...[
+                                  const SizedBox(height: 6),
+                                  GestureDetector(
+                                    onTap: () {
+                                      _copyToClipboard(ctx, widget.currentUin!);
+                                      _showSnack(
+                                          '${l.uinCopied}: ${widget.currentUin}');
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color:
+                                            cs.primary.withValues(alpha: 0.10),
+                                        borderRadius: BorderRadius.circular(20),
+                                      ),
+                                      child: Text(
+                                        '#${widget.currentUin}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: cs.primary
+                                              .withValues(alpha: 0.85),
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 8),
+                                Text(
+                                  l.tapAvatarHint,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: cs.onSurface.withValues(alpha: 0.45),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          Text(
+                            l.displayName,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: cs.onSurface.withValues(alpha: 0.6),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ValueListenableBuilder<double>(
+                            valueListenable: SettingsManager.elementBrightness,
+                            builder: (_, brightness, __) {
+                              final baseColor = SettingsManager.getElementColor(
+                                cs.surfaceContainerHighest, brightness);
+                              return TextField(
+                                controller: displayNameCtrl,
+                                autofocus: true,
+                                maxLength: 16,
+                                decoration: InputDecoration(
+                                  filled: true,
+                                  fillColor: baseColor.withValues(alpha: 0.5),
+                                  border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14)),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: BorderSide(
+                                        color: cs.outlineVariant
+                                            .withValues(alpha: 0.3),
+                                        width: 0.8),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide:
+                                        BorderSide(color: cs.primary, width: 1.4),
+                                  ),
+                                  counterStyle: TextStyle(
+                                    fontSize: 11,
+                                    color: cs.onSurface.withValues(alpha: 0.45),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 20),
+                          FilledButton(
+                            style: FilledButton.styleFrom(
+                              padding: btnPadding,
+                              shape: btnShape,
+                            ),
+                            onPressed: () {
+                              final newName = displayNameCtrl.text.trim();
+                              if (newName.isEmpty || newName.length > 16) {
+                                _showSnack(l.displayNameLength);
+                                return;
+                              }
+                              if (newName == currentDisplayName) {
+                                Navigator.of(ctx).pop(false);
+                                return;
+                              }
+                              Navigator.of(ctx).pop(true);
+                            },
+                            child: Text(l.save),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: displayNameCtrl,
-                      maxLength: 16,
-                      decoration: InputDecoration(
-                        hintText: 'Enter your display name',
-                        filled: true,
-                        fillColor: surfaceVariantColor.withValues(alpha: 0.3),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
-                        ),
-                        counterStyle: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(ctx).colorScheme.onSurface.withValues(alpha: 0.5),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    Row(
-                      children: [
-                        TextButton(
-                          onPressed: () => Navigator.of(ctx).pop(false),
-                          child: const Text('Cancel'),
-                        ),
-                        const Spacer(),
-                        FilledButton(
-                          onPressed: () {
-                            final newName = displayNameCtrl.text.trim();
-                            if (newName.isEmpty || newName.length > 16) {
-                              _showSnack(AppLocalizations.of(context).displayNameLength);
-                              return;
-                            }
-                            if (newName == currentDisplayName) {
-                              Navigator.of(ctx).pop(false);
-                              return;
-                            }
-                            Navigator.of(ctx).pop(true);
-                          },
-                          child: const Text('Save'),
-                        ),
-                      ],
                     ),
                   ],
-                ),           
-              ),             
-            ),               
-          ),                 
-        ),                   
-      ),                     
-    );                       
-          },
+                ),
+              ),
+            ),
+          ),
         );
       },
     );
@@ -776,8 +850,9 @@ class _AccountsTabState extends State<AccountsTab>
           if (!DecoyManager.isActive.value)
             ValueListenableBuilder<bool>(
               valueListenable: sessionExpiredNotifier,
-              builder: (_, expired, __) {
+              builder: (ctx, expired, __) {
                 if (!expired) return const SizedBox.shrink();
+                final l = AppLocalizations.of(ctx);
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Container(
@@ -788,19 +863,44 @@ class _AccountsTabState extends State<AccountsTab>
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(color: Colors.orange.withValues(alpha: 0.5), width: 1),
                     ),
-                    child: const Row(
+                    child: Row(
                       children: [
-                        Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 20),
-                        SizedBox(width: 10),
+                        const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 20),
+                        const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            'Session expired — please log in again',
-                            style: TextStyle(
+                            l.sessionExpiredBanner,
+                            style: const TextStyle(
                               color: Colors.orange,
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
+                        ),
+                        const SizedBox(width: 6),
+                        TextButton(
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.orange,
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                          ),
+                          onPressed: () async {
+                            await showGeneralDialog(
+                              context: ctx,
+                              barrierDismissible: true,
+                              barrierLabel: 'Authentication',
+                              transitionDuration: const Duration(milliseconds: 133),
+                              pageBuilder: (dialogCtx, anim1, anim2) => AuthDialog(
+                                onLogin: widget.onLogin,
+                                onRegister: widget.onRegister,
+                                onQrLogin: widget.onQrLogin,
+                              ),
+                            );
+                            if (mounted) _loadTokenExpiry();
+                          },
+                          child: Text(l.sessionSignIn),
                         ),
                       ],
                     ),
@@ -809,13 +909,19 @@ class _AccountsTabState extends State<AccountsTab>
               },
             ),
 
-          // Token expiry banner
+          // Token expiry banner — suppressed while the orange "session expired"
+          // banner is showing, so the user sees a single notification instead
+          // of two redundant ones for the same expired session.
           if (widget.currentUsername != null && !DecoyManager.isActive.value) ...[
-            Builder(builder: (ctx) {
-              final banner = _buildTokenExpiryBanner(ctx);
-              if (banner == null) return const SizedBox.shrink();
-              return Column(children: [banner, const SizedBox(height: 12)]);
-            }),
+            ValueListenableBuilder<bool>(
+              valueListenable: sessionExpiredNotifier,
+              builder: (ctx, sessionExpired, __) {
+                if (sessionExpired) return const SizedBox.shrink();
+                final banner = _buildTokenExpiryBanner(ctx);
+                if (banner == null) return const SizedBox.shrink();
+                return Column(children: [banner, const SizedBox(height: 12)]);
+              },
+            ),
           ],
 
           if (widget.currentUsername != null)

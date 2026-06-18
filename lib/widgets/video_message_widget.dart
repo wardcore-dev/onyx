@@ -5,8 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemChrome, SystemUiMode, SystemUiOverlay;
 import 'dart:io' show File, Directory, Platform;
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
 import 'package:path/path.dart' as p;
+import '../utils/file_utils.dart' show getOnyxSaveDirectory;
 import 'package:file_picker/file_picker.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:visibility_detector/visibility_detector.dart';
@@ -14,7 +15,11 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import '../managers/account_manager.dart';
 import '../managers/external_server_manager.dart';
+import '../managers/settings_manager.dart';
+import '../l10n/app_localizations.dart';
 import '../globals.dart';
+import '../utils/blurhash_cache.dart';
+import 'package:flutter_blurhash/flutter_blurhash.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 // ── File cache ────────────────────────────────────────────────────────────────
@@ -53,6 +58,14 @@ class VideoMessageWidget extends StatefulWidget {
   final String? owner;
   final String peerUsername;
   final String? mediaKeyB64;
+  /// BlurHash poster from the message metadata — shows a blurred preview behind
+  /// the play button while the video is unloaded. Null for videos sent without
+  /// one; in that case a poster is captured from the first frame after the
+  /// video is opened once and reused on later views (BlurHashCache).
+  final String? blurHash;
+  /// Aspect ratio embedded in the message metadata at send time. Used to size
+  /// the bubble correctly before the video is ever played. Falls back to 16/9.
+  final double? initialAspectRatio;
 
   const VideoMessageWidget({
     super.key,
@@ -60,6 +73,8 @@ class VideoMessageWidget extends StatefulWidget {
     this.owner,
     required this.peerUsername,
     this.mediaKeyB64,
+    this.blurHash,
+    this.initialAspectRatio,
   });
 
   @override
@@ -74,6 +89,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
   String? _errorDetails;
   bool _loading = false;
   bool _error = false;
+  bool _needsTap = false; // true = waiting for user tap before downloading
   File? _cachedFile;
   double? _downloadProgress; // 0.0–1.0, null = no progress info
 
@@ -92,8 +108,30 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
   @override
   void initState() {
     super.initState();
-    // Start loading immediately — don't wait for scroll visibility
-    _loading = true;
+    // Seed from metadata so the bubble has the right shape before the video plays.
+    if (widget.initialAspectRatio != null && widget.initialAspectRatio! > 0) {
+      _aspectRatio = widget.initialAspectRatio!;
+    }
+    // Auto-load only when the user opted in, or when this video is already
+    // prepared in the session cache (cheap to show, no download/player spin-up).
+    // Otherwise show a tap-to-load placeholder so scrolling past videos stays
+    // smooth — preparing a video is the main source of jank.
+    final hasLivePlayer = _globalPlayerCache.containsKey(widget.filename);
+    if (SettingsManager.autoLoadVideoEnabled.value || hasLivePlayer) {
+      _loading = true;
+      _loadOrDownload();
+    } else {
+      _needsTap = true;
+    }
+  }
+
+  void _startLoadFromTap() {
+    setState(() {
+      _needsTap = false;
+      _loading = true;
+      _error = false;
+      _errorDetails = null;
+    });
     _loadOrDownload();
   }
 
@@ -107,8 +145,30 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
         final entry = _globalPlayerCache[widget.filename];
         if (entry != null) entry.aspectRatio = ar;
         setState(() => _aspectRatio = ar);
+        // First decoded frame is available now — capture a poster so future
+        // views (and the unloaded placeholder) show a blurred preview.
+        _capturePosterIfNeeded(player);
       }
     });
+  }
+
+  bool _posterCaptured = false;
+
+  /// Grabs the current frame once and stores a BlurHash poster for this video,
+  /// unless we already have one. Best-effort; never throws.
+  Future<void> _capturePosterIfNeeded(Player player) async {
+    if (_posterCaptured) return;
+    if (widget.blurHash != null && widget.blurHash!.isNotEmpty) return;
+    if (BlurHashCache.instance.get(widget.filename) != null) return;
+    _posterCaptured = true;
+    try {
+      final bytes = await player.screenshot();
+      if (bytes != null && bytes.isNotEmpty) {
+        BlurHashCache.instance.ensureForBytes(widget.filename, bytes);
+      }
+    } catch (_) {
+      // Screenshot unsupported on this platform / not ready — ignore.
+    }
   }
 
   Future<void> _initPlayer(File file) async {
@@ -194,7 +254,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
     }
 
     try {
-      final appSupport = await getApplicationSupportDirectory();
+      final appSupport = await getOnyxSupportDirectory();
       final cacheDir = Directory('${appSupport.path}/video_cache');
       await cacheDir.create(recursive: true);
 
@@ -202,14 +262,14 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
 
       if (widget.filename.startsWith('lan://')) {
         final lanFilename = widget.filename.substring(6);
-        final appDocuments = await getApplicationDocumentsDirectory();
+        final appDocuments = await getOnyxDocumentsDirectory();
         cachedFile = File('${appDocuments.path}/lan_media/$lanFilename');
         if (!(await cachedFile.exists())) {
           throw Exception('LAN file not found: $lanFilename');
         }
       } else if (widget.filename.startsWith('fav://')) {
         final favFilename = widget.filename.substring(6);
-        final appDocuments = await getApplicationDocumentsDirectory();
+        final appDocuments = await getOnyxDocumentsDirectory();
         cachedFile = File('${appDocuments.path}/fav_media/$favFilename');
         if (!(await cachedFile.exists())) {
           throw Exception('Favorites file not found: $favFilename');
@@ -396,13 +456,13 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
             rootScreenKey.currentState?.showSnack('Save cancelled');
             return;
           }
-          final dl = await getDownloadsDirectory();
-          if (dl == null) {
+          final onyxDir = await getOnyxSaveDirectory();
+          if (onyxDir == null) {
             rootScreenKey.currentState
                 ?.showSnack('Cannot access save directory');
             return;
           }
-          destPath = '${dl.path}/$safeName';
+          destPath = '${onyxDir.path}/$safeName';
         }
         final savedFile = File(destPath);
         await _cachedFile!.copy(savedFile.path);
@@ -431,12 +491,12 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
         return;
       }
 
-      final dl = await getDownloadsDirectory();
-      if (dl == null) {
+      final onyxDir = await getOnyxSaveDirectory();
+      if (onyxDir == null) {
         rootScreenKey.currentState?.showSnack('Cannot access save directory');
         return;
       }
-      final savedFile = File('${dl.path}/$safeName');
+      final savedFile = File('${onyxDir.path}/$safeName');
       await _cachedFile!.copy(savedFile.path);
       rootScreenKey.currentState?.showSnack('Saved to: ${savedFile.path}');
     } catch (e, st) {
@@ -500,10 +560,25 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
   }
 
   Widget _buildVideoWidget(BuildContext context) {
+    if (_needsTap) {
+      return _tapToLoadBox(context);
+    }
+
     if (_loading) {
+      final hash =
+          widget.blurHash ?? BlurHashCache.instance.get(widget.filename);
       return _sizedBox(
         context,
-        child: Center(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (hash != null && hash.isNotEmpty)
+              Image(
+                image: BlurHashImage(hash),
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+              ),
+            Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -531,6 +606,8 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
                 const CircularProgressIndicator(color: Colors.white),
             ],
           ),
+            ),
+          ],
         ),
         color: Colors.black,
       );
@@ -552,24 +629,73 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
     );
   }
 
-  /// A container sized to match the video's aspect ratio.
+  /// A container sized to match the video's aspect ratio with Telegram-style
+  /// proportional constraints: portrait clips to 300×460, landscape to 300×168.
   Widget _sizedBox(BuildContext context,
       {required Widget child, Color color = Colors.transparent}) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: SizedBox(
-        width: 380,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 300, maxHeight: 460),
         child: AspectRatio(
-          aspectRatio: _aspectRatio,
+          aspectRatio: _aspectRatio.clamp(0.4, 2.0),
           child: Container(color: color, child: child),
         ),
       ),
     );
   }
 
+  /// Shown when auto-load is off and the video hasn't been requested yet:
+  /// a dark poster-sized box with a play button. Tapping starts the download.
+  Widget _tapToLoadBox(BuildContext context) {
+    final hash = widget.blurHash ?? BlurHashCache.instance.get(widget.filename);
+    return GestureDetector(
+      onTap: _startLoadFromTap,
+      child: _sizedBox(
+        context,
+        color: Colors.black,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (hash != null && hash.isNotEmpty)
+              Image(
+                image: BlurHashImage(hash),
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+              ),
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white70, width: 1.5),
+                    ),
+                    child: const Icon(Icons.play_arrow_rounded,
+                        color: Colors.white, size: 34),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    AppLocalizations.of(context).tapToLoadVideo,
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _errorBox(BuildContext context) {
-    return Container(
-      width: 380,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 300),
+      child: Container(
       padding: const EdgeInsets.all(12),
       alignment: Alignment.center,
       decoration: BoxDecoration(
@@ -599,6 +725,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
             label: const Text('Retry', style: TextStyle(fontSize: 13)),
           ),
         ],
+      ),
       ),
     );
   }
@@ -676,12 +803,10 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
       },
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        // Explicit size with real aspect ratio — prevents zero-dimension
-        // transform matrix crash in Flutter's rendering layer.
-        child: SizedBox(
-          width: 380,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 300, maxHeight: 460),
           child: AspectRatio(
-            aspectRatio: _aspectRatio,
+            aspectRatio: _aspectRatio.clamp(0.4, 2.0),
             child: Stack(
               children: [
                 AbsorbPointer(absorbing: _suppressHover, child: videoWithTheme),

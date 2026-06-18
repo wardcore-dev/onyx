@@ -1,4 +1,5 @@
 // lib/managers/settings_manager.dart
+import 'dart:async' show unawaited;
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,8 +8,12 @@ import 'package:flutter/painting.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/font_family.dart';
 import '../enums/nav_bar_style.dart';
+import '../enums/scroll_down_button_position.dart';
 import '../enums/liquid_glass_quality.dart';
+import '../enums/media_preload_mode.dart';
+import '../utils/settings_backup.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:local_auth/local_auth.dart';
 import 'secure_store.dart';
 import 'fallback_storage.dart';
 
@@ -28,12 +33,18 @@ class SettingsManager {
   static const _swapMessageAlignmentKey = 'swap_message_alignment';
   static const _alignAllMessagesRightKey = 'align_all_messages_right';
   static const _showAvatarInChatsKey = 'show_avatar_in_chats';
+  static const _graphHandlePositionKey = 'graph_handle_position_fraction';
   static const _showAccountIndicatorKey = 'show_account_indicator';
   static const _smoothScrollKey = 'smooth_scroll_enabled';
   static const _messageAnimationsKey = 'message_animations_enabled';
+  static const _autoLoadVideoKey = 'auto_load_video_enabled';
+  static const _mediaPreloadModeKey = 'media_preload_mode';
+  static const _chatListMoveAnimationsKey = 'chat_list_move_animations_enabled';
   static const _enablePerformanceOptimizationsKey =
       'enable_performance_optimizations';
   static const _navBarStyleKey = 'nav_bar_style';
+  static const _scrollDownButtonPositionKey = 'scroll_down_button_position';
+  static const _scrollDownButtonSizeKey = 'scroll_down_button_size';
   static const _liquidGlassQualityKey    = 'liquid_glass_quality';
   static const _liquidGlassExpansionKey  = 'liquid_glass_expansion';
   static const _liquidGlassBlurKey       = 'liquid_glass_blur';
@@ -102,6 +113,7 @@ class SettingsManager {
   static const _pinEnabledKey = 'pin_lock_enabled';
   static const _pinCodeSecureKey = 'pin_lock_code';
   static const _biometricEnabledKey = 'biometric_lock_enabled';
+  static const _lockOnResumeKey = 'lock_on_resume';
   // PIN stashed in the OS keychain so biometrics can unlock the v3 (PIN-derived)
   // store on desktop. Kept in flutter_secure_storage directly — NOT in SecureStore,
   // which on desktop lives inside the very file we need the PIN to decrypt.
@@ -123,6 +135,19 @@ class SettingsManager {
   static const _graphOrbitSpeedKey        = 'graph_orbit_speed';
   static const _graphAnimationKey         = 'graph_animation_enabled';
   static const _graphPreservePositionKey  = 'graph_preserve_position';
+  // WardLink — passive local-network sync of Favorites between trusted devices.
+  static const _wardLinkEnabledKey          = 'wardlink_enabled';
+  static const _wardLinkMaxFileSizeMbKey    = 'wardlink_max_file_size_mb';
+  static const _wardLinkBubbleOnlyErrorsKey = 'wardlink_bubble_only_errors';
+  static const _wardLinkBubbleSizeKey       = 'wardlink_bubble_size';
+  // Download folder — custom save directory for received files (null = Downloads/ONYX).
+  static const _downloadFolderPathKey     = 'download_folder_path';
+  // Chat viewport render buffer beyond the visible area (px). Higher = smoother
+  // scroll at the cost of memory and GPU fill. Default: 1500.
+  static const _chatCacheExtentKey        = 'chat_cache_extent';
+  // Max messages scanned for image preloading on chat open. Default: 60.
+  static const _imagePreloadWindowKey     = 'image_preload_window';
+  static const _snackbarEnabledKey        = 'snackbar_enabled';
 
   static String? _accountContext;
   static SharedPreferences? _prefs;
@@ -144,6 +169,10 @@ class SettingsManager {
       ValueNotifier<double>(0.35);
   static final ValueNotifier<double> inputBarMaxWidth =
       ValueNotifier<double>(760.0);
+  // Fraction (0..1) of screen height where the account-graph drag handle
+  // sits. Defaults near the bottom of the screen.
+  static final ValueNotifier<double> graphHandlePositionFraction =
+      ValueNotifier<double>(0.85);
 
   static final ValueNotifier<bool> debugMode = ValueNotifier<bool>(false);
   static final ValueNotifier<bool> showFpsOverlay = ValueNotifier<bool>(false);
@@ -156,6 +185,10 @@ class SettingsManager {
   static final ValueNotifier<bool> pinEnabled = ValueNotifier<bool>(false);
 
   static final ValueNotifier<bool> biometricEnabled = ValueNotifier<bool>(false);
+
+  static final ValueNotifier<bool> biometricDeviceSupported = ValueNotifier<bool>(false);
+
+  static final ValueNotifier<bool> lockOnResume = ValueNotifier<bool>(false);
 
   static final ValueNotifier<bool> swapMessageAlignment =
       ValueNotifier<bool>(false);
@@ -175,16 +208,35 @@ class SettingsManager {
   static final ValueNotifier<bool> messageAnimationsEnabled =
       ValueNotifier<bool>(true);
 
+  /// When false (default), videos in chat are NOT downloaded/prepared
+  /// automatically — they show a tap-to-load placeholder. Preparing video
+  /// (download + decrypt + spin up a player) is expensive and janks scrolling,
+  /// so it's opt-in.
+  static final ValueNotifier<bool> autoLoadVideoEnabled =
+      ValueNotifier<bool>(false);
+
+  /// Controls proactive background warming (download+decrypt) of chat media
+  /// around the open viewport so images are ready before you scroll to them.
+  /// Default: warm only on Wi-Fi/ethernet to protect mobile data.
+  static final ValueNotifier<MediaPreloadMode> mediaPreloadMode =
+      ValueNotifier<MediaPreloadMode>(MediaPreloadMode.wifiOnly);
+
+  static final ValueNotifier<bool> chatListMoveAnimationsEnabled =
+      ValueNotifier<bool>(true);
+
   static final ValueNotifier<bool> enablePerformanceOptimizations =
       ValueNotifier<bool>(true);
 
   static final ValueNotifier<NavBarStyle> navBarStyle = ValueNotifier<NavBarStyle>(NavBarStyle.standard);
+  static final ValueNotifier<ScrollDownButtonPosition> scrollDownButtonPosition =
+      ValueNotifier<ScrollDownButtonPosition>(ScrollDownButtonPosition.center);
+  static final ValueNotifier<double> scrollDownButtonSize = ValueNotifier<double>(32.0);
   static final ValueNotifier<LiquidGlassQuality> liquidGlassQuality  = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
   static final ValueNotifier<double> liquidGlassExpansion  = ValueNotifier<double>(14.0);
   static final ValueNotifier<double> liquidGlassBlur        = ValueNotifier<double>(7.0);
   static final ValueNotifier<double> liquidGlassTint        = ValueNotifier<double>(0.10);
   static final ValueNotifier<double> liquidGlassSaturation  = ValueNotifier<double>(1.0);
-  static final ValueNotifier<bool>   liquidGlassOnCards        = ValueNotifier<bool>(true);
+  static final ValueNotifier<bool>   liquidGlassOnCards        = ValueNotifier<bool>(false);
   static final ValueNotifier<double> liquidGlassCardsBlur       = ValueNotifier<double>(7.0);
   static final ValueNotifier<double> liquidGlassCardsTint        = ValueNotifier<double>(0.10);
   static final ValueNotifier<double> liquidGlassCardsSaturation  = ValueNotifier<double>(1.0);
@@ -224,6 +276,7 @@ class SettingsManager {
   static final ValueNotifier<LiquidGlassQuality> liquidGlassInputQuality   = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
   static final ValueNotifier<LiquidGlassQuality> liquidGlassSearchQuality  = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
   static final ValueNotifier<bool> messagePaginationEnabled = ValueNotifier<bool>(true);
+  static final ValueNotifier<bool> snackbarEnabled = ValueNotifier<bool>(true);
 
   static final ValueNotifier<bool> minimizeBottomNav =
       ValueNotifier<bool>(false);
@@ -291,8 +344,26 @@ class SettingsManager {
   static final ValueNotifier<bool>   graphAnimation         = ValueNotifier<bool>(true);
   static final ValueNotifier<bool>   graphPreservePosition  = ValueNotifier<bool>(true);
 
+  // WardLink — passive local-network sync of Favorites. Master toggle is off by
+  // default; sync only ever happens between manually-paired (QR-confirmed) devices.
+  static final ValueNotifier<bool> wardLinkEnabled          = ValueNotifier<bool>(false);
+  static final ValueNotifier<int>  wardLinkMaxFileSizeMb    = ValueNotifier<int>(2048);
+  // false = always show bubble; true = show only on sync errors
+  static final ValueNotifier<bool> wardLinkBubbleOnlyErrors = ValueNotifier<bool>(false);
+  // Bubble diameter in logical pixels: 40 (small), 48 (normal), 58 (large)
+  static final ValueNotifier<int>  wardLinkBubbleSize       = ValueNotifier<int>(48);
+
+  // Custom download folder (null/empty = use system Downloads/ONYX).
+  static final ValueNotifier<String> downloadFolderPath = ValueNotifier<String>('');
+
+  static final ValueNotifier<double> chatCacheExtent    = ValueNotifier<double>(1500.0);
+  static final ValueNotifier<int>    imagePreloadWindow = ValueNotifier<int>(60);
+
   static Future<void> init() async {
     final prefs = await _getPrefs();
+    // Restore critical appearance/locale settings if SharedPreferences was
+    // wiped (e.g. the ONYX data folder was accidentally deleted).
+    await SettingsBackup.restoreIfEmpty(prefs);
     final path = prefs.getString(_chatBgKey);
     final apply = prefs.getBool(_applyGlobKey) ?? false;
     final blur = prefs.getBool(_blurKey) ?? false;
@@ -305,12 +376,15 @@ class SettingsManager {
     final opacity = prefs.getDouble(_elementOpacityKey) ?? 0.5;
     final brightness = prefs.getDouble(_elementBrightnessKey) ?? 0.35;
     final inputBarWidth = prefs.getDouble(_inputBarMaxWidthKey) ?? 760.0;
+    final graphHandlePosition =
+        prefs.getDouble(_graphHandlePositionKey) ?? 0.85;
     final swapAlign = prefs.getBool(_swapMessageAlignmentKey) ?? false;
     final alignAllRight = prefs.getBool(_alignAllMessagesRightKey) ?? false;
     final showAvatar = prefs.getBool(_showAvatarInChatsKey) ?? true;
     final showAccountInd = prefs.getBool(_showAccountIndicatorKey) ?? true;
     final smoothScroll = prefs.getBool(_smoothScrollKey) ?? false;
     final messageAnimations = prefs.getBool(_messageAnimationsKey) ?? true;
+    final chatListMoveAnimations = prefs.getBool(_chatListMoveAnimationsKey) ?? true;
     final perfOptimizations =
         prefs.getBool(_enablePerformanceOptimizationsKey) ?? true;
     final navBarStyleStr = prefs.getString(_navBarStyleKey);
@@ -323,6 +397,12 @@ class SettingsManager {
     } else {
       navBarStyleVal = NavBarStyle.standard;
     }
+    final scrollDownPosStr = prefs.getString(_scrollDownButtonPositionKey);
+    final scrollDownPosVal = ScrollDownButtonPosition.values.firstWhere(
+      (e) => e.name == scrollDownPosStr,
+      orElse: () => ScrollDownButtonPosition.center,
+    );
+    final scrollDownSize = prefs.getDouble(_scrollDownButtonSizeKey) ?? 32.0;
     final liquidQualityStr = prefs.getString(_liquidGlassQualityKey) ?? 'quality';
     final liquidQualityVal = LiquidGlassQuality.values.firstWhere(
       (e) => e.name == liquidQualityStr,
@@ -332,7 +412,7 @@ class SettingsManager {
     final liquidBlur        = prefs.getDouble(_liquidGlassBlurKey)        ?? 7.0;
     final liquidTint        = prefs.getDouble(_liquidGlassTintKey)        ?? 0.10;
     final liquidSaturation  = prefs.getDouble(_liquidGlassSaturationKey)  ?? 1.0;
-    final liquidOnCards          = prefs.getBool(_liquidGlassOnCardsKey)           ?? true;
+    final liquidOnCards          = prefs.getBool(_liquidGlassOnCardsKey)           ?? false;
     final liquidCardsBlur        = prefs.getDouble(_liquidGlassCardsBlurKey)        ?? 7.0;
     final liquidCardsTint        = prefs.getDouble(_liquidGlassCardsTintKey)        ?? 0.10;
     final liquidCardsSaturation  = prefs.getDouble(_liquidGlassCardsSaturationKey)  ?? 1.0;
@@ -372,6 +452,7 @@ class SettingsManager {
     final liquidSearchQualityStr  = prefs.getString(_liquidGlassSearchQualityKey) ?? 'quality';
     final liquidSearchQualityVal  = LiquidGlassQuality.values.firstWhere((e) => e.name == liquidSearchQualityStr, orElse: () => LiquidGlassQuality.quality);
     final messagePagination = prefs.getBool(_messagePaginationKey) ?? true;
+    final snackbarEnabledVal = prefs.getBool(_snackbarEnabledKey) ?? true;
     final minimizeNav = prefs.getBool(_minimizeBottomNavKey) ?? false;
     final swipeTabs = prefs.getBool(_swipeTabsKey) ?? true;
 
@@ -383,6 +464,8 @@ class SettingsManager {
     final fontSizeMultiplier_ = prefs.getDouble(_fontSizeKey) ?? 1.0;
     final confirmFile = prefs.getBool(_confirmFileUploadKey) ?? true;
     final confirmVoice = prefs.getBool(_confirmVoiceUploadKey) ?? true;
+    final chatCacheExtent_ = prefs.getDouble(_chatCacheExtentKey) ?? 1500.0;
+    final imagePreloadWindow_ = prefs.getInt(_imagePreloadWindowKey) ?? 60;
 
     final statusVisibility_ = prefs.getString(_statusVisibilityKey) ?? 'show';
     final statusOnline_ = prefs.getString(_statusOnlineKey) ?? 'online';
@@ -444,14 +527,18 @@ class SettingsManager {
     elementOpacity.value = opacity;
     elementBrightness.value = brightness;
     inputBarMaxWidth.value = inputBarWidth;
+    graphHandlePositionFraction.value = graphHandlePosition;
     swapMessageAlignment.value = swapAlign;
     alignAllMessagesRight.value = alignAllRight;
     showAvatarInChats.value = showAvatar;
     showAccountIndicator.value = showAccountInd;
     smoothScrollEnabled.value = smoothScroll;
     messageAnimationsEnabled.value = messageAnimations;
+    chatListMoveAnimationsEnabled.value = chatListMoveAnimations;
     enablePerformanceOptimizations.value = perfOptimizations;
     SettingsManager.navBarStyle.value = navBarStyleVal;
+    SettingsManager.scrollDownButtonPosition.value = scrollDownPosVal;
+    SettingsManager.scrollDownButtonSize.value = scrollDownSize;
     SettingsManager.liquidGlassQuality.value   = liquidQualityVal;
     SettingsManager.liquidGlassExpansion.value  = liquidExpansion;
     SettingsManager.liquidGlassBlur.value       = liquidBlur;
@@ -493,12 +580,15 @@ class SettingsManager {
     SettingsManager.liquidGlassInputQuality.value      = liquidInputQualityVal;
     SettingsManager.liquidGlassSearchQuality.value     = liquidSearchQualityVal;
     SettingsManager.messagePaginationEnabled.value = messagePagination;
+    SettingsManager.snackbarEnabled.value = snackbarEnabledVal;
     SettingsManager.minimizeBottomNav.value = minimizeNav;
     SettingsManager.swipeTabsEnabled.value = swipeTabs;
     SettingsManager.fontFamily.value = fontFamily_;
     SettingsManager.fontSizeMultiplier.value = fontSizeMultiplier_;
     SettingsManager.confirmFileUpload.value = confirmFile;
     SettingsManager.confirmVoiceUpload.value = confirmVoice;
+    SettingsManager.chatCacheExtent.value = chatCacheExtent_;
+    SettingsManager.imagePreloadWindow.value = imagePreloadWindow_;
     SettingsManager.statusVisibility.value = statusVisibility_;
     SettingsManager.statusOnline.value = statusOnline_;
     SettingsManager.statusOffline.value = statusOffline_;
@@ -519,6 +609,8 @@ class SettingsManager {
     SettingsManager.showDisplayNameInGroups.value = showDisplayNameInGroups_;
     SettingsManager.pinEnabled.value = prefs.getBool(_pinEnabledKey) ?? false;
     SettingsManager.biometricEnabled.value = prefs.getBool(_biometricEnabledKey) ?? false;
+    SettingsManager.lockOnResume.value = prefs.getBool(_lockOnResumeKey) ?? false;
+    unawaited(_checkBiometricDeviceSupport());
 
     final localeCode = prefs.getString(_appLocaleKey) ?? 'en';
     SettingsManager.appLocale.value = Locale(localeCode);
@@ -531,6 +623,24 @@ class SettingsManager {
     SettingsManager.graphOrbitSpeed.value       = prefs.getDouble(_graphOrbitSpeedKey) ?? 120.0;
     SettingsManager.graphAnimation.value        = prefs.getBool(_graphAnimationKey) ?? true;
     SettingsManager.graphPreservePosition.value = prefs.getBool(_graphPreservePositionKey) ?? true;
+
+    SettingsManager.wardLinkEnabled.value          = prefs.getBool(_wardLinkEnabledKey) ?? false;
+    SettingsManager.wardLinkMaxFileSizeMb.value    = prefs.getInt(_wardLinkMaxFileSizeMbKey) ?? 2048;
+    SettingsManager.wardLinkBubbleOnlyErrors.value = prefs.getBool(_wardLinkBubbleOnlyErrorsKey) ?? false;
+    SettingsManager.wardLinkBubbleSize.value       = prefs.getInt(_wardLinkBubbleSizeKey) ?? 48;
+
+    SettingsManager.autoLoadVideoEnabled.value = prefs.getBool(_autoLoadVideoKey) ?? false;
+
+    final mediaPreloadStr = prefs.getString(_mediaPreloadModeKey);
+    SettingsManager.mediaPreloadMode.value = MediaPreloadMode.values.firstWhere(
+      (e) => e.name == mediaPreloadStr,
+      orElse: () => MediaPreloadMode.wifiOnly,
+    );
+
+    SettingsManager.downloadFolderPath.value = prefs.getString(_downloadFolderPathKey) ?? '';
+
+    // Keep the bootstrap-level backup up to date so it reflects the latest settings.
+    unawaited(SettingsBackup.save(prefs));
   }
 
   static String _scopedKey(String baseKey) {
@@ -633,6 +743,12 @@ class SettingsManager {
     blurSigma.value = val;
   }
 
+  static Future<void> setGraphHandlePositionFraction(double val) async {
+    final prefs = await _getPrefs();
+    await prefs.setDouble(_graphHandlePositionKey, val);
+    graphHandlePositionFraction.value = val;
+  }
+
   static Future<void> setElementOpacity(double val) async {
     final prefs = await _getPrefs();
     await prefs.setDouble(_elementOpacityKey, val);
@@ -687,6 +803,24 @@ class SettingsManager {
     messageAnimationsEnabled.value = val;
   }
 
+  static Future<void> setAutoLoadVideoEnabled(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_autoLoadVideoKey, val);
+    autoLoadVideoEnabled.value = val;
+  }
+
+  static Future<void> setMediaPreloadMode(MediaPreloadMode val) async {
+    final prefs = await _getPrefs();
+    await prefs.setString(_mediaPreloadModeKey, val.name);
+    mediaPreloadMode.value = val;
+  }
+
+  static Future<void> setChatListMoveAnimationsEnabled(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_chatListMoveAnimationsKey, val);
+    chatListMoveAnimationsEnabled.value = val;
+  }
+
   static Future<void> setEnablePerformanceOptimizations(bool val) async {
     final prefs = await _getPrefs();
     await prefs.setBool(_enablePerformanceOptimizationsKey, val);
@@ -697,6 +831,18 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setString(_navBarStyleKey, val.name);
     navBarStyle.value = val;
+  }
+
+  static Future<void> setScrollDownButtonPosition(ScrollDownButtonPosition val) async {
+    final prefs = await _getPrefs();
+    await prefs.setString(_scrollDownButtonPositionKey, val.name);
+    scrollDownButtonPosition.value = val;
+  }
+
+  static Future<void> setScrollDownButtonSize(double val) async {
+    final prefs = await _getPrefs();
+    await prefs.setDouble(_scrollDownButtonSizeKey, val);
+    scrollDownButtonSize.value = val;
   }
 
   // ── App theme (non-sensitive UI preference) ────────────────────────────────
@@ -734,6 +880,7 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setString(_appThemeNameKey, name);
     await prefs.setBool(_appThemeIsDarkKey, isDark);
+    unawaited(SettingsBackup.save(prefs));
   }
 
   static Future<void> setLiquidGlassQuality(LiquidGlassQuality val) async {
@@ -976,6 +1123,12 @@ class SettingsManager {
     messagePaginationEnabled.value = val;
   }
 
+  static Future<void> setSnackbarEnabled(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_snackbarEnabledKey, val);
+    snackbarEnabled.value = val;
+  }
+
   static Future<void> setMinimizeBottomNav(bool val) async {
     final prefs = await _getPrefs();
     await prefs.setBool(_minimizeBottomNavKey, val);
@@ -1010,6 +1163,18 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setBool(_confirmVoiceUploadKey, val);
     confirmVoiceUpload.value = val;
+  }
+
+  static Future<void> setChatCacheExtent(double val) async {
+    final prefs = await _getPrefs();
+    await prefs.setDouble(_chatCacheExtentKey, val);
+    chatCacheExtent.value = val;
+  }
+
+  static Future<void> setImagePreloadWindow(int val) async {
+    final prefs = await _getPrefs();
+    await prefs.setInt(_imagePreloadWindowKey, val);
+    imagePreloadWindow.value = val;
   }
 
   static Future<void> setStatusVisibility(String val) async {
@@ -1116,6 +1281,23 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setBool(_pinEnabledKey, val);
     pinEnabled.value = val;
+    // Mirror in encrypted storage so the flag survives SharedPreferences loss
+    // (e.g. user deletes the old default data folder which contains shared_preferences.json).
+    try { await SecureStore.write('pin_lock_enabled_secure', val ? '1' : '0'); } catch (_) {}
+  }
+
+  /// Restores pin_lock_enabled from encrypted storage if SharedPreferences lost it.
+  /// Call after FallbackStorage is unlocked so SecureStore is readable.
+  static Future<void> restorePinEnabledIfLost() async {
+    if (pinEnabled.value) return;
+    try {
+      final backed = await SecureStore.read('pin_lock_enabled_secure');
+      if (backed == '1') {
+        final prefs = await _getPrefs();
+        await prefs.setBool(_pinEnabledKey, true);
+        pinEnabled.value = true;
+      }
+    } catch (_) {}
   }
 
   static bool get _isDesktop =>
@@ -1144,6 +1326,24 @@ class SettingsManager {
     if (_isDesktop) {
       await FallbackStorage.main.migrateToV2();
     }
+  }
+
+  static Future<void> _checkBiometricDeviceSupport() async {
+    try {
+      if (kIsWeb) return;
+      final auth = LocalAuthentication();
+      final supported = await auth.isDeviceSupported();
+      final canCheck = await auth.canCheckBiometrics;
+      biometricDeviceSupported.value = supported || canCheck;
+    } catch (_) {
+      biometricDeviceSupported.value = false;
+    }
+  }
+
+  static Future<void> setLockOnResume(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_lockOnResumeKey, val);
+    lockOnResume.value = val;
   }
 
   static Future<void> setBiometricEnabled(bool val) async {
@@ -1191,6 +1391,7 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setString(_appLocaleKey, locale.languageCode);
     appLocale.value = locale;
+    unawaited(SettingsBackup.save(prefs));
   }
 
   static Future<void> setLaunchAtStartup(bool val) async {
@@ -1239,6 +1440,42 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setBool(_hideFromSearchKey, val);
     hideFromSearch.value = val;
+  }
+
+  // ── WardLink ────────────────────────────────────────────────────────────────
+
+  static Future<void> setWardLinkEnabled(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_wardLinkEnabledKey, val);
+    wardLinkEnabled.value = val;
+  }
+
+  static Future<void> setWardLinkMaxFileSizeMb(int val) async {
+    final prefs = await _getPrefs();
+    await prefs.setInt(_wardLinkMaxFileSizeMbKey, val);
+    wardLinkMaxFileSizeMb.value = val;
+  }
+
+  static Future<void> setWardLinkBubbleOnlyErrors(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_wardLinkBubbleOnlyErrorsKey, val);
+    wardLinkBubbleOnlyErrors.value = val;
+  }
+
+  static Future<void> setWardLinkBubbleSize(int val) async {
+    final prefs = await _getPrefs();
+    await prefs.setInt(_wardLinkBubbleSizeKey, val);
+    wardLinkBubbleSize.value = val;
+  }
+
+  static Future<void> setDownloadFolderPath(String val) async {
+    final prefs = await _getPrefs();
+    if (val.isEmpty) {
+      await prefs.remove(_downloadFolderPathKey);
+    } else {
+      await prefs.setString(_downloadFolderPathKey, val);
+    }
+    downloadFolderPath.value = val;
   }
 
   static Color getElementColor(

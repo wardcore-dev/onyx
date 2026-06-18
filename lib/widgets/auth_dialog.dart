@@ -163,45 +163,90 @@ class AuthDialogState extends State<AuthDialog> {
                   final l = AppLocalizations(SettingsManager.appLocale.value);
                   return Material(
                     color: Colors.transparent,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      width: isDesktop ? 400 : double.infinity,
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: surfaceHighestColor.withValues(alpha: elemOpacity),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: colorScheme.outlineVariant.withValues(alpha: 0.15),
-                          width: 1.0,
+                    borderRadius: BorderRadius.circular(28),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(28),
+                      child: Container(
+                        width: isDesktop ? 400 : double.infinity,
+                        decoration: BoxDecoration(
+                          color: colorScheme.surface,
+                          border: Border.all(
+                            color: colorScheme.outlineVariant.withValues(alpha: 0.15),
+                            width: 1.0,
+                          ),
                         ),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (isDesktop)
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // ── Header ──────────────────────────────────
                             GestureDetector(
-                              onPanStart: (details) => windowManager.startDragging(),
+                              onPanStart: isDesktop
+                                  ? (details) => windowManager.startDragging()
+                                  : null,
                               child: Container(
-                                height: 24,
-                                alignment: Alignment.center,
-                                child: Text(
-                                  l.addAccount,
-                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                                padding: const EdgeInsets.fromLTRB(20, 18, 14, 18),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primary.withValues(alpha: 0.07),
+                                  border: Border(
+                                    bottom: BorderSide(
+                                      color: colorScheme.primary.withValues(alpha: 0.10),
+                                      width: 0.8,
+                                    ),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 38,
+                                      height: 38,
+                                      decoration: BoxDecoration(
+                                        color: colorScheme.primary.withValues(alpha: 0.12),
+                                        borderRadius: BorderRadius.circular(11),
+                                      ),
+                                      child: Icon(
+                                        Icons.person_add_alt_1_rounded,
+                                        color: colorScheme.primary,
+                                        size: 20,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        l.addAccount,
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                          color: colorScheme.onSurface,
+                                        ),
+                                      ),
+                                    ),
+                                    GestureDetector(
+                                      onTap: () => Navigator.of(context).pop(),
+                                      child: Container(
+                                        width: 30,
+                                        height: 30,
+                                        decoration: BoxDecoration(
+                                          color: colorScheme.onSurface.withValues(alpha: 0.07),
+                                          borderRadius: BorderRadius.circular(9),
+                                        ),
+                                        child: Icon(
+                                          Icons.close_rounded,
+                                          size: 16,
+                                          color: colorScheme.onSurface.withValues(alpha: 0.55),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            )
-                          else
-                            Container(
-                              height: 56,
-                              alignment: Alignment.center,
-                              child: Text(
-                                l.addAccount,
-                                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                              ),
                             ),
-
-                          if (isDesktop) const SizedBox(height: 16),
+                            // ── Body ────────────────────────────────────
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
                           TextField(
                             controller: _userCtrl,
                             style: TextStyle(color: colorScheme.onSurface),
@@ -289,69 +334,88 @@ class AuthDialogState extends State<AuthDialog> {
                                   : const SizedBox.shrink(),
                             ),
                           ),
-                          const SizedBox(height: 16),
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 8,
-                            children: [
-                              FilledButton.icon(
-                                onPressed: () async {
-                                  final u = _userCtrl.text.trim();
-                                  final p = _passCtrl.text;
-                                  if (u.isEmpty) {
-                                    _showSnack(l.enterUsernameMsg);
-                                    return;
-                                  }
-                                  final nav = Navigator.of(context);
-                                  if (await widget.onLogin(u, p)) {
-                                    if (!mounted) return;
-                                    _showSnack(l.loginSuccess);
-                                    nav.pop();
-                                  } else {
-                                    _showSnack(l.loginFailed);
-                                  }
-                                },
-                                icon: const Icon(Icons.login, size: 18),
-                                label: Text(l.loginBtn),
+                          const SizedBox(height: 4),
+                                ],
                               ),
+                            ),
+                            // ── Footer ──────────────────────────────────
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: FilledButton.icon(
+                                      style: FilledButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(vertical: 14),
+                                        shape: const StadiumBorder(),
+                                      ),
+                                      onPressed: () async {
+                                        final u = _userCtrl.text.trim();
+                                        final p = _passCtrl.text;
+                                        if (u.isEmpty) {
+                                          _showSnack(l.enterUsernameMsg);
+                                          return;
+                                        }
+                                        final nav = Navigator.of(context);
+                                        if (await widget.onLogin(u, p)) {
+                                          if (!mounted) return;
+                                          _showSnack(l.loginSuccess);
+                                          nav.pop();
+                                        } else {
+                                          _showSnack(l.loginFailed);
+                                        }
+                                      },
+                                      icon: const Icon(Icons.login, size: 18),
+                                      label: Text(l.loginBtn),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: FilledButton.icon(
+                                      style: FilledButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(vertical: 14),
+                                        shape: const StadiumBorder(),
+                                        backgroundColor: colorScheme.primary.withValues(alpha: 0.16),
+                                        foregroundColor: colorScheme.primary,
+                                      ),
+                                      onPressed: () async {
+                                        final u = _userCtrl.text.trim();
+                                        final p = _passCtrl.text;
+                                        if (!_isValidUsername(u)) {
+                                          _showSnack(l.usernameInvalidMsg);
+                                          return;
+                                        }
+                                        if (p.length < 16) {
+                                          _showSnack(l.passwordTooShortMsg);
+                                          return;
+                                        }
+                                        _showSnack(l.registeringMsg);
+                                        final passphrase = await widget.onRegister(u, p);
+                                        if (!mounted) return;
+                                        if (passphrase != null) {
 
-                              FilledButton.icon(
-                                onPressed: () async {
-                                  final u = _userCtrl.text.trim();
-                                  final p = _passCtrl.text;
-                                  if (!_isValidUsername(u)) {
-                                    _showSnack(l.usernameInvalidMsg);
-                                    return;
-                                  }
-                                  if (p.length < 16) {
-                                    _showSnack(l.passwordTooShortMsg);
-                                    return;
-                                  }
-                                  _showSnack(l.registeringMsg);
-                                  final passphrase = await widget.onRegister(u, p);
-                                  if (!mounted) return;
-                                  if (passphrase != null) {
+                                          await SecureStore.write('passphrase_$u', passphrase);
+                                          await SecureStore.write('is_primary_device_$u', 'true');
 
-                                    await SecureStore.write('passphrase_$u', passphrase);
-                                    await SecureStore.write('is_primary_device_$u', 'true');
+                                          await _showPassphraseDialog(u, passphrase);
+                                          if (!mounted) return;
 
-                                    await _showPassphraseDialog(u, passphrase);
-                                    if (!mounted) return;
-
-                                    if (await widget.onLogin(u, p)) {
-                                      if (mounted) Navigator.of(context).pop();
-                                    }
-                                  } else {
-                                    _showSnack(l.registrationFailed);
-                                  }
-                                },
-                                icon: const Icon(Icons.app_registration, size: 18),
-                                label: Text(l.registerBtn),
+                                          if (await widget.onLogin(u, p)) {
+                                            if (mounted) Navigator.of(context).pop();
+                                          }
+                                        } else {
+                                          _showSnack(l.registrationFailed);
+                                        }
+                                      },
+                                      icon: const Icon(Icons.app_registration, size: 18),
+                                      label: Text(l.registerBtn),
+                                    ),
+                                  ),
+                                ],
                               ),
-
-                            ],
-                          ),
-                        ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   );

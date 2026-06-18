@@ -1,4 +1,9 @@
 // lib/screens/external_group_chat_screen.dart
+import '../widgets/marquee_text.dart';
+import '../widgets/empty_chat_placeholder.dart';
+import '../utils/chat_image_preloader.dart';
+import '../utils/gallery_extractor.dart';
+import 'media_gallery_screen.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import '../enums/liquid_glass_quality.dart';
 import 'package:ONYX/screens/forward_screen.dart';
@@ -18,23 +23,25 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory;
 import '../models/group.dart';
 import '../models/external_server.dart';
 import '../managers/external_server_manager.dart';
 import '../enums/media_provider.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/chat_images_scope.dart';
+import '../widgets/album_message_widget.dart' show AlbumItem;
 import '../widgets/drag_drop_zone.dart';
 import '../widgets/file_preview_dialog.dart';
 import '../widgets/album_preview_dialog.dart';
 import '../widgets/voice_confirm_dialog.dart';
 import '../widgets/avatar_crop_screen.dart';
+import '../utils/clipboard_image.dart';
 import '../utils/file_utils.dart';
 import '../globals.dart';
 import 'chats_tab.dart' show getPreviewText;
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import '../utils/image_file_cache.dart';
-import '../utils/clipboard_image.dart';
 import '../utils/upload_task.dart';
 import '../widgets/pending_upload_card.dart';
 import '../widgets/chat_search_bar.dart';
@@ -45,6 +52,8 @@ import '../widgets/message_reaction_bar.dart';
 import '../widgets/swipeable_message_wrapper.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../widgets/chat_input_bar.dart';
+import '../widgets/measure_size.dart';
+import '../enums/scroll_down_button_position.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const List<String> _randomHints = [
@@ -82,10 +91,14 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
   late FocusNode _focusNode;
   final ScrollController _scroll = ScrollController();
   List<Map<String, dynamic>> _messages = [];
+  // Fingerprint of the message list last handed to the image preloader.
+  int _preloadStampCount = -1;
+  String _preloadStampLast = '';
   final Set<String> _allMessageIds = {};
   final Map<String, String> _pendingMessageIds = {};
   final List<UploadTask> _pendingUploads = [];
   final ValueNotifier<bool> _showScrollDownButton = ValueNotifier<bool>(false);
+  final ValueNotifier<double> _bottomBarHeight = ValueNotifier<double>(76.0);
   late String _inputHint;
   bool _isConnected = false;
   bool _isConnecting = false;
@@ -351,6 +364,12 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
   final Set<String> _newMessageIds = {};
   final Set<String> _alreadyRenderedMessageIds = {};
+  // True once the message list has painted at least one frame. Entry
+  // animations are suppressed until then — closes a race where the network
+  // history fetch resolves after _applyOpenChatAnimationKeys already ran,
+  // which would otherwise make the whole history "appear new" and animate
+  // in on open.
+  bool _hasBuiltMessageListOnce = false;
 
   static const int _initialMessageLoadCount = 50;
   static const int _messageLoadIncrement = 30;
@@ -476,6 +495,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     _stopDragAutoScroll();
     _scroll.dispose();
     _showScrollDownButton.dispose();
+    _bottomBarHeight.dispose();
     _inputEntryController.dispose();
     _selectionNotifier.dispose();
     _searchController.dispose();
@@ -628,7 +648,9 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       for (final m in _messages) {
         final msgId = m['id']?.toString() ?? '';
         if (msgId.isNotEmpty) {
-          m['animationId'] = '$msgId#$_historyLoadEpoch';
+          final newAnimId = '$msgId#$_historyLoadEpoch';
+          m['animationId'] = newAnimId;
+          _alreadyRenderedMessageIds.add(newAnimId);
         }
       }
     });
@@ -647,6 +669,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
     _allMessageIds.clear();
     _pendingMessageIds.clear();
+    _alreadyRenderedMessageIds.clear();
+    _hasBuiltMessageListOnce = false;
     // Animation status is now tracked directly in message map
     _inputHint = _randomHints[Random().nextInt(_randomHints.length)];
     _isConnected = ExternalServerManager.isServerConnected(widget.server.id);
@@ -1184,7 +1208,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
   Future<void> _loadHistoryFromCache() async {
     try {
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await getOnyxDocumentsDirectory();
       final file = File(
           '${dir.path}/ext_group_${widget.server.id}_${widget.group.id}_history.json');
       if (await file.exists()) {
@@ -1374,7 +1398,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
   Future<void> _saveHistoryToCache(List<Map<String, dynamic>> messages) async {
     try {
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await getOnyxDocumentsDirectory();
       final file = File(
           '${dir.path}/ext_group_${widget.server.id}_${widget.group.id}_history.json');
 
@@ -1684,6 +1708,10 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
   String? _scrollTargetId;
 
   // ── Day-separator display items ─────────────────────────────────────────
+  List<AlbumItem>? _cachedAllImages;
+  int _cachedAllImagesHash = 0;
+  int _cachedDragHash = 0;
+
   List<Object> _extDisplayItems =
       []; // elements: Map<String,dynamic> | DateTime
   int _extDisplayHash = -1;
@@ -2014,6 +2042,26 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     );
   }
 
+  void _copyExternalProxyImage(String content) {
+    try {
+      final data = jsonDecode(content.substring('MEDIA_PROXYv1:'.length))
+          as Map<String, dynamic>;
+      final url = (data['url'] as String?)?.trim() ?? '';
+      if (url.isEmpty) return;
+      final authUrl = ExternalServerManager.addTokenToUrl(url);
+      final cached = imageFileCache[authUrl];
+      if (cached == null) {
+        rootScreenKey.currentState
+            ?.showSnack('Image not loaded yet — open it first');
+        return;
+      }
+      copyFileImageToClipboard(
+          cached.file, (m) => rootScreenKey.currentState?.showSnack(m));
+    } catch (e) {
+      rootScreenKey.currentState?.showSnack('Copy failed: $e');
+    }
+  }
+
   Future<void> _saveMediaFromMessage(String content) async {
     if (kIsWeb) {
       rootScreenKey.currentState?.showSnack('Save not supported on web');
@@ -2284,14 +2332,12 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           rootScreenKey.currentState?.showSnack(
               saved == true ? 'Saved to gallery' : 'Failed to save to gallery');
         } else {
-          final dl = await getDownloadsDirectory();
-          if (dl == null) {
+          final onyxDir = await getOnyxSaveDirectory();
+          if (onyxDir == null) {
             rootScreenKey.currentState
                 ?.showSnack('Cannot access Downloads directory');
             return;
           }
-          final onyxDir = Directory('${dl.path}/ONYX');
-          await onyxDir.create(recursive: true);
           final destPath = '${onyxDir.path}/$originalName';
           await file.copy(destPath);
           rootScreenKey.currentState?.showSnack('Saved to: $destPath');
@@ -2449,25 +2495,6 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     ];
   }
 
-  void _copyExternalProxyImage(String content) {
-    try {
-      final data = jsonDecode(content.substring('MEDIA_PROXYv1:'.length))
-          as Map<String, dynamic>;
-      final url = (data['url'] as String?)?.trim() ?? '';
-      if (url.isEmpty) return;
-      final authUrl = ExternalServerManager.addTokenToUrl(url);
-      final cached = imageFileCache[authUrl];
-      if (cached == null) {
-        rootScreenKey.currentState
-            ?.showSnack('Image not loaded yet — open it first');
-        return;
-      }
-      copyFileImageToClipboard(
-          cached.file, (m) => rootScreenKey.currentState?.showSnack(m));
-    } catch (e) {
-      rootScreenKey.currentState?.showSnack('Copy failed: $e');
-    }
-  }
 
   bool get _isReadOnlyChannel => !_canPost;
 
@@ -3197,7 +3224,13 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     return ValueListenableBuilder<double>(
       valueListenable: SettingsManager.elementOpacity,
       builder: (_, opacity, __) {
-        return Column(
+        return MeasureSize(
+          onChange: (size) {
+            if ((_bottomBarHeight.value - size.height).abs() > 0.5) {
+              _bottomBarHeight.value = size.height;
+            }
+          },
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             AnimatedSize(
@@ -3473,6 +3506,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
               },
             ),
           ],
+          ),
         );
       },
     );
@@ -4131,14 +4165,13 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                     Row(
                                       children: [
                                         Flexible(
-                                          child: Text(
-                                            _groupName,
+                                          child: MarqueeText(
                                             key: ValueKey(
                                                 'group_name_$_groupName'),
+                                            text: _groupName,
                                             style: const TextStyle(
                                                 fontWeight: FontWeight.bold,
                                                 fontSize: 16),
-                                            overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
                                         const SizedBox(width: 6),
@@ -4231,7 +4264,13 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                 icon: Icon(Icons.more_vert,
                                     color: colorScheme.onSurface),
                                 onSelected: (value) async {
-                                  if (value == 'disconnect') {
+                                  if (value == 'gallery') {
+                                    showMediaGalleryDialog(
+                                      context,
+                                      items: extractGalleryItemsFromMaps(_messages),
+                                      peerUsername: widget.group.name,
+                                    );
+                                  } else if (value == 'disconnect') {
                                     ExternalServerManager.disconnectWebSocket(
                                         widget.server.id);
                                     if (mounted) {
@@ -4249,6 +4288,20 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                 itemBuilder: (context) {
                                   final isOwner = _myRole == 'owner';
                                   return [
+                                    PopupMenuItem<String>(
+                                      value: 'gallery',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.photo_library_outlined,
+                                              size: 18,
+                                              color: colorScheme.primary),
+                                          const SizedBox(width: 8),
+                                          Text(AppLocalizations.of(context)
+                                              .galleryMenuLabel),
+                                        ],
+                                      ),
+                                    ),
+                                    const PopupMenuDivider(),
                                     if (isOwner) ...[
                                       PopupMenuItem<String>(
                                         value: 'edit_profile',
@@ -4313,6 +4366,17 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                     const ChatBackgroundLayer(),
                     Builder(
                       builder: (context) {
+                        if (!_hasBuiltMessageListOnce) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            _hasBuiltMessageListOnce = true;
+                          });
+                        }
+                        if (_messages.isEmpty) {
+                          return EmptyChatPlaceholder(
+                              label: AppLocalizations.of(context)
+                                  .noMessagesYet);
+                        }
+
                         final swapped =
                             SettingsManager.swapMessageAlignment.value;
                         final alignRight =
@@ -4320,6 +4384,19 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
                         // Compute search matches (indices into display items)
                         final displayItems = _rebuildExtDisplayItems();
+
+                        final stampLast = _messages.isEmpty
+                            ? ''
+                            : '${_messages.last['id']}';
+                        if (_messages.length != _preloadStampCount ||
+                            stampLast != _preloadStampLast) {
+                          _preloadStampCount = _messages.length;
+                          _preloadStampLast = stampLast;
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            ChatImagePreloader.preloadGroupMessages(_messages);
+                          });
+                        }
+
                         if (_showSearch && _searchQuery.isNotEmpty) {
                           final newMatches = <int>[];
                           for (int j = 0; j < displayItems.length; j++) {
@@ -4357,22 +4434,29 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                           }
                         }
 
-                        final dragMessages = displayItems
-                            .whereType<Map<String, dynamic>>()
-                            .toList(growable: false);
-                        _dragSelectionOrder = dragMessages
-                            .map(_selectionKeyForExtMessage)
-                            .toList(growable: false);
-                        _dragSelectionLookup = {
-                          for (final msg in dragMessages)
-                            _selectionKeyForExtMessage(msg): msg,
-                        };
-                        _dragSelectionIndices = {
-                          for (int idx = 0; idx < _dragSelectionOrder.length; idx++)
-                            _dragSelectionOrder[idx]: idx,
-                        };
+                        if (_cachedDragHash != _extDisplayHash) {
+                          _cachedDragHash = _extDisplayHash;
+                          final dragMessages = displayItems
+                              .whereType<Map<String, dynamic>>()
+                              .toList(growable: false);
+                          _dragSelectionOrder = dragMessages
+                              .map(_selectionKeyForExtMessage)
+                              .toList(growable: false);
+                          _dragSelectionLookup = {
+                            for (final msg in dragMessages)
+                              _selectionKeyForExtMessage(msg): msg,
+                          };
+                          _dragSelectionIndices = {
+                            for (int idx = 0; idx < _dragSelectionOrder.length; idx++)
+                              _dragSelectionOrder[idx]: idx,
+                          };
+                        }
+                        if (_cachedAllImages == null || _cachedAllImagesHash != _extDisplayHash) {
+                          _cachedAllImages = ChatImagesScope.computeFromGroupMessages(_messages);
+                          _cachedAllImagesHash = _extDisplayHash;
+                        }
                         return ChatImagesScope(
-                          allImages: ChatImagesScope.computeFromGroupMessages(_messages),
+                          allImages: _cachedAllImages!,
                           child: Listener(
                           key: _messageListViewportKey,
                           onPointerDown: (_) {
@@ -4391,7 +4475,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                             reverse: true,
                             itemCount:
                                 _pendingUploads.length + displayItems.length,
-                            cacheExtent: 400,
+                            cacheExtent: SettingsManager.chatCacheExtent.value,
                             addRepaintBoundaries: true,
                             addAutomaticKeepAlives: true,
                             padding: EdgeInsets.only(
@@ -4480,6 +4564,19 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                         ? () => _scrollToExtMessageById(
                                             msg['reply_to_id'].toString())
                                         : null,
+                                    onRightClick: isDesktop
+                                        ? (offset) {
+                                            debugPrint('[RightClickMenu] external_group onRightClick invoked, msgId=${msg['id']}');
+                                            final items =
+                                                _buildExternalDesktopMenuItems(
+                                                    msg);
+                                            debugPrint('[RightClickMenu] external_group items=${items.length}');
+                                            if (items.isNotEmpty) {
+                                              showMessageDesktopMenu(
+                                                  context, offset, items);
+                                            }
+                                          }
+                                        : null,
                                   ),
                                 ),
                               );
@@ -4534,7 +4631,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                               final animatedBubble = AnimatedMessageBubble(
                                 key: ValueKey<String>(animKey),
                                 outgoing: isMe,
-                                animate: isFirstAppearance &&
+                                animate: _hasBuiltMessageListOnce &&
+                                    isFirstAppearance &&
                                     SettingsManager.messageAnimationsEnabled.value,
                                 child: RepaintBoundary(
                                     child: contentWithSender),
@@ -4681,7 +4779,12 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                         child: Row(
                                           children: [
                                             if (sel.active) extCheckmark,
-                                            Expanded(child: contentChild!),
+                                            Expanded(
+                                              child: AbsorbPointer(
+                                                absorbing: sel.active,
+                                                child: contentChild!,
+                                              ),
+                                            ),
                                           ],
                                         ),
                                       ),
@@ -4705,21 +4808,41 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                         right: 16,
                         child: _buildExtPinnedBanner(context),
                       ),
-                    if (_showSearch)
                       Positioned(
                         top: MediaQuery.of(context).padding.top +
                             kToolbarHeight +
                             (_pinnedMessage != null ? 68.0 : 8.0),
                         left: 16,
                         right: 16,
-                        child: ChatSearchBar(
-                          controller: _searchController,
-                          focusNode: _searchFocusNode,
-                          statsNotifier: _searchStats,
-                          onChanged: _onSearchChanged,
-                          onPrevious: _navigateSearchPrev,
-                          onNext: _navigateSearchNext,
-                          onClose: _closeSearch,
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          reverseDuration: const Duration(milliseconds: 180),
+                          transitionBuilder: (child, animation) =>
+                              FadeTransition(
+                            opacity: CurvedAnimation(
+                                parent: animation, curve: Curves.easeOut),
+                            child: SlideTransition(
+                              position: Tween<Offset>(
+                                begin: const Offset(0, -0.4),
+                                end: Offset.zero,
+                              ).animate(CurvedAnimation(
+                                  parent: animation,
+                                  curve: Curves.easeOutCubic)),
+                              child: child,
+                            ),
+                          ),
+                          child: _showSearch
+                              ? ChatSearchBar(
+                                  key: const ValueKey('csb'),
+                                  controller: _searchController,
+                                  focusNode: _searchFocusNode,
+                                  statsNotifier: _searchStats,
+                                  onChanged: _onSearchChanged,
+                                  onPrevious: _navigateSearchPrev,
+                                  onNext: _navigateSearchNext,
+                                  onClose: _closeSearch,
+                                )
+                              : const SizedBox.shrink(),
                         ),
                       ),
                     Positioned(
@@ -5043,48 +5166,68 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                         duration: const Duration(milliseconds: 200),
                         child: IgnorePointer(
                           ignoring: !show,
-                          child: Align(
-                            alignment: Alignment.bottomCenter,
-                            child: Padding(
-                              padding: const EdgeInsets.only(bottom: 80),
-                              child: Material(
-                                color: Colors.transparent,
-                                child: ValueListenableBuilder<double>(
-                                  valueListenable:
-                                      SettingsManager.elementBrightness,
-                                  builder: (_, brightness, ___) {
-                                    final baseColor =
-                                        SettingsManager.getElementColor(
-                                      colorScheme.surfaceContainerHighest,
-                                      brightness,
-                                    );
-                                    return IconButton(
-                                      splashRadius: 20,
-                                      padding: EdgeInsets.zero,
-                                      icon: Container(
-                                        width: 32,
-                                        height: 32,
-                                        decoration: BoxDecoration(
-                                          color:
-                                              baseColor.withValues(alpha: 0.5),
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                            color: colorScheme.outlineVariant
-                                                .withValues(alpha: 0.15),
-                                            width: 1,
-                                          ),
-                                        ),
-                                        child: Icon(
-                                          Icons.arrow_downward,
-                                          size: 18,
-                                          color: colorScheme.onSurface
-                                              .withValues(alpha: 0.7),
+                          child: ValueListenableBuilder<double>(
+                            valueListenable: _bottomBarHeight,
+                            builder: (_, barHeight, __) => ValueListenableBuilder<ScrollDownButtonPosition>(
+                              valueListenable: SettingsManager.scrollDownButtonPosition,
+                              builder: (_, position, __) => ValueListenableBuilder<double>(
+                                valueListenable: SettingsManager.scrollDownButtonSize,
+                                builder: (_, btnSize, __) {
+                                  final alignment = switch (position) {
+                                    ScrollDownButtonPosition.left => Alignment.bottomLeft,
+                                    ScrollDownButtonPosition.center => Alignment.bottomCenter,
+                                    ScrollDownButtonPosition.right => Alignment.bottomRight,
+                                  };
+                                  return Align(
+                                    alignment: alignment,
+                                    child: Padding(
+                                      padding: EdgeInsets.only(
+                                        bottom: barHeight + 12 + MediaQuery.of(context).padding.bottom + 16,
+                                        left: position == ScrollDownButtonPosition.left ? 16 : 0,
+                                        right: position == ScrollDownButtonPosition.right ? 16 : 0,
+                                      ),
+                                      child: Material(
+                                        color: Colors.transparent,
+                                        child: ValueListenableBuilder<double>(
+                                          valueListenable:
+                                              SettingsManager.elementBrightness,
+                                          builder: (_, brightness, ___) {
+                                            final baseColor =
+                                                SettingsManager.getElementColor(
+                                              colorScheme.surfaceContainerHighest,
+                                              brightness,
+                                            );
+                                            return IconButton(
+                                              splashRadius: btnSize / 2 + 4,
+                                              padding: EdgeInsets.zero,
+                                              icon: Container(
+                                                width: btnSize,
+                                                height: btnSize,
+                                                decoration: BoxDecoration(
+                                                  color:
+                                                      baseColor.withValues(alpha: 0.5),
+                                                  shape: BoxShape.circle,
+                                                  border: Border.all(
+                                                    color: colorScheme.outlineVariant
+                                                        .withValues(alpha: 0.15),
+                                                    width: 1,
+                                                  ),
+                                                ),
+                                                child: Icon(
+                                                  Icons.arrow_downward,
+                                                  size: btnSize * 0.56,
+                                                  color: colorScheme.onSurface
+                                                      .withValues(alpha: 0.7),
+                                                ),
+                                              ),
+                                              onPressed: _scrollToBottom,
+                                            );
+                                          },
                                         ),
                                       ),
-                                      onPressed: _scrollToBottom,
-                                    );
-                                  },
-                                ),
+                                    ),
+                                  );
+                                },
                               ),
                             ),
                           ),

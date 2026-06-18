@@ -45,6 +45,8 @@
     <!-- === Storage (только для старых Android) === -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <!-- === Полный доступ к хранилищу для бэкапов (Android 11+) === -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <!-- === Установка APK (Android 8+) === -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />

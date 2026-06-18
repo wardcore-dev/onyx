@@ -22,6 +22,9 @@ class ChatMessage {
   
   DateTime? deliveredAt;
 
+  /// When the message content was last edited (used for WardLink edit sync).
+  DateTime? editedAt;
+
   /// emoji → [usernames], cached from server
   Map<String, List<String>> reactions;
 
@@ -47,6 +50,7 @@ class ChatMessage {
     this.replyToContent,
     DeliveryMode? deliveryMode,
     this.deliveredAt,
+    this.editedAt,
     Map<String, List<String>>? reactions,
   })  : reactions = reactions ?? {},
         _content = content,
@@ -93,6 +97,7 @@ class ChatMessage {
     'replyToContent': replyToContent,
     'deliveryMode': deliveryMode.name,
     'deliveredAt': deliveredAt?.toIso8601String(),
+    if (editedAt != null) 'editedAt': editedAt!.toIso8601String(),
     if (reactions.isNotEmpty)
       'reactions': reactions.map((e, u) => MapEntry(e, u)),
   };
@@ -120,6 +125,9 @@ class ChatMessage {
       deliveryMode: _parseDeliveryMode(j['deliveryMode']),
       deliveredAt: j['deliveredAt'] != null
           ? DateTime.tryParse(j['deliveredAt'].toString())
+          : null,
+      editedAt: j['editedAt'] != null
+          ? DateTime.tryParse(j['editedAt'].toString())
           : null,
       reactions: _parseReactions(j['reactions']),
     );

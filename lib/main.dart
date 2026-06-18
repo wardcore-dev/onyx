@@ -13,10 +13,10 @@ import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
-import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'utils/autostart_manager.dart';
+import 'utils/onyx_base_dir.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:just_audio/just_audio.dart' as ja;
@@ -32,11 +32,13 @@ import 'managers/fallback_storage.dart';
 import 'managers/blocklist_manager.dart';
 import 'managers/mute_manager.dart';
 import 'managers/lock_manager.dart';
+import 'managers/trash_manager.dart';
 import 'managers/account_manager.dart';
 import 'managers/onyx_tray_manager.dart';
 import 'models/app_themes.dart';
 import 'widgets/debug_overlay_v2.dart';
 import 'widgets/wardlink_bubble.dart';
+import 'widgets/wardlink_sync_bubble.dart';
 import 'widgets/vinyl_player_button.dart';
 import 'widgets/voice_channel_bar.dart';
 import 'voice/voice_channel_manager.dart';
@@ -46,10 +48,12 @@ import 'utils/performance_initializer.dart';
 import 'utils/performance_config.dart';
 import 'utils/proxy_manager.dart';
 import 'utils/cert_pinning.dart';
+import 'utils/app_paths.dart';
 import 'utils/media_cache.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'l10n/app_localizations.dart';
 
+import 'database/db_provider.dart';
 import 'globals.dart';
 import 'utils/global_audio_controller.dart';
 import 'package:media_kit/media_kit.dart';
@@ -72,7 +76,7 @@ Future<void> _initLogFile() async {
     } else if (Platform.isLinux) {
       appDir = Directory('${Platform.environment['HOME']}/.config/onyx');
     } else {
-      final tempDir = await getApplicationDocumentsDirectory();
+      final tempDir = await getOnyxDocumentsDirectory();
       appDir = Directory('${tempDir.path}/ONYX');
     }
 
@@ -209,6 +213,10 @@ enum MediaProvider {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await OnyxBaseDir.init();
+  await OnyxBaseDir.consolidateFromDocuments();
+  await OnyxBaseDir.fixOrphanedAvatarPaths();
+  await DbProvider.init();
   MediaKit.ensureInitialized();
   await LiquidGlassWidgets.initialize();
 
@@ -234,13 +242,13 @@ void main() async {
 
   appLog('[settings] Loading SettingsManager...');
   await SettingsManager.init();
+  await TrashManager.loadSettings();
   await BlocklistManager.init();
   await MuteManager.init();
   await LockManager.init();
 
   await MediaCache.instance.init();
-
-  unawaited(MediaCache.instance.clearDisplayCache());
+  await AppPaths.ensureInit();
 
   if (SettingsManager.proxyEnabled.value) {
     ProxyManager.deferToFirstConnect();
@@ -255,6 +263,9 @@ void main() async {
     final cur = await AccountManager.getCurrentAccount();
     await SettingsManager.setAccountContext(cur);
     appLog('[settings] SettingsManager loaded (account: ${cur ?? "<none>"})');
+    if (cur != null) {
+      unawaited(AccountManager.pingServer());
+    }
   } catch (e) {
     appLog('[settings] SettingsManager loaded (failed to set account context): $e');
   }
@@ -362,12 +373,9 @@ Future<void> _optimizePerformance() async {
   appLog(
       '[performance] Starting additional performance optimizations...');
 
-  if (Platform.isAndroid || Platform.isWindows) {
-    
-    imageCache.maximumSize = 200;
-    imageCache.maximumSizeBytes = 150 * 1024 * 1024;
-    appLog('[performance] Image cache optimized: 150MB, 200 items');
-  }
+  // Decoded-image cache size is configured once, tiered and web-safe, in
+  // PerformanceInitializer._optimizeImageCache() — not here, so the two don't
+  // fight over the value.
 
   try {
     if (Platform.isAndroid || Platform.isWindows) {
@@ -743,6 +751,7 @@ class _ElegantMessengerState extends State<ElegantMessenger> with WindowListener
                   const CallOverlay(),
                   const VinylPlayerButton(),
                   const WardLinkBubble(),
+                  const WardLinkSyncBubble(),
                   const _GlobalVoiceBar(),
                 ],
               ),
@@ -780,21 +789,166 @@ class _PinGateWidget extends StatefulWidget {
   State<_PinGateWidget> createState() => _PinGateWidgetState();
 }
 
-class _PinGateWidgetState extends State<_PinGateWidget> {
+class _PinGateWidgetState extends State<_PinGateWidget>
+    with WidgetsBindingObserver {
   late bool _unlocked;
   final _localAuth = LocalAuthentication();
+  bool _wasInBackground = false;
+  bool _showCover = false;
 
   @override
   void initState() {
     super.initState();
-    _unlocked = !SettingsManager.pinEnabled.value;
+    // Also show the PIN screen when FallbackStorage is v3-locked even if
+    // pin_lock_enabled was lost from SharedPreferences (e.g. old data folder deleted).
+    _unlocked = !SettingsManager.pinEnabled.value && !FallbackStorage.main.isLocked;
     DecoyManager.onLockRequest = _lockApp;
+    WidgetsBinding.instance.addObserver(this);
     if (!_unlocked && SettingsManager.biometricEnabled.value) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _tryBiometric());
     }
   }
 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final pinActive = SettingsManager.pinEnabled.value || FallbackStorage.main.isLocked;
+
+    final isDesktop = !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+    if (state == AppLifecycleState.inactive) {
+      if (!isDesktop && _unlocked && pinActive && !_isAuthenticating &&
+          SettingsManager.lockOnResume.value) {
+        if (mounted) setState(() => _showCover = true);
+      }
+    } else if (state == AppLifecycleState.paused) {
+      _wasInBackground = !isDesktop;
+      if (!isDesktop && _unlocked && pinActive && !_isAuthenticating &&
+          SettingsManager.lockOnResume.value) {
+        if (mounted && !_showCover) setState(() => _showCover = true);
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      if (_wasInBackground &&
+          !_isAuthenticating &&
+          _unlocked &&
+          SettingsManager.lockOnResume.value &&
+          pinActive) {
+        _wasInBackground = false;
+        _pushResumeLockScreen(); // cover stays visible behind PIN screen
+      } else {
+        _wasInBackground = false;
+        // No lock required — remove cover after one frame so the transition
+        // feels instant rather than flickering.
+        if (mounted && _showCover) {
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) { if (mounted) setState(() => _showCover = false); },
+          );
+        }
+      }
+    }
+  }
+
+  bool _resumeLockShown = false;
+  bool _isAuthenticating = false;
+
+  void _pushResumeLockScreen() {
+    if (_resumeLockShown) return;
+    final nav = navigatorKey.currentState;
+    if (nav == null) return;
+    _resumeLockShown = true;
+
+    // Captured before either PIN path runs, so we know whether the running
+    // RootScreen needs to be switched into/out of decoy mode, or whether the
+    // resumed session is already in the mode the entered PIN matches.
+    final wasDecoy = DecoyManager.isActive.value;
+
+    void onUnlocked() {
+      _wasInBackground = false;
+      _resumeLockShown = false;
+      if (nav.canPop()) nav.pop();
+      if (mounted) setState(() => _showCover = false);
+    }
+
+    // Real PIN/biometric success. If the session was showing the decoy
+    // account before backgrounding, switch the still-alive RootScreen back
+    // to the real account instead of just hiding the lock cover over it.
+    void onRealUnlocked() {
+      onUnlocked();
+      if (wasDecoy) {
+        final state = rootScreenKey.currentState;
+        if (state != null) unawaited(state.exitDecoyMode());
+      }
+    }
+
+    nav.push<void>(
+      PageRouteBuilder(
+        opaque: true,
+        fullscreenDialog: true,
+        pageBuilder: (_, __, ___) => PinCodeScreen.verify(
+          onSuccess: onRealUnlocked,
+          onFakePin: () async {
+            onUnlocked();
+            // Only swap RootScreen's loaded data if it wasn't already
+            // showing decoy content — otherwise this is just re-entering
+            // the same fake PIN while already in decoy mode.
+            if (!wasDecoy) {
+              await _activateDecoy();
+              await rootScreenKey.currentState?.enterDecoyMode();
+            }
+          },
+          onBiometric: SettingsManager.biometricEnabled.value
+              ? () => _tryBiometricResume(nav, onRealUnlocked)
+              : null,
+        ),
+        transitionsBuilder: (_, animation, __, child) =>
+            FadeTransition(opacity: animation, child: child),
+        transitionDuration: const Duration(milliseconds: 180),
+      ),
+    ).then((_) => _resumeLockShown = false);
+
+    if (SettingsManager.biometricEnabled.value) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _tryBiometricResume(nav, onUnlocked),
+      );
+    }
+  }
+
+  Future<void> _tryBiometricResume(NavigatorState nav, VoidCallback onUnlocked) async {
+    if (_isAuthenticating) return;
+    _isAuthenticating = true;
+    try {
+      final supported = await _localAuth.isDeviceSupported();
+      if (!supported) return;
+      final isDesktop = !kIsWeb &&
+          (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+      if (isDesktop) {
+        final pin = await SettingsManager.getBiometricPin();
+        if (pin == null || pin.isEmpty) return;
+        final didAuth = await _localAuth.authenticate(
+          localizedReason: 'Unlock ONYX',
+          options: const AuthenticationOptions(biometricOnly: false),
+        );
+        if (didAuth) onUnlocked();
+        return;
+      }
+      final didAuth = await _localAuth.authenticate(
+        localizedReason: 'Unlock ONYX',
+        options: const AuthenticationOptions(biometricOnly: false),
+      );
+      if (didAuth) onUnlocked();
+    } catch (_) {
+    } finally {
+      _isAuthenticating = false;
+    }
+  }
+
   Future<void> _tryBiometric() async {
+    if (_isAuthenticating) return;
+    _isAuthenticating = true;
     try {
       final supported = await _localAuth.isDeviceSupported();
       final canCheck = await _localAuth.canCheckBiometrics;
@@ -843,6 +997,8 @@ class _PinGateWidgetState extends State<_PinGateWidget> {
       if (didAuth && mounted) _completeUnlock();
     } catch (e, st) {
       appLog('[biometric] auth error: $e\n$st');
+    } finally {
+      _isAuthenticating = false;
     }
   }
 
@@ -851,8 +1007,11 @@ class _PinGateWidgetState extends State<_PinGateWidget> {
   /// RootScreen state is preserved by GlobalKey across lock/unlock, so without
   /// the manual reload the account would not reappear after unlocking.
   void _completeUnlock() {
+    _wasInBackground = false;
     MediaCache.instance.reset();
-    setState(() => _unlocked = true);
+    setState(() { _unlocked = true; _showCover = false; });
+    // FallbackStorage is now readable — restore pin_lock_enabled if SharedPrefs lost it.
+    SettingsManager.restorePinEnabledIfLost();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       rootScreenKey.currentState?.reloadAfterUnlock();
     });
@@ -881,10 +1040,32 @@ class _PinGateWidgetState extends State<_PinGateWidget> {
         onBiometric: SettingsManager.biometricEnabled.value ? _tryBiometric : null,
       );
     }
-    return RootScreenWrapper(
+    final child = RootScreenWrapper(
       currentTheme: widget.currentTheme,
       isDarkMode: widget.isDarkMode,
       onThemeChanged: widget.onThemeChanged,
+    );
+    if (!_showCover) return child;
+    return Stack(
+      children: [
+        child,
+        const _PrivacyCover(),
+      ],
+    );
+  }
+}
+
+class _PrivacyCover extends StatelessWidget {
+  const _PrivacyCover();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return ColoredBox(
+      color: cs.surface,
+      child: Center(
+        child: Icon(Icons.lock_rounded, size: 48, color: cs.onSurface.withValues(alpha: 0.15)),
+      ),
     );
   }
 }

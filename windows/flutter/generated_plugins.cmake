@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
+  connectivity_plus
   desktop_drop
   desktop_multi_window
   file_selector_windows
@@ -18,6 +19,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   permission_handler_windows
   record_windows
   screen_retriever_windows
+  sqlite3_flutter_libs
   super_native_extensions
   tray_manager
   url_launcher_windows

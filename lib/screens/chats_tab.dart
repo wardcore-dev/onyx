@@ -16,6 +16,10 @@ import '../managers/mute_manager.dart';
 import '../managers/lock_manager.dart';
 import '../dialogs/pin_lock_dialog.dart';
 import '../widgets/adaptive_glass_card.dart';
+import '../widgets/animated_reorder_list.dart';
+import '../widgets/tab_pull_search.dart';
+import '../widgets/inline_search_bar.dart';
+import '../utils/dialog_utils.dart';
 
 String _getFileTypeLabel(String filename) {
   final ext = filename.toLowerCase();
@@ -223,7 +227,7 @@ class ChatsTab extends StatefulWidget {
   final Map<String, List<ChatMessage>> chats;
   final String? username;
   final void Function(String other) onOpenChat;
-  final void Function(String chatId) onDeleteChat;
+  final void Function(String chatId, String displayName) onDeleteChat;
   final void Function(String username, String displayName) onBlockUser;
   final void Function(String username) onUnblockUser;
 
@@ -241,8 +245,8 @@ class ChatsTab extends StatefulWidget {
   State<ChatsTab> createState() => _ChatsTabState();
 }
 
-class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
-  
+class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, AutomaticKeepAliveClientMixin, RouteAware {
+
   @override
   bool get wantKeepAlive => true;
 
@@ -254,6 +258,19 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
   final Map<String, _ChatSumm> _byChatId = {};
   late List<_ChatSumm> _summaries;
   VoidCallback? _userUpdateListener;
+
+  final TextEditingController _searchCtrl = TextEditingController();
+  final GlobalKey _searchBarKey = GlobalKey();
+  String _searchQuery = '';
+  List<TabSearchResult> _searchResults = [];
+
+  // While a chat screen is open on top of this tab, new-message reorders are
+  // held back (only the row's content is refreshed in place) so the user
+  // sees the "jump to top" animation play when they come back to the list,
+  // instead of finding the chat already at the top.
+  bool _routeIsCurrent = true;
+  final Set<String> _pendingBumpIds = {};
+  ModalRoute<void>? _subscribedRoute;
 
   @override
   void initState() {
@@ -310,11 +327,13 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
   /// for every single incoming message.
   void _rebuildHintedSummaries(Set<String> chatIds) {
     final Set<String> usernamesToFetch = <String>{};
+    final Set<String> updatedIds = <String>{};
     for (final chatId in chatIds) {
       if (chatId.startsWith('fav:')) continue;
       final msgs = widget.chats[chatId];
       if (msgs == null) {
         _byChatId.remove(chatId);
+        _summaries.removeWhere((s) => s.chatId == chatId);
         continue;
       }
       final parts = chatId.split(':');
@@ -340,10 +359,29 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
         lastTs: lastTs,
         preview: preview,
       );
+      updatedIds.add(chatId);
     }
-    // O(n) move-to-front: remove hinted chats from their current positions,
-    // then insert them at the front sorted by lastTs (k<<n, usually k=1).
-    // Avoids the O(n log n) full re-sort + O(n) list allocation on every send.
+
+    if (_routeIsCurrent) {
+      _bumpToFront(updatedIds);
+    } else {
+      // A chat screen is open on top of the list: refresh each row's content
+      // in place (so preview/time stay correct) without reordering, and
+      // remember to animate the jump-to-top once the user returns to the list.
+      for (final id in updatedIds) {
+        final idx = _summaries.indexWhere((s) => s.chatId == id);
+        final s = _byChatId[id];
+        if (idx != -1 && s != null) _summaries[idx] = s;
+      }
+      _pendingBumpIds.addAll(updatedIds);
+    }
+    _fetchUserProfilesInBackground(usernamesToFetch);
+  }
+
+  /// Moves [chatIds] to the front of `_summaries`, ordered by their lastTs
+  /// (k<<n, usually k=1) — avoids a full O(n log n) re-sort on every message.
+  void _bumpToFront(Set<String> chatIds) {
+    if (chatIds.isEmpty) return;
     _summaries.removeWhere((s) => chatIds.contains(s.chatId));
     final hinted = <_ChatSumm>[];
     for (final id in chatIds) {
@@ -354,7 +392,34 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
       hinted.sort((a, b) => b.lastTs.compareTo(a.lastTs));
     }
     _summaries.insertAll(0, hinted);
-    _fetchUserProfilesInBackground(usernamesToFetch);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != _subscribedRoute) {
+      if (_subscribedRoute != null) routeObserver.unsubscribe(this);
+      _subscribedRoute = route;
+      if (route != null) routeObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPushNext() {
+    // A chat screen (or similar) opened on top of the list — hold off on
+    // animating reorders until the user comes back to look at it.
+    _routeIsCurrent = false;
+  }
+
+  @override
+  void didPopNext() {
+    _routeIsCurrent = true;
+    if (_pendingBumpIds.isNotEmpty && mounted) {
+      final ids = Set<String>.from(_pendingBumpIds);
+      _pendingBumpIds.clear();
+      setState(() => _bumpToFront(ids));
+    }
   }
 
   @override
@@ -370,10 +435,12 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
   void dispose() {
     _listAnimController.dispose();
     _screenFadeController.dispose();
+    _searchCtrl.dispose();
     if (_userUpdateListener != null) {
       UserCache.updatedUsers.removeListener(_userUpdateListener!);
     }
     chatsVersion.removeListener(_onChatsVersion);
+    if (_subscribedRoute != null) routeObserver.unsubscribe(this);
     super.dispose();
   }
 
@@ -438,7 +505,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
             onPressed: () {
               Navigator.of(context).pop();
               LockManager.removeLock('dm_${summary.otherUsername}');
-              widget.onDeleteChat(summary.chatId);
+              widget.onDeleteChat(summary.chatId, summary.displayName);
             },
             child: Text(
               AppLocalizations.of(context).delete,
@@ -499,9 +566,77 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
     );
   }
 
+  Widget Function(BuildContext, double) _chatAvatarBuilder(_ChatSumm summ) {
+    return (context, size) => AvatarWidget(
+          key: ValueKey('search_avatar-${summ.otherUsername}'),
+          username: summ.otherUsername,
+          tokenProvider: avatarTokenProvider,
+          avatarBaseUrl: serverBase,
+          size: size,
+          editable: false,
+        );
+  }
+
+  Future<List<TabSearchResult>> _searchChats(String query) async {
+    final lower = query.toLowerCase();
+    final nameHits = <TabSearchResult>[];
+    final contentHits = <TabSearchResult>[];
+    final chats = rootScreenKey.currentState?.chats;
+
+    outer:
+    for (final summ in _summaries) {
+      final avatarBuilder = _chatAvatarBuilder(summ);
+      final nameMatch = summ.displayName.toLowerCase().contains(lower) ||
+          summ.otherUsername.toLowerCase().contains(lower);
+      if (nameMatch) {
+        nameHits.add(TabSearchResult(
+          id: summ.otherUsername,
+          title: summ.displayName,
+          subtitle: '@${summ.otherUsername}',
+          snippet: summ.preview.isNotEmpty ? summ.preview : null,
+          icon: Icons.person_outline,
+          avatarBuilder: avatarBuilder,
+        ));
+        continue;
+      }
+
+      final history = chats?[summ.chatId];
+      if (history == null || history.isEmpty) continue;
+      // One card per matching message — chats are intentionally not deduped,
+      // so a chat with several hits shows up as several separate cards.
+      for (var i = history.length - 1; i >= 0; i--) {
+        final content = history[i].content;
+        if (content.toLowerCase().contains(lower)) {
+          contentHits.add(TabSearchResult(
+            id: summ.otherUsername,
+            title: summ.displayName,
+            subtitle: '@${summ.otherUsername}',
+            snippet: getPreviewText(content),
+            icon: Icons.forum_outlined,
+            avatarBuilder: avatarBuilder,
+            messageId: history[i].id,
+          ));
+          if (nameHits.length + contentHits.length >= 30) break outer;
+        }
+      }
+    }
+
+    return [...nameHits, ...contentHits].take(30).toList();
+  }
+
+  void _onSearchResultTap(TabSearchResult result) {
+    _searchCtrl.clear();
+    setState(() { _searchQuery = ''; _searchResults = []; });
+    if (result.messageId != null) {
+      final ids = [widget.username ?? 'me', result.id]..sort();
+      setPendingMessageScrollTarget(ids.join(':'), result.messageId!);
+    }
+    _openChatWithLockCheck(context, result.id);
+  }
+
   Future<void> _openChatWithLockCheck(BuildContext ctx, String username) async {
     final lockId = 'dm_$username';
-    if (!LockManager.isLocked(lockId)) {
+    if (!LockManager.isLocked(lockId) || LockManager.isSessionUnlocked(lockId)) {
       widget.onOpenChat(username);
       return;
     }
@@ -784,108 +919,193 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
 
   Future<void> _showUserProfileDialog(
       String username, String displayName) async {
-    
-    FocusScope.of(context).unfocus();
+    await unfocusAndSettle(context);
+    if (!mounted) return;
 
     final cached = UserCache.getSync(username);
     final dp = (cached != null) ? cached.displayName : displayName;
     final desc = (cached != null) ? cached.description : '';
 
-    await showDialog<void>(
+    await showGeneralDialog<void>(
       context: context,
-      builder: (ctx) {
-        return ValueListenableBuilder<double>(
-          valueListenable: SettingsManager.elementOpacity,
-          builder: (_, elemOpacity, __) {
-            final colorScheme = Theme.of(ctx).colorScheme;
-            return Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: Dialog(
-                  backgroundColor: colorScheme.surface.withValues(alpha: elemOpacity),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        
-                        Text(
-                          dp,
-                          style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: colorScheme.onSurface),
+      barrierDismissible: true,
+      barrierLabel: 'User profile',
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      transitionDuration: const Duration(milliseconds: 187),
+      transitionBuilder: (ctx, anim, _, child) {
+        final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+        return FadeTransition(
+          opacity: CurvedAnimation(parent: anim, curve: Curves.easeIn),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.93, end: 1.0).animate(curved),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (ctx, _, __) {
+        final colorScheme = Theme.of(ctx).colorScheme;
+        final l = AppLocalizations.of(ctx);
+        const btnShape = RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(50)),
+        );
+        const btnPadding = EdgeInsets.symmetric(vertical: 13);
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 40),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 360),
+              child: Material(
+                color: colorScheme.surface,
+                borderRadius: BorderRadius.circular(28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // ── Header tinted ──────────────────────────────────
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(0, 28, 16, 20),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary.withValues(alpha: 0.06),
+                        border: Border(
+                          bottom: BorderSide(
+                            color: colorScheme.primary.withValues(alpha: 0.10),
+                            width: 0.8,
+                          ),
                         ),
-                        const SizedBox(height: 12),
-                        AvatarWidget(
-                          username: username,
-                          tokenProvider: avatarTokenProvider,
-                          avatarBaseUrl: serverBase,
-                          size: 96.0,
-                          editable: false,
-                        ),
-                        const SizedBox(height: 12),
-                        
-                        if (desc.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                            child: Text(
-                              desc,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: colorScheme.onSurface.withValues(alpha: 0.8 * elemOpacity),
+                      ),
+                      child: Stack(
+                        alignment: Alignment.topCenter,
+                        children: [
+                          Column(
+                            children: [
+                              AvatarWidget(
+                                username: username,
+                                tokenProvider: avatarTokenProvider,
+                                avatarBaseUrl: serverBase,
+                                size: 80.0,
+                                editable: false,
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                dp,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: colorScheme.onSurface,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              GestureDetector(
+                                onTap: () {
+                                  Clipboard.setData(ClipboardData(text: '@$username'));
+                                  rootScreenKey.currentState?.showSnack(
+                                      AppLocalizations.of(context)
+                                          .copiedUsername(username));
+                                },
+                                child: Text(
+                                  '@$username',
+                                  style: TextStyle(
+                                    color: colorScheme.primary,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ),
+                              if (desc.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                                  child: Text(
+                                    desc,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: colorScheme.onSurface
+                                          .withValues(alpha: 0.6),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          Positioned(
+                            top: 0,
+                            right: 0,
+                            child: GestureDetector(
+                              onTap: () => Navigator.of(ctx).pop(),
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: colorScheme.onSurface
+                                      .withValues(alpha: 0.07),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(
+                                  Icons.close_rounded,
+                                  size: 18,
+                                  color: colorScheme.onSurface
+                                      .withValues(alpha: 0.55),
+                                ),
                               ),
                             ),
                           ),
-                        const SizedBox(height: 6),
-                        TextButton(
-                          style: TextButton.styleFrom(
-                            padding: EdgeInsets.zero,
-                            minimumSize: const Size(0, 0),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                          onPressed: () {
-                            Clipboard.setData(ClipboardData(text: '@$username'));
-                            rootScreenKey.currentState
-                                ?.showSnack(AppLocalizations.of(context).copiedUsername(username));
-                          },
-                          child: Text('@$username',
-                              style: TextStyle(
-                                  color: colorScheme.primary,
-                                  fontWeight: FontWeight.w600)),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            FilledButton.icon(
-                              onPressed: () {
-                                Navigator.of(ctx).pop();
-                                widget.onOpenChat(username);
-                              },
-                              icon: const Icon(Icons.message),
-                              label: const Text('Message'),
-                            ),
-                            const SizedBox(width: 12),
-                            TextButton(
-                              onPressed: () => Navigator.of(ctx).pop(),
-                              child: const Text('Close'),
-                            ),
-                          ],
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
+                    // ── Buttons ────────────────────────────────────────
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: () {
+                              Navigator.of(ctx).pop();
+                              widget.onOpenChat(username);
+                            },
+                            style: FilledButton.styleFrom(
+                              padding: btnPadding,
+                              shape: btnShape,
+                            ),
+                            icon: const Icon(Icons.message_rounded, size: 18),
+                            label: Text(l.profileMessage),
+                          ),
+                          const SizedBox(height: 8),
+                          OutlinedButton(
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            style: OutlinedButton.styleFrom(
+                              padding: btnPadding,
+                              shape: btnShape,
+                            ),
+                            child: Text(l.close),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            );
-          },
+            ),
+          ),
         );
       },
     );
+  }
+
+  Future<void> _onSearchChanged(String query) async {
+    final trimmed = query.trim();
+    if (trimmed == _searchQuery) return;
+    if (trimmed.isEmpty) {
+      setState(() { _searchQuery = ''; _searchResults = []; });
+      return;
+    }
+    final results = await _searchChats(trimmed);
+    if (!mounted) return;
+    setState(() { _searchQuery = trimmed; _searchResults = results; });
   }
 
   Widget _buildContent() {
@@ -908,18 +1128,79 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
       );
     }
 
+    final cs = Theme.of(context).colorScheme;
+    final bottomPad = 8 + MediaQuery.paddingOf(context).bottom;
+    final searchBar = InlineSearchBar(
+      key: _searchBarKey,
+      controller: _searchCtrl,
+      onChanged: _onSearchChanged,
+      hintText: AppLocalizations.of(context).searchChatsHint,
+      hasText: _searchQuery.isNotEmpty,
+    );
+
+    if (_searchQuery.isNotEmpty) {
+      return CustomScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        slivers: [
+          SliverToBoxAdapter(child: searchBar),
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(12, 4, 12, bottomPad),
+            sliver: SliverList.builder(
+              itemCount: _searchResults.length,
+              itemBuilder: (ctx, i) {
+                final r = _searchResults[i];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: GestureDetector(
+                    onTap: () => _onSearchResultTap(r),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Row(
+                        children: [
+                          r.avatarBuilder?.call(ctx, 40) ??
+                              CircleAvatar(
+                                radius: 20,
+                                backgroundColor: cs.primary.withValues(alpha: 0.15),
+                                child: Icon(r.icon, size: 18, color: cs.primary),
+                              ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(r.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                if (r.snippet != null)
+                                  Text(r.snippet!, style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.55)), maxLines: 1, overflow: TextOverflow.ellipsis),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      );
+    }
+
     return FadeTransition(
       opacity: _listFadeAnim,
-      child: ListView.separated(
-        padding: EdgeInsets.fromLTRB(12, 8, 12, 8 + MediaQuery.paddingOf(context).bottom),
-        itemCount: _summaries.length,
-        
-        cacheExtent: 500,
+      child: AnimatedReorderList<_ChatSumm>(
+        items: _summaries,
+        keyOf: (it) => it.chatId,
+        header: searchBar,
+        padding: EdgeInsets.fromLTRB(12, 8, 12, bottomPad),
         physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-        separatorBuilder: (_, __) => const SizedBox(height: 6),
-        itemBuilder: (context, i) {
-          final it = _summaries[i];
-          
+        separatorHeight: 6,
+        itemBuilder: (context, it, i) {
           return RepaintBoundary(
             child: GestureDetector(
               onSecondaryTapUp: _isDesktop
@@ -1068,7 +1349,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                         );
                       },
                     ),
-                    
+
                   ],
                 ),
               ),

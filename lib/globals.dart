@@ -29,6 +29,11 @@ final ValueNotifier<bool> wsConnectedNotifier = ValueNotifier<bool>(false);
 final ValueNotifier<bool> sessionExpiredNotifier = ValueNotifier<bool>(false);
 
 final ValueNotifier<bool> proxyActiveNotifier = ValueNotifier<bool>(false);
+
+/// True while a tab's "pull to search" panel (TabPullSearchOverlay) is open
+/// and focused — used to hide the floating bottom nav bar so it doesn't end
+/// up overlapping the panel/keyboard once the Scaffold resizes for the IME.
+final ValueNotifier<bool> tabPullSearchOpen = ValueNotifier<bool>(false);
 final ValueNotifier<Set<String>> onlineUsersNotifier = ValueNotifier(
   <String>{},
 );
@@ -55,6 +60,28 @@ final ValueNotifier<int> groupsVersion = ValueNotifier<int>(0);
 final ValueNotifier<int> accountSwitchVersion = ValueNotifier<int>(0);
 
 final ValueNotifier<Map<String, bool>> lanModePerChat = ValueNotifier<Map<String, bool>>({});
+
+/// Chat key + message id that the next opened chat screen should scroll to
+/// and highlight — set right before navigating from a content-match search
+/// result so the chat opens scrolled to the matched message instead of the
+/// bottom. Each chat screen consumes (and clears) this in initState by
+/// matching its own chat key (e.g. `_chatId`, `'fav:<id>'`, `'native:<id>'`).
+String? _pendingScrollChatKey;
+String? _pendingScrollMessageId;
+
+void setPendingMessageScrollTarget(String chatKey, String messageId) {
+  _pendingScrollChatKey = chatKey;
+  _pendingScrollMessageId = messageId;
+}
+
+/// Returns and clears the pending scroll target if it belongs to [chatKey].
+String? consumePendingMessageScrollTarget(String chatKey) {
+  if (_pendingScrollChatKey != chatKey) return null;
+  final id = _pendingScrollMessageId;
+  _pendingScrollChatKey = null;
+  _pendingScrollMessageId = null;
+  return id;
+}
 
 /// ChatIds whose summaries changed since the last chatsVersion bump.
 /// ChatsTab reads this in _onChatsVersion to decide whether to do an incremental
@@ -99,7 +126,7 @@ const String wsUrl = 'wss://api-onyx.wardcore.com/ws';
 const String publicIpApi = 'https://api.ipify.org';
 
 
-const String kAppVersion = 'v1.6a-beta';
+const String kAppVersion = 'v1.7-beta';
 
 bool get isDesktop {
   if (kIsWeb) return false;

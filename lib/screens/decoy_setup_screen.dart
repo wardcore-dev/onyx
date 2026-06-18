@@ -2,7 +2,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory;
 import 'package:path/path.dart' as p;
 import '../managers/decoy_manager.dart';
 import '../managers/decoy_data_manager.dart';
@@ -13,14 +13,23 @@ import '../l10n/app_localizations.dart';
 import 'pin_code_screen.dart';
 
 Future<void> showDecoySetupSheet(BuildContext context) {
-  return showModalBottomSheet(
+  return showGeneralDialog(
     context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-    ),
-    builder: (_) => const _DecoySetupSheet(),
+    barrierDismissible: true,
+    barrierLabel: 'Fake PIN Setup',
+    barrierColor: Colors.black.withValues(alpha: 0.55),
+    transitionDuration: const Duration(milliseconds: 200),
+    transitionBuilder: (ctx, anim, _, child) {
+      final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: anim, curve: Curves.easeIn),
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
+          child: child,
+        ),
+      );
+    },
+    pageBuilder: (_, __, ___) => const _DecoySetupSheet(),
   );
 }
 
@@ -325,7 +334,7 @@ class _DecoySetupSheetState extends State<_DecoySetupSheet> {
     final srcPath = result.files.first.path;
     if (srcPath == null) return;
 
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await getOnyxDocumentsDirectory();
     final dest = p.join(dir.path, 'decoy_avatar.jpg');
     await File(srcPath).copy(dest);
     if (mounted) setState(() => _avatarPath = dest);
@@ -377,65 +386,100 @@ class _DecoySetupSheetState extends State<_DecoySetupSheet> {
     final l = AppLocalizations.of(context);
     final cs = Theme.of(context).colorScheme;
 
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 12, bottom: 4),
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: cs.outlineVariant,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 440,
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            child: Row(
+          child: Material(
+            color: cs.surface,
+            borderRadius: BorderRadius.circular(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Icon(Icons.theater_comedy_outlined, color: cs.primary, size: 20),
-                const SizedBox(width: 8),
-                Text(l.fakePinSheetTitle,
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 17,
-                        color: cs.onSurface)),
+                Container(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 16, 16),
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.06),
+                    border: Border(
+                      bottom: BorderSide(
+                          color: cs.primary.withValues(alpha: 0.10), width: 0.8),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: cs.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(Icons.theater_comedy_rounded,
+                            size: 18, color: cs.primary),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(l.fakePinSheetTitle,
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 17,
+                                color: cs.onSurface)),
+                      ),
+                      GestureDetector(
+                        onTap: () => Navigator.of(context).pop(),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: cs.onSurface.withValues(alpha: 0.07),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(Icons.close_rounded,
+                              size: 18,
+                              color: cs.onSurface.withValues(alpha: 0.55)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Flexible(
+                  child: _loading
+                      ? const Padding(
+                          padding: EdgeInsets.all(32),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      : ListView(
+                          padding: const EdgeInsets.all(20),
+                          shrinkWrap: true,
+                          children: [
+                            _buildPinSection(l, cs),
+                            const SizedBox(height: 16),
+                            _buildAccountSection(l, cs),
+                            const SizedBox(height: 16),
+                            _buildFakeChatsSection(l, cs),
+                            const SizedBox(height: 16),
+                            _buildFakeGroupsSection(l, cs),
+                            const SizedBox(height: 16),
+                            _buildFakeFavoritesSection(l, cs),
+                            const SizedBox(height: 16),
+                            _buildGenerateAllButton(l, cs),
+                            const SizedBox(height: 16),
+                            _buildSecurityNote(l, cs),
+                            const SizedBox(height: 8),
+                          ],
+                        ),
+                ),
               ],
             ),
           ),
-          const Divider(height: 1),
-          Flexible(
-            child: _loading
-                ? const Padding(
-                    padding: EdgeInsets.all(32),
-                    child: CircularProgressIndicator(),
-                  )
-                : ListView(
-                    padding: const EdgeInsets.all(20),
-                    shrinkWrap: true,
-                    children: [
-                      _buildPinSection(l, cs),
-                      const SizedBox(height: 16),
-                      _buildAccountSection(l, cs),
-                      const SizedBox(height: 16),
-                      _buildFakeChatsSection(l, cs),
-                      const SizedBox(height: 16),
-                      _buildFakeGroupsSection(l, cs),
-                      const SizedBox(height: 16),
-                      _buildFakeFavoritesSection(l, cs),
-                      const SizedBox(height: 16),
-                      _buildGenerateAllButton(l, cs),
-                      const SizedBox(height: 16),
-                      _buildSecurityNote(l, cs),
-                      const SizedBox(height: 8),
-                    ],
-                  ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -459,53 +503,37 @@ class _DecoySetupSheetState extends State<_DecoySetupSheet> {
                         fontSize: 14,
                         color: cs.onSurface)),
               ),
-              _StatusChip(
-                label: _enabled ? l.fakePinStatusActive : l.fakePinStatusOff,
-                color: _enabled ? Colors.green : cs.outline,
+              Switch.adaptive(
+                value: _enabled,
+                onChanged: (v) => v ? _enableFakePin() : _disableFakePin(),
+                activeThumbColor: cs.primary,
               ),
             ],
           ),
           const SizedBox(height: 6),
           Text(l.fakePinDescription,
               style: TextStyle(fontSize: 12, color: cs.outline)),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: _enabled
-                ? OutlinedButton.icon(
-                    onPressed: _disableFakePin,
-                    icon: const Icon(Icons.lock_open, size: 16),
-                    label: Text(l.disableFakePin),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: cs.error,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                  )
-                : FilledButton.icon(
-                    onPressed: _enableFakePin,
-                    icon: const Icon(Icons.add, size: 16),
-                    label: Text(l.setFakePin),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                  ),
-          ),
           if (_enabled) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _enableFakePin,
-                icon: const Icon(Icons.edit, size: 16),
-                label: Text(l.changeFakePin),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
+            const SizedBox(height: 12),
+            Container(height: 1, color: cs.outlineVariant.withValues(alpha: 0.25)),
+            InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: _enableFakePin,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Row(
+                  children: [
+                    Icon(Icons.edit_outlined, size: 16, color: cs.primary),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(l.changeFakePin,
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: cs.onSurface)),
+                    ),
+                    Icon(Icons.chevron_right_rounded, size: 18, color: cs.outline),
+                  ],
                 ),
               ),
             ),
@@ -634,7 +662,7 @@ class _DecoySetupSheetState extends State<_DecoySetupSheet> {
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                    borderRadius: BorderRadius.circular(50)),
               ),
               child: _saving
                   ? const SizedBox(
@@ -696,7 +724,7 @@ class _DecoySetupSheetState extends State<_DecoySetupSheet> {
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                    borderRadius: BorderRadius.circular(50)),
               ),
             ),
           ),
@@ -787,7 +815,7 @@ class _DecoySetupSheetState extends State<_DecoySetupSheet> {
         children: [
           Row(
             children: [
-              Icon(Icons.star_outline, color: cs.primary, size: 18),
+              Icon(Icons.bookmark_outline_rounded, color: cs.primary, size: 18),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(l.decoyFavoritesSection,
@@ -819,13 +847,13 @@ class _DecoySetupSheetState extends State<_DecoySetupSheet> {
             width: double.infinity,
             child: OutlinedButton.icon(
               onPressed: _addFavorite,
-              icon: const Icon(Icons.star_border, size: 15),
+              icon: const Icon(Icons.bookmark_add_outlined, size: 15),
               label: Text(l.addFakeFavorite,
                   style: const TextStyle(fontSize: 13)),
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                    borderRadius: BorderRadius.circular(50)),
               ),
             ),
           ),
@@ -988,26 +1016,6 @@ class _Card extends StatelessWidget {
         border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.2)),
       ),
       child: child,
-    );
-  }
-}
-
-class _StatusChip extends StatelessWidget {
-  final String label;
-  final Color color;
-  const _StatusChip({required this.label, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(label,
-          style: TextStyle(
-              fontSize: 11, color: color, fontWeight: FontWeight.w600)),
     );
   }
 }

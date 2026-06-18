@@ -1,17 +1,22 @@
 // lib/screens/forward_screen.dart
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import '../globals.dart';
+import '../enums/liquid_glass_quality.dart';
 import '../models/fav_folder.dart';
 import '../models/group.dart';
 import '../models/favorite_chat.dart';
 import '../models/external_server.dart';
 import '../managers/account_manager.dart';
 import '../managers/external_server_manager.dart';
+import '../managers/lock_manager.dart';
 import '../managers/settings_manager.dart';
+import '../dialogs/pin_lock_dialog.dart';
 import '../managers/user_cache.dart';
 import '../widgets/avatar_widget.dart';
 import '../widgets/chat_background_layer.dart';
@@ -337,6 +342,18 @@ class _ForwardScreenState extends State<ForwardScreen> {
   // ── floating glass nav bar (scaffold / mobile) ────────────────────────────────
 
   Widget _buildFloatingNavBar(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: SettingsManager.liquidGlassOnNavBar,
+      builder: (context, onNavBar, _) {
+        // Liquid glass on Android, iOS and macOS; standard bar on Windows/Linux.
+        final glassAllowed = !Platform.isWindows && !Platform.isLinux;
+        if (glassAllowed && onNavBar) return _buildLiquidFloatingNavBar(context);
+        return _buildStandardFloatingNavBar(context);
+      },
+    );
+  }
+
+  Widget _buildStandardFloatingNavBar(BuildContext context) {
     return ValueListenableBuilder<double>(
       valueListenable: SettingsManager.elementBrightness,
       builder: (_, brightness, __) {
@@ -406,6 +423,98 @@ class _ForwardScreenState extends State<ForwardScreen> {
               ),
             );
           },
+        );
+      },
+    );
+  }
+
+  static const _navTabIcons = [
+    Icons.chat_bubble,
+    Icons.group,
+    Icons.bookmark,
+  ];
+
+  Widget _buildLiquidFloatingNavBar(BuildContext context) {
+    final screenW = MediaQuery.of(context).size.width;
+    final navWidth = screenW / 3;
+
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        SettingsManager.liquidGlassNavBarQuality,
+        SettingsManager.liquidGlassExpansion,
+        SettingsManager.liquidGlassBlur,
+        SettingsManager.liquidGlassTint,
+        SettingsManager.liquidGlassSaturation,
+        SettingsManager.liquidGlassChromatic,
+        SettingsManager.liquidGlassRefractive,
+        SettingsManager.liquidGlassLightIntensity,
+        SettingsManager.liquidGlassThickness,
+      ]),
+      builder: (context, _) {
+        final quality        = SettingsManager.liquidGlassNavBarQuality.value;
+        final expansion      = SettingsManager.liquidGlassExpansion.value;
+        final blur           = SettingsManager.liquidGlassBlur.value;
+        final tint           = SettingsManager.liquidGlassTint.value;
+        final saturation     = SettingsManager.liquidGlassSaturation.value;
+        final chromatic      = SettingsManager.liquidGlassChromatic.value;
+        final refractive     = SettingsManager.liquidGlassRefractive.value;
+        final lightIntensity = SettingsManager.liquidGlassLightIntensity.value;
+        final thickness      = SettingsManager.liquidGlassThickness.value;
+
+        final glassQuality = switch (quality) {
+          LiquidGlassQuality.fast    => GlassQuality.standard,
+          LiquidGlassQuality.medium  => GlassQuality.minimal,
+          LiquidGlassQuality.quality => GlassQuality.premium,
+        };
+
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        final tintColor = isDark
+            ? Colors.white.withValues(alpha: tint)
+            : Colors.black.withValues(alpha: tint);
+
+        final glassSettings = LiquidGlassSettings(
+          thickness: thickness,
+          blur: blur,
+          chromaticAberration: chromatic,
+          lightIntensity: lightIntensity,
+          refractiveIndex: refractive,
+          saturation: saturation,
+          ambientStrength: 1,
+          lightAngle: 0.75 * math.pi,
+          glassColor: tintColor,
+        );
+
+        return Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: SafeArea(
+            bottom: true,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 18),
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: SizedBox(
+                  width: navWidth + 20,
+                  child: GlassBottomBar(
+                    tabs: List.generate(
+                      _navTabIcons.length,
+                      (i) => GlassBottomBarTab(icon: Icon(_navTabIcons[i])),
+                    ),
+                    selectedIndex: _tabIndex,
+                    onTabSelected: _selectTab,
+                    horizontalPadding: 10,
+                    verticalPadding: 0,
+                    barHeight: 58,
+                    quality: glassQuality,
+                    indicatorExpansion: expansion,
+                    glassSettings: glassSettings,
+                    selectedIconColor: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+              ),
+            ),
+          ),
         );
       },
     );
@@ -735,6 +844,20 @@ class _ForwardScreenState extends State<ForwardScreen> {
     );
   }
 
+  Future<void> _toggleFolderWithLockCheck(FavFolder folder) async {
+    final isExpanded = _expandedFolderIds.contains(folder.id);
+    if (isExpanded) {
+      setState(() => _expandedFolderIds.remove(folder.id));
+      return;
+    }
+    final lockId = 'fav_folder_${folder.id}';
+    if (LockManager.isLocked(lockId)) {
+      final ok = await showPinDialog(context, PinDialogMode.verify, lockId);
+      if (!ok || !mounted) return;
+    }
+    setState(() => _expandedFolderIds.add(folder.id));
+  }
+
   Widget _buildFavItem(FavoriteChat fav) {
     return InkWell(
       borderRadius: BorderRadius.circular(16),
@@ -781,13 +904,7 @@ class _ForwardScreenState extends State<ForwardScreen> {
 
       items.add(InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => setState(() {
-          if (isExpanded) {
-            _expandedFolderIds.remove(folder.id);
-          } else {
-            _expandedFolderIds.add(folder.id);
-          }
-        }),
+        onTap: () => _toggleFolderWithLockCheck(folder),
         child: _glassCard(
           context: context,
           child: Row(

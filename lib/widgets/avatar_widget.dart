@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart' show unawaited;
 import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart' show getOnyxSupportDirectory;
 import 'package:crypto/crypto.dart';
 import 'dart:math' show min, max;
 import 'package:image/image.dart' as img;
@@ -100,7 +101,7 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
 
   Future<File> _newCacheFile(Uint8List bytes) async {
     
-    final appSupport = await getApplicationSupportDirectory();
+    final appSupport = await getOnyxSupportDirectory();
     final avatarDir = Directory('${appSupport.path}/avatars');
     await avatarDir.create(recursive: true);
     final contentHash = md5.convert(bytes).toString();
@@ -117,7 +118,7 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
         _globalAvatarPathCache.remove(widget.username);
       }
 
-      final appSupport = await getApplicationSupportDirectory();
+      final appSupport = await getOnyxSupportDirectory();
       final avatarDir = Directory('${appSupport.path}/avatars');
       final prefix = 'avatar_${widget.username}_';
 
@@ -338,7 +339,7 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
 
     Future.delayed(const Duration(seconds: 5), () async {
       try {
-        final appSupport = await getApplicationSupportDirectory();
+        final appSupport = await getOnyxSupportDirectory();
         final avatarDir = Directory('${appSupport.path}/avatars');
         final prefix = 'avatar_${widget.username}_';
         if (await avatarDir.exists()) {
@@ -376,7 +377,7 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
     }
     
     try {
-      final appSupport = await getApplicationSupportDirectory();
+      final appSupport = await getOnyxSupportDirectory();
       final avatarDir = Directory('${appSupport.path}/avatars');
       final prefix = 'avatar_${widget.username}_';
       if (await avatarDir.exists()) {
@@ -752,7 +753,7 @@ Future<Uint8List?> getAvatarCachedBytes(String username) async {
   }
 
   try {
-    final appSupport = await getApplicationSupportDirectory();
+    final appSupport = await getOnyxSupportDirectory();
     final avatarDir  = Directory('${appSupport.path}/avatars');
     final prefix     = 'avatar_${username}_';
 

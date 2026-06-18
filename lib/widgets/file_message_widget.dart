@@ -2,7 +2,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import '../utils/file_utils.dart' show getOnyxSaveDirectory;
+import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
 import 'package:file_picker/file_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:http/http.dart' as http;
@@ -75,7 +76,7 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
       if (filename.startsWith('lan://')) {
         debugPrint('[FileWidget] LAN file detected: $filename');
         final lanFilename = filename.substring(6);
-        final appDocuments = await getApplicationDocumentsDirectory();
+        final appDocuments = await getOnyxDocumentsDirectory();
         final lanFile = File('${appDocuments.path}/lan_media/$lanFilename');
         if (await lanFile.exists()) {
           debugPrint('FileMessageWidget: LAN file found at ${lanFile.path}');
@@ -88,7 +89,7 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
 
       if (filename.startsWith('fav://')) {
         final favFilename = filename.substring(6);
-        final appDocuments = await getApplicationDocumentsDirectory();
+        final appDocuments = await getOnyxDocumentsDirectory();
         final favFile = File('${appDocuments.path}/fav_media/$favFilename');
         if (await favFile.exists()) {
           return favFile;
@@ -142,14 +143,12 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
       final basename = p.basename(f.path);
 
       if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
-        final dl = await getDownloadsDirectory();
-        if (dl == null) {
+        final onyxDir = await getOnyxSaveDirectory();
+        if (onyxDir == null) {
           rootScreenKey.currentState
               ?.showSnack('Cannot access Downloads directory');
           return null;
         }
-        final onyxDir = Directory('${dl.path}/ONYX');
-        await onyxDir.create(recursive: true);
         final destPath = '${onyxDir.path}/$basename';
         final savedFile = File(destPath);
         await f.copy(savedFile.path);
@@ -173,7 +172,7 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
       }
 
       if (Platform.isIOS) {
-        final targetDir = await getApplicationDocumentsDirectory();
+        final targetDir = await getOnyxDocumentsDirectory();
         final destPath = '${targetDir.path}/$basename';
         final savedFile = File(destPath);
         await f.copy(savedFile.path);
@@ -190,7 +189,7 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
   Future<File?> _downloadFromDirectUrl(String url, String filename,
       {void Function(double)? onProgress}) async {
     try {
-      final appSupport = await getApplicationSupportDirectory();
+      final appSupport = await getOnyxSupportDirectory();
       final cacheDir = Directory('${appSupport.path}/file_cache');
       await cacheDir.create(recursive: true);
 

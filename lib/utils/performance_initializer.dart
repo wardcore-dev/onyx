@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'fps_booster.dart';
@@ -30,9 +31,21 @@ class PerformanceInitializer {
   }
 
   static void _optimizeImageCache() {
-    
-    imageCache.maximumSize = 100; 
-    imageCache.maximumSizeBytes = 100 * 1024 * 1024; 
+    // Decoded-bitmap cache (PaintingBinding's imageCache). The COUNT is what
+    // stops thumbnails from re-decoding (a blank flash) when scrolling back over
+    // them; the BYTES value is just a safety ceiling, not constant usage.
+    // Tiered so desktop (lots of RAM) keeps more decoded, while phones/web stay
+    // conservative. Uses defaultTargetPlatform (not dart:io) so it's web-safe.
+    final mobile = kIsWeb ||
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    if (mobile) {
+      imageCache.maximumSize = 700;
+      imageCache.maximumSizeBytes = 150 * 1024 * 1024;
+    } else {
+      imageCache.maximumSize = 1000;
+      imageCache.maximumSizeBytes = 250 * 1024 * 1024;
+    }
   }
 
   static void _disableExpensiveEffects() {

@@ -6,11 +6,12 @@ import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart' show getOnyxSupportDirectory;
 import '../globals.dart';
 import '../l10n/app_localizations.dart';
 import '../managers/settings_manager.dart';
 import '../utils/media_cache.dart';
+import '../widgets/apple_segmented_tabs.dart';
 
 // ─── Data models ──────────────────────────────────────────────────────────────
 
@@ -122,12 +123,23 @@ List<_LocalTypeInfo> _scanLocalCacheDirs(String basePath) {
 // ─── Public entry point ────────────────────────────────────────────────────────
 
 Future<void> showCacheManagerSheet(BuildContext context, {String? token}) {
-  return showModalBottomSheet(
+  return showGeneralDialog(
     context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    backgroundColor: Colors.transparent,
-    builder: (_) => _CacheManagerSheet(token: token),
+    barrierDismissible: true,
+    barrierLabel: 'Manage Cache',
+    barrierColor: Colors.black.withValues(alpha: 0.55),
+    transitionDuration: const Duration(milliseconds: 200),
+    transitionBuilder: (ctx, anim, _, child) {
+      final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: anim, curve: Curves.easeIn),
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
+          child: child,
+        ),
+      );
+    },
+    pageBuilder: (_, __, ___) => _CacheManagerSheet(token: token),
   );
 }
 
@@ -228,7 +240,7 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
       _selectedLocal.clear();
     });
     try {
-      final dir = await getApplicationSupportDirectory();
+      final dir = await getOnyxSupportDirectory();
       _localBasePath = dir.path;
       final info = await compute(_scanLocalCacheDirs, dir.path);
       if (mounted) setState(() { _localInfo = info; _localLoading = false; });
@@ -247,7 +259,7 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
     final dirName = info.type.dirName;
     setState(() => _clearingLocal.add(dirName));
     try {
-      final dir = await getApplicationSupportDirectory();
+      final dir = await getOnyxSupportDirectory();
       final typeDir = Directory('${dir.path}/$dirName');
       if (await typeDir.exists()) {
         await typeDir.delete(recursive: true);
@@ -271,7 +283,7 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
     final l = AppLocalizations.of(context);
     final ok = await _confirm(l.clearLocalCacheDialogTitle, l.clearLocalCacheDialogContent);
     if (!ok || !mounted) return;
-    final dir = await getApplicationSupportDirectory();
+    final dir = await getOnyxSupportDirectory();
     for (final type in _localTypes) {
       try {
         final d = Directory('${dir.path}/${type.dirName}');
@@ -322,8 +334,11 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
 
     for (final filename in toDelete) {
       try {
-        final encFile = File('$basePath/$dirName/$filename.enc');
-        if (await encFile.exists()) await encFile.delete();
+        // Delete both plain and encrypted variants (WardLink saves plain files).
+        for (final name in [filename, '$filename.enc']) {
+          final f = File('$basePath/$dirName/$name');
+          if (await f.exists()) await f.delete();
+        }
         if (isImage) {
           _thumbnailCache.remove(filename);
           final displayDir = await MediaCache.instance.displayDirFor('image');
@@ -626,78 +641,100 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
     final l = AppLocalizations.of(context);
     final cs = Theme.of(context).colorScheme;
 
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.87,
-      decoration: BoxDecoration(
-        color: cs.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 10, bottom: 4),
-            child: Container(
-              width: 40, height: 4,
-              decoration: BoxDecoration(
-                color: cs.outlineVariant,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 480,
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            child: Row(
+          child: Material(
+            color: cs.surface,
+            borderRadius: BorderRadius.circular(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Icon(Icons.storage_rounded, size: 20),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(l.manageCacheTitle,
-                      style: const TextStyle(
-                          fontSize: 17, fontWeight: FontWeight.w600)),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close, size: 20),
-                  onPressed: () => Navigator.of(context).pop(),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
-            ),
-          ),
-          TabBar(
-            controller: _tabController,
-            tabs: [
-              Tab(
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(
-                    (Platform.isAndroid || Platform.isIOS)
-                        ? Icons.phone_android
-                        : Icons.computer,
-                    size: 16,
+                Container(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 16, 16),
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.06),
+                    border: Border(
+                      bottom: BorderSide(
+                          color: cs.primary.withValues(alpha: 0.10), width: 0.8),
+                    ),
                   ),
-                  const SizedBox(width: 6),
-                  Text(l.localCacheTab),
-                ]),
-              ),
-              Tab(
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.cloud_outlined, size: 16),
-                  const SizedBox(width: 6),
-                  Text(l.serverCacheTab),
-                ]),
-              ),
-            ],
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                _buildLocalTab(l, cs),
-                _buildServerTab(l, cs),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: cs.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(Icons.storage_rounded,
+                            size: 18, color: cs.primary),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(l.manageCacheTitle,
+                            style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                                color: cs.onSurface)),
+                      ),
+                      GestureDetector(
+                        onTap: () => Navigator.of(context).pop(),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: cs.onSurface.withValues(alpha: 0.07),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(Icons.close_rounded,
+                              size: 18,
+                              color: cs.onSurface.withValues(alpha: 0.55)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                  child: AppleSegmentedTabs(
+                    controller: _tabController,
+                    segments: [
+                      AppleSegment(
+                        icon: (Platform.isAndroid || Platform.isIOS)
+                            ? Icons.phone_android
+                            : Icons.computer,
+                        label: l.localCacheTab,
+                      ),
+                      AppleSegment(
+                        icon: Icons.cloud_outlined,
+                        label: l.serverCacheTab,
+                      ),
+                    ],
+                  ),
+                ),
+                Flexible(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildLocalTab(l, cs),
+                      _buildServerTab(l, cs),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -734,7 +771,6 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
             ],
           ),
         ),
-        const Divider(height: 1),
         Expanded(
           child: !hasAny
               ? Center(
@@ -747,6 +783,7 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
                   ]),
                 )
               : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   itemCount: _localInfo.length,
                   itemBuilder: (_, i) =>
                       _buildExpandableTile(_localInfo[i], l, cs),
@@ -766,7 +803,13 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
         isExpanded &&
         _selectedLocal.length == info.files.length;
 
-    return Column(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: cs.surfaceContainerHighest.withValues(alpha: isEmpty ? 0.18 : 0.35),
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // ── Header ──
@@ -889,9 +932,9 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
                 : const SizedBox(),
           ),
         ),
-
-        const Divider(height: 1, indent: 16),
       ],
+        ),
+      ),
     );
   }
 
@@ -1137,7 +1180,6 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
           ),
         ),
         if (_quotaLimitBytes != null) _buildQuotaBar(cs),
-        const Divider(height: 1),
         Expanded(
           child: totalFiles == 0
               ? Center(
@@ -1151,6 +1193,7 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
                   ]),
                 )
               : ListView(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   children: _serverTypes
                       .map((t) => _buildServerGroup(t, l, cs))
                       .toList(),
@@ -1171,7 +1214,13 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
     final allSelected =
         !isEmpty && isExpanded && selectedInType == entries.length;
 
-    return Column(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: cs.surfaceContainerHighest.withValues(alpha: isEmpty ? 0.18 : 0.35),
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ListTile(
@@ -1280,9 +1329,9 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
                 : const SizedBox(),
           ),
         ),
-
-        const Divider(height: 1, indent: 16),
       ],
+        ),
+      ),
     );
   }
 
@@ -1339,3 +1388,4 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
     );
   }
 }
+

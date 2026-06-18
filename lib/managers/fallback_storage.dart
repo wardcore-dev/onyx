@@ -6,7 +6,9 @@ import 'package:crypto/crypto.dart' as dart_crypto;
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart';
 
 // Storage format versions:
 //   v2 — AES-256-GCM, key derived from machine identity via HKDF-SHA256
@@ -126,14 +128,25 @@ class FallbackStorage {
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
     try {
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await getOnyxDocumentsDirectory();
       _storageFile = File('${dir.path}/$_encFileName');
 
       // Non-main partitions (decoy): only PIN-based, no machine-key fallback.
       if (_id != 'main') {
+        if (!await _storageFile!.exists()) {
+          // One-time migration: file may still be in legacy Documents folder.
+          await _tryCopyDecoyFromDocuments(dir.path);
+        }
         if (await _storageFile!.exists()) _needsPin = true;
         _initialized = true;
         return;
+      }
+
+      // Main partition: if the file is missing here, attempt one-time migration
+      // from the legacy Documents folder (pre-consolidation builds wrote there).
+      if (!await _storageFile!.exists()) {
+        final migrated = await _tryMigrateMainFromDocuments(dir.path);
+        if (migrated) return; // _initialized set inside
       }
 
       // Main partition: check file version.
@@ -175,6 +188,83 @@ class FallbackStorage {
     }
   }
 
+  /// Looks for the main partition's .enc file in the legacy Documents folder
+  /// (where pre-consolidation builds placed it).  If found:
+  ///   • v3 (PIN-derived key) – just copies the file; normal flow sets _needsPin.
+  ///   • v2 (HKDF path-key)   – decrypts with the Documents-path key and
+  ///     re-encrypts at the new Support-path location so the file is readable
+  ///     on all future launches without user interaction.
+  /// Returns true if v2 migration was completed (caller should return early).
+  Future<bool> _tryMigrateMainFromDocuments(String newDirPath) async {
+    try {
+      final legacyDir = await getApplicationDocumentsDirectory();
+      if (legacyDir.path == newDirPath) return false;
+
+      final oldFile = File('${legacyDir.path}/$_encFileName');
+      if (!await oldFile.exists()) return false;
+
+      debugPrint('[FallbackStorage:$_id] one-time migration from Documents…');
+
+      final raw     = await oldFile.readAsString();
+      final wrapper = jsonDecode(raw) as Map<String, dynamic>;
+      final version = wrapper['v'] as int? ?? 2;
+
+      if (version >= 3) {
+        // v3: PIN-derived key is path-independent → just copy, let normal
+        // flow detect the v3 marker and set _needsPin = true.
+        await oldFile.copy(_storageFile!.path);
+        final oldSaltFile = File('${legacyDir.path}/$_saltFileName');
+        if (await oldSaltFile.exists()) {
+          await oldSaltFile.copy('$newDirPath/$_saltFileName');
+        }
+        debugPrint('[FallbackStorage:$_id] Documents→Support: copied v3 (will need PIN)');
+        return false; // caller continues → detects v3 → _needsPin = true
+      }
+
+      // v2: key = HKDF(machineId | dirPath, salt) → must re-derive for new path.
+      final oldSalt = await _loadOrCreateHkdfSalt(legacyDir.path);
+      Map<String, String> data;
+      try {
+        data = await _decryptPayload(wrapper, _hkdfKey(legacyDir.path, oldSalt));
+      } catch (_) {
+        data = await _decryptPayload(wrapper, _hkdfKeyLegacy(legacyDir.path));
+      }
+
+      _memoryCache = data;
+      final newSalt = await _loadOrCreateHkdfSalt(newDirPath);
+      _aesKey       = _hkdfKey(newDirPath, newSalt);
+      await _saveToDiskNow(); // writes to _storageFile (new path)
+
+      if (!Platform.isMacOS && _memoryCache.isEmpty) {
+        await _migrateFromFlutterSecureStorage();
+      }
+      _initialized = true;
+      debugPrint('[FallbackStorage:$_id] Documents→Support: v2 migration done');
+      return true;
+    } catch (e) {
+      debugPrint('[FallbackStorage:$_id] Documents→Support migration failed: $e');
+      _aesKey       = null;
+      _memoryCache  = {};
+      return false;
+    }
+  }
+
+  /// Copies the decoy partition file from the legacy Documents folder if it
+  /// is not yet present in the new Support folder.  Decoy is always v3
+  /// (PIN-derived), so a plain copy is sufficient.
+  Future<void> _tryCopyDecoyFromDocuments(String newDirPath) async {
+    try {
+      final legacyDir = await getApplicationDocumentsDirectory();
+      if (legacyDir.path == newDirPath) return;
+      final oldFile = File('${legacyDir.path}/$_encFileName');
+      if (!await oldFile.exists()) return;
+      await oldFile.copy(_storageFile!.path);
+      debugPrint('[FallbackStorage:decoy] copied from Documents');
+    } catch (e) {
+      debugPrint('[FallbackStorage:decoy] copy from Documents failed: $e');
+    }
+  }
+
   // ── PIN-based unlock ───────────────────────────────────────────────────────
 
   /// Attempt to unlock a v3 partition with [pin].
@@ -182,7 +272,7 @@ class FallbackStorage {
   /// Returns true on success.
   Future<bool> unlockWithPin(String pin) async {
     try {
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await getOnyxDocumentsDirectory();
       _storageFile ??= File('${dir.path}/$_encFileName');
 
       if (!await _storageFile!.exists()) return false;
@@ -224,7 +314,7 @@ class FallbackStorage {
 
   /// Create a new v3 partition encrypted with [pin] (used for decoy setup).
   Future<void> createWithPin(String pin) async {
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await getOnyxDocumentsDirectory();
     _storageFile  = File('${dir.path}/$_encFileName');
     final salt    = _randomBytes(32);
     _aesKey       = await _argon2Key(pin, salt);
@@ -241,7 +331,7 @@ class FallbackStorage {
   Future<void> migrateToV2() async {
     if (_aesKey == null || _argon2Salt == null) return;
     try {
-      final dir      = await getApplicationDocumentsDirectory();
+      final dir      = await getOnyxDocumentsDirectory();
       _storageFile ??= File('${dir.path}/$_encFileName');
       final hkdfSalt = await _loadOrCreateHkdfSalt(dir.path);
       _aesKey        = _hkdfKey(dir.path, hkdfSalt);
@@ -274,7 +364,7 @@ class FallbackStorage {
 
   /// Delete the partition file entirely (used when decoy is disabled).
   Future<void> deleteStorage() async {
-    final dir  = await getApplicationDocumentsDirectory();
+    final dir  = await getOnyxDocumentsDirectory();
     final file = File('${dir.path}/$_encFileName');
     if (await file.exists()) await file.delete();
     _memoryCache = {};
@@ -282,6 +372,39 @@ class FallbackStorage {
     _argon2Salt  = null;
     _needsPin    = false;
     _initialized = false;
+  }
+
+  /// Re-encrypts the in-memory cache into [newDirPath] so the storage is
+  /// readable from the new location on the next app launch.
+  ///
+  /// v2 (no PIN): the HKDF key is derived from the directory path, so we
+  ///   re-derive it for [newDirPath] and write a new .enc file there.
+  /// v3 (PIN-derived): key is path-independent; just writes a copy.
+  ///
+  /// The current session is unaffected — internal state is restored after the
+  /// write so ongoing saves still target the old location until restart.
+  Future<void> relocate(String newDirPath) async {
+    if (_aesKey == null) return;
+    final oldFile = _storageFile;
+    final oldKey  = _aesKey;
+    try {
+      final newFile = File(p.join(newDirPath, _encFileName));
+      _storageFile  = newFile;
+      if (_argon2Salt == null) {
+        // v2: key is path-derived → re-derive for the new path.
+        final newSalt = await _loadOrCreateHkdfSalt(newDirPath);
+        _aesKey = _hkdfKey(newDirPath, newSalt);
+      }
+      // For v3 _aesKey is PIN-derived and already correct; just write.
+      await _saveToDiskNow();
+      debugPrint('[FallbackStorage:$_id] relocated to $newDirPath');
+    } catch (e) {
+      debugPrint('[FallbackStorage:$_id] relocate failed: $e');
+      rethrow;
+    } finally {
+      _storageFile = oldFile;
+      _aesKey      = oldKey;
+    }
   }
 
   /// Lock in-memory cache. User must call [unlockWithPin] again to access data.

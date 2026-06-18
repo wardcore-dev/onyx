@@ -1,4 +1,5 @@
 // lib/screens/chat_screen.dart
+import '../widgets/marquee_text.dart';
 import 'package:ONYX/screens/chats_tab.dart' show getPreviewText;
 import '../services/chat_load_optimizer.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +19,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
 import '../globals.dart';
 import 'forward_screen.dart';
 import 'dart:math' as math;
@@ -31,6 +33,7 @@ import '../managers/unread_manager.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/animated_message_bubble.dart';
 import '../widgets/chat_images_scope.dart';
+import '../widgets/album_message_widget.dart' show AlbumItem;
 import '../widgets/video_message_widget.dart';
 import '../widgets/avatar_widget.dart';
 import '../call/call_manager.dart';
@@ -40,10 +43,12 @@ import '../screens/settings_tab.dart' show SupportSheet;
 import '../widgets/drag_drop_zone.dart';
 import '../widgets/file_preview_dialog.dart';
 import '../widgets/album_preview_dialog.dart';
+import '../utils/clipboard_image.dart';
 import '../utils/file_utils.dart';
 import '../utils/image_file_cache.dart';
-import '../utils/clipboard_image.dart';
 import '../utils/upload_task.dart';
+import '../utils/blurhash_util.dart';
+import '../utils/video_info.dart';
 import '../widgets/pending_upload_card.dart';
 import '../widgets/chat_search_bar.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
@@ -56,6 +61,13 @@ import '../widgets/message_reaction_bar.dart';
 import '../widgets/swipeable_message_wrapper.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../widgets/chat_input_bar.dart';
+import '../widgets/measure_size.dart';
+import '../enums/scroll_down_button_position.dart';
+import '../utils/chat_image_preloader.dart';
+import '../utils/dialog_utils.dart';
+import '../widgets/empty_chat_placeholder.dart';
+import '../utils/gallery_extractor.dart';
+import 'media_gallery_screen.dart';
 
 const List<String> _randomHints = [
   'Say hi!',
@@ -135,10 +147,20 @@ class ChatScreenState extends State<ChatScreen>
   Timer? _typingThrottle;
   bool _typingSentRecently = false;
   final Set<String> _alreadyRenderedMessageIds = {};
+  // True once the message list has painted at least one frame. Entry
+  // animations are suppressed until then — closes a race where messages
+  // (e.g. from WardLink or disk cache) finish loading asynchronously after
+  // the pre-seed snapshot above was taken, which would otherwise make the
+  // whole history "appear new" and animate in on open.
+  bool _hasBuiltMessageListOnce = false;
   late final String _inputHint;
   bool _shouldPreserveExternalFocus = false;
   bool _suppressAutoRefocus = false;
   final ValueNotifier<bool> _scrollDownVisible = ValueNotifier<bool>(false);
+  // Tracks the live rendered height of the bottom bar (reply/edit preview +
+  // ChatInputBar), which grows as the multi-line text field grows — used to
+  // keep the scroll-to-bottom button above it instead of a fixed offset.
+  final ValueNotifier<double> _bottomBarHeight = ValueNotifier<double>(76.0);
 
   String? _droppedFilePath;
 
@@ -159,6 +181,10 @@ class ChatScreenState extends State<ChatScreen>
   List<ChatMessage>? _cachedMessages;
   List<_ListItem>? _cachedItems;
   int _cachedMessagesHash = 0;
+
+  List<AlbumItem>? _cachedAllImages;
+  int _cachedAllImagesHash = 0;
+  int _cachedDragHash = 0;
 
   late final _selectionNotifier =
       ValueNotifier<({bool active, Map<String, ChatMessage> selected})>(
@@ -182,6 +208,11 @@ class ChatScreenState extends State<ChatScreen>
   static const double _dragMaxSpeed = 14.0;
 
   final List<ChatMessage> _olderMessages = [];
+  // Fingerprint of the message list last handed to the image preloader, so we
+  // skip re-walking the whole list on every unrelated rebuild (reactions,
+  // typing, read receipts). Only re-preload when the list actually changes.
+  int _preloadStampCount = -1;
+  String _preloadStampLast = '';
   final List<UploadTask> _pendingUploads = [];
   bool _isLoadingMore = false;
   bool _hasMoreMessages = true;
@@ -222,7 +253,7 @@ class ChatScreenState extends State<ChatScreen>
     _textCtrl.selection = TextSelection.fromPosition(
       TextPosition(offset: _textCtrl.text.length),
     );
-    _focusNode.requestFocus();
+    _requestFocus();
   }
 
   void _cancelEditing() {
@@ -230,7 +261,7 @@ class ChatScreenState extends State<ChatScreen>
       _editingMessage = null;
     });
     _textCtrl.clear();
-    _focusNode.requestFocus();
+    _requestFocus();
   }
 
   String get _pinPrefsKey => 'pinned_dm_${widget.otherUsername}';
@@ -357,6 +388,24 @@ class ChatScreenState extends State<ChatScreen>
     });
 
     _flashHighlight(foundId);
+  }
+
+  /// If a search-result tap asked to land on a specific message in this chat
+  /// (see [setPendingMessageScrollTarget]), scroll to and highlight it once
+  /// the message list is laid out — instead of opening at the bottom.
+  void _consumePendingScrollTarget() {
+    final pendingId = consumePendingMessageScrollTarget(_chatId);
+    if (pendingId == null) return;
+    void attempt([int retries = 6]) {
+      if (!mounted) return;
+      if (_scroll.hasClients) {
+        _scrollToMessageById(int.tryParse(pendingId), localId: pendingId);
+      } else if (retries > 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => attempt(retries - 1));
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => attempt());
   }
 
   Widget _buildPinnedBanner(BuildContext context) {
@@ -711,13 +760,6 @@ class ChatScreenState extends State<ChatScreen>
             ? () {
                 Navigator.pop(ctx);
                 _saveMediaFromMessage(text, l);
-              }
-            : null,
-        onCopyImage: isImage
-            ? () {
-                Navigator.pop(ctx);
-                copyMessageImageToClipboard(
-                    text, (m) => rootScreenKey.currentState?.showSnack(m));
               }
             : null,
         onEdit: canEdit && !isMedia
@@ -1089,15 +1131,13 @@ class ChatScreenState extends State<ChatScreen>
             saved == true ? 'Saved to gallery' : 'Failed to save to gallery',
           );
         } else {
-          // Audio / documents / archives — copy to Downloads/ONYX
-          final dl = await getDownloadsDirectory();
-          if (dl == null) {
+          // Audio / documents / archives — copy to configured ONYX folder
+          final onyxDir = await getOnyxSaveDirectory();
+          if (onyxDir == null) {
             rootScreenKey.currentState
                 ?.showSnack('Cannot access Downloads directory');
             return;
           }
-          final onyxDir = Directory('${dl.path}/ONYX');
-          await onyxDir.create(recursive: true);
           final destPath = '${onyxDir.path}/$originalName';
           await file.copy(destPath);
           rootScreenKey.currentState?.showSnack('Saved to: $destPath');
@@ -1213,11 +1253,24 @@ class ChatScreenState extends State<ChatScreen>
 
     _scroll.addListener(_onScroll);
 
+    // Pre-seed rendered-ids so existing messages don't all animate on open —
+    // only messages added during this session (including a brand-new chat's
+    // very first message) get an entry animation.
+    final root = rootScreenKey.currentState;
+    if (root != null) {
+      final chatId = root.chatIdForUser(widget.otherUsername);
+      final existingMsgs = root.chats[chatId] ?? const [];
+      for (final m in existingMsgs) {
+        _alreadyRenderedMessageIds.add(m.id);
+      }
+    }
+
     _loadFastChangeSetting();
+    _consumePendingScrollTarget();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (!_focusNode.hasFocus && isDesktop) _focusNode.requestFocus();
+      if (!_focusNode.hasFocus && isDesktop) _requestFocus();
 
       // Delay read-marking until AFTER the navigation animation completes.
       // Calling it during the animation bumps chatsVersion synchronously,
@@ -1245,7 +1298,7 @@ class ChatScreenState extends State<ChatScreen>
             !_shouldPreserveExternalFocus &&
             !_suppressAutoRefocus &&
             ModalRoute.of(context)?.isCurrent == true) {
-          _focusNode.requestFocus();
+          _requestFocus();
         }
       }
     });
@@ -1296,91 +1349,178 @@ class ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _showUserProfileDialog(String username) async {
-    FocusScope.of(context).unfocus();
+    await unfocusAndSettle(context);
+    if (!mounted) return;
 
     final cached = UserCache.getSync(username);
     final dp = (cached != null) ? cached.displayName : username;
+    final desc = cached?.description ?? '';
 
-    await showDialog<void>(
+    await showGeneralDialog<void>(
       context: context,
-      builder: (ctx) {
-        return ValueListenableBuilder<double>(
-          valueListenable: SettingsManager.elementOpacity,
-          builder: (_, elemOpacity, __) {
-            final colorScheme = Theme.of(ctx).colorScheme;
-            return Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: Dialog(
-                  backgroundColor:
-                      colorScheme.surface.withValues(alpha: elemOpacity),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        AvatarWidget(
-                          username: username,
-                          tokenProvider: avatarTokenProvider,
-                          avatarBaseUrl: serverBase,
-                          size: 96.0,
-                          editable: false,
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          dp,
-                          style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: colorScheme.onSurface),
-                        ),
-                        const SizedBox(height: 6),
-                        TextButton(
-                          style: TextButton.styleFrom(
-                            padding: EdgeInsets.zero,
-                            minimumSize: const Size(0, 0),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      barrierDismissible: true,
+      barrierLabel: 'User profile',
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      transitionDuration: const Duration(milliseconds: 187),
+      transitionBuilder: (ctx, anim, _, child) {
+        final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+        return FadeTransition(
+          opacity: CurvedAnimation(parent: anim, curve: Curves.easeIn),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.93, end: 1.0).animate(curved),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (ctx, _, __) {
+        final colorScheme = Theme.of(ctx).colorScheme;
+        final l = AppLocalizations.of(ctx);
+        const btnShape = RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(50)),
+        );
+        const btnPadding = EdgeInsets.symmetric(vertical: 13);
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 40),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 360),
+              child: Material(
+                color: colorScheme.surface,
+                borderRadius: BorderRadius.circular(28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // ── Header tinted ──────────────────────────────────
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(0, 28, 16, 20),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary.withValues(alpha: 0.06),
+                        border: Border(
+                          bottom: BorderSide(
+                            color: colorScheme.primary.withValues(alpha: 0.10),
+                            width: 0.8,
                           ),
-                          onPressed: () {
-                            Clipboard.setData(
-                                ClipboardData(text: '@$username'));
-                            rootScreenKey.currentState?.showSnack(
-                                AppLocalizations.of(context)
-                                    .copiedUsername(username));
-                          },
-                          child: Text('@$username',
-                              style: TextStyle(
-                                  color: colorScheme.primary,
-                                  fontWeight: FontWeight.w600)),
                         ),
-                        const SizedBox(height: 12),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            FilledButton.icon(
-                              onPressed: () {
-                                Navigator.of(ctx).pop();
-                                FocusScope.of(context).requestFocus(_focusNode);
-                              },
-                              icon: const Icon(Icons.message),
-                              label: Text(AppLocalizations.of(context).message),
+                      ),
+                      child: Stack(
+                        alignment: Alignment.topCenter,
+                        children: [
+                          Column(
+                            children: [
+                              AvatarWidget(
+                                username: username,
+                                tokenProvider: avatarTokenProvider,
+                                avatarBaseUrl: serverBase,
+                                size: 80.0,
+                                editable: false,
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                dp,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: colorScheme.onSurface,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              GestureDetector(
+                                onTap: () {
+                                  Clipboard.setData(ClipboardData(text: '@$username'));
+                                  rootScreenKey.currentState?.showSnack(
+                                      AppLocalizations.of(context)
+                                          .copiedUsername(username));
+                                },
+                                child: Text(
+                                  '@$username',
+                                  style: TextStyle(
+                                    color: colorScheme.primary,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ),
+                              if (desc.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                                  child: Text(
+                                    desc,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: colorScheme.onSurface
+                                          .withValues(alpha: 0.6),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          Positioned(
+                            top: 0,
+                            right: 0,
+                            child: GestureDetector(
+                              onTap: () => Navigator.of(ctx).pop(),
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: colorScheme.onSurface
+                                      .withValues(alpha: 0.07),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(
+                                  Icons.close_rounded,
+                                  size: 18,
+                                  color: colorScheme.onSurface
+                                      .withValues(alpha: 0.55),
+                                ),
+                              ),
                             ),
-                            const SizedBox(width: 12),
-                            TextButton(
-                              onPressed: () => Navigator.of(ctx).pop(),
-                              child: const Text('Close'),
-                            ),
-                          ],
-                        ),
-                      ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
+                    // ── Buttons ────────────────────────────────────────
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: () {
+                              Navigator.of(ctx).pop();
+                              FocusScope.of(context).requestFocus(_focusNode);
+                            },
+                            style: FilledButton.styleFrom(
+                              padding: btnPadding,
+                              shape: btnShape,
+                            ),
+                            icon: const Icon(Icons.message_rounded, size: 18),
+                            label: Text(l.profileMessage),
+                          ),
+                          const SizedBox(height: 8),
+                          OutlinedButton(
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            style: OutlinedButton.styleFrom(
+                              padding: btnPadding,
+                              shape: btnShape,
+                            ),
+                            child: Text(l.close),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            );
-          },
+            ),
+          ),
         );
       },
     );
@@ -1447,6 +1587,10 @@ class ChatScreenState extends State<ChatScreen>
           _olderMessages.addAll(older);
         }
       });
+      // Preload images for newly fetched older messages so they're ready
+      // before the user scrolls to them.
+      if (older.isNotEmpty)
+        ChatImagePreloader.preload(older, peerUsername: widget.otherUsername);
     } catch (e) {
       debugPrint('[loadMoreMessages] $e');
       if (mounted)
@@ -1461,6 +1605,7 @@ class ChatScreenState extends State<ChatScreen>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.otherUsername != widget.otherUsername) {
       _alreadyRenderedMessageIds.clear();
+      _hasBuiltMessageListOnce = false;
       _cachedMessages = null;
       _cachedItems = null;
       _olderMessages.clear();
@@ -1512,6 +1657,14 @@ class ChatScreenState extends State<ChatScreen>
     unreadManager.markAsRead(chatId);
   }
 
+  // Use instead of _requestFocus() so that canRequestFocus is
+  // re-enabled first (ChatInputBar sets it to false on mobile to block
+  // keyboard restoration after dialogs close).
+  void _requestFocus() {
+    _focusNode.canRequestFocus = true;
+    _focusNode.requestFocus();
+  }
+
   @override
   void dispose() {
     _selectionNotifier.dispose();
@@ -1520,6 +1673,7 @@ class ChatScreenState extends State<ChatScreen>
     _stopDragAutoScroll();
     _scroll.dispose();
     _scrollDownVisible.dispose();
+    _bottomBarHeight.dispose();
     _focusNode.dispose();
     _keyboardListenerFocusNode.dispose();
     _typingThrottle?.cancel();
@@ -1690,7 +1844,7 @@ class ChatScreenState extends State<ChatScreen>
     });
     _suppressAutoRefocus = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _focusNode.requestFocus();
+      if (mounted) _requestFocus();
     });
   }
 
@@ -1761,7 +1915,7 @@ class ChatScreenState extends State<ChatScreen>
     if (!_focusNode.hasFocus &&
         !_shouldPreserveExternalFocus &&
         !recordingNotifier.value) {
-      _focusNode.requestFocus();
+      _requestFocus();
     }
   }
 
@@ -1778,7 +1932,7 @@ class ChatScreenState extends State<ChatScreen>
           _editingMessage = null;
         });
         _textCtrl.clear();
-        _focusNode.requestFocus();
+        _requestFocus();
         await widget.onEditMessage(serverId, content);
       }
       return;
@@ -1829,7 +1983,7 @@ class ChatScreenState extends State<ChatScreen>
 
     _textCtrl.clear();
     _shouldPreserveExternalFocus = false;
-    _focusNode.requestFocus();
+    _requestFocus();
 
     setState(() {
       _replyingToMessage = null;
@@ -2100,7 +2254,7 @@ class ChatScreenState extends State<ChatScreen>
       if (!_shouldPreserveExternalFocus && !recordingNotifier.value) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted && !_focusNode.hasFocus) {
-            _focusNode.requestFocus();
+            _requestFocus();
           }
         });
       }
@@ -2216,14 +2370,6 @@ class ChatScreenState extends State<ChatScreen>
 
     debugPrint(
         '[ChatScreen] Building NEW items list from ${msgs.length} messages (hash changed: $_cachedMessagesHash → $currentHash)');
-
-    if (_alreadyRenderedMessageIds.isEmpty && msgs.isNotEmpty) {
-      for (final msg in msgs) {
-        final uniqueKey =
-            '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
-        _alreadyRenderedMessageIds.add(uniqueKey);
-      }
-    }
 
     final items = <_ListItem>[];
     DateTime? currentDay;
@@ -2435,8 +2581,8 @@ class ChatScreenState extends State<ChatScreen>
                                       widget.otherUsername),
                                   onLongPress: () => _showUserProfileDialog(
                                       widget.otherUsername),
-                                  child: Text(
-                                    displayName,
+                                  child: MarqueeText(
+                                    text: displayName,
                                     style: const TextStyle(
                                         fontWeight: FontWeight.bold),
                                   ),
@@ -2653,17 +2799,50 @@ class ChatScreenState extends State<ChatScreen>
                         builder: (_, blocked, __) {
                           final isBlocked = widget.otherUsername != null &&
                               blocked.contains(widget.otherUsername!);
-                          return IconButton(
-                            tooltip: isBlocked
-                                ? AppLocalizations.of(context).unblockUserLabel
-                                : null,
-                            icon: Icon(
-                              isBlocked
-                                  ? Icons.lock_open_rounded
-                                  : Icons.shield,
-                              size: 20,
-                            ),
-                            onPressed: () async {
+                          return PopupMenuButton<String>(
+                            icon: const Icon(Icons.more_vert),
+                            itemBuilder: (menuCtx) => [
+                              PopupMenuItem<String>(
+                                value: 'gallery',
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.photo_library_outlined, size: 18),
+                                    const SizedBox(width: 10),
+                                    Text(AppLocalizations.of(context).galleryMenuLabel),
+                                  ],
+                                ),
+                              ),
+                              PopupMenuItem<String>(
+                                value: isBlocked ? 'unblock' : 'security',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                        isBlocked
+                                            ? Icons.lock_open_rounded
+                                            : Icons.shield_outlined,
+                                        size: 18),
+                                    const SizedBox(width: 10),
+                                    Text(isBlocked
+                                        ? AppLocalizations.of(context).unblockUserLabel
+                                        : AppLocalizations.of(context).securityCheckTitle),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            onSelected: (value) async {
+                              if (value == 'gallery') {
+                                final rootState = rootScreenKey.currentState;
+                                final msgs = [
+                                  ...(rootState?.chats[chatId] ?? const <ChatMessage>[]),
+                                  ..._olderMessages,
+                                ];
+                                showMediaGalleryDialog(
+                                  context,
+                                  items: extractGalleryItemsFromChatMessages(msgs),
+                                  peerUsername: widget.otherUsername,
+                                );
+                                return;
+                              }
                               if (BlocklistManager.isBlocked(
                                   widget.otherUsername ?? '')) {
                                 final other = widget.otherUsername ?? '';
@@ -3042,45 +3221,155 @@ class ChatScreenState extends State<ChatScreen>
                                   .map((i) => emojiList[i % emojiList.length])
                                   .toList();
 
+                              final dialogColorScheme =
+                                  Theme.of(context).colorScheme;
+                              const cardBtnShape = RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius.all(Radius.circular(50)),
+                              );
                               showDialog(
                                 context: context,
-                                builder: (_) => AlertDialog(
-                                  title: Text(secTitle),
-                                  content: SingleChildScrollView(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.center,
-                                      children: [
-                                        Text(
-                                          secContent,
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(
-                                            color: Colors.grey,
-                                            fontSize: 14,
+                                builder: (dCtx) => Dialog(
+                                  backgroundColor: Colors.transparent,
+                                  insetPadding: const EdgeInsets.symmetric(
+                                      horizontal: 24, vertical: 32),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(28),
+                                    child: ConstrainedBox(
+                                      constraints: const BoxConstraints(
+                                          maxWidth: 400),
+                                      child: Material(
+                                        color: dialogColorScheme.surface,
+                                        borderRadius:
+                                            BorderRadius.circular(28),
+                                        child: Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                              20, 16, 20, 20),
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  const Spacer(),
+                                                  GestureDetector(
+                                                    onTap: () => Navigator.of(
+                                                            dCtx)
+                                                        .pop(),
+                                                    child: Container(
+                                                      width: 32,
+                                                      height: 32,
+                                                      decoration: BoxDecoration(
+                                                        color: dialogColorScheme
+                                                            .onSurface
+                                                            .withValues(
+                                                                alpha: 0.07),
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(10),
+                                                      ),
+                                                      child: Icon(
+                                                        Icons.close_rounded,
+                                                        size: 18,
+                                                        color: dialogColorScheme
+                                                            .onSurface
+                                                            .withValues(
+                                                                alpha: 0.55),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              Container(
+                                                width: 64,
+                                                height: 64,
+                                                decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  color: dialogColorScheme
+                                                      .primary
+                                                      .withValues(alpha: 0.12),
+                                                ),
+                                                child: Icon(
+                                                  Icons.shield_rounded,
+                                                  size: 32,
+                                                  color:
+                                                      dialogColorScheme.primary,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 14),
+                                              Text(
+                                                secTitle,
+                                                textAlign: TextAlign.center,
+                                                style: const TextStyle(
+                                                  fontSize: 18,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 8),
+                                              Text(
+                                                secContent,
+                                                textAlign: TextAlign.center,
+                                                style: TextStyle(
+                                                  color: dialogColorScheme
+                                                      .onSurface
+                                                      .withValues(alpha: 0.6),
+                                                  fontSize: 14,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 18),
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        vertical: 14),
+                                                decoration: BoxDecoration(
+                                                  color: dialogColorScheme
+                                                      .surfaceContainerHighest
+                                                      .withValues(alpha: 0.45),
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          18),
+                                                  border: Border.all(
+                                                    color: dialogColorScheme
+                                                        .outlineVariant
+                                                        .withValues(
+                                                            alpha: 0.3),
+                                                    width: 0.8,
+                                                  ),
+                                                ),
+                                                child: Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment
+                                                          .spaceEvenly,
+                                                  children: emojis
+                                                      .map((e) => Text(
+                                                            e,
+                                                            style:
+                                                                const TextStyle(
+                                                                    fontSize:
+                                                                        40),
+                                                          ))
+                                                      .toList(),
+                                                ),
+                                              ),
+                                              const SizedBox(height: 20),
+                                              OutlinedButton(
+                                                onPressed: () =>
+                                                    Navigator.of(dCtx).pop(),
+                                                style: OutlinedButton.styleFrom(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                          vertical: 13),
+                                                  shape: cardBtnShape,
+                                                ),
+                                                child: Text(closeLabel),
+                                              ),
+                                            ],
                                           ),
                                         ),
-                                        const SizedBox(height: 16),
-                                        Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceEvenly,
-                                          children: emojis
-                                              .map((e) => Text(
-                                                    e,
-                                                    style: const TextStyle(
-                                                        fontSize: 48),
-                                                  ))
-                                              .toList(),
-                                        ),
-                                      ],
+                                      ),
                                     ),
                                   ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () =>
-                                          Navigator.of(context).pop(),
-                                      child: Text(closeLabel),
-                                    )
-                                  ],
                                 ),
                               );
                             },
@@ -3099,14 +3388,34 @@ class ChatScreenState extends State<ChatScreen>
               builder: (_, __, ___) {
                 final rootState = rootScreenKey.currentState;
                 if (rootState == null) return const SizedBox();
+                if (!_hasBuiltMessageListOnce) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    _hasBuiltMessageListOnce = true;
+                  });
+                }
                 final mainMsgs = rootState.chats[chatId] ?? [];
                 final msgs = [...mainMsgs, ..._olderMessages];
                 if (msgs.isEmpty) {
-                  return Center(
-                      child: Text(AppLocalizations.of(context).noMessagesYet));
+                  return EmptyChatPlaceholder(
+                      label: AppLocalizations.of(context).noMessagesYet);
                 }
 
                 final items = _buildMessagesWithDaySeparators(msgs);
+
+                // Preload images for all current messages so initState finds
+                // files in imageFileCache before widgets scroll into view.
+                // Guarded by a list fingerprint so we don't re-walk the whole
+                // list on every unrelated rebuild.
+                final stampLast = msgs.isEmpty ? '' : msgs.last.id;
+                if (msgs.length != _preloadStampCount ||
+                    stampLast != _preloadStampLast) {
+                  _preloadStampCount = msgs.length;
+                  _preloadStampLast = stampLast;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    ChatImagePreloader.preload(msgs,
+                        peerUsername: widget.otherUsername);
+                  });
+                }
 
                 // Update search matches (side-effect during build is safe here
                 // because we only assign fields, no setState).
@@ -3145,22 +3454,29 @@ class ChatScreenState extends State<ChatScreen>
                   }
                 }
 
-                final dragMessages = items
-                    .whereType<_MessageItem>()
-                    .map((item) => item.message)
-                    .toList(growable: false);
-                _dragSelectionOrder = dragMessages
-                    .map(_selectionKeyForMessage)
-                    .toList(growable: false);
-                _dragSelectionLookup = {
-                  for (final msg in dragMessages) _selectionKeyForMessage(msg): msg,
-                };
-                _dragSelectionIndices = {
-                  for (int idx = 0; idx < _dragSelectionOrder.length; idx++)
-                    _dragSelectionOrder[idx]: idx,
-                };
+                if (_cachedDragHash != _cachedMessagesHash) {
+                  _cachedDragHash = _cachedMessagesHash;
+                  final dragMessages = items
+                      .whereType<_MessageItem>()
+                      .map((item) => item.message)
+                      .toList(growable: false);
+                  _dragSelectionOrder = dragMessages
+                      .map(_selectionKeyForMessage)
+                      .toList(growable: false);
+                  _dragSelectionLookup = {
+                    for (final msg in dragMessages) _selectionKeyForMessage(msg): msg,
+                  };
+                  _dragSelectionIndices = {
+                    for (int idx = 0; idx < _dragSelectionOrder.length; idx++)
+                      _dragSelectionOrder[idx]: idx,
+                  };
+                }
+                if (_cachedAllImages == null || _cachedAllImagesHash != _cachedMessagesHash) {
+                  _cachedAllImages = ChatImagesScope.computeFromChatMessages(msgs);
+                  _cachedAllImagesHash = _cachedMessagesHash;
+                }
                 return ChatImagesScope(
-                  allImages: ChatImagesScope.computeFromChatMessages(msgs),
+                  allImages: _cachedAllImages!,
                   child: ValueListenableBuilder<bool>(
                   valueListenable: SettingsManager.showAvatarInChats,
                   builder: (_, showAvatar, __) {
@@ -3187,7 +3503,7 @@ class ChatScreenState extends State<ChatScreen>
                               child: ListView.builder(
                                 controller: _scroll,
                                 reverse: true,
-                                cacheExtent: 800,
+                                cacheExtent: SettingsManager.chatCacheExtent.value,
                                 addRepaintBoundaries: true,
                                 addAutomaticKeepAlives: false,
                                 padding: EdgeInsets.only(
@@ -3299,13 +3615,27 @@ class ChatScreenState extends State<ChatScreen>
                                                   _replyingToMessage!['localId']
                                                           ?.toString() ==
                                                       msg.id.toString()),
+                                      onRightClick: isDesktop
+                                          ? (offset) {
+                                              debugPrint('[RightClickMenu] chat_screen onRightClick invoked, msgId=${msg.id}');
+                                              final items =
+                                                  _buildDesktopMenuItems(msg);
+                                              debugPrint('[RightClickMenu] chat_screen items=${items?.length}');
+                                              if (items != null &&
+                                                  items.isNotEmpty) {
+                                                showMessageDesktopMenu(
+                                                    context, offset, items);
+                                              }
+                                            }
+                                          : null,
                                     );
 
                                     final expensiveChild =
                                         AnimatedMessageBubble(
                                       key: ValueKey<String>(animKey),
                                       outgoing: msg.outgoing,
-                                      animate: isFirstAppearance &&
+                                      animate: _hasBuiltMessageListOnce &&
+                                          isFirstAppearance &&
                                           SettingsManager
                                               .messageAnimationsEnabled.value,
                                       child: RepaintBoundary(child: msgBubble),
@@ -3450,12 +3780,10 @@ class ChatScreenState extends State<ChatScreen>
                                                             preview);
                                                       },
                                                       child: GestureDetector(
-                                                      onSecondaryTap: isDesktop &&
-                                                              !sel.active
-                                                          ? () =>
-                                                              _showMessageMenu(
-                                                                  msg)
-                                                          : null,
+                                                      // Desktop right-click is handled by MessageBubble's
+                                                      // own onRightClick (floating menu). An onSecondaryTap
+                                                      // here too would also pop the mobile bottom-sheet menu
+                                                      // for the same click.
                                                       child: Column(
                                                         crossAxisAlignment:
                                                             shouldShowRight
@@ -3466,7 +3794,10 @@ class ChatScreenState extends State<ChatScreen>
                                                         mainAxisSize:
                                                             MainAxisSize.min,
                                                         children: [
-                                                          bubbleChild!,
+                                                          AbsorbPointer(
+                                                            absorbing: sel.active,
+                                                            child: bubbleChild!,
+                                                          ),
                                                           MessageReactionBar(
                                                             reactions:
                                                                 reactionsFor(
@@ -3548,21 +3879,39 @@ class ChatScreenState extends State<ChatScreen>
                 right: 16,
                 child: _buildPinnedBanner(context),
               ),
-            if (_showSearch)
               Positioned(
                 top: MediaQuery.of(context).padding.top +
                     kToolbarHeight +
                     (_pinnedMessage != null ? 68.0 : 8.0),
                 left: 16,
                 right: 16,
-                child: ChatSearchBar(
-                  controller: _searchController,
-                  focusNode: _searchFocusNode,
-                  statsNotifier: _searchStats,
-                  onChanged: _onSearchChanged,
-                  onPrevious: _navigateSearchPrev,
-                  onNext: _navigateSearchNext,
-                  onClose: _closeSearch,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  reverseDuration: const Duration(milliseconds: 180),
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: CurvedAnimation(
+                        parent: animation, curve: Curves.easeOut),
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, -0.4),
+                        end: Offset.zero,
+                      ).animate(CurvedAnimation(
+                          parent: animation, curve: Curves.easeOutCubic)),
+                      child: child,
+                    ),
+                  ),
+                  child: _showSearch
+                      ? ChatSearchBar(
+                          key: const ValueKey('csb'),
+                          controller: _searchController,
+                          focusNode: _searchFocusNode,
+                          statsNotifier: _searchStats,
+                          onChanged: _onSearchChanged,
+                          onPrevious: _navigateSearchPrev,
+                          onNext: _navigateSearchNext,
+                          onClose: _closeSearch,
+                        )
+                      : const SizedBox.shrink(),
                 ),
               ),
             ValueListenableBuilder<bool>(
@@ -3575,92 +3924,112 @@ class ChatScreenState extends State<ChatScreen>
                   child: child,
                 ),
               ),
-              child: Align(
-                alignment: Alignment.bottomCenter,
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 100),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: Stack(
-                      children: [
-                        ValueListenableBuilder<double>(
-                          valueListenable: SettingsManager.elementBrightness,
-                          builder: (_, brightness, ___) {
-                            final baseColor = SettingsManager.getElementColor(
-                              Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest,
-                              brightness,
-                            );
-                            return IconButton(
-                              splashRadius: 20,
-                              padding: EdgeInsets.zero,
-                              icon: Container(
-                                width: 32,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  color: baseColor.withValues(alpha: 0.5),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .outlineVariant
-                                        .withValues(alpha: 0.15),
-                                    width: 1,
-                                  ),
+              child: ValueListenableBuilder<double>(
+                valueListenable: _bottomBarHeight,
+                builder: (_, barHeight, __) => ValueListenableBuilder<ScrollDownButtonPosition>(
+                  valueListenable: SettingsManager.scrollDownButtonPosition,
+                  builder: (_, position, __) => ValueListenableBuilder<double>(
+                    valueListenable: SettingsManager.scrollDownButtonSize,
+                    builder: (_, btnSize, __) {
+                      final alignment = switch (position) {
+                        ScrollDownButtonPosition.left => Alignment.bottomLeft,
+                        ScrollDownButtonPosition.center => Alignment.bottomCenter,
+                        ScrollDownButtonPosition.right => Alignment.bottomRight,
+                      };
+                      return Align(
+                        alignment: alignment,
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                            bottom: barHeight + 12.0 + MediaQuery.of(context).padding.bottom + 16,
+                            left: position == ScrollDownButtonPosition.left ? 16 : 0,
+                            right: position == ScrollDownButtonPosition.right ? 16 : 0,
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: Stack(
+                              children: [
+                                ValueListenableBuilder<double>(
+                                  valueListenable: SettingsManager.elementBrightness,
+                                  builder: (_, brightness, ___) {
+                                    final baseColor = SettingsManager.getElementColor(
+                                      Theme.of(context)
+                                          .colorScheme
+                                          .surfaceContainerHighest,
+                                      brightness,
+                                    );
+                                    return IconButton(
+                                      splashRadius: btnSize / 2 + 4,
+                                      padding: EdgeInsets.zero,
+                                      icon: Container(
+                                        width: btnSize,
+                                        height: btnSize,
+                                        decoration: BoxDecoration(
+                                          color: baseColor.withValues(alpha: 0.5),
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .outlineVariant
+                                                .withValues(alpha: 0.15),
+                                            width: 1,
+                                          ),
+                                        ),
+                                        child: Icon(
+                                          Icons.arrow_downward,
+                                          size: btnSize * 0.56,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withValues(alpha: 0.7),
+                                        ),
+                                      ),
+                                      onPressed: _scrollToBottom,
+                                    );
+                                  },
                                 ),
-                                child: Icon(
-                                  Icons.arrow_downward,
-                                  size: 18,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurface
-                                      .withValues(alpha: 0.7),
+                                ListenableBuilder(
+                                  listenable: unreadManager,
+                                  builder: (context, _) {
+                                    final me =
+                                        rootScreenKey.currentState?.currentUsername ??
+                                            widget.myUsername;
+                                    final List<String> ids = [me, widget.otherUsername]
+                                      ..sort();
+                                    final String chatId = ids.join(':');
+                                    final unreadCount =
+                                        unreadManager.getUnreadCount(chatId);
+                                    if (unreadCount == 0) {
+                                      return const SizedBox.shrink();
+                                    }
+                                    return Positioned(
+                                      top: -4,
+                                      right: -4,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 5, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Theme.of(context).colorScheme.primary,
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+                                          unreadCount.toString(),
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color:
+                                                Theme.of(context).colorScheme.onPrimary,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
                                 ),
-                              ),
-                              onPressed: _scrollToBottom,
-                            );
-                          },
+                              ],
+                            ),
+                          ),
                         ),
-                        ListenableBuilder(
-                          listenable: unreadManager,
-                          builder: (context, _) {
-                            final me =
-                                rootScreenKey.currentState?.currentUsername ??
-                                    widget.myUsername;
-                            final List<String> ids = [me, widget.otherUsername]
-                              ..sort();
-                            final String chatId = ids.join(':');
-                            final unreadCount =
-                                unreadManager.getUnreadCount(chatId);
-                            if (unreadCount == 0) {
-                              return const SizedBox.shrink();
-                            }
-                            return Positioned(
-                              top: -4,
-                              right: -4,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 5, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Text(
-                                  unreadCount.toString(),
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color:
-                                        Theme.of(context).colorScheme.onPrimary,
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
                 ),
               ),
@@ -3678,7 +4047,13 @@ class ChatScreenState extends State<ChatScreen>
                     return ValueListenableBuilder<double>(
                       valueListenable: SettingsManager.inputBarMaxWidth,
                       builder: (_, width, __) {
-                        return Column(
+                        return MeasureSize(
+                          onChange: (size) {
+                            if ((_bottomBarHeight.value - size.height).abs() > 0.5) {
+                              _bottomBarHeight.value = size.height;
+                            }
+                          },
+                          child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             AnimatedSize(
@@ -4074,6 +4449,7 @@ class ChatScreenState extends State<ChatScreen>
                               ),
                             ),
                           ],
+                          ),
                         );
                       },
                     );
@@ -4190,6 +4566,7 @@ class ChatScreenState extends State<ChatScreen>
           rawPaths?.whereType<String>().where((s) => s.isNotEmpty).toList();
       if (filePaths != null && filePaths.isNotEmpty) {
         debugPrint('[clipboard] File paths from clipboard: $filePaths');
+        if (!mounted) return;
         _handleDroppedFiles(filePaths);
         return;
       }
@@ -4206,6 +4583,7 @@ class ChatScreenState extends State<ChatScreen>
         await tempFile.writeAsBytes(imageBytes);
         debugPrint(
             '[clipboard] Image pasted from native clipboard: ${tempFile.path}');
+        if (!mounted) return;
         _handleDroppedFiles([tempFile.path]);
         return;
       }
@@ -4241,6 +4619,7 @@ class ChatScreenState extends State<ChatScreen>
             fileType = 'FILE';
           }
           debugPrint('[clipboard] File URI pasted: $filePath');
+          if (!mounted) return;
           _showFilePreviewAndSend(filePath, filename, ext, fileType);
           return;
         }
@@ -4684,7 +5063,7 @@ class ChatScreenState extends State<ChatScreen>
       final fileBytes = await file.readAsBytes();
       debugPrint('[LAN SEND] Read ${fileBytes.length} bytes from source');
 
-      final appDocuments = await getApplicationDocumentsDirectory();
+      final appDocuments = await getOnyxDocumentsDirectory();
       final lanMediaDir = Directory('${appDocuments.path}/lan_media');
       if (!await lanMediaDir.exists()) {
         await lanMediaDir.create(recursive: true);
@@ -4801,6 +5180,10 @@ class ChatScreenState extends State<ChatScreen>
         return;
       }
 
+      // Compute a BlurHash so the recipient sees a blurred preview before the
+      // full image finishes downloading (embedded in the IMAGEv1 metadata).
+      final blur = await computeBlurHash(plainBytes);
+
       // Create pending upload task — shows blurred preview immediately
       final task = UploadTask(
         id: '${DateTime.now().millisecondsSinceEpoch}',
@@ -4832,7 +5215,7 @@ class ChatScreenState extends State<ChatScreen>
 
       task.onComplete = (filename) async {
         try {
-          final appSupport = await getApplicationSupportDirectory();
+          final appSupport = await getOnyxSupportDirectory();
           final cacheDir = Directory('${appSupport.path}/image_cache');
           await cacheDir.create(recursive: true);
           if (await localFile.exists())
@@ -4844,7 +5227,9 @@ class ChatScreenState extends State<ChatScreen>
           'filename': filename,
           'owner': widget.myUsername,
           'orig': basename,
-          'key': imageMediaKeyB64
+          'key': imageMediaKeyB64,
+          if (blur != null) 'blur': blur.hash,
+          if (blur != null) 'ar': blur.aspectRatio,
         });
         await widget.onSend('IMAGEv1:$meta', replyTo);
         if (mounted)
@@ -4990,11 +5375,11 @@ class ChatScreenState extends State<ChatScreen>
           AppLocalizations(SettingsManager.appLocale.value)
               .uploadingImages(filePaths.length));
 
-      final appSupport = await getApplicationSupportDirectory();
+      final appSupport = await getOnyxSupportDirectory();
       final cacheDir = Directory('${appSupport.path}/image_cache');
       await cacheDir.create(recursive: true);
 
-      final albumItems = <Map<String, String>>[];
+      final albumItems = <Map<String, dynamic>>[];
 
       for (final filePath in filePaths) {
         final localFile = File(filePath);
@@ -5017,6 +5402,8 @@ class ChatScreenState extends State<ChatScreen>
         final plainBytes = await localFile.readAsBytes();
         final root = rootScreenKey.currentState;
         if (root == null) return;
+
+        final blur = await computeBlurHash(plainBytes);
 
         final (encryptedBytes, albumItemKeyB64) =
             await root.encryptMediaRandom(plainBytes, kind: 'image');
@@ -5041,7 +5428,9 @@ class ChatScreenState extends State<ChatScreen>
           'filename': filename,
           'owner': widget.myUsername,
           'orig': basename,
-          'key': albumItemKeyB64
+          'key': albumItemKeyB64,
+          if (blur != null) 'blur': blur.hash,
+          if (blur != null) 'ar': blur.aspectRatio,
         });
       }
 
@@ -5115,6 +5504,8 @@ class ChatScreenState extends State<ChatScreen>
       }
 
       final plainBytes = await localFile.readAsBytes();
+      // Extract AR + blurHash poster before upload so recipients get instant preview.
+      final videoInfo = await extractVideoInfo(filePath);
       final root = rootScreenKey.currentState;
       if (root == null) {
         rootScreenKey.currentState?.showSnack('RootScreen not ready');
@@ -5154,7 +5545,9 @@ class ChatScreenState extends State<ChatScreen>
           'filename': filename,
           'owner': widget.myUsername,
           'orig': basename,
-          'key': videoMediaKeyB64
+          'key': videoMediaKeyB64,
+          if (videoInfo?.hash != null) 'blur': videoInfo!.hash,
+          if (videoInfo != null) 'ar': videoInfo.ar,
         });
         await widget.onSend('VIDEOv1:$meta', replyTo);
         if (mounted)
@@ -5199,7 +5592,6 @@ class _MessageActionsSheet extends StatefulWidget {
   final bool canAlwaysDelete;
   final VoidCallback onReply;
   final VoidCallback? onSave;
-  final VoidCallback? onCopyImage;
   final VoidCallback? onEdit;
   final VoidCallback onCopy;
   final VoidCallback? onDelete;
@@ -5214,7 +5606,6 @@ class _MessageActionsSheet extends StatefulWidget {
     this.canAlwaysDelete = false,
     required this.onReply,
     this.onSave,
-    this.onCopyImage,
     this.onEdit,
     required this.onCopy,
     this.onDelete,
@@ -5332,11 +5723,6 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
                 ),
                 if (widget.onSave != null)
                   actionTile(Icons.save_alt_rounded, l.save, widget.onSave),
-                if (widget.onCopyImage != null &&
-                    !Platform.isAndroid &&
-                    !Platform.isIOS)
-                  actionTile(
-                      Icons.copy_all_rounded, l.copyImage, widget.onCopyImage),
                 if (widget.msg.outgoing && !widget.isMedia)
                   actionTile(
                     Icons.edit_rounded,

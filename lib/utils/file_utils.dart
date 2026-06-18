@@ -4,6 +4,26 @@ import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import '../managers/settings_manager.dart';
+
+/// Returns the directory where ONYX saves received files.
+/// Uses the user-configured path if set, otherwise defaults to Downloads/ONYX.
+Future<Directory?> getOnyxSaveDirectory() async {
+  final custom = SettingsManager.downloadFolderPath.value.trim();
+  if (custom.isNotEmpty) {
+    final dir = Directory(custom);
+    await dir.create(recursive: true);
+    return dir;
+  }
+  if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+    final dl = await getDownloadsDirectory();
+    if (dl == null) return null;
+    final onyxDir = Directory('${dl.path}/ONYX');
+    await onyxDir.create(recursive: true);
+    return onyxDir;
+  }
+  return null;
+}
 
 /// Saves an image to the device gallery, handling .jfif by copying to .jpg first
 /// (some native gallery plugins do not recognise the .jfif extension).

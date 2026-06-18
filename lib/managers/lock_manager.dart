@@ -29,6 +29,17 @@ class LockManager {
         _cachedPinHashes[chatId] = entry.value;
       }
     }
+
+    // If a chat is marked locked but its PIN was lost (e.g. SecureStorage cleared),
+    // remove the stale lock so the user isn't permanently locked out.
+    final orphaned = lockedChats.value
+        .where((id) => !_cachedPinHashes.containsKey(id))
+        .toList();
+    if (orphaned.isNotEmpty) {
+      final updated = Set<String>.from(lockedChats.value)..removeAll(orphaned);
+      lockedChats.value = updated;
+      await prefs.setStringList(_chatsKey, updated.toList());
+    }
   }
 
   static Future<void> _save() async {

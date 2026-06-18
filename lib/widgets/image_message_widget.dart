@@ -6,21 +6,23 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:visibility_detector/visibility_detector.dart';
 import '../globals.dart';
 import '../managers/external_server_manager.dart';
 import 'album_message_widget.dart';
 import 'chat_images_scope.dart';
+import 'blur_placeholder.dart';
 import '../utils/image_size_cache.dart';
 import '../utils/image_file_cache.dart';
+import '../utils/blurhash_cache.dart';
 
 // Singleton future so all widgets share one async init instead of each awaiting separately.
 Future<String>? _imageDirFuture;
 Future<String> _getImageDirPath() {
   return _imageDirFuture ??= () async {
-    final appSupport = await getApplicationSupportDirectory();
+    final appSupport = await getOnyxSupportDirectory();
     final dir = Directory('${appSupport.path}/image_cache');
     await dir.create(recursive: true);
     return dir.path;
@@ -28,11 +30,24 @@ Future<String> _getImageDirPath() {
 }
 
 class ImageMessageWidget extends StatefulWidget {
-  final String filename; 
+  final String filename;
   final String? owner;
   final String peerUsername;
   final bool isOutgoing;
   final String? mediaKeyB64;
+  /// BlurHash from the message metadata — shows a blurred preview while the
+  /// full image is still downloading. Null for images sent before this feature.
+  final String? blurHash;
+  /// Aspect ratio embedded in the message metadata, used to size the placeholder
+  /// correctly before the real image dimensions are known.
+  final double? initialAspectRatio;
+  /// Decode width passed to [Image.file]'s `cacheWidth`. Defaults to 280
+  /// (chat-bubble size). Callers that render this widget much smaller (e.g.
+  /// a gallery grid tile shrunk via FittedBox) should pass the actual
+  /// on-screen pixel width instead — decoding at the full bubble size only
+  /// to immediately downscale it wastes CPU and is the main cause of laggy
+  /// thumbnails when scrolling a dense grid.
+  final int? cacheWidth;
 
   const ImageMessageWidget({
     Key? key,
@@ -41,6 +56,9 @@ class ImageMessageWidget extends StatefulWidget {
     required this.peerUsername,
     this.isOutgoing = false,
     this.mediaKeyB64,
+    this.blurHash,
+    this.initialAspectRatio,
+    this.cacheWidth,
   }) : super(key: key);
 
   @override
@@ -51,9 +69,7 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
   File? _imageFile;
   bool _loading = true;
   String? _error;
-  bool _isVisible = true;  
-  int? _fileSizeBytes;  
-  double? _aspectRatio;  
+  double? _aspectRatio;
 
 
   @override
@@ -63,10 +79,11 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
     final cached = imageFileCache[widget.filename];
     if (cached != null && cached.file.existsSync()) {
       _imageFile = cached.file;
-      _fileSizeBytes = cached.size;
       _aspectRatio = cached.aspectRatio;
       _loading = false;
+      BlurHashCache.instance.ensureFor(widget.filename, cached.file);
     } else {
+      _aspectRatio = widget.initialAspectRatio;
       _loadImageFile();
     }
   }
@@ -79,9 +96,9 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
       
       final cached = imageFileCache[widget.filename];
       if (cached != null && cached.file.existsSync()) {
+        BlurHashCache.instance.ensureFor(widget.filename, cached.file);
         setState(() {
           _imageFile = cached.file;
-          _fileSizeBytes = cached.size;
           _aspectRatio = cached.aspectRatio;
           _loading = false;
           _error = null;
@@ -109,14 +126,14 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
         debugPrint('[ImageWidget] LAN file detected: ${widget.filename}');
 
         final lanFilename = widget.filename.substring(6);
-        final appDocuments = await getApplicationDocumentsDirectory();
+        final appDocuments = await getOnyxDocumentsDirectory();
         cachedFile = File('${appDocuments.path}/lan_media/$lanFilename');
         if (!(await cachedFile.exists())) {
           throw Exception('LAN file not found: $lanFilename');
         }
       } else if (widget.filename.startsWith('fav://')) {
         final favFilename = widget.filename.substring(6);
-        final appDocuments = await getApplicationDocumentsDirectory();
+        final appDocuments = await getOnyxDocumentsDirectory();
         cachedFile = File('${appDocuments.path}/fav_media/$favFilename');
         if (!(await cachedFile.exists())) {
           throw Exception('Favorites file not found: $favFilename');
@@ -181,10 +198,13 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
           aspectRatio: aspectRatio,
         );
 
+        // Remember a BlurHash for this image so future loads-from-cache (and
+        // images sent without an embedded hash) still show a blurred preview.
+        BlurHashCache.instance.ensureFor(widget.filename, cachedFile);
+
         if (mounted) {
           setState(() {
             _imageFile = cachedFile;
-            _fileSizeBytes = fileSize;
             _aspectRatio = aspectRatio;
             _loading = false;
           });
@@ -388,80 +408,78 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
     });
   }
 
+  /// Blurred placeholder (BlurHash + centre button) sized to the message's
+  /// aspect ratio. Shown while downloading and on error.
+  Widget _placeholderBox(
+      {required IconData icon, VoidCallback? onTap, bool loading = false}) {
+    final aspectRatio = _aspectRatio ?? widget.initialAspectRatio ?? 4 / 3;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 280, maxHeight: 400),
+      child: AspectRatio(
+        aspectRatio: aspectRatio,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: BlurPlaceholder(
+            blurHash: widget.blurHash ??
+                BlurHashCache.instance.get(widget.filename),
+            icon: icon,
+            onTap: onTap,
+            loading: loading,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_error != null) return Text(' Failed: $_error');
+    if (_error != null) {
+      return _placeholderBox(
+        icon: Icons.refresh,
+        onTap: () {
+          setState(() {
+            _error = null;
+            _loading = true;
+          });
+          _loadImageFile();
+        },
+      );
+    }
     if (_imageFile != null) {
-      
-      final isLanFile = widget.filename.startsWith('lan://');
-      final isLargeFile = !isLanFile &&
-          _fileSizeBytes != null &&
-          _fileSizeBytes! > 2 * 1024 * 1024;
-
-      if (isLargeFile && !_isVisible) {
-        return Container(
-          constraints: BoxConstraints(
-            minHeight: 150,
-            maxHeight: 300,
-            maxWidth: MediaQuery.of(context).size.width * 0.7,
-          ),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            color: Colors.grey.withValues(alpha: 0.3),
-          ),
-          child: const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.image, size: 40, color: Colors.grey),
-                SizedBox(height: 8),
-                Text('Scroll to load', style: TextStyle(fontSize: 12, color: Colors.grey)),
-              ],
-            ),
-          ),
-        );
-      }
-
+      // The image is loaded — always render it. (Previously large images were
+      // hidden behind a grey "Scroll to load" box when off-screen to save
+      // memory; that made already-loaded photos look unloaded until tapped.
+      // Decoding is bounded by cacheWidth below, so memory stays in check.)
       final aspectRatio = _aspectRatio ?? 4 / 3;
       return RepaintBoundary(
-        child: VisibilityDetector(
-          key: Key('image_${widget.filename}_${widget.peerUsername}'),
-          onVisibilityChanged: (VisibilityInfo info) {
-            final newVisibility = info.visibleFraction > 0.05; 
-            if (_isVisible != newVisibility && mounted) {
-              setState(() => _isVisible = newVisibility);
-            }
-          },
-          child: GestureDetector(
-            onTap: () => _showFullscreen(_imageFile!),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                maxWidth: 280, 
-                maxHeight: 400, 
-              ),
-              child: AspectRatio(
-                aspectRatio: aspectRatio, 
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: Image.file(
-                      _imageFile!,
-                      fit: BoxFit.cover,
-                      gaplessPlayback: true,
-                      
-                      cacheWidth: 560, 
-                      filterQuality: FilterQuality.medium, 
+        child: GestureDetector(
+          onTap: () => _showFullscreen(_imageFile!),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: 280,
+              maxHeight: 400,
+            ),
+            child: AspectRatio(
+              aspectRatio: aspectRatio,
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
                     ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Image.file(
+                    _imageFile!,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                    cacheWidth: widget.cacheWidth ?? 560,
+                    filterQuality: FilterQuality.medium,
                   ),
                 ),
               ),
@@ -471,25 +489,7 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
       );
     }
     if (_loading) {
-      final aspectRatio = _aspectRatio ?? 4 / 3; 
-      return ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: 280, 
-          maxHeight: 400, 
-        ),
-        child: AspectRatio(
-          aspectRatio: aspectRatio,
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
-            ),
-            child: const Center(
-              child: CircularProgressIndicator(),
-            ),
-          ),
-        ),
-      );
+      return _placeholderBox(icon: Icons.close, loading: true);
     }
     return const Text(' No image');
   }

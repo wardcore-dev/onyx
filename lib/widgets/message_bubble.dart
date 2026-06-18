@@ -93,6 +93,63 @@ class _ContextMenuLayoutDelegate extends SingleChildLayoutDelegate {
   bool shouldRelayout(_ContextMenuLayoutDelegate old) => old.anchor != anchor;
 }
 
+/// Shows the desktop floating context menu at [position] with the given [items].
+/// Uses the same card style as the SelectionArea context menu in [MessageBubble].
+void showMessageDesktopMenu(
+  BuildContext context,
+  Offset position,
+  List<DesktopMenuItem> items,
+) {
+  debugPrint('[RightClickMenu] showMessageDesktopMenu called, items=${items.length}, mounted=${context.mounted}, pos=$position');
+  ContextMenuController.removeAny();
+  final controller = ContextMenuController();
+  controller.show(
+    context: context,
+    contextMenuBuilder: (ctx) {
+      debugPrint('[RightClickMenu] contextMenuBuilder running, building menu UI');
+      final cs = Theme.of(ctx).colorScheme;
+      return TapRegion(
+        onTapOutside: (_) {
+          debugPrint('[RightClickMenu] TapRegion.onTapOutside fired, removing menu');
+          ContextMenuController.removeAny();
+        },
+        child: CustomSingleChildLayout(
+        delegate: _ContextMenuLayoutDelegate(position),
+        child: Material(
+          elevation: 8,
+          borderRadius: BorderRadius.circular(12),
+          color: cs.surfaceContainerHigh,
+          child: IntrinsicWidth(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final item in items)
+                    _menuRow(
+                      icon: _standardIcon(item.type) ?? item.icon,
+                      label: item.label,
+                      onPressed: item.onPressed == null
+                          ? null
+                          : () {
+                              ContextMenuController.removeAny();
+                              item.onPressed!();
+                            },
+                      cs: cs,
+                      color: item.color,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),   // closes CustomSingleChildLayout
+      ),     // closes TapRegion
+    );
+    },
+  );
+}
+
 class MessageBubble extends StatelessWidget {
   final String text;
   final bool outgoing;
@@ -232,16 +289,15 @@ class MessageBubble extends StatelessWidget {
             final orig = (meta['orig'] ?? meta['filename'] ?? '') as String;
             final owner = meta['owner'] as String?;
             final audioKeyB64 = meta['key'] as String?;
-            primaryContent = IntrinsicWidth(
-              child: VoiceMessagePlayer(
-                filename: filename,
-                owner: owner,
-                label: '',
-                peerUsername: peerUsername,
-                mediaKeyB64: audioKeyB64,
-                isFile: true,
-                origName: orig.isNotEmpty ? orig : null,
-              ),
+            primaryContent = VoiceMessagePlayer(
+              filename: filename,
+              owner: owner,
+              label: '',
+              peerUsername: peerUsername,
+              mediaKeyB64: audioKeyB64,
+              isFile: true,
+              origName: orig.isNotEmpty ? orig : null,
+              expand: true,
             );
           } catch (e) {
             primaryContent = FileMessageWidget(
@@ -258,6 +314,8 @@ class MessageBubble extends StatelessWidget {
       final filename = data['url'] as String? ?? data['filename'] as String? ?? '';
       final owner = data['owner'] as String?;
       final imageMediaKeyB64 = data['key'] as String?;
+      final blurHash = data['blur'] as String?;
+      final ar = (data['ar'] as num?)?.toDouble();
       debugPrint('[MessageBubble] IMAGE - url: ${data['url']}, filename: ${data['filename']}, owner: $owner, result: "$filename"');
       primaryContent = ImageMessageWidget(
         filename: filename,
@@ -265,6 +323,8 @@ class MessageBubble extends StatelessWidget {
         peerUsername: peerUsername,
         isOutgoing: outgoing,
         mediaKeyB64: imageMediaKeyB64,
+        blurHash: blurHash,
+        initialAspectRatio: ar,
       );
     } else if (text.toUpperCase().startsWith('VIDEOV1:')) {
       final prefixLen = 'VIDEOv1:'.length; 
@@ -275,6 +335,8 @@ class MessageBubble extends StatelessWidget {
       final origName = meta['orig'] as String? ?? 'video';
       final pending = meta['pending_upload'] == true;
       final videoMediaKeyB64 = meta['key'] as String?;
+      final videoBlurHash = meta['blur'] as String?;
+      final videoAr = (meta['ar'] as num?)?.toDouble();
       debugPrint('[MessageBubble] VIDEO - url: ${meta['url']}, filename: ${meta['filename']}, owner: $owner, result: "$filename", pending: $pending');
       if (pending) {
         primaryContent = Container(
@@ -307,6 +369,8 @@ class MessageBubble extends StatelessWidget {
           owner: owner,
           peerUsername: peerUsername,
           mediaKeyB64: videoMediaKeyB64,
+          blurHash: videoBlurHash,
+          initialAspectRatio: videoAr,
         );
       } else {
         primaryContent = Container(
@@ -378,16 +442,15 @@ class MessageBubble extends StatelessWidget {
           final dot = audioName.lastIndexOf('.');
           final ext = dot >= 0 ? audioName.substring(dot).toLowerCase() : '';
           if (audioExts.contains(ext) && !filename.startsWith('lan://')) {
-            primaryContent = IntrinsicWidth(
-              child: VoiceMessagePlayer(
-                filename: filename,
-                owner: owner,
-                label: '',
-                peerUsername: peerUsername,
-                mediaKeyB64: fileMediaKeyB64,
-                isFile: true,
-                origName: origName.isNotEmpty ? origName : null,
-              ),
+            primaryContent = VoiceMessagePlayer(
+              filename: filename,
+              owner: owner,
+              label: '',
+              peerUsername: peerUsername,
+              mediaKeyB64: fileMediaKeyB64,
+              isFile: true,
+              origName: origName.isNotEmpty ? origName : null,
+              expand: true,
             );
           } else {
           primaryContent = FileMessageWidget(
@@ -471,13 +534,12 @@ class MessageBubble extends StatelessWidget {
               ),
             );
           } else if (type == 'audio') {
-            primaryContent = IntrinsicWidth(
-              child: VoiceMessagePlayer(
-                filename: authUrl,
-                label: '',
-                peerUsername: '<external>',
-                origName: orig.isNotEmpty ? orig : null,
-              ),
+            primaryContent = VoiceMessagePlayer(
+              filename: authUrl,
+              label: '',
+              peerUsername: '<external>',
+              origName: orig.isNotEmpty ? orig : null,
+              expand: true,
             );
           } else if (type == 'document' || type == 'archive' || type == 'data' || type == 'file') {
             primaryContent = FileMessageWidget(
@@ -664,15 +726,27 @@ class MessageBubble extends StatelessWidget {
                             ),
                           ),
                         if (replyToUsername != null) const SizedBox(height: 4),
-                        Text(
-                          (replyToContent ?? '').trim(),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: fontFamily.getBodyTextStyle(
+                        Builder(builder: (_) {
+                          final special = _parseReplySpecial(replyToContent ?? '');
+                          final labelStyle = fontFamily.getBodyTextStyle(
                             fontSize: 12 * fontSizeMultiplier,
-                            color: textColorFinal.withOpacity(0.85),
-                          ).copyWith(fontStyle: FontStyle.italic),
-                        ),
+                            color: textColorFinal.withValues(alpha: 0.85),
+                          ).copyWith(fontStyle: FontStyle.italic);
+                          if (special != null) {
+                            return Text(
+                              special.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: labelStyle,
+                            );
+                          }
+                          return Text(
+                            (replyToContent ?? '').trim(),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: labelStyle,
+                          );
+                        }),
                       ],
                     ),
                   ),
@@ -700,12 +774,14 @@ class MessageBubble extends StatelessWidget {
                     ),
                     const SizedBox(width: 4),
                   ],
-                  Text(
-                    _formatMessageTime(time),
-                    style: fontFamily.getBodyTextStyle(
-                      fontSize: 8 * fontSizeMultiplier,
-                      color: textColorFinal.withOpacity(0.7),
-                    ).copyWith(height: 1.0),
+                  SelectionContainer.disabled(
+                    child: Text(
+                      _formatMessageTime(time),
+                      style: fontFamily.getBodyTextStyle(
+                        fontSize: 8 * fontSizeMultiplier,
+                        color: textColorFinal.withValues(alpha: 0.7),
+                      ).copyWith(height: 1.0),
+                    ),
                   ),
                 ],
               ),
@@ -772,16 +848,56 @@ class MessageBubble extends StatelessWidget {
           // A Listener (which bypasses the gesture arena) detects the secondary
           // button press and invokes the callback.
           if (onRightClick != null) {
+            // SelectableRegion (inside SelectionArea below) also reacts to a
+            // secondary click whenever there is selectable content under the
+            // cursor (plain text, video captions, etc.): it calls its own
+            // contextMenuBuilder and internally does
+            // ContextMenuController.removeAny() + show(). If we raced it with
+            // our own show() the two would stomp on each other (menu flashes
+            // or never appears). Instead we piggyback on its contextMenuBuilder
+            // hook directly -- it only fires when SelectableRegion has decided
+            // to show a menu, so there is no race. We defer our actual
+            // showMessageDesktopMenu call to the next frame (post-frame
+            // callback) because contextMenuBuilder runs *during* that overlay
+            // entry's build, and calling removeAny()/show() synchronously at
+            // that point would trip "setState during build".
+            //
+            // When there is nothing selectable under the cursor (images,
+            // albums), SelectableRegion never calls contextMenuBuilder at all,
+            // so we fall back to showing the menu ourselves a couple of frames
+            // after the right-click if that hook hasn't fired by then.
+            Offset? lastSecondaryPos;
+            bool handledBySelectableRegion = false;
+
+            void showFallbackIfNotHandled() {
+              if (!handledBySelectableRegion && lastSecondaryPos != null) {
+                onRightClick!(lastSecondaryPos!);
+              }
+            }
+
             return Listener(
               behavior: HitTestBehavior.translucent,
               onPointerDown: (PointerDownEvent event) {
                 if (event.buttons == kSecondaryMouseButton) {
-                  ContextMenuController.removeAny();
-                  onRightClick!(event.position);
+                  lastSecondaryPos = event.position;
+                  handledBySelectableRegion = false;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      showFallbackIfNotHandled();
+                    });
+                  });
                 }
               },
               child: SelectionArea(
-                contextMenuBuilder: (_, __) => const SizedBox.shrink(),
+                contextMenuBuilder: (ctx, regionState) {
+                  handledBySelectableRegion = true;
+                  final position =
+                      lastSecondaryPos ?? regionState.contextMenuAnchors.primaryAnchor;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    onRightClick!(position);
+                  });
+                  return const SizedBox.shrink();
+                },
                 child: innerBubble,
               ),
             );
@@ -849,6 +965,33 @@ class MessageBubble extends StatelessWidget {
             child: innerBubble,
           );
         }
+  }
+
+  /// Returns (icon, label) for special message types shown in reply previews.
+  ({IconData icon, String label})? _parseReplySpecial(String content) {
+    final c = content.trim();
+    for (final prefix in ['DATAv1:', 'DOCUMENTv1:', 'ARCHIVEv1:', 'FILEv1:', 'FILE:']) {
+      if (c.startsWith(prefix)) {
+        try {
+          final meta = jsonDecode(c.substring(prefix.length)) as Map<String, dynamic>;
+          final filename = meta['filename'] as String? ?? meta['orig'] as String? ?? 'File';
+          final icon = prefix == 'ARCHIVEv1:' ? Icons.folder_zip_outlined : Icons.attach_file;
+          return (icon: icon, label: filename);
+        } catch (_) {
+          return (icon: Icons.attach_file, label: 'File');
+        }
+      }
+    }
+    for (final prefix in ['IMAGEv1:', 'IMAGE:', 'ALBUM:']) {
+      if (c.startsWith(prefix)) return (icon: Icons.image_outlined, label: 'Photo');
+    }
+    for (final prefix in ['VIDEOv1:', 'VIDEO:']) {
+      if (c.startsWith(prefix)) return (icon: Icons.videocam_outlined, label: 'Video');
+    }
+    for (final prefix in ['VOICE:', 'AUDIO:']) {
+      if (c.startsWith(prefix)) return (icon: Icons.mic_outlined, label: 'Voice message');
+    }
+    return null;
   }
 
   String _formatMessageTime(DateTime t) {

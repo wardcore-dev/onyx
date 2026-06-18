@@ -37,6 +37,7 @@ class GlobalAudioController extends ChangeNotifier {
   VoidCallback? _onStop;
   AudioSeekCallback? _onSeek;
   AudioSpeedCallback? _onSetSpeed;
+  AudioSpeedCallback? _onSetVolume;
 
   // ── Playlist ───────────────────────────────────────────────────────────────
   // Map from chatId → list of registered voice messages in insertion order.
@@ -48,6 +49,9 @@ class GlobalAudioController extends ChangeNotifier {
   // ── Settings ───────────────────────────────────────────────────────────────
   bool _autoPlay = false;
   double _playbackSpeed = 1.0;
+  // Persists across tracks — a user who turns it down expects it to stay
+  // down for the next voice message/file too, not reset to 100%.
+  double _volume = 1.0;
   // true = Stretch (time-stretch, pitch preserved); false = Resample (pitch tracks speed)
   bool _isStretchMode = true;
 
@@ -66,6 +70,7 @@ class GlobalAudioController extends ChangeNotifier {
   bool get isFile => _isFile;
   bool get autoPlay => _autoPlay;
   double get playbackSpeed => _playbackSpeed;
+  double get volume => _volume;
   bool get isStretchMode => _isStretchMode;
 
   bool get hasNext {
@@ -132,6 +137,12 @@ class GlobalAudioController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setVolume(double v) {
+    _volume = v.clamp(0.0, 1.0);
+    _onSetVolume?.call(_volume);
+    notifyListeners();
+  }
+
   // ── Session management ─────────────────────────────────────────────────────
 
   /// Call when a player starts. Returns the session ID that the caller must
@@ -144,6 +155,7 @@ class GlobalAudioController extends ChangeNotifier {
     required VoidCallback onStop,
     required AudioSeekCallback onSeek,
     AudioSpeedCallback? onSetSpeed,
+    AudioSpeedCallback? onSetVolume,
     String? chatId,
     String? filename,
   }) {
@@ -163,9 +175,15 @@ class GlobalAudioController extends ChangeNotifier {
     _onStop = onStop;
     _onSeek = onSeek;
     _onSetSpeed = onSetSpeed;
+    _onSetVolume = onSetVolume;
     _currentChatId = chatId;
     _currentFilename = filename;
     notifyListeners();
+
+    // Apply the persisted volume to the freshly created player — a new
+    // AudioPlayer instance always starts at 100%, so without this every new
+    // track would ignore the volume the user previously set.
+    onSetVolume?.call(_volume);
 
     // Stop the previous session AFTER registering new callbacks.
     previousStop?.call();
@@ -277,6 +295,9 @@ class GlobalAudioController extends ChangeNotifier {
       await player.setSpeed(s);
       await player.setPitch(s);
     };
+    _onSetVolume = (v) async {
+      await player.setVolume(v);
+    };
   }
 
   void _cleanAdopted() {
@@ -289,6 +310,7 @@ class GlobalAudioController extends ChangeNotifier {
     _adoptedPlayer?.dispose();
     _adoptedPlayer = null;
     _onSetSpeed = null;
+    _onSetVolume = null;
   }
 }
 

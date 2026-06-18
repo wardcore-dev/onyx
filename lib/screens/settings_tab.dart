@@ -1,8 +1,13 @@
-// lib/screens/settings_tab.dart
+﻿// lib/screens/settings_tab.dart
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show compute, ValueListenable;
+import 'package:flutter/foundation.dart' show compute, ValueListenable, kIsWeb;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
-import 'package:path_provider/path_provider.dart';
+import 'package:path_provider/path_provider.dart' show getApplicationSupportDirectory;
+import '../utils/onyx_base_dir.dart';
+import '../utils/settings_backup.dart';
+import '../services/backup/backup_service.dart';
+import '../services/wardlink/wardlink_tombstones.dart';
+import '../services/wardlink/wardlink_pending_deletions.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
@@ -13,10 +18,13 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 import '../managers/secure_store.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../managers/account_manager.dart';
 import '../managers/settings_manager.dart';
 import '../enums/liquid_glass_quality.dart';
+import '../enums/media_preload_mode.dart';
+import '../enums/scroll_down_button_position.dart';
 import '../l10n/app_localizations.dart';
 import '../utils/proxy_manager.dart';
 import 'pin_code_screen.dart';
@@ -35,6 +43,11 @@ import 'package:flutter_webrtc/flutter_webrtc.dart' show MediaDeviceInfo, naviga
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import '../widgets/media_picker_sheet.dart';
+import '../services/wardlink/wardlink_sync_service.dart';
+import '../services/wardlink/wardlink_paired_devices.dart';
+import 'package:permission_handler/permission_handler.dart';
+import '../managers/trash_manager.dart';
+import '../widgets/inline_search_bar.dart';
 
 void _showStyledSnack(BuildContext context, String text, {Duration duration = const Duration(seconds: 2)}) {
   final colorScheme = Theme.of(context).colorScheme;
@@ -296,6 +309,13 @@ class SettingsTab extends StatefulWidget {
   final Future<void> Function(String passphrase, String oldPassword, String newPassword) onChangePassword;
   final VoidCallback onOpenSessions;
   final void Function(String username) onOpenChat;
+  // Whether this tab is the one currently shown to the user. The PageView
+  // hosting all bottom-nav tabs keeps every page mounted even when off-screen
+  // (swiped away), so without this flag the settings search query would
+  // silently survive a tab switch. Defaults to true for callers that mount
+  // this tab standalone (e.g. the desktop left-sidebar layout, which already
+  // disposes the widget on tab switch).
+  final bool isActive;
 
   const SettingsTab({
     Key? key,
@@ -315,6 +335,7 @@ class SettingsTab extends StatefulWidget {
     required this.onChangePassword,
     required this.onOpenSessions,
     required this.onOpenChat,
+    this.isActive = true,
   }) : super(key: key);
 
   @override
@@ -326,10 +347,11 @@ class _SettingsTabState extends State<SettingsTab>
   
   @override
   bool get wantKeepAlive => true;
-  late final int _randomTipIndex;
   double? _cacheSizeMb;
   bool _cacheSizeLoaded = false;
   bool _purging = false;
+  double? _orphanedSizeMb;
+  bool _orphanedSizeLoaded = false;
 
   late final AnimationController _fadeController;
   late final Animation<double> _fadeAnimation;
@@ -338,6 +360,15 @@ class _SettingsTabState extends State<SettingsTab>
   List<MediaDeviceInfo>? _audioDevices;
 
   SectionType? _expandedSection;
+  final Map<String, bool> _expandedSubsections = {};
+
+  final TextEditingController _settingsSearchCtrl = TextEditingController();
+  final GlobalKey _settingsSearchBarKey = GlobalKey();
+  String _settingsSearchQuery = '';
+
+  // Ambient context for search breadcrumb rendering (set during build, not setState)
+  String? _searchSectionLabel;
+  IconData? _searchSectionIcon;
 
   late TextEditingController _statusOnlineController;
   late TextEditingController _statusOfflineController;
@@ -350,7 +381,10 @@ class _SettingsTabState extends State<SettingsTab>
   late TextEditingController _proxyPasswordController;
   bool _proxyPasswordVisible = false;
   bool _proxyTesting = false;
-  String? _proxyTestResult; 
+  String? _proxyTestResult;
+
+  // Cached future for old-folder check — avoids redoing filesystem I/O on every rebuild.
+  Future<({String path, bool hasUserData})>? _oldFolderInfoFuture;
   
   late String _localStatusVisibility;
   bool _localHideFromSearch = false;
@@ -358,7 +392,6 @@ class _SettingsTabState extends State<SettingsTab>
   @override
   void initState() {
     super.initState();
-    _randomTipIndex = Random().nextInt(6);
 
     _localStatusVisibility = SettingsManager.statusVisibility.value;
     _localHideFromSearch = SettingsManager.hideFromSearch.value;
@@ -407,8 +440,21 @@ class _SettingsTabState extends State<SettingsTab>
         _fadeController.forward();
         
         _loadTotalCacheSize();
+        _loadOrphanedSize();
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(SettingsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Leaving the tab (swipe or bottom-nav tap both flow through the same
+    // isActive flag) clears whatever the user typed in the search box, so it
+    // doesn't linger stale next time they open Settings.
+    if (oldWidget.isActive && !widget.isActive && _settingsSearchQuery.isNotEmpty) {
+      _settingsSearchCtrl.clear();
+      setState(() => _settingsSearchQuery = '');
+    }
   }
 
   @override
@@ -422,8 +468,24 @@ class _SettingsTabState extends State<SettingsTab>
     _proxyPortController.dispose();
     _proxyUsernameController.dispose();
     _proxyPasswordController.dispose();
+    _settingsSearchCtrl.dispose();
     _fadeController.dispose();
     super.dispose();
+  }
+
+  bool _sectionVisible(String title, String subtitle, [List<String> keywords = const []]) {
+    if (_settingsSearchQuery.isEmpty) return true;
+    final q = _settingsSearchQuery.toLowerCase().trim();
+    if (q.isEmpty) return true;
+    final words = q.split(RegExp(r'\s+')).where((w) => w.length >= 2).toList();
+    if (words.isEmpty) return false;
+    // Each item is checked independently — prevents false positives from words
+    // scattered across unrelated keywords (e.g. "chat" in one key, "display" in another).
+    for (final item in [title, subtitle, ...keywords]) {
+      final lower = item.toLowerCase();
+      if (lower.contains(q) || words.every((w) => lower.contains(w))) return true;
+    }
+    return false;
   }
 
   void _updateStatusOnlineController() {
@@ -448,11 +510,11 @@ class _SettingsTabState extends State<SettingsTab>
   }
 
   Future<void> _loadTotalCacheSize() async {
-    if (_cacheSizeLoaded) return; 
+    if (_cacheSizeLoaded) return;
 
     try {
-      final dir = await getApplicationSupportDirectory();
-      
+      final dir = await getOnyxSupportDirectory();
+
       final sizeMb = await compute(_calculateCacheSizeInBackground, dir.path);
 
       if (mounted) {
@@ -464,6 +526,19 @@ class _SettingsTabState extends State<SettingsTab>
     } catch (e) {
       debugPrint('[_loadTotalCacheSize] error: $e');
     }
+  }
+
+  Future<void> _loadOrphanedSize() async {
+    if (_orphanedSizeLoaded) return;
+    try {
+      final bytes = await rootScreenKey.currentState?.scanOrphanedCacheBytes();
+      if (mounted) {
+        setState(() {
+          _orphanedSizeMb = bytes != null ? bytes / (1024 * 1024) : null;
+          _orphanedSizeLoaded = true;
+        });
+      }
+    } catch (_) {}
   }
 
   void _toggleSection(SectionType section) {
@@ -506,8 +581,11 @@ class _SettingsTabState extends State<SettingsTab>
         _purging = false;
         _cacheSizeMb = null;
         _cacheSizeLoaded = false;
+        _orphanedSizeMb = null;
+        _orphanedSizeLoaded = false;
       });
       _loadTotalCacheSize();
+      _loadOrphanedSize();
     } catch (e) {
       if (mounted) {
         setState(() => _purging = false);
@@ -625,14 +703,14 @@ class _SettingsTabState extends State<SettingsTab>
         await prefs.clear();
         debugPrint(' Cleared SharedPreferences');
 
-        final appSupport = await getApplicationSupportDirectory();
+        final appSupport = await getOnyxSupportDirectory();
         if (await appSupport.exists()) {
           await appSupport.delete(recursive: true);
           await appSupport.create(recursive: true);
           debugPrint(' Cleared Application Support directory');
         }
 
-        final appDocs = await getApplicationDocumentsDirectory();
+        final appDocs = await getOnyxDocumentsDirectory();
         if (await appDocs.exists()) {
           await appDocs.delete(recursive: true);
           await appDocs.create(recursive: true);
@@ -681,130 +759,301 @@ class _SettingsTabState extends State<SettingsTab>
     final onlineCtrl = TextEditingController(text: SettingsManager.statusOnline.value);
     final offlineCtrl = TextEditingController(text: SettingsManager.statusOffline.value);
 
-    final inputBorder = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(10),
-      borderSide: BorderSide(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.5)),
-    );
-    final focusedBorder = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(10),
-      borderSide: BorderSide(color: Theme.of(context).colorScheme.primary, width: 2),
-    );
-
-    await showDialog(
+    await showGeneralDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) {
-          return AlertDialog(
-            title: Row(
-              children: [
-                const Icon(Icons.manage_accounts_rounded, size: 20),
-                const SizedBox(width: 8),
-                Text(l.statusSettings),
-              ],
-            ),
-            content: SizedBox(
-              width: 360,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+      barrierDismissible: true,
+      barrierLabel: 'Status',
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      transitionDuration: const Duration(milliseconds: 187),
+      transitionBuilder: (ctx, anim, _, child) {
+        final curved =
+            CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+        return FadeTransition(
+          opacity: CurvedAnimation(parent: anim, curve: Curves.easeIn),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.93, end: 1.0).animate(curved),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (ctx, _, __) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final cs = Theme.of(ctx).colorScheme;
+            const btnShape = RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(50)));
+            const btnPadding = EdgeInsets.symmetric(vertical: 13);
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding:
+                  const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(28),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 400),
+                  child: Material(
+                    color: cs.surface,
+                    borderRadius: BorderRadius.circular(28),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const Icon(Icons.visibility_rounded, size: 16),
-                        const SizedBox(width: 6),
-                        Text(l.statusVisibility, style: const TextStyle(fontWeight: FontWeight.bold)),
+                        // ── Header ──────────────────────────────────────
+                        Container(
+                          padding: const EdgeInsets.fromLTRB(20, 18, 16, 16),
+                          decoration: BoxDecoration(
+                            color: cs.primary.withValues(alpha: 0.06),
+                            border: Border(
+                              bottom: BorderSide(
+                                  color: cs.primary.withValues(alpha: 0.10),
+                                  width: 0.8),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: cs.primary.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(Icons.manage_accounts_rounded,
+                                    size: 18, color: cs.primary),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(l.statusSettings,
+                                    style: TextStyle(
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.bold,
+                                        color: cs.onSurface)),
+                              ),
+                              GestureDetector(
+                                onTap: () {
+                                  onlineCtrl.dispose();
+                                  offlineCtrl.dispose();
+                                  Navigator.of(ctx).pop();
+                                },
+                                child: Container(
+                                  width: 32,
+                                  height: 32,
+                                  decoration: BoxDecoration(
+                                    color:
+                                        cs.onSurface.withValues(alpha: 0.07),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Icon(Icons.close_rounded,
+                                      size: 18,
+                                      color: cs.onSurface
+                                          .withValues(alpha: 0.55)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        // ── Content ─────────────────────────────────────
+                        Padding(
+                          padding:
+                              const EdgeInsets.fromLTRB(20, 20, 20, 24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // Visibility
+                              Row(
+                                children: [
+                                  Icon(Icons.visibility_rounded,
+                                      size: 15,
+                                      color:
+                                          cs.onSurface.withValues(alpha: 0.6)),
+                                  const SizedBox(width: 6),
+                                  Text(l.statusVisibility,
+                                      style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: cs.onSurface
+                                              .withValues(alpha: 0.6))),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: ['show', 'hide'].map((opt) {
+                                  final selected = localVisibility == opt;
+                                  return Expanded(
+                                    child: Padding(
+                                      padding: EdgeInsets.only(
+                                          right: opt == 'show' ? 6 : 0,
+                                          left: opt == 'hide' ? 6 : 0),
+                                      child: GestureDetector(
+                                        onTap: () => setDialogState(
+                                            () => localVisibility = opt),
+                                        child: AnimatedContainer(
+                                          duration: const Duration(
+                                              milliseconds: 150),
+                                          padding: const EdgeInsets.symmetric(
+                                              vertical: 10),
+                                          decoration: BoxDecoration(
+                                            color: selected
+                                                ? cs.primary
+                                                    .withValues(alpha: 0.12)
+                                                : cs.surfaceContainerHighest
+                                                    .withValues(alpha: 0.4),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            border: Border.all(
+                                              color: selected
+                                                  ? cs.primary.withValues(
+                                                      alpha: 0.4)
+                                                  : cs.outlineVariant
+                                                      .withValues(alpha: 0.3),
+                                              width: selected ? 1.2 : 0.8,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              if (selected)
+                                                Icon(Icons.check_rounded,
+                                                    size: 15,
+                                                    color: cs.primary),
+                                              if (selected)
+                                                const SizedBox(width: 4),
+                                              Text(
+                                                opt == 'show'
+                                                    ? l.statusShowStatus
+                                                    : l.statusHideStatus,
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: selected
+                                                      ? cs.primary
+                                                      : cs.onSurface
+                                                          .withValues(
+                                                              alpha: 0.7),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                              const SizedBox(height: 20),
+                              // Text fields
+                              Row(
+                                children: [
+                                  Icon(Icons.edit_rounded,
+                                      size: 15,
+                                      color:
+                                          cs.onSurface.withValues(alpha: 0.6)),
+                                  const SizedBox(width: 6),
+                                  Text(l.statusCustomText,
+                                      style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: cs.onSurface
+                                              .withValues(alpha: 0.6))),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: onlineCtrl,
+                                decoration: InputDecoration(
+                                  labelText: l.statusWhenOnline,
+                                  filled: true,
+                                  fillColor: cs.surfaceContainerHighest
+                                      .withValues(alpha: 0.4),
+                                  border: OutlineInputBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(14)),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: BorderSide(
+                                        color: cs.outlineVariant
+                                            .withValues(alpha: 0.3),
+                                        width: 0.8),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: BorderSide(
+                                        color: cs.primary, width: 1.4),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: offlineCtrl,
+                                decoration: InputDecoration(
+                                  labelText: l.statusWhenOffline,
+                                  filled: true,
+                                  fillColor: cs.surfaceContainerHighest
+                                      .withValues(alpha: 0.4),
+                                  border: OutlineInputBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(14)),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: BorderSide(
+                                        color: cs.outlineVariant
+                                            .withValues(alpha: 0.3),
+                                        width: 0.8),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: BorderSide(
+                                        color: cs.primary, width: 1.4),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+                              FilledButton(
+                                style: FilledButton.styleFrom(
+                                    padding: btnPadding, shape: btnShape),
+                                onPressed: () async {
+                                  final onlineText =
+                                      onlineCtrl.text.trim().isEmpty
+                                          ? 'online'
+                                          : onlineCtrl.text.trim();
+                                  final offlineText =
+                                      offlineCtrl.text.trim().isEmpty
+                                          ? 'offline'
+                                          : offlineCtrl.text.trim();
+                                  _isUpdatingControllers = true;
+                                  await SettingsManager
+                                      .setStatusVisibility(localVisibility);
+                                  await SettingsManager
+                                      .setStatusOnline(onlineText);
+                                  await SettingsManager
+                                      .setStatusOffline(offlineText);
+                                  _isUpdatingControllers = false;
+                                  setState(() =>
+                                      _localStatusVisibility = localVisibility);
+                                  onlineCtrl.dispose();
+                                  offlineCtrl.dispose();
+                                  if (!ctx.mounted) return;
+                                  Navigator.pop(ctx);
+                                  final ok = await _syncStatusSettings();
+                                  if (mounted) {
+                                    _showSnack(ok ? savedOkMsg : savedFailMsg);
+                                  }
+                                },
+                                child: Text(l.save),
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      children: ['show', 'hide'].map((opt) {
-                        return FilterChip(
-                          label: Text(opt == 'show' ? l.statusShowStatus : l.statusHideStatus),
-                          selected: localVisibility == opt,
-                          onSelected: (sel) {
-                            if (sel) setDialogState(() => localVisibility = opt);
-                          },
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        const Icon(Icons.edit_rounded, size: 16),
-                        const SizedBox(width: 6),
-                        Text(l.statusCustomText, style: const TextStyle(fontWeight: FontWeight.bold)),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: onlineCtrl,
-                      style: const TextStyle(fontSize: 14),
-                      decoration: InputDecoration(
-                        labelText: l.statusWhenOnline,
-                        hintText: 'e.g., "custom online"',
-                        filled: true,
-                        fillColor: Theme.of(ctx).colorScheme.surface,
-                        border: inputBorder,
-                        enabledBorder: inputBorder,
-                        focusedBorder: focusedBorder,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: offlineCtrl,
-                      style: const TextStyle(fontSize: 14),
-                      decoration: InputDecoration(
-                        labelText: l.statusWhenOffline,
-                        hintText: 'e.g., "custom offline"',
-                        filled: true,
-                        fillColor: Theme.of(ctx).colorScheme.surface,
-                        border: inputBorder,
-                        enabledBorder: inputBorder,
-                        focusedBorder: focusedBorder,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  onlineCtrl.dispose();
-                  offlineCtrl.dispose();
-                  Navigator.pop(ctx);
-                },
-                child: Text(l.cancel),
-              ),
-              FilledButton(
-                onPressed: () async {
-                  final onlineText = onlineCtrl.text.trim().isEmpty ? 'online' : onlineCtrl.text.trim();
-                  final offlineText = offlineCtrl.text.trim().isEmpty ? 'offline' : offlineCtrl.text.trim();
-                  _isUpdatingControllers = true;
-                  await SettingsManager.setStatusVisibility(localVisibility);
-                  await SettingsManager.setStatusOnline(onlineText);
-                  await SettingsManager.setStatusOffline(offlineText);
-                  _isUpdatingControllers = false;
-                  setState(() => _localStatusVisibility = localVisibility);
-                  onlineCtrl.dispose();
-                  offlineCtrl.dispose();
-                  if (!ctx.mounted) return;
-                  Navigator.pop(ctx);
-                  final ok = await _syncStatusSettings();
-                  if (mounted) {
-                    _showSnack(ok ? savedOkMsg : savedFailMsg);
-                  }
-                },
-                child: Text(l.save),
-              ),
-            ],
-          );
-        },
-      ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -929,7 +1178,7 @@ class _SettingsTabState extends State<SettingsTab>
       } else if (Platform.isLinux) {
         appDir = Directory('${Platform.environment['HOME']}/.config/onyx');
       } else {
-        final docs = await getApplicationDocumentsDirectory();
+        final docs = await getOnyxDocumentsDirectory();
         appDir = Directory('${docs.path}/ONYX');
       }
 
@@ -1161,7 +1410,7 @@ class _SettingsTabState extends State<SettingsTab>
       const videoExts = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.m4v'};
       final isVideo = videoExts.contains(ext);
 
-      final dir = await getApplicationSupportDirectory();
+      final dir = await getOnyxSupportDirectory();
       final bgDir = Directory('${dir.path}/backgrounds');
       await bgDir.create(recursive: true);
 
@@ -1232,7 +1481,7 @@ class _SettingsTabState extends State<SettingsTab>
     if (confirmed != true) return;
 
     try {
-      final dir = await getApplicationSupportDirectory();
+      final dir = await getOnyxSupportDirectory();
       final bgDir = Directory('${dir.path}/backgrounds');
       if (await bgDir.exists()) {
         final files = bgDir.listSync().whereType<File>().toList();
@@ -1259,7 +1508,7 @@ class _SettingsTabState extends State<SettingsTab>
 
   Future<void> _clearChatVideoBackground() async {
     try {
-      final dir = await getApplicationSupportDirectory();
+      final dir = await getOnyxSupportDirectory();
       final bgDir = Directory('${dir.path}/backgrounds');
       if (await bgDir.exists()) {
         for (final f in bgDir.listSync().whereType<File>()) {
@@ -1289,7 +1538,8 @@ class _SettingsTabState extends State<SettingsTab>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); 
+    super.build(context);
+    final l = AppLocalizations.of(context);
     return FadeTransition(
       opacity: _isVisible ? _fadeAnimation : const AlwaysStoppedAnimation(0),
       child: ListView(
@@ -1332,1165 +1582,184 @@ class _SettingsTabState extends State<SettingsTab>
             ),
           ),
           const SizedBox(height: 16),
-          
+          InlineSearchBar(
+            key: _settingsSearchBarKey,
+            controller: _settingsSearchCtrl,
+            onChanged: (q) {
+              final trimmed = q.trim();
+              if (trimmed == _settingsSearchQuery) return;
+              setState(() => _settingsSearchQuery = trimmed);
+            },
+            hintText: AppLocalizations.of(context).searchSettingsHint,
+            hasText: _settingsSearchQuery.isNotEmpty,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+          ),
+          const SizedBox(height: 16),
+
+          if (_sectionVisible(l.securityTitle, l.securitySubtitle,
+              [l.statusSettings, l.showDisplayNameInGroups, l.showDisplayNameSubtitle, l.pinLock, l.enablePinLock, l.enablePinSubtitle, l.useBiometrics, l.useBiometricsSubtitle, l.lockOnResume, l.lockOnResumeSubtitle, l.hideFromSearch, l.hideFromSearchSubtitle, l.statusVisibility, l.statusShowStatus, l.statusHideStatus, l.statusCustomText, l.statusWhenOnline, l.statusWhenOffline, l.fakePinTitle, l.fakePinSubtitle, l.fakePinDescription, l.decoyAccountSection, l.decoyAccountSubtitle, l.decoyContactsSection, l.decoyContactsSubtitle, 'Privacy', 'Visibility and search settings', 'PIN, biometrics and lock behavior'])) ...[
           _buildLiquidGlassSection(
             icon: Icons.security_rounded,
+            iconHue: 1,
             title: AppLocalizations.of(context).securityTitle,
             subtitle: AppLocalizations.of(context).securitySubtitle,
             section: SectionType.security,
-            expandedContent: _buildSecurityContent(),
+            expandedContentBuilder: _buildSecurityContent,
           ),
           const SizedBox(height: 16),
+          ],
+          if (_sectionVisible(l.keyMgmtTitle, l.keyMgmtSubtitle,
+              [l.keyMgmtDescription, l.rotateE2eeKey, l.activeDevices, l.showPassphrase, l.changePassword])) ...[
           _buildLiquidGlassSection(
             icon: Icons.key_rounded,
+            iconHue: 1,
             title: AppLocalizations.of(context).keyMgmtTitle,
             subtitle: AppLocalizations.of(context).keyMgmtSubtitle,
             section: SectionType.keyManagement,
-            expandedContent: _buildKeyManagementContent(),
+            expandedContentBuilder: _buildKeyManagementContent,
           ),
-          if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) ...[
-            const SizedBox(height: 16),
+          const SizedBox(height: 16),
+          ],
+          if (_sectionVisible(l.wardLinkTitle, l.wardLinkSubtitle,
+              [l.wardLinkEnable, l.wardLinkEnableDesc, l.wardLinkPairedDevices, l.wardLinkAddDevice, l.wardLinkMaxFileSize, l.wardLinkBubbleVisibility, l.wardLinkBubbleSize, l.wardLinkFavoritesOnlyNote, l.wardLinkSyncFromBeginning, l.wardLinkSyncFromBeginningDesc, l.wardLinkE2E, l.wardLinkHoldForLog, l.wardLinkLog, 'Sync Settings', 'File size limit and bubble notifications', 'Add and manage paired devices'])) ...[
+          _buildLiquidGlassSection(
+            icon: Icons.sync_rounded,
+            iconHue: 1,
+            title: AppLocalizations.of(context).wardLinkTitle,
+            subtitle: AppLocalizations.of(context).wardLinkSubtitle,
+            section: SectionType.wardLink,
+            expandedContentBuilder: _buildWardLinkContent,
+          ),
+          const SizedBox(height: 16),
+          ],
+          if (_sectionVisible(l.backupTitle, l.backupSubtitle,
+              [l.backupExport, l.backupRestore, l.backupScope, l.backupFavorites, l.backupPersonal, l.backupIncludeMedia, l.backupSchedule, l.backupFolder, l.backupMediaImages, l.backupMediaVideos, l.backupMediaVoice, l.backupMediaOther])) ...[
+          _buildLiquidGlassSection(
+            icon: Icons.save_rounded,
+            iconHue: 1,
+            title: AppLocalizations.of(context).backupTitle,
+            subtitle: AppLocalizations.of(context).backupSubtitle,
+            section: SectionType.backup,
+            expandedContentBuilder: () => const _BackupSection(),
+          ),
+          const SizedBox(height: 16),
+          ],
+          if ((Platform.isWindows || Platform.isMacOS || Platform.isLinux) &&
+              _sectionVisible(l.audioTitle, l.audioSubtitle,
+              [l.audioTitle, l.audioSubtitle])) ...[
             _buildLiquidGlassSection(
               icon: Icons.headset_mic_rounded,
+              iconHue: 1,
               title: AppLocalizations.of(context).audioTitle,
               subtitle: AppLocalizations.of(context).audioSubtitle,
               section: SectionType.audio,
-              expandedContent: _buildAudioContent(),
+              expandedContentBuilder: _buildAudioContent,
             ),
+            const SizedBox(height: 16),
           ],
-          const SizedBox(height: 16),
+          if (_sectionVisible(l.notificationsTitle, l.notificationsSubtitle,
+              [l.notifEnableLabel, l.notifHideContentLabel, l.notifSoundEnableLabel, l.notifSoundChooseLabel, l.notifPopupPosition, l.notifPopupPositionSubtitle, l.launchAtStartupLabel, l.launchAtStartupSubtitle, l.notificationsEnabled, l.notificationsEnabledSubtitle, 'General', 'Enable notifications and content visibility', 'Notification sound and audio file', 'Advanced', 'Startup behavior and popup position'])) ...[
           _buildLiquidGlassSection(
             icon: Icons.notifications_rounded,
+            iconHue: 1,
             title: AppLocalizations.of(context).notificationsTitle,
             subtitle: AppLocalizations.of(context).notificationsSubtitle,
             section: SectionType.notifications,
-            expandedContent: _buildNotificationsContent(),
+            expandedContentBuilder: _buildNotificationsContent,
           ),
           const SizedBox(height: 16),
+          ],
+          if (_sectionVisible(l.appearanceTitle, l.appearanceSubtitle,
+              [l.selectTheme, l.darkMode, l.fontAndTextSize, l.fontFamily, l.messageSize, l.chatBackground, l.chatBgSubtitle, l.applyGlobally, l.applyGloballySubtitle, l.blurBackground, l.elementOpacity, l.elementBrightness, l.uiLayout, l.navBarPosition, l.inputBarMaxWidth, l.minimizeBottomNav, l.minimizeBottomNavSubtitle, l.swipeTabs, l.swipeTabsSubtitle, l.smoothScroll, l.performanceOptimizations, l.showAvatarInChats, l.showAvatarSubtitle, l.showAccountIndicator, l.showAccountIndicatorSubtitle, l.liquidGlassSubtitle, l.liquidGlassNavBarLabel, l.liquidGlassNavBarDesc, l.liquidGlassCardsLabel, l.liquidGlassCardsDesc, l.liquidGlassInputLabel, l.liquidGlassInputDesc, l.liquidGlassSearchLabel, l.liquidGlassSearchDesc, l.macOsWindowStyle, l.macOsWindowStyleSubtitle, l.messageAnimations, l.chatListMoveAnimations, l.smoothScrollDown, l.showSnackbars, l.tabSwiping, l.tabSwipingSubtitle, l.navPanelPosition, l.showAvatarsInChats, l.loadOlderMessagesOnScroll, l.ownMessagesRight, l.ownMessagesLeft, l.alignAllRight, l.alignAllRightSubtitle, l.presetsBackground, 'Chat Display', 'Alignment, avatars and animations', 'Wallpaper, blur and opacity', 'Layout', 'Navigation, graph and tab swiping', 'Liquid Glass Effects'])) ...[
           _buildLiquidGlassSection(
             icon: Icons.palette_rounded,
+            iconHue: 1,
             title: AppLocalizations.of(context).appearanceTitle,
             subtitle: AppLocalizations.of(context).appearanceSubtitle,
             section: SectionType.appearance,
-            expandedContent: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  AppLocalizations.of(context).selectTheme,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 2,
-                  children: AppTheme.values.map((theme) {
-                    final isSelected = widget.currentTheme == theme;
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        GestureDetector(
-                          onTap: () async {
-                            await widget.onThemeChanged(
-                                theme, widget.isDarkMode);
-                          },
-                          child: Container(
-                            width: 38,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: theme.color,
-                              border: Border.all(
-                                color: isSelected
-                                    ? Colors.white
-                                    : Colors.transparent,
-                                width: isSelected ? 3 : 0,
-                              ),
-                              boxShadow: [
-                                if (isSelected)
-                                  BoxShadow(
-                                    color: theme.color.withValues(alpha: 0.5),
-                                    blurRadius: 8,
-                                    spreadRadius: 2,
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        SizedBox(
-                          width: 60,
-                          child: Text(
-                            theme.name,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Text(AppLocalizations.of(context).darkMode),
-                    const SizedBox(width: 12),
-                    Switch(
-                      value: widget.isDarkMode,
-                      onChanged: (val) async {
-                        await widget.onThemeChanged(widget.currentTheme, val);
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 12),
-                Text(
-                  AppLocalizations.of(context).fontAndTextSize,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-                const SizedBox(height: 16),
-                ValueListenableBuilder<FontFamilyType>(
-                  valueListenable: SettingsManager.fontFamily,
-                  builder: (_, currentFont, __) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          AppLocalizations.of(context).fontFamily,
-                          style: const TextStyle(fontSize: 13, color: Colors.grey),
-                        ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          width: double.infinity,
-                          child: InkWell(
-                            onTap: () {
-                              showModalBottomSheet(
-                                context: context,
-                                isScrollControlled: true,
-                                backgroundColor: Colors.transparent,
-                                builder: (ctx) {
-                                  final cs = Theme.of(ctx).colorScheme;
-                                  return ValueListenableBuilder<double>(
-                                    valueListenable:
-                                        SettingsManager.elementBrightness,
-                                    builder: (_, brightness, __) {
-                                      final sheetColor =
-                                          SettingsManager.getElementColor(
-                                        cs.surfaceContainerHighest,
-                                        brightness,
-                                      );
-                                      return DraggableScrollableSheet(
-                                        initialChildSize: 0.6,
-                                        minChildSize: 0.4,
-                                        maxChildSize: 0.95,
-                                        expand: false,
-                                        builder: (_, scrollController) {
-                                          return Container(
-                                            margin: const EdgeInsets.fromLTRB(
-                                                12, 0, 12, 12),
-                                            decoration: BoxDecoration(
-                                              color: sheetColor,
-                                              borderRadius:
-                                                  BorderRadius.circular(20),
-                                            ),
-                                            child: Column(
-                                              children: [
-                                                const SizedBox(height: 8),
-                                                Container(
-                                                  width: 36,
-                                                  height: 4,
-                                                  decoration: BoxDecoration(
-                                                    color: cs.onSurface
-                                                        .withValues(alpha: 0.2),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            2),
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 8),
-                                                Padding(
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 16,
-                                                      vertical: 4),
-                                                  child: Text(
-                                                    AppLocalizations.of(context).fontFamily,
-                                                    style: TextStyle(
-                                                      fontSize: 15,
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      color: cs.onSurface,
-                                                    ),
-                                                  ),
-                                                ),
-                                                Expanded(
-                                                  child: ListView(
-                                                    controller: scrollController,
-                                                    padding:
-                                                        const EdgeInsets.only(
-                                                            bottom: 8),
-                                                    children: FontFamilyType
-                                                        .values
-                                                        .map((font) {
-                                                      final isSelected =
-                                                          currentFont == font;
-                                                      return ListTile(
-                                                        title: Text(
-                                                          font.displayName,
-                                                          style: font
-                                                              .getBodyTextStyle(
-                                                                  fontSize: 14),
-                                                        ),
-                                                        subtitle: Text(
-                                                          AppLocalizations.of(context).localizeFontDescription(font.description),
-                                                          style: TextStyle(
-                                                            fontSize: 12,
-                                                            color: cs.onSurface
-                                                                .withValues(
-                                                                    alpha: 0.5),
-                                                          ),
-                                                        ),
-                                                        trailing: isSelected
-                                                            ? Icon(
-                                                                Icons
-                                                                    .check_circle_rounded,
-                                                                color: cs
-                                                                    .primary,
-                                                              )
-                                                            : Icon(
-                                                                Icons
-                                                                    .radio_button_unchecked_rounded,
-                                                                color: cs
-                                                                    .onSurface
-                                                                    .withValues(
-                                                                        alpha:
-                                                                            0.3),
-                                                              ),
-                                                        selected: isSelected,
-                                                        selectedTileColor: cs
-                                                            .primary
-                                                            .withValues(
-                                                                alpha: 0.08),
-                                                        shape:
-                                                            RoundedRectangleBorder(
-                                                          borderRadius:
-                                                              BorderRadius
-                                                                  .circular(12),
-                                                        ),
-                                                        onTap: () async {
-                                                          await SettingsManager
-                                                              .setFontFamily(
-                                                                  font);
-                                                          if (ctx.mounted) {
-                                                            Navigator.of(ctx)
-                                                                .pop();
-                                                          }
-                                                        },
-                                                      );
-                                                    }).toList(),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          );
-                                        },
-                                      );
-                                    },
-                                  );
-                                },
-                              );
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 12),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .outline,
-                                  width: 1,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        currentFont.displayName,
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        AppLocalizations.of(context).localizeFontDescription(currentFont.description),
-                                        style: const TextStyle(
-                                            fontSize: 12, color: Colors.grey),
-                                      ),
-                                    ],
-                                  ),
-                                  const Icon(Icons.chevron_right),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-                ValueListenableBuilder<double>(
-                  valueListenable: SettingsManager.fontSizeMultiplier,
-                  builder: (_, sizeMultiplier, __) {
-                    final labels = ['S', 'M', 'L', 'XL'];
-                    final values = [0.9, 1.0, 1.1, 1.2];
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              AppLocalizations.of(context).messageSize,
-                              style: const TextStyle(fontSize: 13, color: Colors.grey),
-                            ),
-                            Text(
-                              '${(sizeMultiplier * 100).toStringAsFixed(0)}%',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                            children: List.generate(values.length, (idx) {
-                          final val = values[idx];
-                          final label = labels[idx];
-                          final isSelected =
-                              (sizeMultiplier - val).abs() < 0.01;
-                          return Expanded(
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 4),
-                              child: GestureDetector(
-                                onTap: () async {
-                                  await SettingsManager.setFontSizeMultiplier(
-                                      val);
-                                },
-                                child: Container(
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 10),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
-                                      color: isSelected
-                                          ? Theme.of(context)
-                                              .colorScheme
-                                              .primary
-                                          : Theme.of(context)
-                                              .colorScheme
-                                              .outline,
-                                      width: isSelected ? 2 : 1,
-                                    ),
-                                    color: isSelected
-                                        ? Theme.of(context)
-                                            .colorScheme
-                                            .primary
-                                            .withValues(alpha: 0.1)
-                                        : Colors.transparent,
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      label,
-                                      style: TextStyle(
-                                        fontWeight: isSelected
-                                            ? FontWeight.w600
-                                            : FontWeight.normal,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          );
-                        }).toList()),
-                        const SizedBox(height: 8),
-                        Slider(
-                          value: sizeMultiplier,
-                          min: 0.8,
-                          max: 1.3,
-                          divisions: 10,
-                          onChanged: (val) async {
-                            await SettingsManager.setFontSizeMultiplier(val);
-                          },
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.swapMessageAlignment,
-                  builder: (_, swapped, __) {
-                    final label = swapped
-                        ? AppLocalizations.of(context).ownMessagesLeft
-                        : AppLocalizations.of(context).ownMessagesRight;
-                    return Row(
-                      children: [
-                        Text(label),
-                        const SizedBox(width: 12),
-                        Switch(
-                          value: swapped,
-                          onChanged: (val) async {
-                            await SettingsManager.setSwapMessageAlignment(val);
-                          },
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.swapMessageAlignment,
-                  builder: (_, swappedMsg, __) {
-                    return ValueListenableBuilder<bool>(
-                      valueListenable: SettingsManager.alignAllMessagesRight,
-                      builder: (_, alignRight, __) {
-                        final label = alignRight
-                            ? (swappedMsg
-                                ? AppLocalizations.of(context).allMessagesLeft
-                                : AppLocalizations.of(context).allMessagesRight2)
-                            : AppLocalizations.of(context).allMessagesMixed;
-                        return Row(
-                          children: [
-                            Text(label),
-                            const SizedBox(width: 12),
-                            Switch(
-                              value: alignRight,
-                              onChanged: (val) async {
-                                await SettingsManager.setAlignAllMessagesRight(
-                                    val);
-                              },
-                            ),
-                          ],
-                        );
-                      },
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.showAvatarInChats,
-                  builder: (_, showAvatar, __) {
-                    return Row(
-                      children: [
-                        Text(AppLocalizations.of(context).showAvatarsInChats),
-                        const SizedBox(width: 12),
-                        Switch(
-                          value: showAvatar,
-                          onChanged: (val) async {
-                            await SettingsManager.setShowAvatarInChats(val);
-                          },
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.showAccountIndicator,
-                  builder: (_, showInd, __) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Text(AppLocalizations.of(context).showAccountIndicator),
-                            const SizedBox(width: 12),
-                            Switch(
-                              value: showInd,
-                              onChanged: (val) async {
-                                await SettingsManager.setShowAccountIndicator(val);
-                              },
-                            ),
-                          ],
-                        ),
-                        Text(
-                          AppLocalizations.of(context).showAccountIndicatorSubtitle,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.smoothScrollEnabled,
-                  builder: (_, smoothScroll, __) {
-                    return Row(
-                      children: [
-                        Text(AppLocalizations.of(context).smoothScrollDown),
-                        const SizedBox(width: 12),
-                        Switch(
-                          value: smoothScroll,
-                          onChanged: (val) async {
-                            await SettingsManager.setSmoothScroll(val);
-                          },
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 8),
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.messageAnimationsEnabled,
-                  builder: (_, animationsEnabled, __) {
-                    return Row(
-                      children: [
-                        Text(AppLocalizations.of(context).messageAnimations),
-                        const SizedBox(width: 12),
-                        Switch(
-                          value: animationsEnabled,
-                          onChanged: (val) async {
-                            await SettingsManager.setMessageAnimationsEnabled(val);
-                          },
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 8),
-                ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.messagePaginationEnabled,
-                  builder: (_, paginationEnabled, __) {
-                    return Row(
-                      children: [
-                        Text(AppLocalizations.of(context).loadOlderMessagesOnScroll),
-                        const SizedBox(width: 12),
-                        Switch(
-                          value: paginationEnabled,
-                          onChanged: (val) async {
-                            await SettingsManager.setMessagePaginationEnabled(val);
-                          },
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  AppLocalizations.of(context).chatBackground,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                ValueListenableBuilder<String?>(
-                  valueListenable: SettingsManager.chatVideoBackground,
-                  builder: (_, videoPath, __) {
-                  return ValueListenableBuilder<String?>(
-                  valueListenable: SettingsManager.chatBackground,
-                  builder: (_, path, __) {
-                    final aspect = isDesktop ? (16 / 9) : (9 / 16);
-                    Widget preview;
-                    if (videoPath != null && File(videoPath).existsSync()) {
-                      preview = ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: AspectRatio(
-                          aspectRatio: aspect,
-                          child: _VideoPreviewWidget(path: videoPath),
-                        ),
-                      );
-                    } else if (path != null && File(path).existsSync()) {
-                      preview = ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: AspectRatio(
-                          aspectRatio: aspect,
-                          child: ValueListenableBuilder<bool>(
-                            valueListenable: SettingsManager.blurBackground,
-                            builder: (_, blur, __) {
-                              final provider = FileImage(File(path));
-                              final img = Image(
-                                  image: provider,
-                                  width: double.infinity,
-                                  fit: BoxFit.cover);
-                              return blur
-                                  ? ValueListenableBuilder<double>(
-                                      valueListenable:
-                                          SettingsManager.blurSigma,
-                                      builder: (_, sigma, __) {
-                                        return AdaptiveBlur(
-                                            imageProvider: provider,
-                                            sigma: sigma,
-                                            fit: BoxFit.cover);
-                                      },
-                                    )
-                                  : img;
-                            },
-                          ),
-                        ),
-                      );
-                    } else {
-                      preview = ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: AspectRatio(
-                          aspectRatio: aspect,
-                          child: ValueListenableBuilder<double>(
-                            valueListenable: SettingsManager.elementOpacity,
-                            builder: (_, opacity, __) {
-                              return Container(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .surfaceContainerHighest
-                                    .withValues(alpha: opacity * 0.47),
-                                child: Icon(Icons.photo_outlined,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant
-                                        .withValues(alpha: 0.5)),
-                              );
-                            },
-                          ),
-                        ),
-                      );
-                    }
-
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          width: isDesktop ? 320 : 160,
-                          child: preview,
-                        ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            _buildAppleButton(
-                              icon: Icons.photo_outlined,
-                              label: AppLocalizations.of(context).chooseBackground,
-                              onPressed: _pickChatBackground,
-                            ),
-                            _buildAppleButton(
-                              icon: Icons.auto_awesome_rounded,
-                              label: AppLocalizations.of(context).presetsBackground,
-                              onPressed: _showPresetsSheet,
-                            ),
-                            if (path != null || videoPath != null)
-                              _buildAppleButton(
-                                icon: Icons.close_rounded,
-                                label: AppLocalizations.of(context).clearBackground2,
-                                onPressed: () async {
-                                  await _clearChatBackground();
-                                  await _clearChatVideoBackground();
-                                },
-                                isDestructive: true,
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        ValueListenableBuilder<bool>(
-                          valueListenable: SettingsManager.applyGlobally,
-                          builder: (_, apply, __) {
-                            return SwitchListTile(
-                              title: Text(AppLocalizations.of(context).applyBackgroundToApp),
-                              value: apply,
-                              onChanged: (val) =>
-                                  SettingsManager.setApplyGlobally(val),
-                              contentPadding: EdgeInsets.zero,
-                              activeColor:
-                                  Theme.of(context).colorScheme.primary,
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 12),
-                        ValueListenableBuilder<double>(
-                          valueListenable: SettingsManager.elementOpacity,
-                          builder: (_, opacity, __) {
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  AppLocalizations.of(context).uiElementsOpacityLabel,
-                                  style: const TextStyle(fontWeight: FontWeight.bold),
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Slider(
-                                        min: 0.1,
-                                        max: 1.0,
-                                        divisions: 18,
-                                        value: opacity,
-                                        label:
-                                            (opacity * 100).toStringAsFixed(0) +
-                                                '%',
-                                        onChanged: (v) =>
-                                            SettingsManager.setElementOpacity(
-                                                v),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    SizedBox(
-                                      width: 50,
-                                      child: Text(
-                                          '${(opacity * 100).toStringAsFixed(0)}%',
-                                          textAlign: TextAlign.right),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 12),
-                        ValueListenableBuilder<double>(
-                          valueListenable: SettingsManager.elementBrightness,
-                          builder: (_, brightness, __) {
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  AppLocalizations.of(context).uiElementsBrightnessLabel,
-                                  style: const TextStyle(fontWeight: FontWeight.bold),
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Slider(
-                                        min: 0.0,
-                                        max: 1.0,
-                                        divisions: 20,
-                                        value: brightness,
-                                        label:
-                                            (brightness * 100).toStringAsFixed(0) +
-                                                '%',
-                                        onChanged: (v) =>
-                                            SettingsManager.setElementBrightness(
-                                                v),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    SizedBox(
-                                      width: 50,
-                                      child: Text(
-                                          '${(brightness * 100).toStringAsFixed(0)}%',
-                                          textAlign: TextAlign.right),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                      ],
-                    );
-                  },
-                  );
-                  },
-                ),
-                const SizedBox(height: 12),
-                if (isDesktop)
-                  ValueListenableBuilder<double>(
-                    valueListenable: SettingsManager.inputBarMaxWidth,
-                    builder: (_, width, __) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            AppLocalizations.of(context).inputBarMaxWidth,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Slider(
-                                  min: 320,
-                                  max: 1600,
-                                  divisions: 27,
-                                  value: width,
-                                  label: '${width.toInt()} px',
-                                  onChanged: (v) =>
-                                      SettingsManager.setInputBarMaxWidth(v),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              SizedBox(
-                                width: 72,
-                                child: Text('${width.toInt()} px',
-                                    textAlign: TextAlign.right),
-                              ),
-                            ],
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                if (isDesktop)
-                  const SizedBox(height: 16),
-                if (isDesktop)
-                  ValueListenableBuilder<String>(
-                    valueListenable: SettingsManager.desktopNavPosition,
-                    builder: (_, navPosition, __) {
-                      final isBottom = navPosition == 'bottom';
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            AppLocalizations.of(context).navPanelPosition,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Text(isBottom ? AppLocalizations.of(context).navPosBottom : AppLocalizations.of(context).navPosLeft),
-                              const SizedBox(width: 12),
-                              Switch(
-                                value: isBottom,
-                                onChanged: (val) async {
-                                  await SettingsManager.setDesktopNavPosition(
-                                    val ? 'bottom' : 'left',
-                                  );
-                                },
-                              ),
-                            ],
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ...[
-                  const SizedBox(height: 16),
-                  ValueListenableBuilder<bool>(
-                    valueListenable: SettingsManager.showAccountGraph,
-                    builder: (_, showGraph, __) => Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            AppLocalizations.of(context).accountGraph,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          subtitle: Text(
-                            showGraph
-                                ? (isDesktop
-                                    ? AppLocalizations.of(context).accountGraphSubtitleDesktopOn
-                                    : AppLocalizations.of(context).accountGraphSubtitleMobileOn)
-                                : (isDesktop
-                                    ? AppLocalizations.of(context).accountGraphSubtitleDesktopOff
-                                    : AppLocalizations.of(context).accountGraphSubtitleMobileOff),
-                            style: TextStyle(
-                                fontSize: 13,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant),
-                          ),
-                          value: showGraph,
-                          onChanged: (v) => SettingsManager.setShowAccountGraph(v),
-                        ),
-                        if (showGraph) ...[
-                          const SizedBox(height: 4),
-                          ValueListenableBuilder<double>(
-                            valueListenable: SettingsManager.graphOrbitSpeed,
-                            builder: (_, speed, __) {
-                              final l = AppLocalizations.of(context);
-                              final label = speed < 60
-                                  ? l.secOrbit(speed.round())
-                                  : l.minOrbit((speed / 60).round());
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(l.orbitSpeed,
-                                          style: const TextStyle(fontWeight: FontWeight.w600)),
-                                      Text(label,
-                                          style: TextStyle(
-                                              fontSize: 12,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurfaceVariant)),
-                                    ],
-                                  ),
-                                  Slider(
-                                    min: 30.0,
-                                    max: 600.0,
-                                    value: speed,
-                                    onChanged: SettingsManager.setGraphOrbitSpeed,
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                          const SizedBox(height: 4),
-                          ValueListenableBuilder<bool>(
-                            valueListenable: SettingsManager.graphAnimation,
-                            builder: (_, anim, __) => SwitchListTile(
-                              contentPadding: EdgeInsets.zero,
-                              title: Text(AppLocalizations.of(context).animateGraph,
-                                  style: const TextStyle(fontWeight: FontWeight.w600)),
-                              subtitle: Text(
-                                anim
-                                    ? AppLocalizations.of(context).animateGraphOn
-                                    : AppLocalizations.of(context).animateGraphOff,
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant),
-                              ),
-                              value: anim,
-                              onChanged: SettingsManager.setGraphAnimation,
-                            ),
-                          ),
-                          ValueListenableBuilder<bool>(
-                            valueListenable: SettingsManager.graphPreservePosition,
-                            builder: (_, preserve, __) => SwitchListTile(
-                              contentPadding: EdgeInsets.zero,
-                              title: Text(AppLocalizations.of(context).preserveView,
-                                  style: const TextStyle(fontWeight: FontWeight.w600)),
-                              subtitle: Text(
-                                preserve
-                                    ? AppLocalizations.of(context).preserveViewOn
-                                    : AppLocalizations.of(context).preserveViewOff,
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant),
-                              ),
-                              value: preserve,
-                              onChanged: SettingsManager.setGraphPreservePosition,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-                if (!isDesktop) ...[
-                  const SizedBox(height: 16),
-                  ValueListenableBuilder<bool>(
-                    valueListenable: SettingsManager.swipeTabsEnabled,
-                    builder: (_, swipeTabs, __) {
-                      return Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(AppLocalizations.of(context).tabSwiping, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                Text(
-                                  AppLocalizations.of(context).tabSwipingSubtitle,
-                                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Switch(
-                            value: swipeTabs,
-                            onChanged: (val) async {
-                              await SettingsManager.setSwipeTabsEnabled(val);
-                            },
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ],
-                if (!Platform.isWindows && !Platform.isLinux) ...[
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Liquid Glass Effects',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    AppLocalizations.of(context).liquidGlassSubtitle,
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 12),
-                  // ── Navigation Bar ────────────────────────────
-                  _buildLiquidElementSection(
-                    context: context,
-                    label: AppLocalizations.of(context).liquidGlassNavBarLabel,
-                    description: AppLocalizations.of(context).liquidGlassNavBarDesc,
-                    toggleListenable: SettingsManager.liquidGlassOnNavBar,
-                    toggleGetter: (v) => v as bool,
-                    onToggle: SettingsManager.setLiquidGlassOnNavBar,
-                    qualityNotifier: SettingsManager.liquidGlassNavBarQuality,
-                    onQualityChanged: SettingsManager.setLiquidGlassNavBarQuality,
-                    sliders: [
-                      _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassBlur),
-                      _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassTint),
-                      _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassSaturation),
-                      _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassChromatic),
-                      _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassRefractive),
-                      _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassLightIntensity),
-                      _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassThickness),
-                      _LiquidSliderConfig(label: 'Jelly Stretch Amount', description: 'Indicator expansion when dragging between tabs', listenable: SettingsManager.liquidGlassExpansion, min: 0, max: 28, divisions: 28, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassExpansion),
-                    ],
-                  ),
-                  // ── Cards & List Items (только мобилки; на десктопе скрыто) ──
-                  if (!Platform.isMacOS) ...[
-                  const SizedBox(height: 12),
-                  _buildLiquidElementSection(
-                    context: context,
-                    label: AppLocalizations.of(context).liquidGlassCardsLabel,
-                    description: AppLocalizations.of(context).liquidGlassCardsDesc,
-                    toggleListenable: SettingsManager.liquidGlassOnCards,
-                    toggleGetter: (v) => v as bool,
-                    onToggle: SettingsManager.setLiquidGlassOnCards,
-                    qualityNotifier: SettingsManager.liquidGlassCardsQuality,
-                    onQualityChanged: SettingsManager.setLiquidGlassCardsQuality,
-                    sliders: [
-                      _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassCardsBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassCardsBlur),
-                      _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassCardsTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassCardsTint),
-                      _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassCardsSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassCardsSaturation),
-                      _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassCardsChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassCardsChromatic),
-                      _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassCardsRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassCardsRefractive),
-                      _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassCardsLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassCardsLightIntensity),
-                      _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassCardsThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassCardsThickness),
-                    ],
-                  ),
-                  ],
-                  // ── Input Bar ─────────────────────────────────
-                  const SizedBox(height: 12),
-                  _buildLiquidElementSection(
-                    context: context,
-                    label: AppLocalizations.of(context).liquidGlassInputLabel,
-                    description: AppLocalizations.of(context).liquidGlassInputDesc,
-                    toggleListenable: SettingsManager.liquidGlassOnInput,
-                    toggleGetter: (v) => v as bool,
-                    onToggle: SettingsManager.setLiquidGlassOnInput,
-                    qualityNotifier: SettingsManager.liquidGlassInputQuality,
-                    onQualityChanged: SettingsManager.setLiquidGlassInputQuality,
-                    sliders: [
-                      _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassInputBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassInputBlur),
-                      _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassInputTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassInputTint),
-                      _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassInputSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassInputSaturation),
-                      _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassInputChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassInputChromatic),
-                      _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassInputRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassInputRefractive),
-                      _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassInputLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassInputLightIntensity),
-                      _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassInputThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassInputThickness),
-                    ],
-                  ),
-                  // ── Search ────────────────────────────────────
-                  const SizedBox(height: 12),
-                  _buildLiquidElementSection(
-                    context: context,
-                    label: AppLocalizations.of(context).liquidGlassSearchLabel,
-                    description: AppLocalizations.of(context).liquidGlassSearchDesc,
-                    toggleListenable: SettingsManager.liquidGlassOnSearch,
-                    toggleGetter: (v) => v as bool,
-                    onToggle: SettingsManager.setLiquidGlassOnSearch,
-                    qualityNotifier: SettingsManager.liquidGlassSearchQuality,
-                    onQualityChanged: SettingsManager.setLiquidGlassSearchQuality,
-                    sliders: [
-                      _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassSearchBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassSearchBlur),
-                      _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassSearchTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassSearchTint),
-                      _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassSearchSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassSearchSaturation),
-                      _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassSearchChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassSearchChromatic),
-                      _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassSearchRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassSearchRefractive),
-                      _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassSearchLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassSearchLightIntensity),
-                      _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassSearchThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassSearchThickness),
-                    ],
-                  ),
-                ],
-              ],
-            ),
+            expandedContentBuilder: _buildAppearanceContent,
           ),
           const SizedBox(height: 16),
+          ],
+          if (_sectionVisible(l.languageTitle, l.languageSubtitle,
+              [l.languageEnglish, l.languageRussian])) ...[
           _buildLiquidGlassSection(
             icon: Icons.translate_rounded,
+            iconHue: 1,
             title: AppLocalizations.of(context).languageTitle,
             subtitle: AppLocalizations.of(context).languageSubtitle,
             section: SectionType.language,
-            expandedContent: _buildLanguageContent(),
+            expandedContentBuilder: _buildLanguageContent,
           ),
           const SizedBox(height: 16),
+          ],
+          if (_sectionVisible(l.cacheTitle, l.cacheSubtitle,
+              [l.mediaCacheSize, l.clearLocalCache, l.serverMediaCache, l.serverMediaCacheSubtitle, l.clearServerCache, l.dangerZone, l.dangerZoneSubtitle, l.factoryReset, l.factoryResetHint, l.resetDeleteAccount, l.resetDeleteLocal, l.resetDeleteLocalSubtitle, l.manageCacheTitle, l.manageCacheButton, l.cleanUnusedFiles, 'Storage', 'Media cache and unused file cleanup'])) ...[
           _buildLiquidGlassSection(
             icon: Icons.cleaning_services_rounded,
+            iconHue: 1,
             title: AppLocalizations.of(context).cacheTitle,
             subtitle: AppLocalizations.of(context).cacheSubtitle,
             section: SectionType.cache,
-            expandedContent: _buildCacheContent(),
+            expandedContentBuilder: _buildCacheContent,
           ),
           const SizedBox(height: 16),
+          ],
+          if (_sectionVisible(l.connectionTitle, l.connectionSubtitle,
+              [l.connect, l.disconnect, 'Server Connection', 'Connect or disconnect from the WebSocket server',
+               l.proxyTitle, l.proxySubtitle, l.enableProxy, l.proxyType, l.proxyHost, l.proxyPort, l.proxyUsername, l.proxyPassword, l.testProxy, l.proxyApplyReconnect, l.useProxy, l.proxyDirectConnection, l.proxyRouted])) ...[
           _buildLiquidGlassSection(
             icon: Icons.cell_tower_rounded,
+            iconHue: 1,
             title: AppLocalizations.of(context).connectionTitle,
             subtitle: AppLocalizations.of(context).connectionSubtitle,
             section: SectionType.connection,
-            expandedContent: _buildConnectionContent(),
+            expandedContentBuilder: _buildConnectionContent,
           ),
           const SizedBox(height: 16),
-          _buildLiquidGlassSection(
-            icon: Icons.language_rounded,
-            title: AppLocalizations.of(context).proxyTitle,
-            subtitle: AppLocalizations.of(context).proxySubtitle,
-            section: SectionType.proxy,
-            expandedContent: _buildProxyContent(),
-          ),
-          const SizedBox(height: 16),
+          ],
+          if (_sectionVisible(l.interactTitle, l.interactSubtitle,
+              [l.confirmFileUpload, l.confirmFileUploadSubtitle, l.confirmVoiceMessage, l.confirmVoiceSubtitle, l.downloadFolder, l.downloadFolderSubtitle, l.autoLoadVideos, l.autoLoadVideosSubtitle, 'Media & Uploads', 'Confirmations, auto-load and image preloading', 'Performance', 'Scroll buffer and image preload window', 'Files & Storage', 'Download folder and app data management',
+               l.debugTitle, l.debugSubtitle, l.debugMode, l.debugModeSubtitle, l.enableFileLogging, l.enableFileLoggingSubtitle, l.deleteAllLogs,
+               l.blockedUsersTitle, l.blockedUsersSubtitle, l.blockedUsersEmpty, l.unblockAction, l.blockUserLabel, l.unblockUserLabel])) ...[
           _buildLiquidGlassSection(
             icon: Icons.tune_rounded,
+            iconHue: 1,
             title: AppLocalizations.of(context).interactTitle,
             subtitle: AppLocalizations.of(context).interactSubtitle,
             section: SectionType.interact,
-            expandedContent: _buildInteractContent(),
+            expandedContentBuilder: _buildInteractContent,
           ),
           const SizedBox(height: 16),
-          _buildLiquidGlassSection(
-            icon: Icons.bug_report_rounded,
-            title: AppLocalizations.of(context).debugTitle,
-            subtitle: AppLocalizations.of(context).debugSubtitle,
-            section: SectionType.debug,
-            expandedContent: _buildDebugContent(),
-          ),
-          const SizedBox(height: 8),
+          ],
+          if (_sectionVisible(l.contactTitle, l.contactSubtitle,
+              [l.contactWebsite, l.contactRepository, l.contactRepositoryServer, l.contactEmail, l.supportOnyx])) ...[
           _buildLiquidGlassSection(
             icon: Icons.info_outline_rounded,
+            iconHue: 1,
             title: AppLocalizations.of(context).contactTitle,
             subtitle: AppLocalizations.of(context).contactSubtitle,
             section: SectionType.contact,
-            expandedContent: _buildContactContent(),
+            expandedContentBuilder: _buildContactContent,
           ),
           const SizedBox(height: 16),
+          ],
+          if (_sectionVisible(l.recycleBinTitle, l.recycleBinSubtitle,
+              [l.recycleBinPendingTitle, l.recycleBinNoPending, l.recycleBinResetTitle, l.recycleBinResetDesc, l.recycleBinResetButton])) ...[
           _buildLiquidGlassSection(
-            icon: Icons.block_rounded,
-            title: AppLocalizations.of(context).blockedUsersTitle,
-            subtitle: AppLocalizations.of(context).blockedUsersSubtitle,
-            section: SectionType.blockedUsers,
-            expandedContent: _buildBlockedUsersContent(),
+            icon: Icons.delete_sweep_rounded,
+            iconHue: 1,
+            title: AppLocalizations.of(context).recycleBinTitle,
+            subtitle: AppLocalizations.of(context).recycleBinSubtitle,
+            section: SectionType.recycleBin,
+            expandedContentBuilder: () => const _RecycleBinSection(),
           ),
+          ],
           const SizedBox(height: 20),
           
           Center( 
             child: Text(
-              'open-beta 1.6a',
+              'open-beta 1.7',
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
@@ -2669,426 +1938,686 @@ class _SettingsTabState extends State<SettingsTab>
     );
   }
 
-  Widget _buildNotificationsContent() {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isDesktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+  Widget _buildWardLinkContent() {
+    final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
+    final showAll = _sectionVisible(l.wardLinkTitle, l.wardLinkSubtitle);
+
+    Future<void> toggleEnabled(bool v) async {
+      await SettingsManager.setWardLinkEnabled(v);
+      final username = await AccountManager.getCurrentAccount();
+      if (v && username != null) {
+        await WardLinkSyncService.instance.start(username);
+      } else {
+        await WardLinkSyncService.instance.stop();
+      }
+    }
+
+    Future<void> addDevice() async {
+      final username = await AccountManager.getCurrentAccount();
+      if (username == null) {
+        _showSnack(l.wardLinkPairFailed);
+        return;
+      }
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => const _WardLinkQrDialog(),
+      );
+    }
+
+    Future<void> removeDevice(PairedDevice d) async {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(d.name),
+          content: Text(l.wardLinkRemoveConfirm),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(l.cancel)),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(l.wardLinkRemoveDevice)),
+          ],
+        ),
+      );
+      if (ok == true) {
+        await WardLinkSyncService.instance.sendUnpair(d.identityPubB64);
+      }
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        
+        ValueListenableBuilder<bool>(
+          valueListenable: SettingsManager.wardLinkEnabled,
+          builder: (_, enabled, __) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(l.wardLinkEnable, style: const TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: Text(l.wardLinkEnableDesc,
+                    style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
+                value: enabled,
+                onChanged: toggleEnabled,
+              ),
+              ValueListenableBuilder<WardLinkStatus>(
+                valueListenable: WardLinkSyncService.instance.status,
+                builder: (_, st, __) {
+                  if (!enabled || st.message.isEmpty) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        Icon(
+                          st.syncing ? Icons.sync_rounded : Icons.check_circle_outline_rounded,
+                          size: 14,
+                          color: cs.primary,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(st.message,
+                              style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+              if (enabled) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      Icon(Icons.bookmark_rounded, size: 16, color: cs.primary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(l.wardLinkFavoritesOnlyNote,
+                            style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _buildSubSection(
+                  key: 'wardlink_settings',
+                  title: 'Sync Settings',
+                  subtitle: 'File size limit and bubble notifications',
+                  icon: Icons.settings_rounded,
+                  searchShowAll: showAll,
+                  keywords: [
+                    l.wardLinkMaxFileSize, l.wardLinkBubbleVisibility, l.wardLinkBubbleSize,
+                    'file size', 'bubble', 'sync',
+                  ],
+                  expandedContent: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(l.wardLinkMaxFileSize,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          const Spacer(),
+                          ValueListenableBuilder<int>(
+                            valueListenable: SettingsManager.wardLinkMaxFileSizeMb,
+                            builder: (_, mb, __) => DropdownButton<int>(
+                              value: const [512, 1024, 2048, 4096].contains(mb) ? mb : 2048,
+                              underline: const SizedBox.shrink(),
+                              items: const [
+                                DropdownMenuItem(value: 512, child: Text('512 MB')),
+                                DropdownMenuItem(value: 1024, child: Text('1 GB')),
+                                DropdownMenuItem(value: 2048, child: Text('2 GB')),
+                                DropdownMenuItem(value: 4096, child: Text('4 GB')),
+                              ],
+                              onChanged: (v) { if (v != null) SettingsManager.setWardLinkMaxFileSizeMb(v); },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      ValueListenableBuilder<bool>(
+                        valueListenable: SettingsManager.wardLinkBubbleOnlyErrors,
+                        builder: (_, onlyErrors, __) => Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(l.wardLinkBubbleVisibility,
+                                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: cs.onSurface)),
+                                  Text(
+                                    onlyErrors ? l.wardLinkBubbleShowOnErrors : l.wardLinkBubbleShowAlways,
+                                    style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.55)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Switch(
+                              value: !onlyErrors,
+                              onChanged: (v) => SettingsManager.setWardLinkBubbleOnlyErrors(!v),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      ValueListenableBuilder<int>(
+                        valueListenable: SettingsManager.wardLinkBubbleSize,
+                        builder: (_, sz, __) => Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(l.wardLinkBubbleSize,
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: cs.onSurface)),
+                            Slider(
+                              value: sz.toDouble().clamp(32.0, 64.0),
+                              min: 32.0,
+                              max: 64.0,
+                              divisions: 16,
+                              label: sz.toString(),
+                              onChanged: (v) => SettingsManager.setWardLinkBubbleSize(v.round()),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _buildSubSection(
+                  key: 'wardlink_devices',
+                  title: l.wardLinkPairedDevices,
+                  subtitle: 'Add and manage paired devices',
+                  icon: Icons.devices_rounded,
+                  searchShowAll: showAll,
+                  keywords: [
+                    l.wardLinkPairedDevices, l.wardLinkAddDevice, l.wardLinkE2E, l.wardLinkSyncFromBeginning,
+                    'device', 'pair', 'paired',
+                  ],
+                  expandedContent: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(l.wardLinkPairedDevices,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          const Spacer(),
+                          TextButton.icon(
+                            onPressed: addDevice,
+                            icon: const Icon(Icons.add_rounded, size: 18),
+                            label: Text(l.wardLinkAddDevice),
+                          ),
+                        ],
+                      ),
+                      ValueListenableBuilder<List<PairedDevice>>(
+                        valueListenable: WardLinkPairedDevices.devices,
+                        builder: (_, devices, __) {
+                          if (devices.isEmpty) {
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Text(l.wardLinkNoPairedDevices,
+                                  style: TextStyle(fontSize: 13, color: cs.onSurface.withValues(alpha: 0.5))),
+                            );
+                          }
+                          return Column(
+                            children: devices.map((d) {
+                              final synced = d.lastSyncAt != null
+                                  ? l.wardLinkSyncedAgo(_shortWhen(d.lastSyncAt!))
+                                  : l.wardLinkNeverSynced;
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: Icon(
+                                      d.os == 'android' || d.os == 'ios'
+                                          ? Icons.smartphone_rounded
+                                          : Icons.computer_rounded,
+                                      color: cs.primary,
+                                    ),
+                                    title: Text(d.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                    subtitle: Text(synced, style: const TextStyle(fontSize: 12)),
+                                    trailing: IconButton(
+                                      icon: Icon(Icons.delete_outline_rounded, color: cs.error),
+                                      onPressed: () => removeDevice(d),
+                                    ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: d.syncFromBeginning
+                                        ? Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              SizedBox(
+                                                width: 14,
+                                                height: 14,
+                                                child: CircularProgressIndicator(strokeWidth: 2, color: cs.primary),
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Text(l.wardLinkSyncPending,
+                                                  style: TextStyle(fontSize: 12, color: cs.primary)),
+                                            ],
+                                          )
+                                        : SizedBox(
+                                            width: double.infinity,
+                                            child: FilledButton.tonal(
+                                              style: FilledButton.styleFrom(
+                                                visualDensity: VisualDensity.compact,
+                                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                              ),
+                                              onPressed: () async {
+                                                await WardLinkPairedDevices.setSyncFromBeginning(d.identityPubB64, true);
+                                                await WardLinkSyncService.instance.triggerResync(d.identityPubB64);
+                                              },
+                                              child: Text(l.wardLinkSyncFromBeginning, style: const TextStyle(fontSize: 12)),
+                                            ),
+                                          ),
+                                  ),
+                                ],
+                              );
+                            }).toList(),
+                          );
+                        },
+                      ),
+                      if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux))
+                        _buildWardLinkFirewallHint(context),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWardLinkFirewallHint(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final cs = Theme.of(context).colorScheme;
+
+    final String hint;
+    if (Platform.isWindows) {
+      hint = l.wardLinkFirewallHintWindows;
+    } else if (Platform.isMacOS) {
+      hint = l.wardLinkFirewallHintMac;
+    } else {
+      hint = l.wardLinkFirewallHintLinux;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: cs.secondaryContainer.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: cs.outline.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.shield_outlined, size: 16, color: cs.secondary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                hint,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: cs.onSurface.withValues(alpha: 0.7),
+                  height: 1.45,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _shortWhen(DateTime t) {
+    final diff = DateTime.now().difference(t);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+    if (diff.inDays < 1) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+
+  Widget _buildNotificationsContent() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
+    final isDesktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+    final showAll = _sectionVisible(l.notificationsTitle, l.notificationsSubtitle);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             color: colorScheme.tertiaryContainer.withValues(alpha: 0.45),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: colorScheme.tertiary.withValues(alpha: 0.3),
-              width: 0.8,
-            ),
+            border: Border.all(color: colorScheme.tertiary.withValues(alpha: 0.3), width: 0.8),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.info_outline_rounded,
-                  size: 18, color: colorScheme.tertiary),
+              Icon(Icons.info_outline_rounded, size: 18, color: colorScheme.tertiary),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  AppLocalizations.of(context).notifWarning,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: colorScheme.onTertiaryContainer,
-                    height: 1.45,
-                  ),
+                  l.notifWarning,
+                  style: TextStyle(fontSize: 13, color: colorScheme.onTertiaryContainer, height: 1.45),
                 ),
               ),
             ],
           ),
         ),
         const SizedBox(height: 16),
-        const Divider(),
-        const SizedBox(height: 4),
-
-        ValueListenableBuilder<bool>(
-          valueListenable: SettingsManager.notificationsEnabled,
-          builder: (_, enabled, __) {
-            return SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(AppLocalizations.of(context).notifEnableLabel,
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text(
-                AppLocalizations.of(context).notifEnabledSubtitle(enabled),
-                style: TextStyle(
-                    fontSize: 13,
-                    color: colorScheme.onSurfaceVariant),
+        _buildSubSection(
+          key: 'notif_general',
+          title: 'General',
+          subtitle: 'Enable notifications and content visibility',
+          icon: Icons.notifications_rounded,
+          searchShowAll: showAll,
+          keywords: [l.notifEnableLabel, l.notifHideContentLabel, l.notificationsEnabled],
+          expandedContent: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.notificationsEnabled,
+                builder: (_, enabled, __) => SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(l.notifEnableLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: Text(l.notifEnabledSubtitle(enabled),
+                      style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
+                  value: enabled,
+                  onChanged: (v) => SettingsManager.setNotificationsEnabled(v),
+                ),
               ),
-              value: enabled,
-              onChanged: (v) => SettingsManager.setNotificationsEnabled(v),
-            );
-          },
-        ),
-
-        if (!isDesktop) ...[
-          const SizedBox(height: 8),
-          const Divider(),
-          const SizedBox(height: 4),
-          ValueListenableBuilder<bool>(
-            valueListenable: SettingsManager.notifHideContent,
-            builder: (_, hidden, __) {
-              return SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(
-                  AppLocalizations.of(context).notifHideContentLabel,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+              if (!isDesktop)
+                ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.notifHideContent,
+                  builder: (_, hidden, __) => SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(l.notifHideContentLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(l.notifHideContentSubtitle(hidden),
+                        style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
+                    value: hidden,
+                    onChanged: (v) => SettingsManager.setNotifHideContent(v),
+                  ),
                 ),
-                subtitle: Text(
-                  AppLocalizations.of(context).notifHideContentSubtitle(hidden),
-                  style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
-                ),
-                value: hidden,
-                onChanged: (v) => SettingsManager.setNotifHideContent(v),
-              );
-            },
+            ],
           ),
-        ],
-
+        ),
         if (isDesktop) ...[
           const SizedBox(height: 8),
-          const Divider(),
-          const SizedBox(height: 4),
-          ValueListenableBuilder<bool>(
-            valueListenable: SettingsManager.notifSoundEnabled,
-            builder: (_, soundEnabled, __) {
-              return SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(AppLocalizations.of(context).notifSoundEnableLabel,
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: Text(
-                  AppLocalizations.of(context).notifSoundEnabledSubtitle(soundEnabled),
-                  style: TextStyle(
-                      fontSize: 13, color: colorScheme.onSurfaceVariant),
+          _buildSubSection(
+            key: 'notif_sound',
+            title: l.notifSoundEnableLabel,
+            subtitle: 'Notification sound and audio file',
+            icon: Icons.music_note_rounded,
+            searchShowAll: showAll,
+            keywords: [l.notifSoundEnableLabel, l.notifSoundChooseLabel, 'sound', 'audio', 'notification'],
+            expandedContent: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.notifSoundEnabled,
+                  builder: (_, soundEnabled, __) => SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(l.notifSoundEnableLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(l.notifSoundEnabledSubtitle(soundEnabled),
+                        style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
+                    value: soundEnabled,
+                    onChanged: (v) => SettingsManager.setNotifSoundEnabled(v),
+                  ),
                 ),
-                value: soundEnabled,
-                onChanged: (v) => SettingsManager.setNotifSoundEnabled(v),
-              );
-            },
-          ),
-          const SizedBox(height: 8),
-          Text(
-            AppLocalizations.of(context).notifSoundChooseLabel,
-            style: TextStyle(
-                fontSize: 13, fontWeight: FontWeight.w600, color: colorScheme.onSurface),
-          ),
-          const SizedBox(height: 8),
-          ValueListenableBuilder<String>(
-            valueListenable: SettingsManager.notifSound,
-            builder: (_, currentSound, __) {
-              const builtInSounds = ['notification0', 'notification1', 'notification2'];
-              
-              final allSounds = <String>[...builtInSounds];
-              if (currentSound.startsWith('custom:') && !allSounds.contains(currentSound)) {
-                allSounds.add(currentSound);
-              }
-
-              return Column(
-                children: [
-                  ...allSounds.map((sound) {
-                    final selected = currentSound == sound;
-                    final isCustom = sound.startsWith('custom:');
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: GestureDetector(
-                        onTap: () {
-                          SettingsManager.setNotifSound(sound);
-                          
-                          try {
-                            if (isCustom) {
-                              AudioPlayer().play(DeviceFileSource(sound.substring(7)));
-                            } else {
-                              AudioPlayer().play(AssetSource('$sound.wav'));
-                            }
-                          } catch (e) { debugPrint('[err] $e'); }
-                        },
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 180),
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: selected
-                                ? colorScheme.primaryContainer.withValues(alpha: 0.85)
-                                : colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: selected
-                                  ? colorScheme.primary
-                                  : colorScheme.outlineVariant.withValues(alpha: 0.4),
-                              width: selected ? 1.5 : 0.8,
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                selected ? Icons.check_circle : Icons.play_circle_outline,
-                                size: 20,
-                                color: selected
-                                    ? colorScheme.primary
-                                    : colorScheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  AppLocalizations.of(context).localizeNotifSound(sound),
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                                    color: selected
-                                        ? colorScheme.onPrimaryContainer
-                                        : colorScheme.onSurfaceVariant,
+                const SizedBox(height: 8),
+                Text(l.notifSoundChooseLabel,
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: colorScheme.onSurface)),
+                const SizedBox(height: 8),
+                ValueListenableBuilder<String>(
+                  valueListenable: SettingsManager.notifSound,
+                  builder: (_, currentSound, __) {
+                    const builtInSounds = ['notification0', 'notification1', 'notification2'];
+                    final allSounds = <String>[...builtInSounds];
+                    if (currentSound.startsWith('custom:') && !allSounds.contains(currentSound)) {
+                      allSounds.add(currentSound);
+                    }
+                    return Column(
+                      children: [
+                        ...allSounds.map((sound) {
+                          final selected = currentSound == sound;
+                          final isCustom = sound.startsWith('custom:');
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: GestureDetector(
+                              onTap: () {
+                                SettingsManager.setNotifSound(sound);
+                                try {
+                                  if (isCustom) {
+                                    AudioPlayer().play(DeviceFileSource(sound.substring(7)));
+                                  } else {
+                                    AudioPlayer().play(AssetSource('$sound.wav'));
+                                  }
+                                } catch (e) { debugPrint('[err] $e'); }
+                              },
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 180),
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                decoration: BoxDecoration(
+                                  color: selected
+                                      ? colorScheme.primaryContainer.withValues(alpha: 0.85)
+                                      : colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: selected ? colorScheme.primary : colorScheme.outlineVariant.withValues(alpha: 0.4),
+                                    width: selected ? 1.5 : 0.8,
                                   ),
-                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      selected ? Icons.check_circle : Icons.play_circle_outline,
+                                      size: 20,
+                                      color: selected ? colorScheme.primary : colorScheme.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        l.localizeNotifSound(sound),
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                                          color: selected ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  }),
-                  
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: GestureDetector(
-                      onTap: () async {
-                        try {
-                          final result = await FilePicker.platform.pickFiles(
-                            type: FileType.custom,
-                            allowedExtensions: ['wav', 'mp3', 'm4a', 'ogg', 'aac', 'opus'],
+                            ),
                           );
-                          if (result == null || result.files.isEmpty) return;
-                          final filePath = result.files.first.path;
-                          if (filePath == null) return;
-
-                          final appSupport = await getApplicationDocumentsDirectory();
-                          final soundsDir = Directory('${appSupport.path}/custom_sounds');
-                          await soundsDir.create(recursive: true);
-                          final fileName = p.basename(filePath);
-                          final destFile = File('${soundsDir.path}/$fileName');
-                          await File(filePath).copy(destFile.path);
-
-                          final soundKey = 'custom:${destFile.path}';
-                          SettingsManager.setNotifSound(soundKey);
-
-                          try {
-                            AudioPlayer().play(DeviceFileSource(destFile.path));
-                          } catch (e) { debugPrint('[err] $e'); }
-
-                          if (mounted) {
-                            rootScreenKey.currentState?.showSnack(
-                              AppLocalizations.of(context).notifSoundCustomLoaded,
-                            );
-                          }
-                        } catch (e) {
-                          debugPrint('[NotifSound] pick error: $e');
-                          if (mounted) {
-                            rootScreenKey.currentState?.showSnack(
-                              '${AppLocalizations.of(context).notifSoundCustomError}: $e',
-                            );
-                          }
-                        }
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: colorScheme.outlineVariant.withValues(alpha: 0.4),
-                            width: 0.8,
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(Icons.file_upload_outlined, size: 20,
-                                color: colorScheme.onSurfaceVariant),
-                            const SizedBox(width: 10),
-                            Text(
-                              AppLocalizations.of(context).notifSoundCustom,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: colorScheme.onSurfaceVariant,
+                        }),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: GestureDetector(
+                            onTap: () async {
+                              try {
+                                final result = await FilePicker.platform.pickFiles(
+                                  type: FileType.custom,
+                                  allowedExtensions: ['wav', 'mp3', 'm4a', 'ogg', 'aac', 'opus'],
+                                );
+                                if (result == null || result.files.isEmpty) return;
+                                final filePath = result.files.first.path;
+                                if (filePath == null) return;
+                                final appSupport = await getOnyxDocumentsDirectory();
+                                final soundsDir = Directory('${appSupport.path}/custom_sounds');
+                                await soundsDir.create(recursive: true);
+                                final fileName = p.basename(filePath);
+                                final destFile = File('${soundsDir.path}/$fileName');
+                                await File(filePath).copy(destFile.path);
+                                final soundKey = 'custom:${destFile.path}';
+                                SettingsManager.setNotifSound(soundKey);
+                                try { AudioPlayer().play(DeviceFileSource(destFile.path)); } catch (e) { debugPrint('[err] $e'); }
+                                if (mounted) rootScreenKey.currentState?.showSnack(l.notifSoundCustomLoaded);
+                              } catch (e) {
+                                debugPrint('[NotifSound] pick error: $e');
+                                if (mounted) rootScreenKey.currentState?.showSnack('${l.notifSoundCustomError}: $e');
+                              }
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.4), width: 0.8),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.file_upload_outlined, size: 20, color: colorScheme.onSurfaceVariant),
+                                  const SizedBox(width: 10),
+                                  Text(l.notifSoundCustom, style: TextStyle(fontSize: 14, color: colorScheme.onSurfaceVariant)),
+                                ],
                               ),
                             ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ),
-                  ),
-                  
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2, bottom: 4),
-                    child: Text(
-                      AppLocalizations.of(context).notifSoundCustomInvalidFormat,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            },
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2, bottom: 4),
+                          child: Text(l.notifSoundCustomInvalidFormat,
+                              style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6))),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
         ],
-
-        if (Platform.isWindows) ...[
+        if (Platform.isWindows || (isDesktop && !Platform.isMacOS)) ...[
           const SizedBox(height: 8),
-          const Divider(),
-          const SizedBox(height: 4),
-          ValueListenableBuilder<bool>(
-            valueListenable: SettingsManager.launchAtStartup,
-            builder: (_, autostartEnabled, __) {
-              return Column(
-                children: [
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(
-                      AppLocalizations.of(context).launchAtStartupLabel,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Text(
-                      AppLocalizations.of(context).launchAtStartupSubtitle,
-                      style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
-                    ),
-                    value: autostartEnabled,
-                    onChanged: (val) async {
-                      // Pre-capture everything from context before the first await
-                      final l10n = AppLocalizations.of(context);
-                      final scaffold = ScaffoldMessenger.of(context);
-                      final cs = Theme.of(context).colorScheme;
-
-                      void snack(String msg) {
-                        final bg = SettingsManager.getElementColor(
-                          cs.surfaceContainerHighest,
-                          SettingsManager.elementBrightness.value,
-                        ).withValues(alpha: SettingsManager.elementOpacity.value);
-                        scaffold
-                          ..hideCurrentSnackBar()
-                          ..showSnackBar(SnackBar(
-                            content: Text(msg,
-                              style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14, fontWeight: FontWeight.w500),
-                              textAlign: TextAlign.center),
-                            backgroundColor: bg,
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                            margin: const EdgeInsets.only(bottom: 16, left: 16, right: 16),
-                            elevation: 4,
-                            duration: const Duration(seconds: 2),
-                          ));
-                      }
-
-                      try {
-                        if (val) {
-                          await AutostartManager.enable();
-                        } else {
-                          await AutostartManager.disable();
+          _buildSubSection(
+            key: 'notif_advanced',
+            title: 'Advanced',
+            subtitle: 'Startup behavior and popup position',
+            icon: Icons.tune_rounded,
+            searchShowAll: showAll,
+            keywords: [l.notifPopupPosition, l.notifPopupPositionSubtitle, l.launchAtStartupLabel, l.launchAtStartupSubtitle, 'startup', 'popup'],
+            expandedContent: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (Platform.isWindows)
+                  ValueListenableBuilder<bool>(
+                    valueListenable: SettingsManager.launchAtStartup,
+                    builder: (_, autostartEnabled, __) => SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(l.launchAtStartupLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: Text(l.launchAtStartupSubtitle,
+                          style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
+                      value: autostartEnabled,
+                      onChanged: (val) async {
+                        final l10n = AppLocalizations.of(context);
+                        final scaffold = ScaffoldMessenger.of(context);
+                        final cs = Theme.of(context).colorScheme;
+                        void snack(String msg) {
+                          final bg = SettingsManager.getElementColor(
+                            cs.surfaceContainerHighest,
+                            SettingsManager.elementBrightness.value,
+                          ).withValues(alpha: SettingsManager.elementOpacity.value);
+                          scaffold
+                            ..hideCurrentSnackBar()
+                            ..showSnackBar(SnackBar(
+                              content: Text(msg,
+                                style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14, fontWeight: FontWeight.w500),
+                                textAlign: TextAlign.center),
+                              backgroundColor: bg,
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              margin: const EdgeInsets.only(bottom: 16, left: 16, right: 16),
+                              elevation: 4,
+                              duration: const Duration(seconds: 2),
+                            ));
                         }
-                        final actual = await AutostartManager.isEnabled();
-                        if (actual != val) {
+                        try {
+                          if (val) { await AutostartManager.enable(); } else { await AutostartManager.disable(); }
+                          final actual = await AutostartManager.isEnabled();
+                          if (actual != val) { snack(l10n.launchAtStartupFailed); return; }
+                          await SettingsManager.setLaunchAtStartup(val);
+                          snack(val ? l10n.launchAtStartupEnabled : l10n.launchAtStartupDisabled);
+                        } catch (e) {
+                          debugPrint('[autostart] Failed to toggle: $e');
                           snack(l10n.launchAtStartupFailed);
-                          return;
                         }
-                        await SettingsManager.setLaunchAtStartup(val);
-                        snack(val ? l10n.launchAtStartupEnabled : l10n.launchAtStartupDisabled);
-                      } catch (e) {
-                        debugPrint('[autostart] Failed to toggle: $e');
-                        snack(l10n.launchAtStartupFailed);
-                      }
+                      },
+                    ),
+                  ),
+                if (isDesktop && !Platform.isMacOS) ...[
+                  if (Platform.isWindows) const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(Icons.picture_in_picture_rounded, size: 16, color: colorScheme.onSurface),
+                      const SizedBox(width: 6),
+                      Text(l.notifPopupPosition,
+                          style: TextStyle(fontWeight: FontWeight.bold, color: colorScheme.onSurface)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(l.notifPopupPositionSubtitle,
+                      style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
+                  const SizedBox(height: 12),
+                  ValueListenableBuilder<String>(
+                    valueListenable: SettingsManager.notificationPosition,
+                    builder: (_, pos, __) {
+                      const positionKeys = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
+                      return GridView.count(
+                        crossAxisCount: 2,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        padding: EdgeInsets.zero,
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
+                        childAspectRatio: 3.4,
+                        children: positionKeys.map((String posKey) {
+                          final selected = pos == posKey;
+                          return GestureDetector(
+                            onTap: () => SettingsManager.setNotificationPosition(posKey),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
+                              decoration: BoxDecoration(
+                                color: selected
+                                    ? colorScheme.primaryContainer.withValues(alpha: 0.85)
+                                    : colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: selected ? colorScheme.primary : colorScheme.outlineVariant.withValues(alpha: 0.4),
+                                  width: selected ? 1.5 : 0.8,
+                                ),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                l.localizeNotifPosition(posKey),
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                                  color: selected ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      );
                     },
                   ),
                 ],
-              );
-            },
+              ],
+            ),
           ),
-        ],
-
-        if (isDesktop && !Platform.isMacOS) ...[
-          const SizedBox(height: 8),
-          const Divider(),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Icon(Icons.picture_in_picture_rounded, size: 16, color: colorScheme.onSurface),
-              const SizedBox(width: 6),
-              Text(
-                AppLocalizations.of(context).notifPopupPosition,
-                style: TextStyle(fontWeight: FontWeight.bold, color: colorScheme.onSurface),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            AppLocalizations.of(context).notifPopupPositionSubtitle,
-            style: TextStyle(
-                fontSize: 13, color: colorScheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 12),
-          ValueListenableBuilder<String>(
-            valueListenable: SettingsManager.notificationPosition,
-            builder: (_, pos, __) {
-              
-              const positionKeys = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
-              return GridView.count(
-                crossAxisCount: 2,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                padding: EdgeInsets.zero,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-                childAspectRatio: 3.4,
-                children: positionKeys.map((String posKey) {
-                  final selected = pos == posKey;
-                  return GestureDetector(
-                    onTap: () =>
-                        SettingsManager.setNotificationPosition(posKey),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 180),
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? colorScheme.primaryContainer
-                                .withValues(alpha: 0.85)
-                            : colorScheme.surfaceContainerHighest
-                                .withValues(alpha: 0.45),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: selected
-                              ? colorScheme.primary
-                              : colorScheme.outlineVariant
-                                  .withValues(alpha: 0.4),
-                          width: selected ? 1.5 : 0.8,
-                        ),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        AppLocalizations.of(context).localizeNotifPosition(posKey),
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: selected
-                              ? FontWeight.w600
-                              : FontWeight.normal,
-                          color: selected
-                              ? colorScheme.onPrimaryContainer
-                              : colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              );
-            },
-          ),
-          const SizedBox(height: 4),
         ],
       ],
     );
@@ -3619,157 +3148,194 @@ class _SettingsTabState extends State<SettingsTab>
   }
 
   Widget _buildSecurityContent() {
+    final l = AppLocalizations.of(context);
+    final showAll = _sectionVisible(l.securityTitle, l.securitySubtitle);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Icon(Icons.lightbulb_outline_rounded, size: 16, color: Colors.amber),
-            const SizedBox(width: 6),
-            Text(AppLocalizations.of(context).tipOfTheDay, style: const TextStyle(fontWeight: FontWeight.bold)),
+        _buildSubSection(
+          key: 'security_privacy',
+          title: 'Privacy',
+          subtitle: 'Visibility and search settings',
+          icon: Icons.visibility_off_rounded,
+          searchShowAll: showAll,
+          keywords: [
+            l.showDisplayNameInGroups, l.showDisplayNameSubtitle, l.hideFromSearch,
+            l.hideFromSearchSubtitle, l.statusSettings, l.statusVisibility, l.statusShowStatus,
+            l.statusHideStatus, l.statusCustomText, l.statusWhenOnline, l.statusWhenOffline,
+            l.fakePinTitle, l.fakePinSubtitle, l.decoyAccountSection, l.decoyContactsSection,
           ],
-        ),
-        const SizedBox(height: 8),
-        Text(
-          AppLocalizations.of(context).securityTips[_randomTipIndex],
-          style: const TextStyle(fontSize: 14, color: Colors.grey),
-        ),
-        const SizedBox(height: 16),
-        const SizedBox(height: 8),
-        _buildLiquidGlassButton(
-          icon: Icons.manage_accounts_rounded,
-          label: AppLocalizations.of(context).statusSettings,
-          fontSize: 15,
-          onPressed: () => _showStatusDialog(),
-        ),
-        const SizedBox(height: 8),
-        ValueListenableBuilder<bool>(
-          valueListenable: SettingsManager.showDisplayNameInGroups,
-          builder: (context, showDN, _) => SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(AppLocalizations.of(context).showDisplayNameInGroups, style: const TextStyle(fontSize: 14)),
-            subtitle: Text(AppLocalizations.of(context).showDisplayNameSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-            value: showDN,
-            onChanged: (val) => SettingsManager.setShowDisplayNameInGroups(val),
+          expandedContent: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildLiquidGlassButton(
+                icon: Icons.manage_accounts_rounded,
+                label: l.statusSettings,
+                fontSize: 15,
+                onPressed: () => _showStatusDialog(),
+              ),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.showDisplayNameInGroups,
+                builder: (context, showDN, _) => SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(l.showDisplayNameInGroups, style: const TextStyle(fontSize: 14)),
+                  subtitle: Text(l.showDisplayNameSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  value: showDN,
+                  onChanged: (val) => SettingsManager.setShowDisplayNameInGroups(val),
+                ),
+              ),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.hideFromSearch,
+                builder: (context, hideSearch, _) => SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(l.hideFromSearch, style: const TextStyle(fontSize: 14)),
+                  subtitle: Text(l.hideFromSearchSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  value: hideSearch,
+                  onChanged: (val) async {
+                    final okMsg = l.hideFromSearchSavedOk;
+                    final failMsg = l.hideFromSearchSavedFail;
+                    await SettingsManager.setHideFromSearch(val);
+                    setState(() => _localHideFromSearch = val);
+                    final ok = await _syncPrivacySettings();
+                    if (mounted) _showSnack(ok ? okMsg : failMsg);
+                  },
+                ),
+              ),
+            ],
           ),
         ),
-        ValueListenableBuilder<bool>(
-          valueListenable: SettingsManager.hideFromSearch,
-          builder: (context, hideSearch, _) => SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(AppLocalizations.of(context).hideFromSearch, style: const TextStyle(fontSize: 14)),
-            subtitle: Text(AppLocalizations.of(context).hideFromSearchSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-            value: hideSearch,
-            onChanged: (val) async {
-              final okMsg = AppLocalizations.of(context).hideFromSearchSavedOk;
-              final failMsg = AppLocalizations.of(context).hideFromSearchSavedFail;
-              await SettingsManager.setHideFromSearch(val);
-              setState(() => _localHideFromSearch = val);
-              final ok = await _syncPrivacySettings();
-              if (mounted) _showSnack(ok ? okMsg : failMsg);
-            },
-          ),
-        ),
         const SizedBox(height: 8),
-        const Divider(),
-        const SizedBox(height: 4),
-        Row(
-          children: [
-            const Icon(Icons.pin_rounded, size: 16),
-            const SizedBox(width: 6),
-            Text(AppLocalizations.of(context).pinLock, style: const TextStyle(fontWeight: FontWeight.bold)),
+        _buildSubSection(
+          key: 'security_pin',
+          title: l.pinLock,
+          subtitle: 'PIN, biometrics and lock behavior',
+          icon: Icons.pin_rounded,
+          searchShowAll: showAll,
+          keywords: [
+            l.enablePinLock, l.enablePinSubtitle, l.useBiometrics, l.useBiometricsSubtitle,
+            l.lockOnResume, l.lockOnResumeSubtitle, l.fakePinTitle, l.fakePinSubtitle,
+            'biometric', 'fingerprint', 'password',
           ],
-        ),
-        const SizedBox(height: 4),
-        ValueListenableBuilder<bool>(
-          valueListenable: SettingsManager.pinEnabled,
-          builder: (context, pinOn, _) => SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(AppLocalizations.of(context).enablePinLock, style: const TextStyle(fontSize: 14)),
-            subtitle: Text(AppLocalizations.of(context).enablePinSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-            value: pinOn,
-            onChanged: (val) async {
-              if (val) {
-                final pinEnabledMsg = AppLocalizations.of(context).pinLockEnabled;
-                final result = await Navigator.push<String>(
-                  context,
-                  MaterialPageRoute(
-                    fullscreenDialog: true,
-                    builder: (_) => PinCodeScreen.setup(
-                      onPinSet: (pin) => Navigator.pop(context, pin),
-                      onCancel: () => Navigator.pop(context),
-                    ),
-                  ),
-                );
-                if (result != null && result.length == 4) {
-                  await SettingsManager.setPin(result);
-                  await SettingsManager.setPinEnabled(true);
-                  _showSnack(pinEnabledMsg);
-                }
-              } else {
-                final pinDisabledMsg = AppLocalizations.of(context).pinLockDisabled;
-                final confirmed = await Navigator.push<bool>(
-                  context,
-                  MaterialPageRoute(
-                    fullscreenDialog: true,
-                    builder: (_) => PinCodeScreen.disable(
-                      onSuccess: () => Navigator.pop(context, true),
-                      onCancel: () => Navigator.pop(context, false),
-                    ),
-                  ),
-                );
-                if (confirmed == true) {
-                  await SettingsManager.setPinEnabled(false);
-                  await SettingsManager.clearPin();
-                  await SettingsManager.setBiometricEnabled(false);
-                  _showSnack(pinDisabledMsg);
-                }
-              }
-            },
-          ),
-        ),
-        ValueListenableBuilder<bool>(
-          valueListenable: SettingsManager.pinEnabled,
-          builder: (context, pinOn, _) {
-            if (!pinOn) return const SizedBox.shrink();
-            return ValueListenableBuilder<bool>(
-              valueListenable: SettingsManager.biometricEnabled,
-              builder: (context, bioOn, _) => SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(AppLocalizations.of(context).useBiometrics, style: const TextStyle(fontSize: 14)),
-                subtitle: Text(AppLocalizations.of(context).useBiometricsSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                secondary: const Icon(Icons.fingerprint_rounded),
-                value: bioOn,
-                onChanged: (val) async {
-                  if (val) {
-                    final unavailMsg = AppLocalizations.of(context).biometricsUnavailable;
-                    final auth = LocalAuthentication();
-                    final supported = await auth.isDeviceSupported();
-                    final canCheck = await auth.canCheckBiometrics;
-                    if (!supported || !canCheck) {
-                      _showSnack(unavailMsg);
-                      return;
+          expandedContent: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.pinEnabled,
+                builder: (context, pinOn, _) => SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(l.enablePinLock, style: const TextStyle(fontSize: 14)),
+                  subtitle: Text(l.enablePinSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  value: pinOn,
+                  onChanged: (val) async {
+                    if (val) {
+                      final pinEnabledMsg = l.pinLockEnabled;
+                      final result = await Navigator.push<String>(
+                        context,
+                        MaterialPageRoute(
+                          fullscreenDialog: true,
+                          builder: (_) => PinCodeScreen.setup(
+                            onPinSet: (pin) => Navigator.pop(context, pin),
+                            onCancel: () => Navigator.pop(context),
+                          ),
+                        ),
+                      );
+                      if (result != null && result.length == 4) {
+                        await SettingsManager.setPin(result);
+                        await SettingsManager.setPinEnabled(true);
+                        _showSnack(pinEnabledMsg);
+                      }
+                    } else {
+                      final pinDisabledMsg = l.pinLockDisabled;
+                      final confirmed = await Navigator.push<bool>(
+                        context,
+                        MaterialPageRoute(
+                          fullscreenDialog: true,
+                          builder: (_) => PinCodeScreen.disable(
+                            onSuccess: () => Navigator.pop(context, true),
+                            onCancel: () => Navigator.pop(context, false),
+                          ),
+                        ),
+                      );
+                      if (confirmed == true) {
+                        await SettingsManager.setPinEnabled(false);
+                        await SettingsManager.clearPin();
+                        await SettingsManager.setBiometricEnabled(false);
+                        _showSnack(pinDisabledMsg);
+                      }
                     }
-                  }
-                  await SettingsManager.setBiometricEnabled(val);
+                  },
+                ),
+              ),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.pinEnabled,
+                builder: (context, pinOn, _) {
+                  if (!pinOn) return const SizedBox.shrink();
+                  return ValueListenableBuilder<bool>(
+                    valueListenable: SettingsManager.biometricDeviceSupported,
+                    builder: (context, bioSupported, _) {
+                      if (!bioSupported) return const SizedBox.shrink();
+                      return ValueListenableBuilder<bool>(
+                        valueListenable: SettingsManager.biometricEnabled,
+                        builder: (context, bioOn, _) => SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(l.useBiometrics, style: const TextStyle(fontSize: 14)),
+                          subtitle: Text(l.useBiometricsSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          secondary: const Icon(Icons.fingerprint_rounded),
+                          value: bioOn,
+                          onChanged: (val) async {
+                            if (val) {
+                              final unavailMsg = l.biometricsUnavailable;
+                              final auth = LocalAuthentication();
+                              final supported = await auth.isDeviceSupported();
+                              final canCheck = await auth.canCheckBiometrics;
+                              if (!supported || !canCheck) {
+                                _showSnack(unavailMsg);
+                                return;
+                              }
+                            }
+                            await SettingsManager.setBiometricEnabled(val);
+                          },
+                        ),
+                      );
+                    },
+                  );
                 },
               ),
-            );
-          },
-        ),
-        ValueListenableBuilder<bool>(
-          valueListenable: SettingsManager.pinEnabled,
-          builder: (context, pinOn, _) {
-            if (!pinOn) return const SizedBox.shrink();
-            return ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.theater_comedy_outlined),
-              title: Text(AppLocalizations.of(context).fakePinTitle, style: const TextStyle(fontSize: 14)),
-              subtitle: Text(AppLocalizations.of(context).fakePinSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-              trailing: const Icon(Icons.chevron_right, size: 18),
-              onTap: () => showDecoySetupSheet(context),
-            );
-          },
+              if (!Platform.isWindows && !Platform.isMacOS && !Platform.isLinux)
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.pinEnabled,
+                builder: (context, pinOn, _) {
+                  if (!pinOn) return const SizedBox.shrink();
+                  return ValueListenableBuilder<bool>(
+                    valueListenable: SettingsManager.lockOnResume,
+                    builder: (context, lockOn, _) => SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: const Icon(Icons.lock_clock_outlined),
+                      title: Text(l.lockOnResume, style: const TextStyle(fontSize: 14)),
+                      subtitle: Text(l.lockOnResumeSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                      value: lockOn,
+                      onChanged: (val) => SettingsManager.setLockOnResume(val),
+                    ),
+                  );
+                },
+              ),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.pinEnabled,
+                builder: (context, pinOn, _) {
+                  if (!pinOn) return const SizedBox.shrink();
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.theater_comedy_outlined),
+                    title: Text(l.fakePinTitle, style: const TextStyle(fontSize: 14)),
+                    subtitle: Text(l.fakePinSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    trailing: const Icon(Icons.chevron_right, size: 18),
+                    onTap: () => showDecoySetupSheet(context),
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -3815,76 +3381,565 @@ class _SettingsTabState extends State<SettingsTab>
     );
   }
 
+  // ── ONYX data folder ────────────────────────────────────────────────────────
+
+  Widget _buildAppDataContent() {
+    final l      = AppLocalizations.of(context);
+    final cs     = Theme.of(context).colorScheme;
+    final custom = OnyxBaseDir.customBase;
+
+    return FutureBuilder<String>(
+      future: OnyxBaseDir.supportDir().then((d) => d.path),
+      builder: (ctx, snap) {
+        final displayPath = snap.data ?? custom ?? l.appDataDefault;
+        final isCustom    = custom != null;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text(l.appDataTitle,
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                displayPath,
+                style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.tonal(
+                    onPressed: () async {
+                      final picked = await FilePicker.platform.getDirectoryPath(
+                        dialogTitle: l.appDataMove,
+                        initialDirectory: custom ?? snap.data,
+                      );
+                      if (picked == null || picked.isEmpty || !mounted) return;
+                      _showMigrationDialog(context, picked);
+                    },
+                    child: Text(l.appDataMove),
+                  ),
+                  OutlinedButton(
+                    onPressed: () async {
+                      final path = custom ?? snap.data;
+                      if (path == null) return;
+                      try {
+                        if (Platform.isWindows) {
+                          await Process.run('explorer', [path.replaceAll('/', '\\')]);
+                        } else if (Platform.isMacOS) {
+                          await Process.run('open', [path]);
+                        } else {
+                          await Process.run('xdg-open', [path]);
+                        }
+                      } catch (_) {}
+                    },
+                    child: Text(l.appDataOpenFolder),
+                  ),
+                  if (isCustom)
+                    OutlinedButton(
+                      onPressed: () => _showResetDialog(context),
+                      child: Text(l.appDataReset),
+                    ),
+                ],
+              ),
+            ),
+
+            // Delete previous (default system) folder — only shown after migration
+            if (isCustom)
+              _buildDeleteOldFolderTile(context, cs),
+          ],
+        );
+      },
+    );
+  }
+
+  // Files that the app creates in any support directory automatically.
+  // Presence of only these files means there is no actual user data to warn about.
+  static const _kOldFolderSystemFiles = {
+    '.onyx_docs_consolidated',
+    'libCachedImageData.json',
+    'shared_preferences.json',
+  };
+
+  static Future<({String path, bool hasUserData})> _oldFolderInfo() async {
+    final dir = await getApplicationSupportDirectory();
+    if (!await dir.exists()) return (path: dir.path, hasUserData: false);
+    final entities = await dir.list().toList();
+    final hasUserData = entities.any((e) {
+      final name = e.path.split(Platform.pathSeparator).last;
+      return !_kOldFolderSystemFiles.contains(name);
+    });
+    return (path: dir.path, hasUserData: hasUserData);
+  }
+
+  Widget _buildDeleteOldFolderTile(BuildContext ctx, ColorScheme cs) {
+    final l = AppLocalizations.of(ctx);
+    _oldFolderInfoFuture ??= _oldFolderInfo();
+    return FutureBuilder<({String path, bool hasUserData})>(
+      future: _oldFolderInfoFuture,
+      builder: (_, snap) {
+        final info = snap.data;
+        if (info == null || !info.hasUserData) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+              child: Text(l.appDataDeleteOldFolder,
+                  style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      color: cs.error)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                info.path,
+                style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: cs.error,
+                  side: BorderSide(color: cs.error.withValues(alpha: 0.5)),
+                ),
+                icon: const Icon(Icons.delete_forever_rounded, size: 18),
+                label: Text(l.appDataDeleteOldFolder),
+                onPressed: () => _showDeleteOldFolderDialog(ctx, info.path),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showDeleteOldFolderDialog(BuildContext ctx, String oldPath) {
+    final l = AppLocalizations.of(ctx);
+    showDialog<void>(
+      context: ctx,
+      builder: (_) => AlertDialog(
+        title: Text(l.appDataDeleteOldFolder),
+        content: Text(l.appDataDeleteOldFolderConfirm),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(l.cancel),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              try {
+                final d = Directory(oldPath);
+                if (await d.exists()) {
+                  // Delete user data files but keep Flutter infrastructure files
+                  // that the app still reads from this location (SharedPreferences,
+                  // image cache). Without this, settings like pin_lock_enabled
+                  // are lost because Flutter always writes SharedPreferences to
+                  // the default AppSupport directory regardless of custom base.
+                  final entities = await d.list().toList();
+                  for (final e in entities) {
+                    final name = p.basename(e.path);
+                    if (_kOldFolderSystemFiles.contains(name)) continue;
+                    await e.delete(recursive: true);
+                  }
+                }
+                if (ctx.mounted) {
+                  _showStyledSnack(ctx, l.appDataDeleteOldFolderSuccess);
+                  setState(() { _oldFolderInfoFuture = null; }); // invalidate cache
+                }
+              } catch (e) {
+                if (ctx.mounted) {
+                  _showStyledSnack(ctx, '${l.appDataDeleteOldFolderError}$e');
+                }
+              }
+            },
+            child: Text(l.appDataDeleteOldFolder),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMigrationDialog(BuildContext ctx, String targetPath) {
+    showDialog<void>(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (_) => _MigrationDialog(targetPath: targetPath),
+    );
+  }
+
+  void _showResetDialog(BuildContext ctx) {
+    showDialog<void>(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (_) => _MigrationDialog(targetPath: null),
+    );
+  }
+
   Widget _buildCacheContent() {
     final l = AppLocalizations.of(context);
+    final showAll = _sectionVisible(l.cacheTitle, l.cacheSubtitle);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '${l.mediaCacheSize}${_cacheSizeMb != null ? '${_cacheSizeMb!.toStringAsFixed(1)} MB' : l.loading}',
-          style: const TextStyle(color: Colors.grey),
-        ),
-        const SizedBox(height: 12),
-        _buildLiquidGlassButton(
+        _buildSubSection(
+          key: 'cache_storage',
+          searchShowAll: showAll,
+          title: 'Storage',
+          subtitle: 'Media cache and unused file cleanup',
           icon: Icons.storage_rounded,
-          label: l.manageCacheButton,
-          fontSize: 14,
-          onPressed: _openCacheManager,
+          keywords: [l.mediaCacheSize, l.manageCacheButton, l.manageCacheTitle, l.cleanUnusedFiles, l.clearLocalCache, l.serverMediaCache, 'storage', 'cache', 'cleanup'],
+          expandedContent: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${l.mediaCacheSize}${_cacheSizeMb != null ? '${_cacheSizeMb!.toStringAsFixed(1)} MB' : l.loading}',
+                style: const TextStyle(color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              _buildLiquidGlassButton(
+                icon: Icons.storage_rounded,
+                label: l.manageCacheButton,
+                fontSize: 14,
+                onPressed: _openCacheManager,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Unused Files: ${_orphanedSizeMb != null ? '${_orphanedSizeMb!.toStringAsFixed(1)} MB' : l.loading}',
+                style: const TextStyle(color: Colors.grey, fontSize: 13),
+              ),
+              const SizedBox(height: 6),
+              _buildLiquidGlassButton(
+                icon: _purging ? Icons.hourglass_top_rounded : Icons.auto_delete_rounded,
+                label: _purging ? l.cleaningUnusedFiles : l.cleanUnusedFiles,
+                fontSize: 14,
+                onPressed: _purging ? null : _purgeOrphanedCache,
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 8),
-        _buildLiquidGlassButton(
-          icon: _purging ? Icons.hourglass_top_rounded : Icons.auto_delete_rounded,
-          label: _purging ? l.cleaningUnusedFiles : l.cleanUnusedFiles,
-          fontSize: 14,
-          onPressed: _purging ? null : _purgeOrphanedCache,
+        _buildSubSection(
+          key: 'cache_danger',
+          title: l.dangerZone,
+          subtitle: l.dangerZoneSubtitle,
+          icon: Icons.warning_rounded,
+          searchShowAll: showAll,
+          keywords: [l.dangerZone, l.dangerZoneSubtitle, l.factoryReset, l.factoryResetHint, l.resetDeleteAccount, l.resetDeleteLocal, 'reset', 'delete', 'wipe'],
+          expandedContent: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildLiquidGlassButton(icon: Icons.restore, label: l.factoryReset, fontSize: 14, onPressed: _factoryReset),
+            ],
+          ),
         ),
-        const SizedBox(height: 16),
-        const Divider(),
-        const SizedBox(height: 12),
-        Text(l.dangerZone, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
-        const SizedBox(height: 4),
-        Text(l.dangerZoneSubtitle, style: const TextStyle(color: Colors.grey, fontSize: 13)),
-        const SizedBox(height: 8),
-        _buildLiquidGlassButton(icon: Icons.restore, label: l.factoryReset, fontSize: 14, onPressed: _factoryReset),
       ],
     );
   }
 
   Widget _buildConnectionContent() {
-    return Wrap(
-      spacing: 10,
-      runSpacing: 10,
+    final l = AppLocalizations.of(context);
+    final showAll = _sectionVisible(l.connectionTitle, l.connectionSubtitle);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildLiquidGlassButton(icon: Icons.wifi, label: AppLocalizations.of(context).connect, fontSize: 14, onPressed: widget.onConnectWs),
-        _buildLiquidGlassButton(icon: Icons.wifi_off, label: AppLocalizations.of(context).disconnect, fontSize: 14, onPressed: widget.onDisconnectWs),
+        _buildSubSection(
+          key: 'connection_server',
+          searchShowAll: showAll,
+          title: 'Server Connection',
+          subtitle: 'Connect or disconnect from the WebSocket server',
+          icon: Icons.wifi_rounded,
+          keywords: [l.connect, l.disconnect, 'websocket', 'server', 'connection'],
+          expandedContent: Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _buildLiquidGlassButton(icon: Icons.wifi, label: l.connect, fontSize: 14, onPressed: widget.onConnectWs),
+              _buildLiquidGlassButton(icon: Icons.wifi_off, label: l.disconnect, fontSize: 14, onPressed: widget.onDisconnectWs),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildSubSection(
+          key: 'connection_proxy',
+          searchShowAll: showAll,
+          title: l.proxyTitle,
+          subtitle: l.proxySubtitle,
+          icon: Icons.language_rounded,
+          keywords: [l.enableProxy, l.proxyType, l.proxyHost, l.proxyPort, l.proxyUsername, l.proxyPassword, l.testProxy, l.proxyApplyReconnect, l.useProxy, l.proxyDirectConnection, l.proxyRouted],
+          expandedContent: _buildProxyContent(),
+        ),
       ],
     );
   }
 
   Widget _buildInteractContent() {
+    final l = AppLocalizations.of(context);
+    final showAll = _sectionVisible(l.interactTitle, l.interactSubtitle);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ValueListenableBuilder<bool>(
-          valueListenable: SettingsManager.confirmFileUpload,
-          builder: (_, confirmFile, __) => SwitchListTile(
-            title: Text(AppLocalizations.of(context).confirmFileUpload),
-            subtitle: Text(AppLocalizations.of(context).confirmFileUploadSubtitle),
-            value: confirmFile,
-            onChanged: (val) async => await SettingsManager.setConfirmFileUpload(val),
+        _buildSubSection(
+          key: 'interact_media',
+          searchShowAll: showAll,
+          title: 'Media & Uploads',
+          subtitle: 'Confirmations, auto-load and image preloading',
+          icon: Icons.perm_media_rounded,
+          keywords: [l.confirmFileUpload, l.confirmFileUploadSubtitle, l.confirmVoiceMessage, l.confirmVoiceSubtitle, l.autoLoadVideos, l.autoLoadVideosSubtitle, 'upload', 'media', 'video', 'voice'],
+          expandedContent: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.confirmFileUpload,
+                builder: (_, confirmFile, __) => SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(l.confirmFileUpload),
+                  subtitle: Text(l.confirmFileUploadSubtitle),
+                  value: confirmFile,
+                  onChanged: (val) async => await SettingsManager.setConfirmFileUpload(val),
+                ),
+              ),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.confirmVoiceUpload,
+                builder: (_, confirmVoice, __) => SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(l.confirmVoiceMessage),
+                  subtitle: Text(l.confirmVoiceSubtitle),
+                  value: confirmVoice,
+                  onChanged: (val) async => await SettingsManager.setConfirmVoiceUpload(val),
+                ),
+              ),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.autoLoadVideoEnabled,
+                builder: (_, autoLoadVideo, __) => SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(l.autoLoadVideos),
+                  subtitle: Text(l.autoLoadVideosSubtitle),
+                  value: autoLoadVideo,
+                  onChanged: (val) async => await SettingsManager.setAutoLoadVideoEnabled(val),
+                ),
+              ),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<MediaPreloadMode>(
+                valueListenable: SettingsManager.mediaPreloadMode,
+                builder: (_, mode, __) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Preload chat images', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Download images around the open chat in the background so they are ready before you scroll to them.',
+                      style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButton<MediaPreloadMode>(
+                      value: mode,
+                      underline: const SizedBox.shrink(),
+                      onChanged: (val) async { if (val != null) await SettingsManager.setMediaPreloadMode(val); },
+                      items: const [
+                        DropdownMenuItem(value: MediaPreloadMode.off, child: Text('Off')),
+                        DropdownMenuItem(value: MediaPreloadMode.wifiOnly, child: Text('Wi-Fi only')),
+                        DropdownMenuItem(value: MediaPreloadMode.always, child: Text('Always')),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 8),
-        ValueListenableBuilder<bool>(
-          valueListenable: SettingsManager.confirmVoiceUpload,
-          builder: (_, confirmVoice, __) => SwitchListTile(
-            title: Text(AppLocalizations.of(context).confirmVoiceMessage),
-            subtitle: Text(AppLocalizations.of(context).confirmVoiceSubtitle),
-            value: confirmVoice,
-            onChanged: (val) async => await SettingsManager.setConfirmVoiceUpload(val),
+        _buildSubSection(
+          key: 'interact_performance',
+          title: 'Performance',
+          subtitle: 'Scroll buffer and image preload window',
+          icon: Icons.speed_rounded,
+          searchShowAll: showAll,
+          keywords: ['scroll buffer', 'image preload', 'preload window', 'cache extent'],
+          expandedContent: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ValueListenableBuilder<double>(
+                valueListenable: SettingsManager.chatCacheExtent,
+                builder: (_, extent, __) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Scroll buffer', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Pixels rendered beyond the visible chat area. Higher = smoother scrolling, more memory. Current: ${extent.toStringAsFixed(0)} px',
+                      style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+                    ),
+                    Slider(
+                      value: extent,
+                      min: 0,
+                      max: 5000,
+                      divisions: 20,
+                      label: '${extent.toStringAsFixed(0)} px',
+                      onChanged: (val) async => await SettingsManager.setChatCacheExtent(val),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<int>(
+                valueListenable: SettingsManager.imagePreloadWindow,
+                builder: (_, window, __) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Image preload window', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Messages scanned for images when opening a chat. Higher = more images ready before you scroll. Current: $window messages',
+                      style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+                    ),
+                    Slider(
+                      value: window.toDouble(),
+                      min: 0,
+                      max: 300,
+                      divisions: 15,
+                      label: '$window',
+                      onChanged: (val) async => await SettingsManager.setImagePreloadWindow(val.round()),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
+        if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) ...[
+          const SizedBox(height: 8),
+          _buildSubSection(
+            key: 'interact_files',
+            title: 'Files & Storage',
+            subtitle: 'Download folder and app data management',
+            icon: Icons.folder_rounded,
+            searchShowAll: showAll,
+            keywords: [l.downloadFolder, l.downloadFolderSubtitle, 'download', 'folder', 'storage'],
+            expandedContent: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildDownloadFolderTile(context),
+                const SizedBox(height: 8),
+                _buildAppDataContent(),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 8),
+        _buildSubSection(
+          key: 'interact_debug',
+          searchShowAll: showAll,
+          title: l.debugTitle,
+          subtitle: l.debugSubtitle,
+          icon: Icons.bug_report_rounded,
+          keywords: [l.debugMode, l.debugModeSubtitle, l.enableFileLogging, l.enableFileLoggingSubtitle, l.deleteAllLogs],
+          expandedContent: _buildDebugContent(),
+        ),
+        const SizedBox(height: 8),
+        _buildSubSection(
+          key: 'interact_blocked_users',
+          searchShowAll: showAll,
+          title: l.blockedUsersTitle,
+          subtitle: l.blockedUsersSubtitle,
+          icon: Icons.block_rounded,
+          keywords: [l.blockedUsersEmpty, l.unblockAction, l.blockUserLabel, l.unblockUserLabel],
+          expandedContent: _buildBlockedUsersContent(),
+        ),
       ],
+    );
+  }
+
+  Widget _buildDownloadFolderTile(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    return ValueListenableBuilder<String>(
+      valueListenable: SettingsManager.downloadFolderPath,
+      builder: (_, path, __) {
+        final hasCustom = path.isNotEmpty;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text(l.downloadFolder,
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                hasCustom ? path : l.downloadFolderDefault,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Wrap(
+                spacing: 8,
+                children: [
+                  FilledButton.tonal(
+                    onPressed: () async {
+                      final picked = await FilePicker.platform.getDirectoryPath(
+                        dialogTitle: l.downloadFolderChange,
+                        initialDirectory: hasCustom ? path : null,
+                      );
+                      if (picked != null && picked.isNotEmpty) {
+                        await SettingsManager.setDownloadFolderPath(picked);
+                      }
+                    },
+                    child: Text(l.downloadFolderChange),
+                  ),
+                  if (hasCustom) ...[
+                    OutlinedButton(
+                      onPressed: () async {
+                        try {
+                          if (Platform.isWindows) {
+                            await Process.run('explorer', [path.replaceAll('/', '\\')]);
+                          } else if (Platform.isMacOS) {
+                            await Process.run('open', [path]);
+                          } else if (Platform.isLinux) {
+                            await Process.run('xdg-open', [path]);
+                          }
+                        } catch (_) {}
+                      },
+                      child: const Icon(Icons.folder_open_rounded, size: 18),
+                    ),
+                    OutlinedButton(
+                      onPressed: () => SettingsManager.setDownloadFolderPath(''),
+                      child: Text(l.downloadFolderReset),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        );
+      },
     );
   }
 
@@ -4199,15 +4254,50 @@ class _SettingsTabState extends State<SettingsTab>
     );
   }
 
+  Widget _buildSectionIcon(IconData icon, int? hue) {
+    final cs = Theme.of(context).colorScheme;
+    if (hue == null) {
+      return Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(icon, size: 18, color: cs.onSurfaceVariant),
+      );
+    }
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(icon, size: 18, color: cs.primary),
+    );
+  }
+
   Widget _buildLiquidGlassSection({
     required String title,
     required String subtitle,
     required SectionType section,
-    required Widget expandedContent,
+    required Widget Function() expandedContentBuilder,
     IconData? icon,
+    int? iconHue,
   }) {
-    final isExpanded = _expandedSection == section;
+    final isExpanded = _expandedSection == section || _settingsSearchQuery.isNotEmpty;
     final colorScheme = Theme.of(context).colorScheme;
+
+    // In search mode: set ambient breadcrumb context, return flat content, then clear context
+    if (_settingsSearchQuery.isNotEmpty) {
+      _searchSectionLabel = title;
+      _searchSectionIcon = icon;
+      final content = expandedContentBuilder();
+      _searchSectionLabel = null;
+      _searchSectionIcon = null;
+      return content;
+    }
 
     return AdaptiveGlassCard(
       borderRadius: 16,
@@ -4221,27 +4311,21 @@ class _SettingsTabState extends State<SettingsTab>
                     padding: const EdgeInsets.all(16),
                     child: Row(
                       children: [
+                        if (icon != null) ...[
+                          _buildSectionIcon(icon, iconHue),
+                          const SizedBox(width: 12),
+                        ],
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Row(
-                                children: [
-                                  if (icon != null) ...[
-                                    Icon(icon, size: 18, color: colorScheme.primary),
-                                    const SizedBox(width: 8),
-                                  ],
-                                  Expanded(
-                                    child: Text(
-                                      title,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                        color: colorScheme.onSurface,
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                              Text(
+                                title,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: colorScheme.onSurface,
+                                ),
                               ),
                               const SizedBox(height: 4),
                               Text(
@@ -4255,17 +4339,10 @@ class _SettingsTabState extends State<SettingsTab>
                             ],
                           ),
                         ),
-                        RotationTransition(
-                          turns: Tween<double>(begin: 0.0, end: 0.5).animate(
-                            CurvedAnimation(
-                              parent: _fadeController,
-                              curve: Interval(
-                                isExpanded ? 0.5 : 0.0,
-                                isExpanded ? 1.0 : 0.5,
-                                curve: Curves.easeInOut,
-                              ),
-                            ),
-                          ),
+                        AnimatedRotation(
+                          turns: isExpanded ? 0.25 : 0.0,
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeInOut,
                           child: Icon(
                             Icons.arrow_forward_ios,
                             size: 16,
@@ -4282,7 +4359,7 @@ class _SettingsTabState extends State<SettingsTab>
                   child: isExpanded
                       ? Padding(
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                          child: expandedContent,
+                          child: expandedContentBuilder(),
                         )
                       : const SizedBox.shrink(),
                 ),
@@ -4291,31 +4368,964 @@ class _SettingsTabState extends State<SettingsTab>
     );
   }
 
-  Widget _featureRow(String title, String subtitle) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
+  Widget _buildSubSection({
+    required String key,
+    required String title,
+    required String subtitle,
+    required Widget expandedContent,
+    IconData? icon,
+    List<String> keywords = const [],
+    bool searchShowAll = false,
+  }) {
+    // Capture breadcrumb context before visibility check clears it
+    final breadcrumb = _searchSectionLabel;
+    final breadcrumbIcon = _searchSectionIcon;
+
+    final searchActive = _settingsSearchQuery.isNotEmpty;
+    if (searchActive && !searchShowAll && !_sectionVisible(title, subtitle, keywords)) {
+      return const SizedBox.shrink();
+    }
+    final isExpanded = (_expandedSubsections[key] ?? false) || searchActive;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    final card = AdaptiveGlassCard(
+      borderRadius: 12,
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => setState(() => _expandedSubsections[key] = !isExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  if (icon != null) ...[
+                    Icon(icon, size: 16, color: colorScheme.primary),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colorScheme.onSurface.withValues(alpha: 0.55),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: isExpanded ? 0.5 : 0.0,
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeInOut,
+                    child: Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      size: 20,
+                      color: colorScheme.onSurface.withValues(alpha: 0.45),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          ClipRect(
+            child: AnimatedAlign(
+              alignment: Alignment.topCenter,
+              heightFactor: isExpanded ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeInOut,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                child: expandedContent,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (searchActive) {
+      return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.check_circle_outline, size: 16, color: Colors.green),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
+          if (breadcrumb != null) ...[
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6, top: 4),
+              child: Row(
+                children: [
+                  if (breadcrumbIcon != null)
+                    Icon(breadcrumbIcon, size: 13, color: colorScheme.primary),
+                  const SizedBox(width: 5),
+                  Text(
+                    breadcrumb,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.primary,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          card,
+          const SizedBox(height: 8),
+        ],
+      );
+    }
+
+    return card;
+  }
+
+  Widget _buildAppearanceContent() {
+    final isDesktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+    final l = AppLocalizations.of(context);
+    final showAll = _sectionVisible(l.appearanceTitle, l.appearanceSubtitle);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Theme & Colors ────────────────────────
+        _buildSubSection(
+          key: 'appearance_theme',
+          title: l.selectTheme,
+          subtitle: l.darkMode,
+          searchShowAll: showAll,
+          icon: Icons.color_lens_rounded,
+          expandedContent: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 12,
+                runSpacing: 2,
+                children: AppTheme.values.map((theme) {
+                  final isSelected = widget.currentTheme == theme;
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      GestureDetector(
+                        onTap: () async => widget.onThemeChanged(theme, widget.isDarkMode),
+                        child: Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: theme.color,
+                            border: Border.all(
+                              color: isSelected ? Colors.white : Colors.transparent,
+                              width: isSelected ? 3 : 0,
+                            ),
+                            boxShadow: [
+                              if (isSelected)
+                                BoxShadow(
+                                  color: theme.color.withValues(alpha: 0.5),
+                                  blurRadius: 8,
+                                  spreadRadius: 2,
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      SizedBox(
+                        width: 60,
+                        child: Text(
+                          theme.name,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Text(l.darkMode),
+                  const SizedBox(width: 12),
+                  Switch(
+                    value: widget.isDarkMode,
+                    onChanged: (val) async => widget.onThemeChanged(widget.currentTheme, val),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        // ── Typography ───────────────────────────
+        _buildSubSection(
+          key: 'appearance_typography',
+          title: l.fontAndTextSize,
+          subtitle: l.fontFamily,
+          searchShowAll: showAll,
+          icon: Icons.text_fields_rounded,
+          expandedContent: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ValueListenableBuilder<FontFamilyType>(
+                valueListenable: SettingsManager.fontFamily,
+                builder: (_, currentFont, __) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(l.fontFamily, style: const TextStyle(fontSize: 13, color: Colors.grey)),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: InkWell(
+                          onTap: () {
+                            showModalBottomSheet(
+                              context: context,
+                              isScrollControlled: true,
+                              backgroundColor: Colors.transparent,
+                              builder: (ctx) {
+                                final cs = Theme.of(ctx).colorScheme;
+                                return ValueListenableBuilder<double>(
+                                  valueListenable: SettingsManager.elementBrightness,
+                                  builder: (_, brightness, __) {
+                                    final sheetColor = SettingsManager.getElementColor(cs.surfaceContainerHighest, brightness);
+                                    return DraggableScrollableSheet(
+                                      initialChildSize: 0.6,
+                                      minChildSize: 0.4,
+                                      maxChildSize: 0.95,
+                                      expand: false,
+                                      builder: (_, sc) => Container(
+                                        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                                        decoration: BoxDecoration(color: sheetColor, borderRadius: BorderRadius.circular(20)),
+                                        child: Column(
+                                          children: [
+                                            const SizedBox(height: 8),
+                                            Container(
+                                              width: 36, height: 4,
+                                              decoration: BoxDecoration(
+                                                color: cs.onSurface.withValues(alpha: 0.2),
+                                                borderRadius: BorderRadius.circular(2),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                              child: Text(l.fontFamily, style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: cs.onSurface)),
+                                            ),
+                                            Expanded(
+                                              child: ListView(
+                                                controller: sc,
+                                                padding: const EdgeInsets.only(bottom: 8),
+                                                children: FontFamilyType.values.map((font) {
+                                                  final isSel = currentFont == font;
+                                                  return ListTile(
+                                                    title: Text(font.displayName, style: font.getBodyTextStyle(fontSize: 14)),
+                                                    subtitle: Text(l.localizeFontDescription(font.description), style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.5))),
+                                                    trailing: isSel
+                                                        ? Icon(Icons.check_circle_rounded, color: cs.primary)
+                                                        : Icon(Icons.radio_button_unchecked_rounded, color: cs.onSurface.withValues(alpha: 0.3)),
+                                                    selected: isSel,
+                                                    selectedTileColor: cs.primary.withValues(alpha: 0.08),
+                                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                                    onTap: () async {
+                                                      await SettingsManager.setFontFamily(font);
+                                                      if (ctx.mounted) Navigator.of(ctx).pop();
+                                                    },
+                                                  );
+                                                }).toList(),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Theme.of(context).colorScheme.outline, width: 1),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(currentFont.displayName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                                    const SizedBox(height: 2),
+                                    Text(l.localizeFontDescription(currentFont.description), style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                                  ],
+                                ),
+                                const Icon(Icons.chevron_right),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              ValueListenableBuilder<double>(
+                valueListenable: SettingsManager.fontSizeMultiplier,
+                builder: (_, sizeMultiplier, __) {
+                  final labels = ['S', 'M', 'L', 'XL'];
+                  final values = [0.9, 1.0, 1.1, 1.2];
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(l.messageSize, style: const TextStyle(fontSize: 13, color: Colors.grey)),
+                          Text('${(sizeMultiplier * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.primary)),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: List.generate(values.length, (idx) {
+                          final val = values[idx];
+                          final label = labels[idx];
+                          final isSel = (sizeMultiplier - val).abs() < 0.01;
+                          return Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              child: GestureDetector(
+                                onTap: () async => SettingsManager.setFontSizeMultiplier(val),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: isSel ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outline,
+                                      width: isSel ? 2 : 1,
+                                    ),
+                                    color: isSel ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1) : Colors.transparent,
+                                  ),
+                                  child: Center(child: Text(label, style: TextStyle(fontWeight: isSel ? FontWeight.w600 : FontWeight.normal, fontSize: 14))),
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                      const SizedBox(height: 8),
+                      Slider(
+                        value: sizeMultiplier,
+                        min: 0.8,
+                        max: 1.3,
+                        divisions: 10,
+                        onChanged: (val) async => SettingsManager.setFontSizeMultiplier(val),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        // ── Chat Display ─────────────────────────
+        _buildSubSection(
+          key: 'appearance_chat',
+          title: 'Chat Display',
+          subtitle: 'Alignment, avatars and animations',
+          searchShowAll: showAll,
+          icon: Icons.chat_bubble_outline_rounded,
+          keywords: [
+            l.ownMessagesRight, l.ownMessagesLeft, l.alignAllRight, l.alignAllRightSubtitle,
+            l.showAvatarsInChats, l.showAvatarSubtitle, l.showAccountIndicator, l.showAccountIndicatorSubtitle,
+            l.smoothScrollDown, l.messageAnimations, l.chatListMoveAnimations,
+            l.loadOlderMessagesOnScroll, l.showSnackbars,
+          ],
+          expandedContent: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.swapMessageAlignment,
+                builder: (_, swapped, __) => Row(
+                  children: [
+                    Text(swapped ? l.ownMessagesLeft : l.ownMessagesRight),
+                    const SizedBox(width: 12),
+                    Switch(value: swapped, onChanged: (val) async => SettingsManager.setSwapMessageAlignment(val)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.swapMessageAlignment,
+                builder: (_, swappedMsg, __) => ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.alignAllMessagesRight,
+                  builder: (_, alignRight, __) => Row(
+                    children: [
+                      Text(alignRight ? (swappedMsg ? l.allMessagesLeft : l.allMessagesRight2) : l.allMessagesMixed),
+                      const SizedBox(width: 12),
+                      Switch(value: alignRight, onChanged: (val) async => SettingsManager.setAlignAllMessagesRight(val)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.showAvatarInChats,
+                builder: (_, showAvatar, __) => Row(
+                  children: [
+                    Text(l.showAvatarsInChats),
+                    const SizedBox(width: 12),
+                    Switch(value: showAvatar, onChanged: (val) async => SettingsManager.setShowAvatarInChats(val)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.showAccountIndicator,
+                builder: (_, showInd, __) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(l.showAccountIndicator),
+                        const SizedBox(width: 12),
+                        Switch(value: showInd, onChanged: (val) async => SettingsManager.setShowAccountIndicator(val)),
+                      ],
+                    ),
+                    Text(l.showAccountIndicatorSubtitle, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.smoothScrollEnabled,
+                builder: (_, v, __) => Row(
+                  children: [
+                    Text(l.smoothScrollDown),
+                    const SizedBox(width: 12),
+                    Switch(value: v, onChanged: (val) async => SettingsManager.setSmoothScroll(val)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.messageAnimationsEnabled,
+                builder: (_, v, __) => Row(
+                  children: [
+                    Text(l.messageAnimations),
+                    const SizedBox(width: 12),
+                    Switch(value: v, onChanged: (val) async => SettingsManager.setMessageAnimationsEnabled(val)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.chatListMoveAnimationsEnabled,
+                builder: (_, v, __) => Row(
+                  children: [
+                    Text(l.chatListMoveAnimations),
+                    const SizedBox(width: 12),
+                    Switch(value: v, onChanged: (val) async => SettingsManager.setChatListMoveAnimationsEnabled(val)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.messagePaginationEnabled,
+                builder: (_, v, __) => Row(
+                  children: [
+                    Text(l.loadOlderMessagesOnScroll),
+                    const SizedBox(width: 12),
+                    Switch(value: v, onChanged: (val) async => SettingsManager.setMessagePaginationEnabled(val)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.snackbarEnabled,
+                builder: (_, v, __) => Row(
+                  children: [
+                    Text(l.showSnackbars),
+                    const SizedBox(width: 12),
+                    Switch(value: v, onChanged: (val) async => SettingsManager.setSnackbarEnabled(val)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(l.scrollDownButtonPosition, style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<ScrollDownButtonPosition>(
+                valueListenable: SettingsManager.scrollDownButtonPosition,
+                builder: (_, selected, __) {
+                  final options = <(ScrollDownButtonPosition, IconData, String)>[
+                    (ScrollDownButtonPosition.left, Icons.format_align_left_rounded, l.scrollDownButtonPositionLeft),
+                    (ScrollDownButtonPosition.center, Icons.format_align_center_rounded, l.scrollDownButtonPositionCenter),
+                    (ScrollDownButtonPosition.right, Icons.format_align_right_rounded, l.scrollDownButtonPositionRight),
+                  ];
+                  return Column(
+                    children: options.map((opt) {
+                      final (pos, icon, label) = opt;
+                      final isSel = selected == pos;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: GestureDetector(
+                          onTap: () async => SettingsManager.setScrollDownButtonPosition(pos),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: isSel ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outline,
+                                width: isSel ? 2 : 1,
+                              ),
+                              color: isSel ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1) : Colors.transparent,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(icon, size: 18, color: isSel ? Theme.of(context).colorScheme.primary : null),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(label, style: TextStyle(fontWeight: isSel ? FontWeight.w600 : FontWeight.normal)),
+                                ),
+                                if (isSel) Icon(Icons.check_rounded, size: 18, color: Theme.of(context).colorScheme.primary),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+              ValueListenableBuilder<double>(
+                valueListenable: SettingsManager.scrollDownButtonSize,
+                builder: (_, size, __) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(l.scrollDownButtonSize, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Slider(
+                            min: 28.0,
+                            max: 56.0,
+                            divisions: 14,
+                            value: size,
+                            label: '${size.toInt()} px',
+                            onChanged: (v) => SettingsManager.setScrollDownButtonSize(v),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(width: 50, child: Text('${size.toInt()} px', textAlign: TextAlign.right)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        // ── Background ───────────────────────────
+        _buildSubSection(
+          key: 'appearance_background',
+          title: l.chatBackground,
+          subtitle: 'Wallpaper, blur and opacity',
+          searchShowAll: showAll,
+          icon: Icons.wallpaper_rounded,
+          keywords: [
+            l.blurBackground, l.presetsBackground, l.applyGlobally, l.applyGloballySubtitle,
+            l.elementOpacity, l.elementBrightness, 'wallpaper', 'opacity', 'brightness',
+            l.chooseBackground, l.clearBackground2,
+          ],
+          expandedContent: ValueListenableBuilder<String?>(
+            valueListenable: SettingsManager.chatVideoBackground,
+            builder: (_, videoPath, __) => ValueListenableBuilder<String?>(
+              valueListenable: SettingsManager.chatBackground,
+              builder: (_, path, __) {
+                final aspect = isDesktop ? (16 / 9) : (9 / 16);
+                Widget preview;
+                if (videoPath != null && File(videoPath).existsSync()) {
+                  preview = ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: AspectRatio(aspectRatio: aspect, child: _VideoPreviewWidget(path: videoPath)),
+                  );
+                } else if (path != null && File(path).existsSync()) {
+                  preview = ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: AspectRatio(
+                      aspectRatio: aspect,
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: SettingsManager.blurBackground,
+                        builder: (_, blur, __) {
+                          final provider = FileImage(File(path));
+                          final img = Image(image: provider, width: double.infinity, fit: BoxFit.cover);
+                          return blur
+                              ? ValueListenableBuilder<double>(
+                                  valueListenable: SettingsManager.blurSigma,
+                                  builder: (_, sigma, __) => AdaptiveBlur(imageProvider: provider, sigma: sigma, fit: BoxFit.cover),
+                                )
+                              : img;
+                        },
+                      ),
+                    ),
+                  );
+                } else {
+                  preview = ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: AspectRatio(
+                      aspectRatio: aspect,
+                      child: ValueListenableBuilder<double>(
+                        valueListenable: SettingsManager.elementOpacity,
+                        builder: (_, opacity, __) => Container(
+                          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: opacity * 0.47),
+                          child: Icon(Icons.photo_outlined, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(width: isDesktop ? 320 : 160, child: preview),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _buildAppleButton(icon: Icons.photo_outlined, label: l.chooseBackground, onPressed: _pickChatBackground),
+                        _buildAppleButton(icon: Icons.auto_awesome_rounded, label: l.presetsBackground, onPressed: _showPresetsSheet),
+                        if (path != null || videoPath != null)
+                          _buildAppleButton(
+                            icon: Icons.close_rounded,
+                            label: l.clearBackground2,
+                            onPressed: () async { await _clearChatBackground(); await _clearChatVideoBackground(); },
+                            isDestructive: true,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ValueListenableBuilder<bool>(
+                      valueListenable: SettingsManager.applyGlobally,
+                      builder: (_, apply, __) => SwitchListTile(
+                        title: Text(l.applyBackgroundToApp),
+                        value: apply,
+                        onChanged: (val) => SettingsManager.setApplyGlobally(val),
+                        contentPadding: EdgeInsets.zero,
+                        activeThumbColor: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ValueListenableBuilder<double>(
+                      valueListenable: SettingsManager.elementOpacity,
+                      builder: (_, opacity, __) => Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(l.uiElementsOpacityLabel, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(child: Slider(min: 0.1, max: 1.0, divisions: 18, value: opacity, label: '${(opacity * 100).toStringAsFixed(0)}%', onChanged: (v) => SettingsManager.setElementOpacity(v))),
+                              const SizedBox(width: 8),
+                              SizedBox(width: 50, child: Text('${(opacity * 100).toStringAsFixed(0)}%', textAlign: TextAlign.right)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ValueListenableBuilder<double>(
+                      valueListenable: SettingsManager.elementBrightness,
+                      builder: (_, brightness, __) => Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(l.uiElementsBrightnessLabel, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(child: Slider(min: 0.0, max: 1.0, divisions: 20, value: brightness, label: '${(brightness * 100).toStringAsFixed(0)}%', onChanged: (v) => SettingsManager.setElementBrightness(v))),
+                              const SizedBox(width: 8),
+                              SizedBox(width: 50, child: Text('${(brightness * 100).toStringAsFixed(0)}%', textAlign: TextAlign.right)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        // ── Layout ───────────────────────────────
+        _buildSubSection(
+          key: 'appearance_layout',
+          title: 'Layout',
+          subtitle: 'Navigation, graph and tab swiping',
+          searchShowAll: showAll,
+          icon: Icons.view_quilt_rounded,
+          keywords: [
+            l.inputBarMaxWidth, l.navPanelPosition, l.minimizeBottomNav, l.minimizeBottomNavSubtitle,
+            l.swipeTabs, l.swipeTabsSubtitle, l.tabSwiping, l.tabSwipingSubtitle,
+            l.navBarPosition, l.uiLayout, l.smoothScroll, 'navigation', 'sidebar',
+            l.accountGraph, l.accountGraphSubtitleDesktopOn, l.accountGraphSubtitleMobileOn,
+            l.accountGraphSubtitleDesktopOff, l.accountGraphSubtitleMobileOff,
+            l.animateGraph, l.orbitSpeed,
+            'account graph', 'график аккаунтов', 'графа аккаунтов',
+          ],
+          expandedContent: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (isDesktop) ...[
+                ValueListenableBuilder<double>(
+                  valueListenable: SettingsManager.inputBarMaxWidth,
+                  builder: (_, width, __) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(l.inputBarMaxWidth, style: const TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(child: Slider(min: 320, max: 1600, divisions: 27, value: width, label: '${width.toInt()} px', onChanged: (v) => SettingsManager.setInputBarMaxWidth(v))),
+                          const SizedBox(width: 8),
+                          SizedBox(width: 72, child: Text('${width.toInt()} px', textAlign: TextAlign.right)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ValueListenableBuilder<String>(
+                  valueListenable: SettingsManager.desktopNavPosition,
+                  builder: (_, navPos, __) {
+                    final isBottom = navPos == 'bottom';
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(l.navPanelPosition, style: const TextStyle(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Text(isBottom ? l.navPosBottom : l.navPosLeft),
+                            const SizedBox(width: 12),
+                            Switch(value: isBottom, onChanged: (val) async => SettingsManager.setDesktopNavPosition(val ? 'bottom' : 'left')),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+              ],
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.showAccountGraph,
+                builder: (_, showGraph, __) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(l.accountGraph, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: Text(
+                        showGraph ? (isDesktop ? l.accountGraphSubtitleDesktopOn : l.accountGraphSubtitleMobileOn) : (isDesktop ? l.accountGraphSubtitleDesktopOff : l.accountGraphSubtitleMobileOff),
+                        style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      ),
+                      value: showGraph,
+                      onChanged: (v) => SettingsManager.setShowAccountGraph(v),
+                    ),
+                    if (showGraph) ...[
+                      const SizedBox(height: 4),
+                      ValueListenableBuilder<double>(
+                        valueListenable: SettingsManager.graphOrbitSpeed,
+                        builder: (_, speed, __) {
+                          final label = speed < 60 ? l.secOrbit(speed.round()) : l.minOrbit((speed / 60).round());
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(l.orbitSpeed, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                  Text(label, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                                ],
+                              ),
+                              Slider(min: 30.0, max: 600.0, value: speed, onChanged: SettingsManager.setGraphOrbitSpeed),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 4),
+                      ValueListenableBuilder<bool>(
+                        valueListenable: SettingsManager.graphAnimation,
+                        builder: (_, anim, __) => SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(l.animateGraph, style: const TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: Text(anim ? l.animateGraphOn : l.animateGraphOff, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                          value: anim,
+                          onChanged: SettingsManager.setGraphAnimation,
+                        ),
+                      ),
+                      ValueListenableBuilder<bool>(
+                        valueListenable: SettingsManager.graphPreservePosition,
+                        builder: (_, preserve, __) => SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(l.preserveView, style: const TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: Text(preserve ? l.preserveViewOn : l.preserveViewOff, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                          value: preserve,
+                          onChanged: SettingsManager.setGraphPreservePosition,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (!isDesktop) ...[
+                const SizedBox(height: 16),
+                ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.swipeTabsEnabled,
+                  builder: (_, swipeTabs, __) => Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(l.tabSwiping, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text(l.tabSwipingSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          ],
+                        ),
+                      ),
+                      Switch(value: swipeTabs, onChanged: (val) async => SettingsManager.setSwipeTabsEnabled(val)),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (!Platform.isWindows && !Platform.isLinux) ...[
+          const SizedBox(height: 8),
+          // ── Liquid Glass ─────────────────────────
+          _buildSubSection(
+            key: 'appearance_glass',
+            title: 'Liquid Glass Effects',
+            subtitle: l.liquidGlassSubtitle,
+            searchShowAll: showAll,
+            icon: Icons.blur_on_rounded,
+            keywords: [
+              l.liquidGlassNavBarLabel, l.liquidGlassNavBarDesc, l.liquidGlassCardsLabel,
+              l.liquidGlassCardsDesc, l.liquidGlassInputLabel, l.liquidGlassInputDesc,
+              l.liquidGlassSearchLabel, l.liquidGlassSearchDesc, 'blur', 'tint', 'glass',
+              'chromatic', 'refraction', 'opacity', 'saturation',
+            ],
+            expandedContent: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+                _buildLiquidElementSection(
+                  context: context,
+                  label: l.liquidGlassNavBarLabel,
+                  description: l.liquidGlassNavBarDesc,
+                  toggleListenable: SettingsManager.liquidGlassOnNavBar,
+                  toggleGetter: (v) => v as bool,
+                  onToggle: SettingsManager.setLiquidGlassOnNavBar,
+                  qualityNotifier: SettingsManager.liquidGlassNavBarQuality,
+                  onQualityChanged: SettingsManager.setLiquidGlassNavBarQuality,
+                  sliders: [
+                    _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassBlur),
+                    _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassTint),
+                    _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassSaturation),
+                    _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassChromatic),
+                    _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassRefractive),
+                    _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassLightIntensity),
+                    _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassThickness),
+                    _LiquidSliderConfig(label: 'Jelly Stretch Amount', description: 'Indicator expansion when dragging between tabs', listenable: SettingsManager.liquidGlassExpansion, min: 0, max: 28, divisions: 28, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassExpansion),
+                  ],
                 ),
-                Text(
-                  subtitle,
-                  style: const TextStyle(fontSize: 13, color: Colors.grey),
+                if (!Platform.isMacOS) ...[
+                  const SizedBox(height: 12),
+                  _buildLiquidElementSection(
+                    context: context,
+                    label: l.liquidGlassCardsLabel,
+                    description: l.liquidGlassCardsDesc,
+                    toggleListenable: SettingsManager.liquidGlassOnCards,
+                    toggleGetter: (v) => v as bool,
+                    onToggle: SettingsManager.setLiquidGlassOnCards,
+                    qualityNotifier: SettingsManager.liquidGlassCardsQuality,
+                    onQualityChanged: SettingsManager.setLiquidGlassCardsQuality,
+                    sliders: [
+                      _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassCardsBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassCardsBlur),
+                      _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassCardsTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassCardsTint),
+                      _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassCardsSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassCardsSaturation),
+                      _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassCardsChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassCardsChromatic),
+                      _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassCardsRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassCardsRefractive),
+                      _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassCardsLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassCardsLightIntensity),
+                      _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassCardsThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassCardsThickness),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 12),
+                _buildLiquidElementSection(
+                  context: context,
+                  label: l.liquidGlassInputLabel,
+                  description: l.liquidGlassInputDesc,
+                  toggleListenable: SettingsManager.liquidGlassOnInput,
+                  toggleGetter: (v) => v as bool,
+                  onToggle: SettingsManager.setLiquidGlassOnInput,
+                  qualityNotifier: SettingsManager.liquidGlassInputQuality,
+                  onQualityChanged: SettingsManager.setLiquidGlassInputQuality,
+                  sliders: [
+                    _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassInputBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassInputBlur),
+                    _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassInputTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassInputTint),
+                    _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassInputSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassInputSaturation),
+                    _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassInputChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassInputChromatic),
+                    _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassInputRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassInputRefractive),
+                    _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassInputLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassInputLightIntensity),
+                    _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassInputThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassInputThickness),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _buildLiquidElementSection(
+                  context: context,
+                  label: l.liquidGlassSearchLabel,
+                  description: l.liquidGlassSearchDesc,
+                  toggleListenable: SettingsManager.liquidGlassOnSearch,
+                  toggleGetter: (v) => v as bool,
+                  onToggle: SettingsManager.setLiquidGlassOnSearch,
+                  qualityNotifier: SettingsManager.liquidGlassSearchQuality,
+                  onQualityChanged: SettingsManager.setLiquidGlassSearchQuality,
+                  sliders: [
+                    _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassSearchBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassSearchBlur),
+                    _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassSearchTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassSearchTint),
+                    _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassSearchSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassSearchSaturation),
+                    _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassSearchChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassSearchChromatic),
+                    _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassSearchRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassSearchRefractive),
+                    _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassSearchLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassSearchLightIntensity),
+                    _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassSearchThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassSearchThickness),
+                  ],
                 ),
               ],
             ),
           ),
         ],
-      ),
+      ],
     );
   }
 
@@ -4428,7 +5438,421 @@ class _SettingsTabState extends State<SettingsTab>
   }
 }
 
-enum SectionType { security, keyManagement, notifications, appearance, language, cache, connection, proxy, interact, debug, contact, blockedUsers, audio }
+enum SectionType { security, keyManagement, notifications, appearance, language, cache, connection, interact, contact, audio, wardLink, backup, recycleBin }
+
+// ── WardLink QR pairing dialog ────────────────────────────────────────────────
+
+class _WardLinkQrDialog extends StatefulWidget {
+  const _WardLinkQrDialog();
+  @override
+  State<_WardLinkQrDialog> createState() => _WardLinkQrDialogState();
+}
+
+class _WardLinkQrDialogState extends State<_WardLinkQrDialog> {
+  String? _qrJson;
+  String? _username;
+  String? _error;
+  bool _showScanner = false;
+  bool _handled = false;
+  bool _busy = false;
+  bool _poppingDialog = false;
+  MobileScannerController? _scanCtrl;
+  int _initialDeviceCount = 0;
+
+  bool get _isMobile =>
+      !Platform.isWindows && !Platform.isMacOS && !Platform.isLinux;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialDeviceCount = WardLinkPairedDevices.devices.value.length;
+    WardLinkPairedDevices.devices.addListener(_onDevicesChanged);
+    _prepare();
+  }
+
+  @override
+  void dispose() {
+    WardLinkPairedDevices.devices.removeListener(_onDevicesChanged);
+    _scanCtrl?.dispose();
+    super.dispose();
+  }
+
+  // Fires when the other device scans our QR and the daemon saves the pairing.
+  void _onDevicesChanged() {
+    if (!mounted) return;
+    // If _handled is true, we're the scanning device and _onDetect is already
+    // managing the pop — skip here to avoid a double Navigator.pop that would
+    // dismiss the settings tab and leave a black screen.
+    if (_handled || _poppingDialog) return;
+    if (WardLinkPairedDevices.devices.value.length > _initialDeviceCount) {
+      _poppingDialog = true;
+      // Stop camera first so it doesn't flash black during the pop animation.
+      _scanCtrl?.dispose();
+      _scanCtrl = null;
+      final l = AppLocalizations.of(context);
+      // Defer the pop to the next frame — the listener may fire synchronously
+      // inside an HTTP handler; calling Navigator.pop inside that can corrupt
+      // the widget tree and cause a black screen on both devices.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.pop(context);
+        rootScreenKey.currentState?.showSnack(l.wardLinkPairedOk);
+      });
+    }
+  }
+
+  Future<void> _prepare() async {
+    final username = await AccountManager.getCurrentAccount();
+    if (username == null) {
+      if (mounted) setState(() => _error = 'Not logged in');
+      return;
+    }
+    await WardLinkSyncService.instance.start(username);
+    final qr = await WardLinkSyncService.instance.pairingQrJson(username);
+    if (mounted) setState(() { _username = username; _qrJson = qr; });
+  }
+
+  void _startScan() {
+    _scanCtrl = MobileScannerController(
+      detectionSpeed: DetectionSpeed.normal,
+      facing: CameraFacing.back,
+    );
+    setState(() { _showScanner = true; _handled = false; _error = null; });
+  }
+
+  void _stopScan() {
+    _scanCtrl?.dispose();
+    _scanCtrl = null;
+    setState(() => _showScanner = false);
+  }
+
+  Future<void> _onDetect(BarcodeCapture capture) async {
+    if (_handled || _username == null) return;
+    final raw = capture.barcodes.firstOrNull?.rawValue;
+    if (raw == null || !raw.contains('wardlink_pair')) return;
+    _handled = true;
+    _scanCtrl?.dispose();
+    _scanCtrl = null;
+    setState(() { _showScanner = false; _busy = true; });
+
+    final err = await WardLinkSyncService.instance
+        .completePairingFromQr(raw, _username!);
+    if (!mounted) return;
+    setState(() => _busy = false);
+
+    final l = AppLocalizations.of(context);
+    if (err == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.pop(context);
+        rootScreenKey.currentState?.showSnack(l.wardLinkPairedOk);
+      });
+    } else {
+      setState(() => _error = '${l.wardLinkPairFailed}: $err');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
+
+    // ── Scanner view ───────────────────────────────────────────────────────────
+    if (_showScanner && _scanCtrl != null) {
+      return AlertDialog(
+        titlePadding: const EdgeInsets.fromLTRB(20, 16, 8, 0),
+        title: Row(
+          children: [
+            Expanded(child: Text(l.wardLinkScanCode)),
+            IconButton(
+              icon: const Icon(Icons.close_rounded),
+              onPressed: _stopScan,
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
+        contentPadding: const EdgeInsets.fromLTRB(0, 12, 0, 0),
+        content: SizedBox(
+          width: 280,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
+                child: SizedBox(
+                  width: 280,
+                  height: 260,
+                  child: MobileScanner(
+                    controller: _scanCtrl!,
+                    onDetect: _onDetect,
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: Text(
+                  l.wardLinkScanInstruction,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6)),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        actions: [
+          TextButton(onPressed: _stopScan, child: Text(l.cancel)),
+        ],
+      );
+    }
+
+    // ── QR / loading / error view ──────────────────────────────────────────────
+    Widget body;
+    if (_busy) {
+      body = const Padding(
+        padding: EdgeInsets.symmetric(vertical: 32),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    } else if (_error != null && _qrJson == null) {
+      body = Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Text(_error!, style: TextStyle(color: cs.error), textAlign: TextAlign.center),
+      );
+    } else if (_qrJson == null) {
+      body = const Padding(
+        padding: EdgeInsets.symmetric(vertical: 32),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    } else {
+      body = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            l.wardLinkShowInstruction,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: cs.onSurface.withValues(alpha: 0.7)),
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: QrImageView(
+                data: _qrJson!,
+                version: QrVersions.auto,
+                size: 200,
+                backgroundColor: Colors.white,
+                eyeStyle: const QrEyeStyle(
+                    eyeShape: QrEyeShape.square, color: Color(0xFF1A1A1A)),
+                dataModuleStyle: const QrDataModuleStyle(
+                    dataModuleShape: QrDataModuleShape.square,
+                    color: Color(0xFF1A1A1A)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(Icons.lock_outline_rounded, size: 13, color: cs.primary),
+              const SizedBox(width: 5),
+              Text(
+                l.wardLinkE2E,
+                style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.5)),
+              ),
+            ],
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!, style: TextStyle(color: cs.error, fontSize: 12), textAlign: TextAlign.center),
+          ],
+        ],
+      );
+    }
+
+    return AlertDialog(
+      titlePadding: const EdgeInsets.fromLTRB(20, 16, 8, 0),
+      title: Row(
+        children: [
+          Expanded(child: Text(l.wardLinkPairTitle)),
+          IconButton(
+            icon: const Icon(Icons.close_rounded),
+            onPressed: () => Navigator.pop(context),
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+      contentPadding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+      content: SizedBox(width: 280, child: body),
+      actions: [
+        if (_isMobile && _qrJson != null && !_busy)
+          FilledButton.icon(
+            icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
+            label: Text(l.wardLinkScanCode),
+            onPressed: _startScan,
+          ),
+      ],
+    );
+  }
+}
+
+// ── Migration blocking dialog ─────────────────────────────────────────────────
+//
+// [targetPath] == null  →  "reset to defaults" (just clears the bootstrap config)
+// [targetPath] != null  →  full migration to the given directory
+
+class _MigrationDialog extends StatefulWidget {
+  final String? targetPath;
+  const _MigrationDialog({required this.targetPath});
+
+  @override
+  State<_MigrationDialog> createState() => _MigrationDialogState();
+}
+
+class _MigrationDialogState extends State<_MigrationDialog> {
+  bool   _done  = false;
+  bool   _error = false;
+  String _step  = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _run();
+  }
+
+  Future<void> _run() async {
+    final l = AppLocalizations.of(context);
+    try {
+      if (widget.targetPath == null) {
+        _setStep(l.appDataMigrating);
+        await OnyxBaseDir.setCustomBase(null);
+      } else {
+        // Capture old base path before migration so we can rewrite avatar paths.
+        final oldBase = (await OnyxBaseDir.supportDir()).path;
+
+        await OnyxBaseDir.migrate(
+          widget.targetPath!,
+          onStep: (s) => _setStep(s),
+        );
+
+        // Rewrite absolute avatarPaths in all favorites_* keys.
+        _setStep('Updating avatar paths…');
+        await _rewriteFavoriteAvatarPaths(oldBase, widget.targetPath!);
+
+        // Refresh the settings backup so it contains the updated avatar paths.
+        final prefs = await SharedPreferences.getInstance();
+        await SettingsBackup.save(prefs);
+      }
+      if (mounted) setState(() { _done = true; _step = l.appDataRestartRequired; });
+    } catch (e) {
+      if (mounted) setState(() { _done = true; _error = true; _step = '${l.appDataMigrateError}: $e'; });
+    }
+  }
+
+  /// Replaces [oldBase] with [newBase] in every avatarPath stored inside
+  /// favorites_* and fav_structure_* SharedPreferences keys.
+  static Future<void> _rewriteFavoriteAvatarPaths(
+      String oldBase, String newBase) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final oldNorm = oldBase.replaceAll('\\', '/');
+      final newNorm = newBase.replaceAll('\\', '/');
+
+      for (final key in prefs.getKeys()) {
+        if (!key.startsWith('favorites_')) continue;
+        final raw = prefs.getString(key);
+        if (raw == null) continue;
+        try {
+          final list = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+          bool changed = false;
+          final updated = list.map((fav) {
+            final ap = fav['avatarPath'] as String?;
+            if (ap == null) return fav;
+            final apNorm = ap.replaceAll('\\', '/');
+            if (!apNorm.startsWith(oldNorm)) return fav;
+            final newAp = newNorm + apNorm.substring(oldNorm.length);
+            // Preserve original path separator style on Windows.
+            final finalAp = Platform.isWindows
+                ? newAp.replaceAll('/', '\\')
+                : newAp;
+            changed = true;
+            return {...fav, 'avatarPath': finalAp};
+          }).toList();
+          if (changed) {
+            await prefs.setString(key, jsonEncode(updated));
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  void _setStep(String s) {
+    if (mounted) setState(() => _step = s);
+  }
+
+  void _restart() {
+    try {
+      final exe = Platform.resolvedExecutable;
+      Process.start(exe, [], mode: ProcessStartMode.detached);
+    } catch (_) {}
+    exit(0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l  = AppLocalizations.of(context);
+    final cs = Theme.of(context).colorScheme;
+
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        title: Text(l.appDataTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (!_done) ...[
+              const Center(child: CircularProgressIndicator()),
+              const SizedBox(height: 16),
+              Text(l.appDataMigrating,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+            ] else ...[
+              Icon(
+                _error ? Icons.error_outline_rounded : Icons.check_circle_outline_rounded,
+                color: _error ? cs.error : Colors.green,
+                size: 32,
+              ),
+              const SizedBox(height: 8),
+            ],
+            if (_step.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(_step,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _error && _done
+                        ? cs.error
+                        : cs.onSurface.withValues(alpha: 0.7),
+                  )),
+            ],
+          ],
+        ),
+        actions: _done
+            ? [
+                FilledButton.icon(
+                  onPressed: _restart,
+                  icon: const Icon(Icons.restart_alt_rounded),
+                  label: Text(l.appDataRestart),
+                ),
+              ]
+            : const [],
+      ),
+    );
+  }
+}
 
 // ── Video preview for wallpaper settings ─────────────────────────────────────
 
@@ -4529,7 +5953,7 @@ class _PresetsSheetState extends State<_PresetsSheet> {
     String? stableWallpaper;
     String? stableVideo;
     try {
-      final dir = await getApplicationSupportDirectory();
+      final dir = await getOnyxSupportDirectory();
       final wpDir = Directory('${dir.path}/preset_wallpapers');
       await wpDir.create(recursive: true);
 
@@ -4976,4 +6400,972 @@ class _LiquidToggleItem extends _LiquidItem {
   final String description;
   final ValueNotifier<bool> listenable;
   final Future<void> Function(bool) onChanged;
+}
+
+// ── Backup section ────────────────────────────────────────────────────────────
+
+class _BackupSection extends StatefulWidget {
+  const _BackupSection();
+
+  @override
+  State<_BackupSection> createState() => _BackupSectionState();
+}
+
+class _BackupSectionState extends State<_BackupSection>
+    with SingleTickerProviderStateMixin {
+  BackupOptions _opts = const BackupOptions();
+  BackupFrequency _freq = BackupFrequency.monthly;
+  DateTime? _lastAuto;
+  String _dir = '';
+  bool _busy = false;
+  double _progress = 0;
+  String _label = '';
+  BackupCancelToken? _cancelToken;
+
+  // Vertical reveal so the section grows open like the others (the parent's
+  // AnimatedSize alone doesn't animate this async-built child cleanly).
+  late final AnimationController _reveal;
+
+  @override
+  void initState() {
+    super.initState();
+    _reveal = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    )..forward();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _reveal.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final opts = await BackupService.loadOptions();
+    final freq = await BackupService.loadFrequency();
+    final last = await BackupService.lastAutoBackup();
+    final dir = await BackupService.backupDir();
+    if (!mounted) return;
+    setState(() {
+      _opts = opts;
+      _freq = freq;
+      _lastAuto = last;
+      _dir = dir;
+    });
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    final root = rootScreenKey.currentState;
+    if (root != null) {
+      root.showSnack(msg);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  Future<void> _updateOpts(BackupOptions o) async {
+    setState(() => _opts = o);
+    await BackupService.saveOptions(o);
+  }
+
+  Future<void> _export() async {
+    final l = AppLocalizations.of(context);
+    final root = rootScreenKey.currentState;
+    final username = root?.currentUsername;
+    if (username == null) {
+      _snack(l.backupNoAccount);
+      return;
+    }
+    if (!_opts.favorites && !_opts.personal) {
+      _snack(l.backupSelectScope);
+      return;
+    }
+    if (Platform.isAndroid) {
+      final granted = await _ensureAndroidStoragePermission();
+      if (!granted) {
+        _snack(l.backupNoPermission);
+        return;
+      }
+    }
+    String? dir;
+    if (!Platform.isAndroid) {
+      dir = await FilePicker.platform.getDirectoryPath(dialogTitle: l.backupExport);
+    }
+    dir ??= await BackupService.backupDir();
+    await Directory(dir).create(recursive: true);
+    final ts = DateTime.now().toIso8601String().replaceAll(RegExp(r'[:.\-]'), '');
+    final dest = p.join(dir, 'onyx_backup_$ts.zip');
+    final token = BackupCancelToken();
+    setState(() {
+      _busy = true;
+      _progress = 0;
+      _label = l.backupInProgress;
+      _cancelToken = token;
+    });
+    try {
+      await BackupService.export(
+        username: username,
+        chats: root!.chats,
+        opts: _opts,
+        destPath: dest,
+        cancelToken: token,
+        onProgress: (pr, label) {
+          if (mounted) setState(() { _progress = pr; _label = label; });
+        },
+      );
+      _snack('${l.backupExport}: $dest');
+    } on BackupCancelledException {
+      try { await File(dest).delete(); } catch (_) {}
+      _snack(l.cancelled);
+    } catch (e) {
+      _snack('${l.error}: $e');
+    } finally {
+      if (mounted) setState(() { _busy = false; _cancelToken = null; });
+    }
+  }
+
+  Future<void> _restore() async {
+    final l = AppLocalizations.of(context);
+    final root = rootScreenKey.currentState;
+    final username = root?.currentUsername;
+    if (username == null) {
+      _snack(l.backupNoAccount);
+      return;
+    }
+    final res = await FilePicker.platform
+        .pickFiles(type: FileType.custom, allowedExtensions: ['zip']);
+    final path = res?.files.single.path;
+    if (path == null) return;
+
+    final manifest = await BackupService.peekManifest(path);
+    if (!mounted) return;
+    final created = manifest?['createdAt']?.toString();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l.backupRestoreConfirmTitle),
+        content: Text(
+            '${l.backupRestoreConfirmBody}${created != null ? '\n\n($created)' : ''}'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false), child: Text(l.cancel)),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(l.backupRestore)),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    try {
+      setState(() {
+        _busy = true;
+        _progress = 0;
+        _label = l.backupRestoring;
+      });
+      final r = await BackupService.import(
+        path,
+        username: username,
+        onProgress: (pr, label) {
+          if (mounted) {
+            setState(() {
+              _progress = pr;
+              _label = label;
+            });
+          }
+        },
+      );
+      _snack('${l.backupRestore}: ${r.chats} chats, ${r.messages} msgs, '
+          '${r.mediaFiles} media. ${l.backupRestartHint}');
+    } catch (e) {
+      _snack('${l.error}: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _changeFolder() async {
+    final l = AppLocalizations.of(context);
+    final raw = await FilePicker.platform.getDirectoryPath();
+    if (raw == null) return;
+    final resolved = Platform.isAndroid ? _resolveAndroidSafPath(raw) : raw;
+    if (resolved == null) {
+      _snack(l.backupFolderUnsupported);
+      return;
+    }
+    await BackupService.setBackupDir(resolved);
+    await _load();
+  }
+
+  /// Converts an Android SAF content URI to a real filesystem path.
+  /// Works for primary/internal storage only.
+  /// Example: content://com.android.externalstorage.documents/tree/primary%3ADownload%2FMyFolder
+  ///       → /storage/emulated/0/Download/MyFolder
+  static String? _resolveAndroidSafPath(String raw) {
+    if (!raw.startsWith('content://')) return raw;
+    try {
+      final uri = Uri.parse(raw);
+      final segments = uri.pathSegments; // already percent-decoded by Dart
+      // Expect ['tree', 'primary:relative/path'] or ['tree', 'primary:']
+      if (segments.length >= 2 && segments[0] == 'tree') {
+        final treeId = segments[1];
+        if (treeId.startsWith('primary:')) {
+          final rel = treeId.substring('primary:'.length);
+          return rel.isEmpty
+              ? '/storage/emulated/0'
+              : '/storage/emulated/0/$rel';
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _setFreq(BackupFrequency f) async {
+    setState(() => _freq = f);
+    await BackupService.saveFrequency(f);
+  }
+
+  Future<bool> _ensureAndroidStoragePermission() async {
+    if (!Platform.isAndroid) return true;
+    if (await Permission.manageExternalStorage.isGranted) return true;
+    await Permission.manageExternalStorage.request();
+    return Permission.manageExternalStorage.isGranted;
+  }
+
+  Future<void> _openBackupFolder() async {
+    final errorPrefix = AppLocalizations.of(context).error;
+    try {
+      await Directory(_dir).create(recursive: true);
+      if (Platform.isAndroid) {
+        const storageRoot = '/storage/emulated/0/';
+        if (_dir.startsWith(storageRoot)) {
+          final rel = _dir.substring(storageRoot.length);
+          final enc = Uri.encodeComponent(rel);
+          final uri = Uri.parse(
+              'content://com.android.externalstorage.documents/document/primary%3A$enc');
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+          return;
+        }
+      }
+      await launchUrl(Uri.file(_dir), mode: LaunchMode.externalApplication);
+    } catch (e) {
+      _snack('$errorPrefix: $e');
+    }
+  }
+
+  BackupOptions _copy({
+    bool? favorites,
+    bool? personal,
+    bool? includeMedia,
+    bool? mediaImages,
+    bool? mediaVideos,
+    bool? mediaVoice,
+    bool? mediaOther,
+  }) =>
+      BackupOptions(
+        favorites: favorites ?? _opts.favorites,
+        personal: personal ?? _opts.personal,
+        includeMedia: includeMedia ?? _opts.includeMedia,
+        mediaImages: mediaImages ?? _opts.mediaImages,
+        mediaVideos: mediaVideos ?? _opts.mediaVideos,
+        mediaVoice: mediaVoice ?? _opts.mediaVoice,
+        mediaOther: mediaOther ?? _opts.mediaOther,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
+
+    String freqLabel(BackupFrequency f) => switch (f) {
+          BackupFrequency.off => l.backupFreqOff,
+          BackupFrequency.daily => l.backupFreqDaily,
+          BackupFrequency.weekly => l.backupFreqWeekly,
+          BackupFrequency.monthly => l.backupFreqMonthly,
+        };
+
+    Widget check(String title, bool value, ValueChanged<bool> onChanged,
+            {bool dense = false}) =>
+        CheckboxListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: dense,
+          controlAffinity: ListTileControlAffinity.leading,
+          title: Text(title, style: TextStyle(fontSize: dense ? 13 : 14)),
+          value: value,
+          onChanged: _busy ? null : (v) => onChanged(v ?? false),
+        );
+
+    Widget group(IconData icon, String title, List<Widget> children) =>
+        Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(top: 12),
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 15, color: cs.primary),
+                  const SizedBox(width: 8),
+                  Text(title,
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                          color: cs.primary)),
+                ],
+              ),
+              const SizedBox(height: 2),
+              ...children,
+            ],
+          ),
+        );
+
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_busy)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(_label,
+                          style: TextStyle(fontSize: 12, color: cs.primary)),
+                    ),
+                    if (_cancelToken != null)
+                      GestureDetector(
+                        onTap: () => _cancelToken?.cancel(),
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Icon(Icons.cancel_outlined,
+                              size: 18, color: cs.error),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                      minHeight: 6,
+                      value: _progress == 0 ? null : _progress),
+                ),
+              ],
+            ),
+          ),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _busy ? null : _export,
+            style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14)),
+            icon: const Icon(Icons.save_rounded, size: 18),
+            label: Text(l.backupExport),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.tonalIcon(
+            onPressed: _busy ? null : _restore,
+            style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14)),
+            icon: const Icon(Icons.restore_rounded, size: 18),
+            label: Text(l.backupRestore),
+          ),
+        ),
+        group(Icons.inventory_2_rounded, l.backupScope, [
+          check(l.backupFavorites, _opts.favorites,
+              (v) => _updateOpts(_copy(favorites: v))),
+          check(l.backupPersonal, _opts.personal,
+              (v) => _updateOpts(_copy(personal: v))),
+          check(l.backupIncludeMedia, _opts.includeMedia,
+              (v) => _updateOpts(_copy(includeMedia: v))),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            child: _opts.includeMedia
+                ? Padding(
+                    padding: const EdgeInsets.only(left: 16),
+                    child: Column(
+                      children: [
+                        check(l.backupMediaImages, _opts.mediaImages,
+                            (v) => _updateOpts(_copy(mediaImages: v)),
+                            dense: true),
+                        check(l.backupMediaVideos, _opts.mediaVideos,
+                            (v) => _updateOpts(_copy(mediaVideos: v)),
+                            dense: true),
+                        check(l.backupMediaVoice, _opts.mediaVoice,
+                            (v) => _updateOpts(_copy(mediaVoice: v)),
+                            dense: true),
+                        check(l.backupMediaOther, _opts.mediaOther,
+                            (v) => _updateOpts(_copy(mediaOther: v)),
+                            dense: true),
+                      ],
+                    ),
+                  )
+                : const SizedBox(width: double.infinity),
+          ),
+        ]),
+        group(Icons.schedule_rounded, l.backupSchedule, [
+          const SizedBox(height: 6),
+          DropdownButton<BackupFrequency>(
+            value: _freq,
+            isExpanded: true,
+            onChanged: _busy ? null : (f) { if (f != null) _setFreq(f); },
+            items: BackupFrequency.values
+                .map((f) => DropdownMenuItem(
+                      value: f,
+                      child: Text(freqLabel(f)),
+                    ))
+                .toList(),
+          ),
+          const SizedBox(height: 10),
+          Text('${l.backupFolder}:\n$_dir',
+              style: TextStyle(
+                  fontSize: 11, color: cs.onSurface.withValues(alpha: 0.6))),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _backupActionButton(
+                icon: Icons.folder_open_rounded,
+                label: l.backupOpenFolder,
+                onPressed: _busy ? null : _openBackupFolder,
+              ),
+              _backupActionButton(
+                icon: Icons.edit_rounded,
+                label: l.backupChangeFolder,
+                onPressed: _busy ? null : _changeFolder,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${l.backupLastAuto}: ${_lastAuto != null ? _lastAuto!.toLocal().toString().split('.').first : l.backupNever}',
+            style: TextStyle(
+                fontSize: 11, color: cs.onSurface.withValues(alpha: 0.6)),
+          ),
+        ]),
+      ],
+    );
+
+    return SizeTransition(
+      sizeFactor: CurvedAnimation(parent: _reveal, curve: Curves.easeOut),
+      axisAlignment: -1.0,
+      child: content,
+    );
+  }
+
+  // Mirrors _SettingsTabState._buildAppleButton so backup actions match the
+  // pill-button style used for wallpaper/preset actions elsewhere in Settings.
+  Widget _backupActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onPressed,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    final color = cs.onSurface.withValues(alpha: 0.85);
+    final bgColor = cs.surfaceContainerHighest.withValues(alpha: 0.55);
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onPressed,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(50),
+            border: Border.all(
+              color: cs.outlineVariant.withValues(alpha: 0.22),
+              width: 0.8,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                  letterSpacing: -0.1,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Trash section ─────────────────────────────────────────────────────────────
+
+class _RecycleBinSection extends StatefulWidget {
+  const _RecycleBinSection();
+
+  @override
+  State<_RecycleBinSection> createState() => _RecycleBinSectionState();
+}
+
+class _RecycleBinSectionState extends State<_RecycleBinSection> {
+  bool _busy = false;
+  final Map<String, bool> _expandedSubsections = {};
+
+  Widget _buildSubSection({
+    required String key,
+    required String title,
+    required String subtitle,
+    required Widget expandedContent,
+    IconData? icon,
+  }) {
+    final isExpanded = _expandedSubsections[key] ?? false;
+    final cs = Theme.of(context).colorScheme;
+    return AdaptiveGlassCard(
+      borderRadius: 12,
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => setState(() => _expandedSubsections[key] = !isExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  if (icon != null) ...[
+                    Icon(icon, size: 16, color: cs.primary),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: cs.onSurface)),
+                        const SizedBox(height: 2),
+                        Text(subtitle, style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.55))),
+                      ],
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: isExpanded ? 0.5 : 0.0,
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeInOut,
+                    child: Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: cs.onSurface.withValues(alpha: 0.45)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          ClipRect(
+            child: AnimatedAlign(
+              alignment: Alignment.topCenter,
+              heightFactor: isExpanded ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeInOut,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                child: expandedContent,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    final root = rootScreenKey.currentState;
+    if (root != null) {
+      root.showSnack(msg);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  Future<void> _applyPending(PendingBulkDelete req) async {
+    setState(() => _busy = true);
+    try {
+      final taken = await WardLinkPendingDeletions.take(req.peerPub);
+      if (taken != null) {
+        await WardLinkTombstones.recordFavs(taken.favs);
+        rootScreenKey.currentState
+            ?.applyRemoteDeletions(taken.favs.keys.toSet(), const {});
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _keepPending(PendingBulkDelete req) async {
+    setState(() => _busy = true);
+    try {
+      await WardLinkPendingDeletions.keep(req.peerPub);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _resetTombstones() async {
+    final l = AppLocalizations.of(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l.recycleBinResetTitle),
+        content: Text(l.recycleBinResetConfirm),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false), child: Text(l.cancel)),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(l.recycleBinResetButton)),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _busy = true);
+    try {
+      await WardLinkTombstones.clearAll();
+      await WardLinkPendingDeletions.clearKept();
+      _snack(l.recycleBinResetDone);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _restoreChat(TrashedChat chat) {
+    rootScreenKey.currentState?.restoreDeletedChat(chat);
+    _snack('Chat "${chat.displayName}" restored');
+  }
+
+  void _restoreMessage(TrashedMessage item) {
+    rootScreenKey.currentState?.restoreDeletedMessage(item);
+    _snack('Message restored');
+  }
+
+  void _permanentlyDeleteChat(BuildContext ctx, TrashedChat chat) {
+    showDialog(
+      context: ctx,
+      builder: (dlgCtx) => AlertDialog(
+        title: const Text('Delete permanently?'),
+        content: Text('Remove "${chat.displayName}" from Trash forever?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dlgCtx),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () {
+                Navigator.pop(dlgCtx);
+                TrashManager.instance.permanentlyDeleteChat(chat.id);
+              },
+              child: const Text('Delete', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+  }
+
+  void _permanentlyDeleteMessage(BuildContext ctx, TrashedMessage item) {
+    showDialog(
+      context: ctx,
+      builder: (dlgCtx) => AlertDialog(
+        title: const Text('Delete permanently?'),
+        content: const Text('Remove this message from Trash forever?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dlgCtx),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () {
+                Navigator.pop(dlgCtx);
+                TrashManager.instance.permanentlyDeleteMessage(item.id);
+              },
+              child: const Text('Delete', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+  }
+
+  String _ago(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+    if (diff.inDays < 1) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${dt.day}.${dt.month.toString().padLeft(2, '0')}.${dt.year}';
+  }
+
+  Widget _chatTypeIcon(TrashedChatType type, ColorScheme cs) {
+    final icon = switch (type) {
+      TrashedChatType.group    => Icons.group,
+      TrashedChatType.favorite => Icons.bookmark,
+      TrashedChatType.dm       => Icons.person,
+    };
+    return CircleAvatar(
+      radius: 16,
+      backgroundColor: cs.surfaceContainerHighest,
+      child: Icon(icon, size: 16, color: cs.onSurfaceVariant),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSubSection(
+          key: 'trash_chats',
+          title: 'Deleted Chats',
+          subtitle: 'Restore or permanently delete chats',
+          icon: Icons.chat_bubble_outline_rounded,
+          expandedContent: ValueListenableBuilder<int>(
+            valueListenable: TrashManager.instance.chatsNotifier,
+            builder: (_, __, ___) {
+              final chats = TrashManager.instance.deletedChats;
+              if (chats.isEmpty) {
+                return Row(
+                  children: [
+                    Icon(Icons.check_circle_outline_rounded, size: 16, color: cs.primary),
+                    const SizedBox(width: 8),
+                    Text('No deleted chats',
+                        style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
+                  ],
+                );
+              }
+              return Column(
+                children: chats.map((chat) => Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      _chatTypeIcon(chat.type, cs),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(chat.displayName, maxLines: 1, overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                            Text('${chat.messages.length} msg · ${_ago(chat.deletedAt)}',
+                                style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.55))),
+                          ],
+                        ),
+                      ),
+                      if (chat.type != TrashedChatType.group)
+                        IconButton(
+                          icon: Icon(Icons.restore_rounded, size: 20, color: cs.primary),
+                          tooltip: 'Restore',
+                          onPressed: () => _restoreChat(chat),
+                        ),
+                      IconButton(
+                        icon: Icon(Icons.delete_forever_rounded, size: 20, color: cs.error),
+                        tooltip: 'Delete permanently',
+                        onPressed: () => _permanentlyDeleteChat(context, chat),
+                      ),
+                    ],
+                  ),
+                )).toList(),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildSubSection(
+          key: 'trash_messages',
+          title: 'Deleted Messages',
+          subtitle: 'Restore or permanently delete messages',
+          icon: Icons.message_outlined,
+          expandedContent: ValueListenableBuilder<int>(
+            valueListenable: TrashManager.instance.messagesNotifier,
+            builder: (_, __, ___) {
+              final messages = TrashManager.instance.deletedMessages;
+              if (messages.isEmpty) {
+                return Row(
+                  children: [
+                    Icon(Icons.check_circle_outline_rounded, size: 16, color: cs.primary),
+                    const SizedBox(width: 8),
+                    Text('No deleted messages',
+                        style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
+                  ],
+                );
+              }
+              return Column(
+                children: messages.map((item) => Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 16,
+                        backgroundColor: cs.surfaceContainerHighest,
+                        child: Icon(Icons.message_rounded, size: 16, color: cs.onSurfaceVariant),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item.chatDisplayName, maxLines: 1, overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+                            Text(item.message.content, maxLines: 2, overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.7))),
+                            Text(_ago(item.deletedAt),
+                                style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.45))),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.restore_rounded, size: 20, color: cs.primary),
+                        tooltip: 'Restore',
+                        onPressed: () => _restoreMessage(item),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.delete_forever_rounded, size: 20, color: cs.error),
+                        tooltip: 'Delete permanently',
+                        onPressed: () => _permanentlyDeleteMessage(context, item),
+                      ),
+                    ],
+                  ),
+                )).toList(),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildSubSection(
+          key: 'trash_settings',
+          title: 'Auto-clean & Sync',
+          subtitle: 'Auto-delete schedule, pending WardLink deletions and tombstone reset',
+          icon: Icons.auto_delete_rounded,
+          expandedContent: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Auto-clean', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const SizedBox(height: 4),
+              Text('Items in Trash are automatically deleted after the selected period.',
+                  style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
+              const SizedBox(height: 10),
+              ValueListenableBuilder<int>(
+                valueListenable: TrashManager.autoCleanDays,
+                builder: (_, days, __) {
+                  const options = [
+                    (0, 'Never'), (7, '7 days'), (14, '14 days'),
+                    (30, '30 days'), (60, '60 days'), (90, '90 days'),
+                  ];
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: cs.outline.withValues(alpha: 0.3)),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: DropdownButton<int>(
+                      value: days,
+                      isExpanded: true,
+                      underline: const SizedBox.shrink(),
+                      items: options.map((o) => DropdownMenuItem(value: o.$1, child: Text(o.$2))).toList(),
+                      onChanged: (v) { if (v != null) TrashManager.setAutoCleanDays(v); },
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              Text(l.recycleBinPendingTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<List<PendingBulkDelete>>(
+                valueListenable: WardLinkPendingDeletions.pending,
+                builder: (_, pending, __) {
+                  if (pending.isEmpty) {
+                    return Row(
+                      children: [
+                        Icon(Icons.check_circle_outline_rounded, size: 16, color: cs.primary),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(l.recycleBinNoPending,
+                            style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6)))),
+                      ],
+                    );
+                  }
+                  return Column(
+                    children: pending.map((req) => Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: cs.errorContainer.withValues(alpha: 0.25),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: cs.error.withValues(alpha: 0.3)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.warning_amber_rounded, size: 18, color: cs.error),
+                              const SizedBox(width: 8),
+                              Expanded(child: Text(l.recycleBinPendingDesc(req.peerName, req.favs.length),
+                                  style: const TextStyle(fontSize: 13))),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              TextButton(
+                                onPressed: _busy ? null : () => _applyPending(req),
+                                child: Text(l.recycleBinApply, style: TextStyle(color: cs.error)),
+                              ),
+                              const SizedBox(width: 8),
+                              FilledButton.tonal(
+                                onPressed: _busy ? null : () => _keepPending(req),
+                                child: Text(l.recycleBinKeep),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    )).toList(),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              Text(l.recycleBinResetTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const SizedBox(height: 4),
+              Text(l.recycleBinResetDesc,
+                  style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
+              const SizedBox(height: 10),
+              FilledButton.tonalIcon(
+                onPressed: _busy ? null : _resetTombstones,
+                icon: const Icon(Icons.restore_from_trash_rounded, size: 18),
+                label: Text(l.recycleBinResetButton),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
