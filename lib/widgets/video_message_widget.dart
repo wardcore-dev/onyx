@@ -19,6 +19,7 @@ import '../managers/settings_manager.dart';
 import '../l10n/app_localizations.dart';
 import '../globals.dart';
 import '../utils/blurhash_cache.dart';
+import '../utils/wallpaper_util.dart';
 import 'package:flutter_blurhash/flutter_blurhash.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
@@ -260,7 +261,12 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
 
       File? cachedFile;
 
-      if (widget.filename.startsWith('lan://')) {
+      if (widget.filename.startsWith('file://')) {
+        cachedFile = File(widget.filename.substring(7));
+        if (!(await cachedFile.exists())) {
+          throw Exception('Mesh file not found: ${widget.filename}');
+        }
+      } else if (widget.filename.startsWith('lan://')) {
         final lanFilename = widget.filename.substring(6);
         final appDocuments = await getOnyxDocumentsDirectory();
         cachedFile = File('${appDocuments.path}/lan_media/$lanFilename');
@@ -505,6 +511,151 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
     }
   }
 
+  Future<void> _saveCurrentFrameWithState() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    await _saveCurrentFrame();
+    if (mounted) setState(() => _saving = false);
+  }
+
+  /// Captures the currently displayed video frame via the player's
+  /// screenshot API and saves it like a regular image.
+  Future<void> _saveCurrentFrame() async {
+    if (_player == null) {
+      rootScreenKey.currentState?.showSnack('Video not playing');
+      return;
+    }
+    try {
+      final bytes = await _player!.screenshot();
+      if (bytes == null || bytes.isEmpty) {
+        rootScreenKey.currentState?.showSnack('Failed to capture frame');
+        return;
+      }
+      final filename = 'frame_${DateTime.now().millisecondsSinceEpoch}.png';
+
+      if (!kIsWeb &&
+          (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+        String? destPath;
+        var dialogSupported = true;
+        try {
+          destPath = await FilePicker.platform.saveFile(
+            dialogTitle: 'Save frame as',
+            fileName: filename,
+            type: FileType.custom,
+            allowedExtensions: ['png'],
+          );
+        } catch (e) {
+          dialogSupported = false;
+          destPath = null;
+        }
+        if (destPath == null || destPath.isEmpty) {
+          if (dialogSupported) {
+            rootScreenKey.currentState?.showSnack('Save cancelled');
+            return;
+          }
+          final onyxDir = await getOnyxSaveDirectory();
+          if (onyxDir == null) {
+            rootScreenKey.currentState
+                ?.showSnack('Cannot access save directory');
+            return;
+          }
+          destPath = '${onyxDir.path}/$filename';
+        }
+        await File(destPath).writeAsBytes(bytes);
+        rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+        return;
+      }
+
+      if (kIsWeb) {
+        rootScreenKey.currentState
+            ?.showSnack('Save not supported on web');
+        return;
+      }
+
+      if (Platform.isAndroid || Platform.isIOS) {
+        final tempDir = await getOnyxSupportDirectory();
+        final tempFile = File('${tempDir.path}/$filename');
+        await tempFile.writeAsBytes(bytes);
+        final saved =
+            await GallerySaver.saveImage(tempFile.path, albumName: 'ONYX');
+        if (saved == true) {
+          rootScreenKey.currentState?.showSnack('Frame saved to gallery');
+        } else {
+          rootScreenKey.currentState?.showSnack('Failed to save frame');
+        }
+        return;
+      }
+
+      final onyxDir = await getOnyxSaveDirectory();
+      if (onyxDir == null) {
+        rootScreenKey.currentState?.showSnack('Cannot access save directory');
+        return;
+      }
+      final savedFile = File('${onyxDir.path}/$filename');
+      await savedFile.writeAsBytes(bytes);
+      rootScreenKey.currentState?.showSnack('Saved to: ${savedFile.path}');
+    } catch (e, st) {
+      debugPrint(' _saveCurrentFrame error: $e\n$st');
+      rootScreenKey.currentState?.showSnack(' Save frame failed: $e');
+    }
+  }
+
+  Future<void> _setVideoAsWallpaper() async {
+    if (_cachedFile == null || !await _cachedFile!.exists()) {
+      rootScreenKey.currentState?.showSnack('Video not available');
+      return;
+    }
+    try {
+      await setFileAsChatWallpaper(_cachedFile!, isVideo: true);
+      rootScreenKey.currentState?.showSnack('Video wallpaper set');
+    } catch (e) {
+      rootScreenKey.currentState?.showSnack('Failed to set wallpaper: $e');
+    }
+  }
+
+  /// Three-dot menu (Download / Save current frame / Set as wallpaper) shown
+  /// while the video is fullscreen — a persistent top-right button like
+  /// every other messenger's fullscreen media viewer, NOT wired through
+  /// media_kit's `topButtonBar`.
+  ///
+  /// `topButtonBar` lives inside the player's auto-hiding controls layer:
+  /// the same tap that opened our menu was also seen by the video's own
+  /// tap-to-toggle-controls handler underneath, hiding (unmounting) the
+  /// whole control bar — and with it our just-opened menu — causing it to
+  /// flash open and immediately vanish. Inserting our own [OverlayEntry]
+  /// directly via [onEnterFullscreen]/[onExitFullscreen] keeps the button
+  /// completely independent of that auto-hide timer.
+  OverlayEntry? _fullscreenMenuEntry;
+
+  void _showFullscreenMenuOverlay() {
+    if (!mounted) return;
+    _fullscreenMenuEntry?.remove();
+    final overlay = Overlay.of(context, rootOverlay: true);
+    final entry = OverlayEntry(
+      builder: (_) => Positioned(
+        top: 0,
+        right: 0,
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: _VideoFullscreenMenuButton(
+              onDownload: _saveVideoWithState,
+              onSaveFrame: _saveCurrentFrameWithState,
+              onSetWallpaper: _setVideoAsWallpaper,
+            ),
+          ),
+        ),
+      ),
+    );
+    _fullscreenMenuEntry = entry;
+    overlay.insert(entry);
+  }
+
+  void _hideFullscreenMenuOverlay() {
+    _fullscreenMenuEntry?.remove();
+    _fullscreenMenuEntry = null;
+  }
+
   void _resetAndRetry() {
     // Remove from global cache so _initPlayer does a fresh cold init
     final removed = _globalPlayerCache.remove(widget.filename);
@@ -530,6 +681,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
 
   @override
   void dispose() {
+    _hideFullscreenMenuOverlay();
     _videoParamsSub?.cancel();
     _videoParamsSub = null;
     // Pause before releasing — player stays alive in cache but shouldn't play
@@ -752,6 +904,17 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
         child: Video(
           controller: _videoController!,
           controls: MaterialDesktopVideoControls,
+          // Desktop has no built-in onEnterFullscreen override elsewhere, so
+          // we must still call the package default (native OS window
+          // fullscreen) ourselves alongside showing our persistent menu.
+          onEnterFullscreen: () async {
+            await defaultEnterNativeFullscreen();
+            _showFullscreenMenuOverlay();
+          },
+          onExitFullscreen: () async {
+            _hideFullscreenMenuOverlay();
+            await defaultExitNativeFullscreen();
+          },
         ),
       );
     } else {
@@ -776,8 +939,10 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
               overlays: [],
             );
             // No setPreferredOrientations call → system auto-rotate stays active
+            _showFullscreenMenuOverlay();
           },
           onExitFullscreen: () async {
+            _hideFullscreenMenuOverlay();
             _player?.pause();
             await SystemChrome.setEnabledSystemUIMode(
               SystemUiMode.manual,
@@ -810,39 +975,10 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
             child: Stack(
               children: [
                 AbsorbPointer(absorbing: _suppressHover, child: videoWithTheme),
-                // Save button — top right corner
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(20),
-                      onTap: _saveVideoWithState,
-                      child: Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.45),
-                          shape: BoxShape.circle,
-                        ),
-                        child: _saving
-                            ? const Padding(
-                                padding: EdgeInsets.all(7),
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(
-                                Icons.download_rounded,
-                                size: 18,
-                                color: Colors.white,
-                              ),
-                      ),
-                    ),
-                  ),
-                ),
+                // No always-visible save button here — Download / Save frame /
+                // Set as wallpaper now live in the fullscreen controls' menu
+                // (see _buildFullscreenMenuButton), so the inline bubble stays
+                // clean and the actions only show once the user opens fullscreen.
                 // Mobile only: GestureDetector that claims vertical drags
                 // so they scroll the chat instead of triggering video
                 // controls. Taps are not handled here, so they pass through
@@ -865,6 +1001,139 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Self-contained three-dot menu for the fullscreen video controls. Must own
+/// its own State (rather than reading state from the outer
+/// [_VideoMessageWidgetState]) because media_kit snapshots `topButtonBar`'s
+/// widget instances into the fullscreen route once, at the moment fullscreen
+/// is entered — only a widget that manages its own open/closed flag keeps
+/// responding to taps after that snapshot is taken.
+class _VideoFullscreenMenuButton extends StatefulWidget {
+  final VoidCallback onDownload;
+  final VoidCallback onSaveFrame;
+  final VoidCallback onSetWallpaper;
+
+  const _VideoFullscreenMenuButton({
+    required this.onDownload,
+    required this.onSaveFrame,
+    required this.onSetWallpaper,
+  });
+
+  @override
+  State<_VideoFullscreenMenuButton> createState() =>
+      _VideoFullscreenMenuButtonState();
+}
+
+class _VideoFullscreenMenuButtonState
+    extends State<_VideoFullscreenMenuButton> {
+  // Renders the dropdown into the app's root Overlay (full-screen sized)
+  // instead of as a Positioned child of a small Stack: a Stack only
+  // hit-tests within its own layout size, so a Positioned child that merely
+  // *paints* outside those bounds via Clip.none is visible but untappable.
+  // OverlayPortal mounts the panel as real Overlay content, sized to the
+  // whole screen, so taps on it hit-test correctly.
+  final _controller = OverlayPortalController();
+  final _layerLink = LayerLink();
+
+  void _select(VoidCallback action) {
+    _controller.hide();
+    action();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CompositedTransformTarget(
+      link: _layerLink,
+      child: OverlayPortal(
+        controller: _controller,
+        overlayLocation: OverlayChildLocation.rootOverlay,
+        overlayChildBuilder: (context) => Stack(
+          children: [
+            // Invisible full-screen barrier — tap outside the panel to close
+            // it. Opaque (not translucent): a translucent barrier let taps
+            // fall through to the video underneath, which toggled
+            // play/pause and the controls' own show/hide timer — fighting
+            // with our menu's visibility and causing it to flicker.
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _controller.hide,
+              ),
+            ),
+            CompositedTransformFollower(
+              link: _layerLink,
+              targetAnchor: Alignment.bottomRight,
+              followerAnchor: Alignment.topRight,
+              showWhenUnlinked: false,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: _buildPanel(),
+              ),
+            ),
+          ],
+        ),
+        child: IconButton(
+          icon: const Icon(Icons.more_vert, color: Colors.white),
+          tooltip: 'More',
+          onPressed: _controller.toggle,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPanel() {
+    final cs = Theme.of(context).colorScheme;
+
+    Widget item(IconData icon, String label, VoidCallback onTap) {
+      return InkWell(
+        onTap: () => _select(onTap),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 20, color: cs.onSurface),
+              const SizedBox(width: 12),
+              Text(
+                label,
+                style: TextStyle(
+                  color: cs.onSurface,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Material(
+      color: cs.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      elevation: 8,
+      child: SizedBox(
+        // Fixed (not just minimum) width — combined with the stretch below,
+        // an unbounded ConstrainedBox(minWidth:...) let the Column expand to
+        // fill the entire screen instead of staying a compact dropdown.
+        width: 240,
+        // stretch so each item's InkWell hover/ripple fills the full panel
+        // width instead of just hugging the icon+text content.
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            item(Icons.download_rounded, 'Download', widget.onDownload),
+            item(Icons.camera_alt_rounded, 'Save current frame',
+                widget.onSaveFrame),
+            item(Icons.wallpaper_rounded, 'Set as wallpaper',
+                widget.onSetWallpaper),
+          ],
         ),
       ),
     );

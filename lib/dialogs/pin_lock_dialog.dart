@@ -1,9 +1,16 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
-    show LogicalKeyboardKey, KeyDownEvent, KeyRepeatEvent;
+    show
+        LogicalKeyboardKey,
+        KeyDownEvent,
+        KeyRepeatEvent,
+        HapticFeedback;
+import '../l10n/app_localizations.dart';
 import '../managers/lock_manager.dart';
+import '../widgets/pin_keypad.dart';
 
 enum PinDialogMode { set, verify }
 
@@ -37,15 +44,17 @@ class _ChatPinScreen extends StatefulWidget {
 }
 
 class _ChatPinScreenState extends State<_ChatPinScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   String _pin = '';
   String _firstPin = '';
   bool _isConfirming = false;
   String _error = '';
   bool _biometricsAvailable = false;
+  // Brief green "confirmed" flash before popping — mirrors pin_code_screen.dart.
+  bool _success = false;
 
+  // Drives the per-dot wave shake on a wrong PIN (see _dotShakeOffset).
   late AnimationController _shakeController;
-  late Animation<double> _shakeAnimation;
   final FocusNode _focusNode = FocusNode();
 
   @override
@@ -53,15 +62,8 @@ class _ChatPinScreenState extends State<_ChatPinScreen>
     super.initState();
     _shakeController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 450),
+      duration: const Duration(milliseconds: 550),
     );
-    _shakeAnimation = TweenSequence<double>([
-      TweenSequenceItem(tween: Tween(begin: 0.0, end: 10.0), weight: 1),
-      TweenSequenceItem(tween: Tween(begin: 10.0, end: -10.0), weight: 2),
-      TweenSequenceItem(tween: Tween(begin: -10.0, end: 10.0), weight: 2),
-      TweenSequenceItem(tween: Tween(begin: 10.0, end: -6.0), weight: 2),
-      TweenSequenceItem(tween: Tween(begin: -6.0, end: 0.0), weight: 1),
-    ]).animate(_shakeController);
 
     if (widget.mode == PinDialogMode.verify) _checkBiometrics();
   }
@@ -117,7 +119,37 @@ class _ChatPinScreenState extends State<_ChatPinScreen>
 
   void _onDelete() {
     if (_pin.isEmpty) return;
-    setState(() => _pin = _pin.substring(0, _pin.length - 1));
+    setState(() {
+      _pin = _pin.substring(0, _pin.length - 1);
+    });
+  }
+
+  Future<void> _succeed() async {
+    HapticFeedback.mediumImpact();
+    setState(() => _success = true);
+    // Long enough for the screen's fly-up launch (see PinRevealSlot) to read
+    // clearly before we pop this screen.
+    await Future.delayed(const Duration(milliseconds: 380));
+    if (!mounted) return;
+    Navigator.of(context).pop(true);
+  }
+
+  void _fail(String message, {bool resetConfirm = false}) {
+    HapticFeedback.heavyImpact();
+    setState(() => _error = message);
+    _shakeController
+      ..reset()
+      ..forward();
+    Future.delayed(const Duration(milliseconds: 550), () {
+      if (!mounted) return;
+      setState(() {
+        _pin = '';
+        if (resetConfirm) {
+          _firstPin = '';
+          _isConfirming = false;
+        }
+      });
+    });
   }
 
   Future<void> _onPinComplete() async {
@@ -131,60 +163,64 @@ class _ChatPinScreenState extends State<_ChatPinScreen>
       } else {
         if (_pin == _firstPin) {
           await LockManager.setPin(widget.chatId, _pin);
-          if (mounted) Navigator.of(context).pop(true);
+          if (mounted) await _succeed();
         } else {
-          _shake();
-          setState(() {
-            _pin = '';
-            _firstPin = '';
-            _isConfirming = false;
-            _error = 'PINs do not match. Try again.';
-          });
+          if (!mounted) return;
+          _fail(AppLocalizations.of(context).pinScreenMismatchError,
+              resetConfirm: true);
         }
       }
     } else {
       if (LockManager.verifyPin(widget.chatId, _pin)) {
         LockManager.sessionUnlock(widget.chatId);
-        if (mounted) Navigator.of(context).pop(true);
+        await _succeed();
       } else {
-        _shake();
-        setState(() {
-          _pin = '';
-          _error = 'Incorrect PIN';
-        });
+        _fail(AppLocalizations.of(context).pinScreenIncorrectError);
       }
     }
   }
 
   Future<void> _tryBiometrics() async {
     final ok = await LockManager.authenticateWithBiometrics();
-    if (ok && mounted) Navigator.of(context).pop(true);
+    if (ok && mounted) {
+      LockManager.sessionUnlock(widget.chatId);
+      await _succeed();
+    }
   }
 
-  void _shake() {
-    _shakeController.reset();
-    _shakeController.forward();
+  // Per-dot phase-shifted decaying wave: dot i starts its shake a little
+  // after dot i-1, so the row ripples left-to-right instead of jerking as a
+  // single rigid block.
+  double _dotShakeOffset(double t, int index) {
+    const perDotDelay = 0.07;
+    final local = (t - index * perDotDelay).clamp(0.0, 1.0);
+    if (local <= 0) return 0;
+    final decay = 1 - local;
+    return math.sin(local * math.pi * 5) * 9 * decay;
   }
 
   String get _title {
+    final l = AppLocalizations.of(context);
     if (widget.mode == PinDialogMode.set) {
-      return _isConfirming ? 'Confirm PIN' : 'Set PIN';
+      return _isConfirming ? l.pinScreenConfirmTitle : l.pinScreenSetTitle;
     }
-    return 'Enter PIN';
+    return l.pinScreenEnterTitle;
   }
 
   String get _subtitle {
+    final l = AppLocalizations.of(context);
     if (widget.mode == PinDialogMode.set) {
       return _isConfirming
-          ? 'Re-enter your PIN to confirm'
-          : 'Choose a 4-digit PIN for this chat';
+          ? l.pinScreenReenterSubtitle
+          : l.pinScreenChooseChatSubtitle;
     }
-    return 'Enter your 4-digit PIN to unlock';
+    return l.pinScreenUnlockSubtitle;
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
     return Focus(
       focusNode: _focusNode,
       autofocus: _isDesktop,
@@ -193,181 +229,218 @@ class _ChatPinScreenState extends State<_ChatPinScreen>
         backgroundColor: cs.surface,
         body: SafeArea(
           child: Column(
-            children: [
-              Align(
-                alignment: Alignment.topRight,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 8, right: 8),
-                  child: TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: const Text('Cancel'),
+              children: [
+                Align(
+                  alignment: Alignment.topRight,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 8, right: 8),
+                    child: TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: Text(l.cancel),
+                    ),
                   ),
                 ),
-              ),
-              Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.lock_rounded, size: 48, color: cs.primary),
-                      const SizedBox(height: 24),
-                      Text(
-                        _title,
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w600,
-                          color: cs.onSurface,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      if (_error.isNotEmpty)
-                        Text(
-                          _error,
-                          style:
-                              const TextStyle(color: Colors.red, fontSize: 13),
-                        )
-                      else
-                        Text(
-                          _subtitle,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: cs.onSurface.withValues(alpha: 0.6),
-                          ),
-                        ),
-                      const SizedBox(height: 40),
-                      AnimatedBuilder(
-                        animation: _shakeAnimation,
-                        builder: (_, child) => Transform.translate(
-                          offset: Offset(_shakeAnimation.value, 0),
-                          child: child,
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: List.generate(4, (i) {
-                            final filled = i < _pin.length;
-                            return AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              margin:
-                                  const EdgeInsets.symmetric(horizontal: 10),
-                              width: 18,
-                              height: 18,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: filled
-                                    ? cs.primary
-                                    : Colors.transparent,
-                                border: Border.all(
-                                  color: filled ? cs.primary : cs.outline,
-                                  width: 2,
-                                ),
-                              ),
+                Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        PinRevealSlot(
+                          index: 0,
+                          exit: _success,
+                          child: Builder(builder: (context) {
+                            final lockColor = _error.isNotEmpty
+                                ? Colors.red.shade400
+                                : (_success
+                                    ? Colors.green.shade400
+                                    : cs.primary);
+                            return AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              child: Icon(Icons.lock_rounded,
+                                  key: ValueKey(lockColor),
+                                  size: 48,
+                                  color: lockColor),
                             );
                           }),
                         ),
-                      ),
-                      const SizedBox(height: 48),
-                      _buildNumpad(cs),
-                      if (_biometricsAvailable &&
-                          widget.mode == PinDialogMode.verify) ...[
-                        const SizedBox(height: 16),
-                        TextButton.icon(
-                          onPressed: _tryBiometrics,
-                          icon: const Icon(Icons.fingerprint_rounded, size: 22),
-                          label: const Text('Use biometrics'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: cs.primary,
+                        const SizedBox(height: 24),
+                        PinRevealSlot(
+                          index: 1,
+                          exit: _success,
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 220),
+                            child: Text(
+                              _title,
+                              key: ValueKey(_title),
+                              style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.w600,
+                                color: cs.onSurface,
+                              ),
+                            ),
                           ),
                         ),
+                        const SizedBox(height: 8),
+                        PinRevealSlot(
+                          index: 2,
+                          exit: _success,
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 220),
+                            child: _error.isNotEmpty
+                                ? Text(
+                                    _error,
+                                    key: const ValueKey('error'),
+                                    style: const TextStyle(
+                                        color: Colors.red, fontSize: 13),
+                                  )
+                                : Text(
+                                    _subtitle,
+                                    key: ValueKey(_subtitle),
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color:
+                                          cs.onSurface.withValues(alpha: 0.6),
+                                    ),
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(height: 40),
+                        PinRevealSlot(
+                          index: 3,
+                          exit: _success,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: List.generate(4, (i) {
+                              final filled = i < _pin.length;
+                              final dotColor = _error.isNotEmpty
+                                  ? Colors.red.shade400
+                                  : (_success
+                                      ? Colors.green.shade400
+                                      : cs.primary);
+                              return AnimatedBuilder(
+                                animation: _shakeController,
+                                builder: (_, child) => Transform.translate(
+                                  offset: Offset(
+                                      _dotShakeOffset(
+                                          _shakeController.value, i),
+                                      0),
+                                  child: child,
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10),
+                                  child: PinDot(
+                                    filled: filled,
+                                    color: dotColor,
+                                    emptyBorderColor: cs.outline,
+                                  ),
+                                ),
+                              );
+                            }),
+                          ),
+                        ),
+                        const SizedBox(height: 48),
+                        _buildNumpad(cs),
+                        if (_biometricsAvailable &&
+                            widget.mode == PinDialogMode.verify) ...[
+                          const SizedBox(height: 16),
+                          PinRevealSlot(
+                            index: 15,
+                            exit: _success,
+                            child: TextButton.icon(
+                              onPressed: _tryBiometrics,
+                              icon: const Icon(Icons.fingerprint_rounded,
+                                  size: 22),
+                              label: Text(l.useBiometrics),
+                              style: TextButton.styleFrom(
+                                foregroundColor: cs.primary,
+                              ),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 32),
                       ],
-                      const SizedBox(height: 32),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-      ),
     );
   }
 
+  // Indices 4-14: continues the whole-screen reveal order after the lock
+  // icon (0), title (1), subtitle (2) and dot row (3) — see PinRevealSlot.
   Widget _buildNumpad(ColorScheme cs) {
     return Column(
       children: [
-        _buildNumRow(['1', '2', '3'], cs),
+        _buildNumRow(['1', '2', '3'], cs, 4),
         const SizedBox(height: 12),
-        _buildNumRow(['4', '5', '6'], cs),
+        _buildNumRow(['4', '5', '6'], cs, 7),
         const SizedBox(height: 12),
-        _buildNumRow(['7', '8', '9'], cs),
+        _buildNumRow(['7', '8', '9'], cs, 10),
         const SizedBox(height: 12),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const SizedBox(width: 80),
             const SizedBox(width: 12),
-            _buildDigitKey('0', cs),
+            _buildDigitKey('0', cs, 13),
             const SizedBox(width: 12),
-            _buildDeleteKey(cs),
+            _buildDeleteKey(cs, 14),
           ],
         ),
       ],
     );
   }
 
-  Widget _buildNumRow(List<String> digits, ColorScheme cs) {
+  Widget _buildNumRow(List<String> digits, ColorScheme cs, int startIndex) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: digits
-          .map((d) => Padding(
+          .asMap()
+          .entries
+          .map((e) => Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: _buildDigitKey(d, cs),
+                child: _buildDigitKey(e.value, cs, startIndex + e.key),
               ))
           .toList(),
     );
   }
 
-  Widget _buildDigitKey(String digit, ColorScheme cs) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(40),
+  Widget _buildDigitKey(String digit, ColorScheme cs, int index) {
+    return PinRevealSlot(
+      index: index,
+      exit: _success,
+      child: PinKey(
         onTap: () => _onDigit(digit),
-        child: Container(
-          width: 68,
-          height: 68,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: cs.surfaceContainerHighest.withValues(alpha: 0.55),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            digit,
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w500,
-              color: cs.onSurface,
-            ),
+        background: cs.surfaceContainerHighest.withValues(alpha: 0.55),
+        pressedBackground: cs.surfaceContainerHighest.withValues(alpha: 0.85),
+        child: Text(
+          digit,
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.w500,
+            color: cs.onSurface,
           ),
         ),
       ),
     );
   }
 
-  Widget _buildDeleteKey(ColorScheme cs) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(40),
+  Widget _buildDeleteKey(ColorScheme cs, int index) {
+    return PinRevealSlot(
+      index: index,
+      exit: _success,
+      child: PinKey(
         onTap: _onDelete,
-        child: Container(
-          width: 68,
-          height: 68,
-          alignment: Alignment.center,
-          child: Icon(
-            Icons.backspace_outlined,
-            color: cs.onSurface,
-            size: 24,
-          ),
+        background: Colors.transparent,
+        pressedBackground: cs.onSurface.withValues(alpha: 0.08),
+        child: Icon(
+          Icons.backspace_outlined,
+          color: cs.onSurface,
+          size: 24,
         ),
       ),
     );

@@ -15,6 +15,8 @@
 //     be fully held in memory or base64-expanded. Each frame is independently
 //     AES-256-GCM sealed and length-prefixed on the wire.
 
+import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -178,4 +180,89 @@ class WardLinkCrypto {
   /// A stable device id derived from the full identity public key.
   static String deviceIdFromPub(List<int> pubKey) =>
       dart_crypto.sha256.convert(pubKey).toString().substring(0, 16);
+}
+
+/// Backpressured streaming reader for the WardLink length-prefixed frame
+/// protocol. Reads exact byte counts from any [Stream<List<int>>] (e.g. an
+/// HTTP response or request body) and pauses the source when the buffer grows
+/// past the high-water mark to avoid unbounded memory use on fast networks.
+///
+/// Used by both [WardLinkSyncService] (for WardLink passive sync downloads)
+/// and [LanFavSyncService] (for large-file streaming over the legacy fav-sync
+/// protocol).
+class WardLinkFrameReader {
+  static const int _highWater = 4 * 1024 * 1024; // 4 MB
+  static const int _lowWater = 1 * 1024 * 1024;  // 1 MB
+
+  late final StreamSubscription<List<int>> _sub;
+  final Queue<Uint8List> _chunks = Queue<Uint8List>();
+  int _buffered = 0;
+  int _headOffset = 0;
+  bool _done = false;
+  Object? _error;
+  Completer<void>? _waiter;
+  bool _paused = false;
+
+  WardLinkFrameReader(Stream<List<int>> stream) {
+    _sub = stream.listen(_onData, onError: _onError, onDone: _onDone);
+  }
+
+  void _onData(List<int> chunk) {
+    _chunks.add(chunk is Uint8List ? chunk : Uint8List.fromList(chunk));
+    _buffered += chunk.length;
+    if (_buffered >= _highWater && !_paused) {
+      _paused = true;
+      _sub.pause();
+    }
+    _wake();
+  }
+
+  void _onError(Object e) {
+    _error = e;
+    _wake();
+  }
+
+  void _onDone() {
+    _done = true;
+    _wake();
+  }
+
+  void _wake() {
+    final w = _waiter;
+    _waiter = null;
+    w?.complete();
+  }
+
+  /// Reads exactly [n] bytes from the stream, blocking until enough data is
+  /// available. Returns null when the stream ends before [n] bytes arrive.
+  Future<Uint8List?> readExact(int n) async {
+    while (_buffered < n) {
+      if (_error != null) throw _error!;
+      if (_done) return null;
+      _waiter = Completer<void>();
+      await _waiter!.future;
+    }
+    final out = Uint8List(n);
+    int got = 0;
+    while (got < n) {
+      final head = _chunks.first;
+      final avail = head.length - _headOffset;
+      final take = (n - got) < avail ? (n - got) : avail;
+      out.setRange(got, got + take, head, _headOffset);
+      got += take;
+      _headOffset += take;
+      _buffered -= take;
+      if (_headOffset >= head.length) {
+        _chunks.removeFirst();
+        _headOffset = 0;
+      }
+    }
+    if (_paused && _buffered <= _lowWater) {
+      _paused = false;
+      _sub.resume();
+    }
+    return out;
+  }
+
+  Future<void> cancel() => _sub.cancel();
 }

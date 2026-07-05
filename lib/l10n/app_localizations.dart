@@ -62,6 +62,20 @@ class AppLocalizations {
   String get biometricsUnavailable => _ru ? 'Биометрия недоступна на этом устройстве' : 'Biometrics not available on this device';
   String get lockOnResume => _ru ? 'Блокировать при сворачивании' : 'Lock when backgrounded';
   String get lockOnResumeSubtitle => _ru ? 'Запрашивать PIN каждый раз при возврате в приложение' : 'Require PIN every time the app returns to foreground';
+
+  // ── PIN entry screen (app unlock + per-chat lock) ─────────────────────────
+  String get pinScreenSetTitle => _ru ? 'Задать PIN' : 'Set PIN';
+  String get pinScreenConfirmTitle => _ru ? 'Подтвердите PIN' : 'Confirm PIN';
+  String get pinScreenEnterTitle => _ru ? 'Введите PIN' : 'Enter PIN';
+  String get pinScreenChooseSubtitle => _ru ? 'Придумайте 4-значный PIN' : 'Choose a 4-digit PIN';
+  String get pinScreenChooseChatSubtitle => _ru ? 'Придумайте 4-значный PIN для этого чата' : 'Choose a 4-digit PIN for this chat';
+  String get pinScreenReenterSubtitle => _ru ? 'Введите PIN ещё раз для подтверждения' : 'Re-enter your PIN to confirm';
+  String get pinScreenUnlockSubtitle => _ru ? 'Введите свой 4-значный PIN для разблокировки' : 'Enter your 4-digit PIN to unlock';
+  String get pinScreenGenericSubtitle => _ru ? 'Введите свой 4-значный PIN' : 'Enter your 4-digit PIN';
+  String get pinScreenDisableHeader => _ru ? 'Введите текущий PIN, чтобы отключить' : 'Enter current PIN to disable';
+  String get pinScreenMismatchError => _ru ? 'PIN-коды не совпадают. Попробуйте снова.' : 'PINs do not match. Try again.';
+  String get pinScreenIncorrectError => _ru ? 'Неверный PIN' : 'Incorrect PIN';
+
   String get searchChatsHint => _ru ? 'Поиск чатов и сообщений…' : 'Search chats and messages…';
   String get searchGroupsHint => _ru ? 'Поиск групп и сообщений…' : 'Search groups and messages…';
   String get searchFavoritesHint => _ru ? 'Поиск избранного…' : 'Search favorites…';
@@ -557,6 +571,8 @@ class AppLocalizations {
   String get liquidGlassInputDesc => _ru ? 'Эффект стекла панели ввода' : 'Glass effect on the message composition bar';
   String get liquidGlassSearchLabel => _ru ? 'Поиск' : 'Search';
   String get liquidGlassSearchDesc => _ru ? 'Стеклянная панель поиска' : 'Spotlight-style glass panel for user search';
+  String get liquidGlassAppBarLabel => _ru ? 'Кнопки шапки' : 'App Bar Buttons';
+  String get liquidGlassAppBarDesc => _ru ? 'Эффект стекла на кнопках верхней панели чата' : 'Glass effect on the chat app bar\'s icon buttons';
   String get sendFavoritesScanHint => _ru ? 'Наведите камеру на QR-код\nна устройстве получателя' : 'Point the camera at the QR code shown on the receiver device';
   String get mediaPickerGallery => _ru ? 'Галерея' : 'Gallery';
   String get mediaPickerCamera => _ru ? 'Камера' : 'Camera';
@@ -664,6 +680,14 @@ class AppLocalizations {
   String get deleteMessageTitle => _ru ? 'Удалить сообщение?' : 'Delete message?';
   String get deleteMessageContent => _ru ? 'Сообщение будет удалено для обеих сторон.' : 'This message will be deleted for both sides.';
   String get cannotDeleteMsg => _ru ? 'Нельзя удалить: сообщение ещё не сохранено на сервере' : 'Cannot delete: message not yet saved on server';
+  String get deleteForMeTitle => _ru ? 'Удалить только у себя?' : 'Delete for me?';
+  String get deleteForMeContent => _ru
+      ? 'Сообщение будет удалено только с вашего устройства. У собеседника оно останется.'
+      : 'This will only remove the message from your device. The other person will still see it.';
+  String get deleteFavMessageContent => _ru
+      ? 'Сообщение будет удалено из избранного.'
+      : 'This message will be removed from favorites.';
+  String get pinnedMessage => _ru ? 'Закреплённое сообщение' : 'Pinned Message';
   String get msgCopied => _ru ? 'Скопировано' : 'Copied';
   String copiedUsername(String name) => _ru ? 'Скопировано @$name' : 'Copied @$name';
   String get deliveryModeTitle => _ru ? 'Режим доставки' : 'Choose delivery mode';
@@ -707,6 +731,7 @@ class AppLocalizations {
   String get galleryEmptyMedia => _ru ? 'Нет фото и видео' : 'No photos or videos yet';
   String get galleryEmptyVoice => _ru ? 'Нет голосовых сообщений' : 'No voice messages yet';
   String get galleryEmptyFiles => _ru ? 'Нет файлов' : 'No files yet';
+  String get galleryShowInChat => _ru ? 'Показать в чате' : 'Show in chat';
 
   String get failedDelete => _ru ? 'Не удалось удалить' : 'Failed to delete';
   String get failedEdit => _ru ? 'Не удалось изменить сообщение' : 'Failed to edit message';
@@ -718,6 +743,13 @@ class AppLocalizations {
   String get voiceUploadFailed => _ru ? 'Ошибка загрузки голосового' : 'Voice upload failed';
   String get voiceCancelled => _ru ? 'Голосовое отменено' : 'Voice message cancelled';
   String get uploadingVoice => _ru ? 'Загрузка голосового...' : 'Uploading voice...';
+  String uploadingAlbumProgress(int done, int total) => _ru
+      ? 'Загрузка альбома: $done/$total фото'
+      : 'Uploading album: $done/$total photos';
+  String get uploadingImageLabel => _ru ? 'Загрузка изображения...' : 'Uploading image...';
+  String get uploadingVideoLabel => _ru ? 'Загрузка видео...' : 'Uploading video...';
+  String get uploadingAudioLabel => _ru ? 'Загрузка аудио...' : 'Uploading audio...';
+  String get uploadingFileLabel => _ru ? 'Загрузка файла...' : 'Uploading file...';
   String get leftGroup => _ru ? 'Вы вышли из группы' : 'You have left the group';
   String get failedLeaveGroup => _ru ? 'Не удалось покинуть группу' : 'Failed to leave group';
   String get avatarOnlyOwnerMod => _ru ? 'Только владелец и модераторы могут менять аватар' : 'Only owners and moderators can change the avatar';
@@ -1165,6 +1197,92 @@ class AppLocalizations {
       _ru ? 'Показывать только при ошибках' : 'Show on errors only';
   String get wardLinkBubbleSize => _ru ? 'Размер кружка' : 'Bubble size';
 
+  // ── Mesh ─────────────────────────────────────────────────────────────────
+  String get meshTitle => 'Mesh';
+  String get meshSubtitle => _ru ? 'Mesh-сеть без интернета' : 'Offline mesh network';
+  String get meshEnable => _ru ? 'Включить Mesh-сеть' : 'Enable Mesh network';
+  String get meshEnableDesc => _ru
+      ? 'Прямое общение без интернета через Wi-Fi или Bluetooth.\nРаботает только в личных чатах.'
+      : 'Direct messaging without internet via Wi-Fi or Bluetooth.\nWorks only in direct messages.';
+  String get meshUnavailable => _ru
+      ? 'Mesh-сеть недоступна на этой платформе.'
+      : 'Mesh network is not available on this platform.';
+  String get meshOpenRadar => _ru ? 'Открыть Радар' : 'Open Radar';
+  String meshNearbyCount(int n) => _ru ? 'В эфире: $n устройств' : 'Nearby: $n devices';
+  String get meshRadarTitle => _ru ? 'Mesh Радар' : 'Mesh Radar';
+  String get meshRadarScanning => _ru ? 'Сканируем эфир…' : 'Scanning…';
+  String meshRadarFound(int n) => _ru ? '$n устройств в диапазоне' : '$n device${n == 1 ? '' : 's'} in range';
+  String get meshRadarSearchHint => _ru ? 'Поиск по имени...' : 'Search by name...';
+  String meshRadarSearchEmpty(String q) => _ru ? 'Никого не найдено по запросу "$q"' : 'No results for "$q"';
+  String get meshRadarNoDevices => _ru
+      ? 'Нет устройств поблизости.\nMesh сканирует каждые 20 сек.'
+      : 'No devices nearby.\nMesh scans every 20 s.';
+  String get meshRadarDisabled => _ru
+      ? 'Mesh режим выключен.\nВключите тоггл в Настройках → Mesh.'
+      : 'Mesh mode is off.\nEnable it in Settings → Mesh.';
+  String get meshRadarStarting => _ru ? 'Запускаем сканирование BLE…' : 'Starting BLE scan…';
+  String get meshMenuRadar => _ru ? 'Радар' : 'Radar';
+  String get meshMenuDiagnostics => _ru ? 'Диагностика' : 'Diagnostics';
+  String get meshMenuModeAuto => _ru ? 'Авто' : 'Auto';
+  String get meshMenuModeWifi => 'Wi-Fi';
+  String get meshMenuModeBluetooth => 'Bluetooth';
+  String get meshBluetoothOffTitle => _ru ? 'Bluetooth выключен' : 'Bluetooth is off';
+  String get meshBluetoothOffContent => _ru
+      ? 'Mesh-чат переключён в режим "только Bluetooth", но Bluetooth выключен. Включите его в настройках системы, чтобы видеть устройства поблизости.'
+      : 'Mesh chat was switched to Bluetooth-only mode, but Bluetooth is turned off. Enable it in system settings to reach nearby devices.';
+  String get meshOpenSystemSettings => _ru ? 'Открыть настройки' : 'Open Settings';
+  String get meshModeLabel => _ru ? 'РЕЖИМ' : 'MODE';
+  String get meshModeActive => _ru ? 'Mesh режим активен' : 'Mesh mode active';
+  String get meshChatLabel => _ru ? 'Mesh Чат' : 'Mesh Chat';
+  String get meshLocationRequired => _ru
+      ? 'Включите службы геолокации для BLE сканирования (Android ≤11)'
+      : 'Enable location services for BLE scanning (Android ≤11)';
+  String get meshChatEmpty => _ru
+      ? 'Нет сообщений.\nОтправьте первое сообщение через Mesh.'
+      : 'No messages yet.\nSend the first mesh message.';
+  String get meshChatInputHint => _ru ? 'Сообщение…' : 'Message…';
+  String get meshChatSend => _ru ? 'Отправить' : 'Send';
+  String get meshChatOutOfRange => _ru ? 'Вне зоны' : 'Out of range';
+
+  // Mesh delivery status
+  String get meshStatusSending =>
+      _ru ? 'Отправка…' : 'Sending…';
+  String get meshStatusSendingWifi =>
+      _ru ? 'Отправка через Wi-Fi…' : 'Sending via Wi-Fi…';
+  String get meshStatusSendingBle =>
+      _ru ? 'Отправка через Bluetooth…' : 'Sending via Bluetooth…';
+  String get meshStatusRelayed =>
+      _ru ? 'В пути через сеть' : 'In transit via mesh';
+  String get meshStatusDelivered =>
+      _ru ? 'Доставлено' : 'Delivered';
+  String get meshStatusFailed =>
+      _ru ? 'Не доставлено' : 'Not delivered';
+  String get meshStatusRetry =>
+      _ru ? 'Повторить' : 'Retry';
+  String get meshStatusFailedHint =>
+      _ru ? 'Сообщение не дошло до получателя' : 'Message did not reach the recipient';
+
+  String get meshErrorVideoWifiOnly =>
+      _ru
+          ? 'Видео отправляется только через Wi-Fi. Подключитесь к той же Wi-Fi сети, что и получатель.'
+          : 'Video can only be sent over Wi-Fi. Connect to the same Wi-Fi network as the recipient.';
+  String get meshErrorFileTooLargeForBle =>
+      _ru
+          ? 'Файл слишком большой для Bluetooth (макс. 10 МБ). Нужен общий Wi-Fi.'
+          : 'File is too large for Bluetooth (max 10 MB). Connect to a shared Wi-Fi network.';
+  String get meshErrorFileTooLarge =>
+      _ru ? 'Файл слишком большой (макс. 200 МБ).' : 'File is too large (max 200 MB).';
+  String get meshErrorAttachmentsUnsupported =>
+      _ru ? 'Вложения только на мобильных/десктопе' : 'Attachments are only supported on mobile/desktop';
+  String get meshErrorPickFileFailed =>
+      _ru ? 'Ошибка выбора файла' : 'Failed to pick file';
+  String get meshErrorSendFileFailed =>
+      _ru ? 'Ошибка отправки файла' : 'Failed to send file';
+  String get meshErrorSendVoiceFailed =>
+      _ru ? 'Ошибка отправки голосового сообщения' : 'Failed to send voice message';
+  String meshErrorOutOfRange(String username) =>
+      _ru ? '$username вне зоны досягаемости' : '$username is out of range';
+
   // ── Backup ────────────────────────────────────────────────────────────────
   String get backupTitle => _ru ? 'Бэкап' : 'Backup';
   String get backupSubtitle => _ru
@@ -1323,7 +1441,7 @@ class AppLocalizations {
   String get voiceNotLoadedYet => _ru ? 'Голосовое сообщение ещё не загружено' : 'Voice not loaded yet';
   String get videoNotLoadedYet => _ru ? 'Видео ещё не загружено' : 'Video not loaded yet';
   String get fileNotLoadedYet => _ru ? 'Файл ещё не загружен' : 'File not loaded yet';
-  String get fileNotLoadedOpenFirst => _ru ? 'Файл ещё не загружен — сначала откройте его' : 'File not loaded yet — open it first';
+  String get fileNotLoadedOpenFirst => _ru ? 'Файл не скачан на устройство — нажмите на него в чате, чтобы скачать' : 'File isn\'t downloaded to this device — tap it in the chat to download it';
   String editTimerLabel(int s) => _ru ? 'Изменить  ·  ${s}с' : 'Edit  ·  ${s}s'; // ignore: unnecessary_brace_in_string_interps
   String deleteTimerLabel(int s) => _ru ? 'Удалить  ·  ${s}с' : 'Delete  ·  ${s}s'; // ignore: unnecessary_brace_in_string_interps
 
@@ -1390,6 +1508,33 @@ class AppLocalizations {
 
   // ── Folder dialogs ────────────────────────────────────────────────────────
   String get tapAvatarLongRemove => _ru ? 'Нажмите чтобы сменить • Удержите чтобы удалить' : 'Tap to change • Long-press to remove';
+
+  // ── "Not end-to-end encrypted" group warning dialog ───────────────────────
+  String get e2eeWarnTitle =>
+      _ru ? 'Без сквозного шифрования' : 'Not end-to-end encrypted';
+  String get e2eeWarnUnderstand => _ru ? 'Понятно' : 'I understand';
+  String get e2eeWarnDoNotShare => _ru
+      ? 'Не делитесь здесь паролями, личными файлами и конфиденциальной информацией.'
+      : 'Do not share passwords, private files or sensitive information here.';
+
+  // Native groups (media stored on the ONYX server / public host).
+  String get e2eeWarnGroupBody => _ru
+      ? 'Сообщения в этой группе не защищены сквозным шифрованием — сервер может их читать.'
+      : 'Messages in this group are not protected by end-to-end encryption — the server can read them.';
+  String get e2eeWarnGroupMedia => _ru
+      ? 'Прикреплённые медиа загружаются на публичный хостинг (catbox.moe) и доступны любому, у кого есть ссылка.'
+      : 'Attached media is uploaded to a public host (catbox.moe) and is reachable by anyone who has the link.';
+
+  // External (self-hosted) groups.
+  String get e2eeWarnExtBody => _ru
+      ? 'Сообщения в этой группе не защищены сквозным шифрованием — сервер владельца группы может их читать.'
+      : "Messages in this group are not protected by end-to-end encryption — the group owner's server can read them.";
+  String get e2eeWarnExtMedia => _ru
+      ? 'Прикреплённые медиа загружаются и хранятся на собственном сервере владельца, а не в ONYX.'
+      : "Attached media is uploaded to and stored on the owner's own server, not on ONYX.";
+  String get e2eeWarnExtOnyxUnrelated => _ru
+      ? 'ONYX не имеет ни малейшего отношения к этой группе и не может модерировать или защищать её содержимое.'
+      : 'ONYX has nothing to do with this group and cannot moderate or protect its content.';
 }
 
 class _AppLocalizationsDelegate

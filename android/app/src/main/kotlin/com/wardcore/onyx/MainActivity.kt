@@ -2,24 +2,57 @@ package com.wardcore.onyx
 
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.annotation.NonNull
-import io.flutter.embedding.android.FlutterFragmentActivity
+import com.ryanheise.audioservice.AudioServiceFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import android.util.Log
 
-class MainActivity : FlutterFragmentActivity() {
+// AudioServiceFragmentActivity (audio_service's FlutterFragmentActivity
+// subclass) wires up the FlutterEngine caching/linking that
+// com.ryanheise.audioservice.AudioService needs to share the engine with
+// this activity — required for the MediaSession-backed playback notification.
+class MainActivity : AudioServiceFragmentActivity() {
     private val CHANNEL = "onyx/audio"
     private val CLIPBOARD_CHANNEL = "onyx/clipboard"
     private val TAG = "ONYX_AUDIO"
 
+    private lateinit var meshPeripheral: MeshPeripheralManager
+
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         Log.d(TAG, "configureFlutterEngine called")
+
+        meshPeripheral = MeshPeripheralManager(this)
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.wardcore.onyx/mesh_peripheral")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> {
+                        val identity = call.argument<ByteArray>("identity") ?: ByteArray(0)
+                        meshPeripheral.start(identity, result)
+                    }
+                    "stop" -> {
+                        meshPeripheral.stop()
+                        result.success(null)
+                    }
+                    "openLocationSettings" -> {
+                        startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, "com.wardcore.onyx/mesh_peripheral/events")
+            .setStreamHandler(meshPeripheral)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call: MethodCall, result: MethodChannel.Result ->
@@ -184,6 +217,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onDestroy() {
         Log.d(TAG, "onDestroy")
+        meshPeripheral.stop()
         super.onDestroy()
     }
 }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../globals.dart';
 import '../l10n/app_localizations.dart';
+import '../managers/settings_manager.dart';
 import '../utils/update_checker.dart';
 import 'connection_title.dart';
 import 'update_banner.dart' show MarkdownText;
@@ -251,7 +252,7 @@ class _AboutOnyxContentState extends State<_AboutOnyxContent>
                   ),
                 ),
 
-                // ── Server info ──────────────────────────────────────
+                // ── Server info ───────────────────────────────────────
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
                   child: Text(
@@ -265,7 +266,7 @@ class _AboutOnyxContentState extends State<_AboutOnyxContent>
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 14, vertical: 11),
@@ -282,7 +283,6 @@ class _AboutOnyxContentState extends State<_AboutOnyxContent>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // строка 1: статус + хост
                         Row(
                           children: [
                             ValueListenableBuilder<bool>(
@@ -328,7 +328,6 @@ class _AboutOnyxContentState extends State<_AboutOnyxContent>
                           ],
                         ),
                         const SizedBox(height: 6),
-                        // строка 2: геолокация
                         Row(
                           children: [
                             Icon(
@@ -351,6 +350,38 @@ class _AboutOnyxContentState extends State<_AboutOnyxContent>
                       ],
                     ),
                   ),
+                ),
+                // ── Mesh badge (shown below server card when active) ───
+                ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.meshModeEnabled,
+                  builder: (_, meshOn, __) {
+                    if (!meshOn) return const SizedBox(height: 14);
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: colorScheme.primary,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            l.meshModeActive,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
 
                 Divider(

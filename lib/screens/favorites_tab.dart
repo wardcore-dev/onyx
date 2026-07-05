@@ -1074,13 +1074,17 @@ class _FavoritesTabState extends State<FavoritesTab>
     if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
       setState(() => _openFolderId = folder.id);
     } else {
+      // Re-lock as soon as the folder dialog is dismissed — however that
+      // happens (back button inside it, Android back gesture, tapping the
+      // barrier) — so the next tap on this folder asks for its PIN again
+      // instead of staying unlocked for the rest of the app session.
       showDialog<void>(
         context: context,
         builder: (_) => _FolderContentDialog(
           folderId: folder.id,
           onOpen: widget.onOpen,
         ),
-      );
+      ).then((_) => LockManager.relock('fav_folder_${folder.id}'));
     }
   }
 
@@ -2078,10 +2082,14 @@ class _FavoritesTabState extends State<FavoritesTab>
             children: [
               IconButton(
                 icon: const Icon(Icons.arrow_back_rounded),
-                onPressed: () => setState(() {
-                  _openFolderId = null;
-                  _editMode = false;
-                }),
+                onPressed: () {
+                  // Same re-lock-on-exit as the mobile dialog path above.
+                  LockManager.relock('fav_folder_${folder.id}');
+                  setState(() {
+                    _openFolderId = null;
+                    _editMode = false;
+                  });
+                },
                 tooltip: 'Back',
               ),
               SizedBox(

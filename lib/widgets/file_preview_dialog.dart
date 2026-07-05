@@ -10,9 +10,11 @@ class FilePreviewDialog extends StatefulWidget {
   final Uint8List? fileBytes;
   final VoidCallback onSend;
   final VoidCallback onCancel;
+
   /// Called when the user presses Ctrl+V while the dialog is open.
   /// Returns the path to the pasted image temp file, or null if nothing.
   final Future<String?> Function()? onPasteExtra;
+
   /// Called instead of [onSend] when the user has pasted extra images (album mode).
   final void Function(List<String>)? onSendAlbum;
 
@@ -35,6 +37,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
   late final String _extension;
   late String _fileSize = '—';
   Uint8List? _previewBytes;
+  final FocusNode _focusNode = FocusNode();
 
   /// Non-empty only when the initial file is an image and album support is enabled.
   final List<String> _albumPaths = [];
@@ -48,28 +51,46 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
     _extension = p.extension(_filename).toLowerCase();
     if (_isImageFile() && widget.onPasteExtra != null) {
       _albumPaths.add(widget.filePath);
-      HardwareKeyboard.instance.addHandler(_handleKeyEvent);
     }
     _loadFileInfo();
   }
 
   @override
   void dispose() {
-    if (widget.onPasteExtra != null && _isImageFile()) {
-      HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
-    }
+    _focusNode.dispose();
     super.dispose();
   }
 
-  bool _handleKeyEvent(KeyEvent event) {
-    if (event is KeyDownEvent &&
+  // Scoped to this dialog's own Focus node (autofocused on open) — NOT a
+  // global HardwareKeyboard handler. A global handler reacts to an Enter
+  // keydown from anywhere in the app for as long as the dialog is mounted
+  // (e.g. a stray/buffered Enter left over from submitting the chat
+  // composer moments earlier), which could silently auto-confirm "Send
+  // File" without the user ever interacting with the dialog.
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+      _confirmSend();
+      return KeyEventResult.handled;
+    }
+    if (widget.onPasteExtra != null &&
         event.logicalKey == LogicalKeyboardKey.keyV &&
         (HardwareKeyboard.instance.isControlPressed ||
             HardwareKeyboard.instance.isMetaPressed)) {
       _pasteImage();
-      return true;
+      return KeyEventResult.handled;
     }
-    return false;
+    return KeyEventResult.ignored;
+  }
+
+  void _confirmSend() {
+    Navigator.pop(context);
+    if (_isAlbumMode && widget.onSendAlbum != null) {
+      widget.onSendAlbum!(List<String>.from(_albumPaths));
+    } else {
+      widget.onSend();
+    }
   }
 
   Future<void> _pasteImage() async {
@@ -221,8 +242,10 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
 
   // ── Preview section ───────────────────────────────────────────────────────
 
-  Widget _buildPreview(ThemeData theme, ColorScheme colorScheme, double elemOpacity, Color surfaceBg) {
-    final border = Border.all(color: colorScheme.outline.withValues(alpha: 0.25 * elemOpacity));
+  Widget _buildPreview(ThemeData theme, ColorScheme colorScheme,
+      double elemOpacity, Color surfaceBg) {
+    final border = Border.all(
+        color: colorScheme.outline.withValues(alpha: 0.25 * elemOpacity));
     final radius = BorderRadius.circular(12);
 
     // ── Album mode ─────────────────────────────────────────────────────────
@@ -252,9 +275,11 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
       return Container(
         width: double.infinity,
         height: 160,
-        decoration: BoxDecoration(color: surfaceBg, borderRadius: radius, border: border),
+        decoration: BoxDecoration(
+            color: surfaceBg, borderRadius: radius, border: border),
         child: Center(
-          child: CircularProgressIndicator(color: colorScheme.primary, strokeWidth: 2),
+          child: CircularProgressIndicator(
+              color: colorScheme.primary, strokeWidth: 2),
         ),
       );
     }
@@ -272,7 +297,8 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
           ),
         ),
         child: Center(
-          child: Icon(Icons.play_circle_outline, size: 48, color: colorScheme.primary),
+          child: Icon(Icons.play_circle_outline,
+              size: 48, color: colorScheme.primary),
         ),
       );
     }
@@ -330,232 +356,250 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
             );
             return Dialog(
               constraints: const BoxConstraints(maxWidth: 500),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // ── Header ──────────────────────────────────────────────
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: colorScheme.primary.withValues(alpha: 0.1 * elemOpacity),
-                        border: Border(
-                          bottom: BorderSide(
-                            color: colorScheme.outline.withValues(alpha: 0.2 * elemOpacity),
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            _isAlbumMode
-                                ? Icons.photo_library_outlined
-                                : Icons.attach_file,
-                            color: colorScheme.primary,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              _isAlbumMode ? 'Send Album' : 'Send File',
-                              style: theme.textTheme.headlineSmall?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
+              child: Focus(
+                focusNode: _focusNode,
+                autofocus: true,
+                onKeyEvent: _handleKeyEvent,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // ── Header ──────────────────────────────────────────────
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primary
+                              .withValues(alpha: 0.1 * elemOpacity),
+                          border: Border(
+                            bottom: BorderSide(
+                              color: colorScheme.outline
+                                  .withValues(alpha: 0.2 * elemOpacity),
                             ),
                           ),
-                        ],
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              _isAlbumMode
+                                  ? Icons.photo_library_outlined
+                                  : Icons.attach_file,
+                              color: colorScheme.primary,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                _isAlbumMode ? 'Send Album' : 'Send File',
+                                style: theme.textTheme.headlineSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
 
-                    Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // ── Preview ────────────────────────────────────────
-                          _buildPreview(theme, colorScheme, elemOpacity, surfaceHighestColor),
+                      Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // ── Preview ────────────────────────────────────────
+                            _buildPreview(theme, colorScheme, elemOpacity,
+                                surfaceHighestColor),
 
-                          const SizedBox(height: 24),
+                            const SizedBox(height: 24),
 
-                          // ── Info box ───────────────────────────────────────
-                          if (_isAlbumMode)
+                            // ── Info box ───────────────────────────────────────
+                            if (_isAlbumMode)
+                              Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: surfaceHighestColor.withValues(
+                                      alpha: 1.0),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: colorScheme.outline
+                                        .withValues(alpha: 0.2 * elemOpacity),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.collections_outlined,
+                                        size: 20, color: colorScheme.primary),
+                                    const SizedBox(width: 12),
+                                    Text(
+                                      '$count ${count == 1 ? 'image' : 'images'} selected',
+                                      style:
+                                          theme.textTheme.bodyMedium?.copyWith(
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else
+                              Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: surfaceHighestColor.withValues(
+                                      alpha: 1.0),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: colorScheme.outline
+                                        .withValues(alpha: 0.2 * elemOpacity),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'File Details',
+                                      style:
+                                          theme.textTheme.labelMedium?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                        color: colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Row(
+                                      children: [
+                                        Text(
+                                          'Name:',
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: SelectableText(
+                                            _filename,
+                                            style: theme.textTheme.bodySmall
+                                                ?.copyWith(
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      children: [
+                                        Text(
+                                          'Size:',
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          _fileSize,
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      children: [
+                                        Text(
+                                          'Type:',
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          _extension.isEmpty
+                                              ? 'Unknown'
+                                              : _extension.toUpperCase(),
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                            const SizedBox(height: 24),
+
+                            // ── Confirm / hint text ────────────────────────────
                             Container(
-                              padding: const EdgeInsets.all(16),
+                              padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: surfaceHighestColor.withValues(alpha: 1.0),
-                                borderRadius: BorderRadius.circular(12),
+                                color: colorScheme.primary
+                                    .withValues(alpha: 0.1 * elemOpacity),
+                                borderRadius: BorderRadius.circular(8),
                                 border: Border.all(
-                                  color: colorScheme.outline.withValues(alpha: 0.2 * elemOpacity),
+                                  color: colorScheme.primary
+                                      .withValues(alpha: 0.3 * elemOpacity),
                                 ),
                               ),
                               child: Row(
                                 children: [
-                                  Icon(Icons.collections_outlined,
-                                      size: 20, color: colorScheme.primary),
+                                  Icon(
+                                    Icons.info,
+                                    size: 18,
+                                    color: colorScheme.primary,
+                                  ),
                                   const SizedBox(width: 12),
-                                  Text(
-                                    '$count ${count == 1 ? 'image' : 'images'} selected',
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      fontWeight: FontWeight.w500,
+                                  Expanded(
+                                    child: Text(
+                                      _isAlbumMode
+                                          ? 'Are you sure you want to send these images as an album?'
+                                          : 'Are you sure you want to send this file?',
+                                      style:
+                                          theme.textTheme.bodySmall?.copyWith(
+                                        color: colorScheme.onSurface,
+                                      ),
                                     ),
                                   ),
                                 ],
                               ),
-                            )
-                          else
-                            Container(
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: surfaceHighestColor.withValues(alpha: 1.0),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: colorScheme.outline.withValues(alpha: 0.2 * elemOpacity),
-                                ),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'File Details',
-                                    style: theme.textTheme.labelMedium?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                      color: colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Row(
-                                    children: [
-                                      Text(
-                                        'Name:',
-                                        style: theme.textTheme.bodySmall?.copyWith(
-                                          color: colorScheme.onSurfaceVariant,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: SelectableText(
-                                          _filename,
-                                          style: theme.textTheme.bodySmall?.copyWith(
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    children: [
-                                      Text(
-                                        'Size:',
-                                        style: theme.textTheme.bodySmall?.copyWith(
-                                          color: colorScheme.onSurfaceVariant,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        _fileSize,
-                                        style: theme.textTheme.bodySmall?.copyWith(
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    children: [
-                                      Text(
-                                        'Type:',
-                                        style: theme.textTheme.bodySmall?.copyWith(
-                                          color: colorScheme.onSurfaceVariant,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        _extension.isEmpty
-                                            ? 'Unknown'
-                                            : _extension.toUpperCase(),
-                                        style: theme.textTheme.bodySmall?.copyWith(
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
                             ),
-
-                          const SizedBox(height: 24),
-
-                          // ── Confirm / hint text ────────────────────────────
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: colorScheme.primary.withValues(alpha: 0.1 * elemOpacity),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: colorScheme.primary.withValues(alpha: 0.3 * elemOpacity),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.info,
-                                  size: 18,
-                                  color: colorScheme.primary,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    _isAlbumMode
-                                        ? 'Are you sure you want to send these images as an album?'
-                                        : 'Are you sure you want to send this file?',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: colorScheme.onSurface,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // ── Action buttons ─────────────────────────────────────
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          top: BorderSide(
-                            color: colorScheme.outline.withValues(alpha: 0.2 * elemOpacity),
-                          ),
+                          ],
                         ),
                       ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          TextButton(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              widget.onCancel();
-                            },
-                            child: const Text('Cancel'),
+
+                      // ── Action buttons ─────────────────────────────────────
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            top: BorderSide(
+                              color: colorScheme.outline
+                                  .withValues(alpha: 0.2 * elemOpacity),
+                            ),
                           ),
-                          const SizedBox(width: 12),
-                          FilledButton.tonal(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              if (_isAlbumMode && widget.onSendAlbum != null) {
-                                widget.onSendAlbum!(List<String>.from(_albumPaths));
-                              } else {
-                                widget.onSend();
-                              }
-                            },
-                            child: Text(_isAlbumMode ? 'Send Album' : 'Send File'),
-                          ),
-                        ],
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(
+                              onPressed: () {
+                                Navigator.pop(context);
+                                widget.onCancel();
+                              },
+                              child: const Text('Cancel'),
+                            ),
+                            const SizedBox(width: 12),
+                            FilledButton.tonal(
+                              onPressed: _confirmSend,
+                              child: Text(
+                                  _isAlbumMode ? 'Send Album' : 'Send File'),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             );

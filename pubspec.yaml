@@ -31,6 +31,8 @@ dependencies:
   http_parser: ^4.0.2
   
   audio_session: ^0.1.20
+  audio_service: ^0.18.15
+  audiotags: ^1.4.5
   flutter_dotenv: ^5.1.0
   
   path_provider: ^2.1.1
@@ -38,6 +40,7 @@ dependencies:
   url_launcher: ^6.3.0
   just_audio: ^0.9.37
   just_audio_windows: ^0.2.0
+  just_waveform: ^0.0.7
   shared_preferences: ^2.1.0
   window_manager: ^0.4.0
   tray_manager: ^0.2.3
@@ -90,6 +93,7 @@ dependencies:
   drift: ^2.22.0
   sqlite3_flutter_libs: ^0.5.4
   connectivity_plus: ^7.1.1
+  flutter_blue_plus: ^1.35.5
 
 dev_dependencies:
   flutter_test:

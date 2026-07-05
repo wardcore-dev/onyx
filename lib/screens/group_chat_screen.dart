@@ -42,13 +42,14 @@ import '../utils/clipboard_image.dart';
 import '../utils/file_utils.dart';
 import '../utils/image_file_cache.dart';
 import '../utils/upload_task.dart';
-import '../widgets/pending_upload_card.dart';
+import '../widgets/upload_progress_bar.dart';
 import '../widgets/chat_search_bar.dart';
 import '../widgets/animated_message_bubble.dart';
 import '../widgets/message_reaction_bar.dart';
 import '../widgets/swipeable_message_wrapper.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../widgets/chat_input_bar.dart';
+import '../widgets/adaptive_glass_icon_button.dart';
 import '../widgets/measure_size.dart';
 import '../enums/scroll_down_button_position.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
@@ -87,6 +88,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   late final RouteObserver<Route<void>> _localRouteObserver;
   final TextEditingController _textCtrl = TextEditingController();
   late final FocusNode _focusNode;
+  final GlobalKey _inputAreaKey = GlobalKey();
   List<Map<String, dynamic>> _messages = [];
   // Fingerprint of the message list last handed to the image preloader.
   int _preloadStampCount = -1;
@@ -118,10 +120,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   final ValueNotifier<bool> _showScrollDownButton = ValueNotifier<bool>(false);
   final ValueNotifier<double> _bottomBarHeight = ValueNotifier<double>(76.0);
 
-
-
   late AnimationController _inputEntryController;
-  late Animation<double> _inputEntryScaleX;
+  late Animation<double> _inputEntryTranslateY;
   late Animation<double> _inputEntryOpacity;
   bool _hasInputAnimated = false;
 
@@ -161,8 +161,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   Map<String, Map<String, dynamic>> _dragSelectionBase = const {};
   Offset _lastDragPointerGlobal = Offset.zero;
   Timer? _dragAutoScrollTimer;
-  static const Duration _messageLongPressDuration =
-      Duration(milliseconds: 375);
+  static const Duration _messageLongPressDuration = Duration(milliseconds: 375);
   static const double _dragEdgeZone = 80.0;
   static const double _dragMaxSpeed = 14.0;
 
@@ -198,6 +197,25 @@ class _GroupChatScreenState extends State<GroupChatScreen>
             _pinnedMessage = Map<String, dynamic>.from(jsonDecode(raw) as Map));
       } catch (_) {}
     }
+  }
+
+  // Scoped per account (currentUsername) so every account that opens the group
+  // sees the notice once — switching accounts re-shows it.
+  String get _e2eeWarnPrefsKey =>
+      'e2ee_warn_shown_group_${_currentUsername ?? ''}_${widget.group.id}';
+
+  // Show the "no E2EE in groups" dialog only the first time this group/channel
+  // is opened. Once acknowledged, the flag is persisted per group id.
+  Future<void> _maybeShowE2eeWarning() async {
+    // Only for groups — channels don't get this notice.
+    if (widget.group.isChannel) return;
+    final prefs = await SharedPreferences.getInstance();
+    final alreadyShown = prefs.getBool(_e2eeWarnPrefsKey) ?? false;
+    if (alreadyShown || !mounted) return;
+    // Defer to after first frame so the dialog opens over a built screen.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _showE2eeWarningDialog();
+    });
   }
 
   Future<void> _savePinnedMessage() async {
@@ -249,8 +267,19 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   }
 
   List<Object> _rebuildGroupDisplayItems() {
+    // Keyed on animationId (stable for a message's whole lifetime), not id
+    // (overwritten with the server id once a locally-sent message is
+    // confirmed). Using id here meant every outgoing send invalidated this
+    // cache a second time right as the confirmation arrived — forcing a
+    // full display-items rebuild (and the drag/image-cache invalidations
+    // keyed off it) in the same frame as the entrance animation was still
+    // playing, which is what made the list visibly jump on send.
     final hash = _messages.length ^
-        (_messages.isNotEmpty ? (_messages.last['id']?.hashCode ?? 0) : 0);
+        (_messages.isNotEmpty
+            ? ((_messages.last['animationId'] ?? _messages.last['id'])
+                    ?.hashCode ??
+                0)
+            : 0);
     if (hash == _groupDisplayHash && _groupDisplayItems.isNotEmpty) {
       return _groupDisplayItems;
     }
@@ -320,7 +349,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     for (int j = 0; j < displayItems.length; j++) {
       final item = displayItems[j];
       if (item is Map<String, dynamic> && item['id']?.toString() == msgId) {
-        listviewIdx = j + _pendingUploads.length;
+        listviewIdx = j;
         break;
       }
     }
@@ -329,7 +358,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     setState(() => _scrollTargetId = msgId);
 
     final maxExt = _scroll.position.maxScrollExtent;
-    final totalItems = _pendingUploads.length + displayItems.length;
+    final totalItems = displayItems.length;
     final approxOffset = totalItems > 0
         ? ((listviewIdx / totalItems) * maxExt).clamp(0.0, maxExt)
         : 0.0;
@@ -374,7 +403,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       if (_scroll.hasClients) {
         _scrollToGroupMessageById(pendingId);
       } else if (retries > 0) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => attempt(retries - 1));
+        WidgetsBinding.instance
+            .addPostFrameCallback((_) => attempt(retries - 1));
       }
     }
 
@@ -396,15 +426,12 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           return GestureDetector(
             onTap: () =>
                 _scrollToGroupMessageById(_pinnedMessage?['id']?.toString()),
-            child: Container(
+            child: AdaptiveGlassPill(
+              backgroundColor: bgColor.withValues(alpha: opacity),
+              borderColor: colorScheme.outlineVariant.withValues(alpha: 0.2),
+              height: null,
+              borderRadius: 28,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: bgColor.withValues(alpha: opacity),
-                borderRadius: BorderRadius.circular(28),
-                border: Border.all(
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.2),
-                ),
-              ),
               child: Row(
                 children: [
                   Icon(Icons.push_pin_rounded,
@@ -416,7 +443,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          'Pinned Message',
+                          AppLocalizations.of(context).pinnedMessage,
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
@@ -499,14 +526,19 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   }
 
   String _selectionKeyForGroupMessage(Map<String, dynamic> msg) {
-    final sender =
-        widget.group.isChannel ? widget.group.name : msg['sender']?.toString() ?? '?';
+    final sender = widget.group.isChannel
+        ? widget.group.name
+        : msg['sender']?.toString() ?? '?';
     final content = msg['content']?.toString() ?? '';
     return '${msg['timestamp']}_${sender}_${content.hashCode}';
   }
 
-  GlobalKey _messageItemKey(String uniqueKey) =>
-      _messageItemKeys.putIfAbsent(uniqueKey, () => GlobalKey());
+  // Keyed by the message's STABLE animation id (animationId/id, not the
+  // uniqueKey which embeds timestamp/content and can shift), so a server
+  // sync doesn't mint a new GlobalKey and tear down the in-flight
+  // AnimatedMessageBubble under it (see ChatScreen for the full story).
+  GlobalKey _messageItemKey(String stableId) =>
+      _messageItemKeys.putIfAbsent(stableId, () => GlobalKey());
 
   void _startGroupDragSelection(Map<String, dynamic> msg, String uniqueKey) {
     final cur = _selectionNotifier.value;
@@ -564,7 +596,14 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     String? bestKey;
     double bestCenterDist = double.infinity;
     for (final uniqueKey in _dragSelectionOrder) {
-      final context = _messageItemKeys[uniqueKey]?.currentContext;
+      final dMsg = _dragSelectionLookup[uniqueKey];
+      final stableId = dMsg == null
+          ? null
+          : (dMsg['animationId']?.toString() ??
+              dMsg['id']?.toString() ??
+              uniqueKey);
+      final context =
+          stableId == null ? null : _messageItemKeys[stableId]?.currentContext;
       if (context == null) continue;
       final box = context.findRenderObject() as RenderBox?;
       if (box == null || !box.hasSize) continue;
@@ -580,8 +619,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   }
 
   void _updateDragAutoScroll() {
-    final box =
-        _messageListViewportKey.currentContext?.findRenderObject() as RenderBox?;
+    final box = _messageListViewportKey.currentContext?.findRenderObject()
+        as RenderBox?;
     if (box == null) return;
     final local = box.globalToLocal(_lastDragPointerGlobal);
     final height = box.size.height;
@@ -602,8 +641,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       _stopDragAutoScroll();
       return;
     }
-    final box =
-        _messageListViewportKey.currentContext?.findRenderObject() as RenderBox?;
+    final box = _messageListViewportKey.currentContext?.findRenderObject()
+        as RenderBox?;
     if (box == null) return;
     final local = box.globalToLocal(_lastDragPointerGlobal);
     final height = box.size.height;
@@ -721,6 +760,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     _currentUsername = rootScreenKey.currentState?.currentUsername;
     _currentDisplayName = rootScreenKey.currentState?.currentDisplayName;
     _loadPinnedMessage();
+    _maybeShowE2eeWarning();
     _consumePendingGroupScrollTarget();
     _loadHistoryFromCache().then((_) {
       _loadHistoryFromNetwork();
@@ -730,21 +770,21 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     HardwareKeyboard.instance.addHandler(_handleGlobalKey);
 
     _inputEntryController = AnimationController(
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 400),
       vsync: this,
     );
 
-    _inputEntryScaleX = Tween<double>(begin: 0.3, end: 1.0).animate(
+    _inputEntryTranslateY = Tween<double>(begin: 30.0, end: 0.0).animate(
       CurvedAnimation(
         parent: _inputEntryController,
-        curve: Curves.easeInOutCubic,
+        curve: Curves.easeOutCubic,
       ),
     );
 
     _inputEntryOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _inputEntryController,
-        curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+        curve: Curves.easeOut,
       ),
     );
 
@@ -912,8 +952,11 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                       Navigator.pop(ctx);
                       final rMsgId = int.tryParse(msg['id']?.toString() ?? '');
                       final reactionKey = 'gm_${msg['id']}';
-                      openEmojiPicker(context, reactionKey, _currentUsername ?? '', onAfterToggle: (emoji, wasReacted) {
-                        if (rMsgId != null) _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
+                      openEmojiPicker(
+                          context, reactionKey, _currentUsername ?? '',
+                          onAfterToggle: (emoji, wasReacted) {
+                        if (rMsgId != null)
+                          _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
                       });
                     }),
                     actionTile(
@@ -1001,11 +1044,11 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     });
   }
 
-  List<DesktopMenuItem> _buildGroupDesktopMenuItems(
-      Map<String, dynamic> msg) {
+  List<DesktopMenuItem> _buildGroupDesktopMenuItems(Map<String, dynamic> msg) {
     final content = msg['content']?.toString() ?? '';
     final rawSender = msg['sender']?.toString() ?? '';
-    final isMe = rawSender == _currentUsername || rawSender == _currentDisplayName;
+    final isMe =
+        rawSender == _currentUsername || rawSender == _currentDisplayName;
     final msgId = msg['id']?.toString();
     final isImage = content.startsWith('IMAGEv1:');
     final isAlbum = content.startsWith('ALBUMv1:');
@@ -1056,8 +1099,10 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         onPressed: () {
           final rMsgId = int.tryParse(msg['id']?.toString() ?? '');
           final reactionKey = 'gm_${msg['id']}';
-          openEmojiPicker(context, reactionKey, _currentUsername ?? '', onAfterToggle: (emoji, wasReacted) {
-            if (rMsgId != null) _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
+          openEmojiPicker(context, reactionKey, _currentUsername ?? '',
+              onAfterToggle: (emoji, wasReacted) {
+            if (rMsgId != null)
+              _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
           });
         },
       ),
@@ -1093,7 +1138,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           onPressed: () => _startEditingGroupMessage(msg),
         ),
       DesktopMenuItem(
-        icon: _isGroupMsgPinned(msg) ? Icons.push_pin_outlined : Icons.push_pin_rounded,
+        icon: _isGroupMsgPinned(msg)
+            ? Icons.push_pin_outlined
+            : Icons.push_pin_rounded,
         label: _isGroupMsgPinned(msg) ? l.unpin : l.pin,
         onPressed: () => _toggleGroupPin(msg),
       ),
@@ -1123,8 +1170,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
             final localPath =
                 filename.isNotEmpty ? mediaFilePathRegistry[filename] : null;
             if (localPath == null) {
-              rootScreenKey.currentState
-                  ?.showSnack(l.fileNotLoadedOpenFirst);
+              rootScreenKey.currentState?.showSnack(l.fileNotLoadedOpenFirst);
               return;
             }
             revealInFileSystem(localPath);
@@ -1132,7 +1178,6 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         ),
     ];
   }
-
 
   void _copyGroupProxyImage(String content) {
     try {
@@ -1689,10 +1734,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       if (!mounted || !_scroll.hasClients || _cachedSearchMatches.isEmpty)
         return;
       final matchAdjI = _cachedSearchMatches[_currentMatchIdx];
-      final pendingCount = _pendingUploads.length;
-      final totalItems = pendingCount + _rebuildGroupDisplayItems().length;
+      final totalItems = _rebuildGroupDisplayItems().length;
       if (totalItems == 0) return;
-      final listIdx = pendingCount + matchAdjI;
+      final listIdx = matchAdjI;
       final maxExtent = _scroll.position.maxScrollExtent;
       final target = (maxExtent * listIdx / totalItems).clamp(0.0, maxExtent);
       _scroll.animateTo(target,
@@ -1741,9 +1785,11 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     }
   }
 
-  Future<void> _serverToggleGroupReaction(int msgId, String emoji, bool remove) async {
+  Future<void> _serverToggleGroupReaction(
+      int msgId, String emoji, bool remove) async {
     // Prefer root-screen username (always fresh) over cached _currentUsername
-    final username = rootScreenKey.currentState?.currentUsername ?? _currentUsername ?? '';
+    final username =
+        rootScreenKey.currentState?.currentUsername ?? _currentUsername ?? '';
     if (username.isEmpty) {
       debugPrint('[reaction.group] username empty, skipping server call');
       return;
@@ -1751,26 +1797,33 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     if (_isDisposed) return;
     final token = await AccountManager.getToken(username);
     if (token == null) {
-      debugPrint('[reaction.group] token null for $username, skipping server call');
+      debugPrint(
+          '[reaction.group] token null for $username, skipping server call');
       return;
     }
     try {
       final groupId = widget.group.id;
-      debugPrint('[reaction.group] ${remove ? "DELETE" : "POST"} groupId=$groupId msgId=$msgId emoji=$emoji user=$username');
+      debugPrint(
+          '[reaction.group] ${remove ? "DELETE" : "POST"} groupId=$groupId msgId=$msgId emoji=$emoji user=$username');
       http.Response resp;
       if (remove) {
         resp = await http.delete(
-          Uri.parse('$serverBase/group/$groupId/messages/$msgId/reactions/${Uri.encodeComponent(emoji)}'),
+          Uri.parse(
+              '$serverBase/group/$groupId/messages/$msgId/reactions/${Uri.encodeComponent(emoji)}'),
           headers: {'Authorization': 'Bearer $token'},
         );
       } else {
         resp = await http.post(
           Uri.parse('$serverBase/group/$groupId/messages/$msgId/reactions'),
-          headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json'
+          },
           body: jsonEncode({'emoji': emoji}),
         );
       }
-      debugPrint('[reaction.group] server responded ${resp.statusCode}: ${resp.body}');
+      debugPrint(
+          '[reaction.group] server responded ${resp.statusCode}: ${resp.body}');
     } catch (e) {
       debugPrint('[reaction.group] server error: $e');
     }
@@ -1886,8 +1939,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                 'reply_to_sender': item['reply_to_sender']?.toString(),
               if (item['reply_to_content'] != null)
                 'reply_to_content': item['reply_to_content']?.toString(),
-              if (item['reactions'] != null)
-                'reactions': item['reactions'],
+              if (item['reactions'] != null) 'reactions': item['reactions'],
             });
           }
         }
@@ -2025,22 +2077,6 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     }
   }
 
-  void _scrollToBottomAfterSend() {
-    if (!_scroll.hasClients) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scroll.hasClients) return;
-      final pixels = _scroll.position.pixels;
-      if (pixels <= 4.0) {
-        _scroll.jumpTo(56.0);
-      }
-      _scroll.animateTo(
-        0.0,
-        duration: const Duration(milliseconds: 310),
-        curve: Curves.easeOutCubic,
-      );
-    });
-  }
-
   void _scrollToBottomIfNeeded() {
     if (!_scroll.hasClients) return;
     final current = _scroll.position.pixels;
@@ -2142,7 +2178,6 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
         _replyingToMessage = null;
       });
-      _scrollToBottomAfterSend();
     }
 
     if (!_shouldPreserveExternalFocus && !recordingNotifier.value) {
@@ -2195,8 +2230,6 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                 _allMessageIds.remove(tempMessageId);
               }
 
-              debugPrint(
-                  '[group_chat_screen::send] clearing _replyingToMessage\n${StackTrace.current}');
               _replyingToMessage = null;
             });
           }
@@ -2287,7 +2320,25 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     if (paths == null || paths.isEmpty) return;
 
     if (paths.length > 1) {
-      await _handleGroupDroppedFiles(paths);
+      final imagePaths = paths.where(FileTypeDetector.isImage).toList();
+      if (imagePaths.length > 10) {
+        final albumCount = (imagePaths.length / 10).ceil();
+        var proceed = false;
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          builder: (_) => BulkAlbumConfirmDialog(
+            imageCount: imagePaths.length,
+            albumCount: albumCount,
+            onSend: () => proceed = true,
+            onCancel: () {},
+          ),
+        );
+        if (!proceed) return;
+        await _handleGroupDroppedFiles(paths, skipBulkConfirm: true);
+      } else {
+        await _handleGroupDroppedFiles(paths);
+      }
       return;
     }
 
@@ -2317,7 +2368,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         : fileType == 'VIDEO'
             ? 'video'
             : fileType == 'AUDIO'
-                ? 'voice'
+                ? 'audio'
                 : 'file';
 
     // Create pending card immediately
@@ -2385,12 +2436,10 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       });
   }
 
-  Widget _buildPendingUploadWidget(UploadTask task) {
-    return PendingUploadCard(
-      task: task,
-      showProgress: false, // catbox upload — no byte-level progress
-      onCancel: () => _cancelUpload(task),
-    );
+  void _cancelAllUploads() {
+    for (final task in List<UploadTask>.from(_pendingUploads)) {
+      _cancelUpload(task);
+    }
   }
 
   Future<void> _processAndUploadAlbum(List<String> filePaths) async {
@@ -2398,22 +2447,33 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     if (filePaths.isEmpty) return;
 
     const provider = MediaProvider.catbox;
-    if (mounted) {
-      rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value)
-              .uploadingImages(filePaths.length));
-    }
+
+    final albumTask = UploadTask(
+      id: 'album_${DateTime.now().millisecondsSinceEpoch}',
+      type: 'album',
+      localPath: '',
+      basename: '',
+    );
+    albumTask.albumTotal = filePaths.length;
+    albumTask.status = UploadStatus.uploading;
+    if (mounted) setState(() => _pendingUploads.add(albumTask));
 
     final items = <Map<String, String>>[];
-    for (final filePath in filePaths) {
-      final basename = p.basename(filePath);
-      final bytes = await File(filePath).readAsBytes();
-      final link = await _uploadToProvider(bytes, basename, provider);
-      if (link == null) {
-        debugPrint('[group-album] upload failed for $basename');
-        continue;
+    try {
+      for (final filePath in filePaths) {
+        final basename = p.basename(filePath);
+        final bytes = await File(filePath).readAsBytes();
+        final link = await _uploadToProvider(bytes, basename, provider);
+        if (link == null) {
+          debugPrint('[group-album] upload failed for $basename');
+          continue;
+        }
+        albumTask.albumDone++;
+        albumTask.progress = albumTask.albumDone / albumTask.albumTotal;
+        items.add({'url': link, 'orig': basename, 'provider': provider.name});
       }
-      items.add({'url': link, 'orig': basename, 'provider': provider.name});
+    } finally {
+      if (mounted) setState(() => _pendingUploads.remove(albumTask));
     }
 
     if (items.isEmpty) {
@@ -2592,12 +2652,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         }),
       );
 
-      if (_replyingToMessage != null)
+      if (_replyingToMessage != null && mounted) {
         setState(() {
           debugPrint(
               '[group_chat_screen::clear] clearing _replyingToMessage\n${StackTrace.current}');
           _replyingToMessage = null;
         });
+      }
     } catch (e) {
       debugPrint('[err] $e');
     }
@@ -2610,12 +2671,14 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
     if (typ == 'reaction_update') {
       final msgIdRaw = msg['message_id'];
-      final msgId = msgIdRaw is int ? msgIdRaw : int.tryParse(msgIdRaw?.toString() ?? '');
+      final msgId =
+          msgIdRaw is int ? msgIdRaw : int.tryParse(msgIdRaw?.toString() ?? '');
       if (msgId != null && mounted) {
         final reactions = (msg['reactions'] as Map<String, dynamic>?) ?? {};
         // Update stored message data so it's correct when scrolled into view
         setState(() {
-          final idx = _messages.indexWhere((m) => m['id']?.toString() == msgId.toString());
+          final idx = _messages
+              .indexWhere((m) => m['id']?.toString() == msgId.toString());
           if (idx >= 0) _messages[idx]['reactions'] = reactions;
         });
         // Update mixin state if message is currently rendered
@@ -2748,14 +2811,11 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     final toAdd = List<Map<String, dynamic>>.from(_wsIncomingBuffer);
     _wsIncomingBuffer.clear();
 
-    const int animateLimit = 3;
-    if (toAdd.length > animateLimit) {
-      for (int i = 0; i < toAdd.length - animateLimit; i++) {
-        toAdd[i]['suppressAnimation'] = true;
-      }
-      debugPrint(
-          '[GroupChat Animation] Batch received: ${toAdd.length}, only last $animateLimit will animate');
-    }
+    // No suppressAnimation cutoff here — ChatScreen (1:1) never gates the
+    // entrance animation either, so every message gets the same growing-slot
+    // entrance regardless of batch size. Capping it to the last N caused the
+    // rest to snap in at full height in a single frame, which is what made
+    // group/channel message bursts look like an abrupt jump compared to 1:1.
 
     final idsToAdd = <String>[];
     for (final m in toAdd) {
@@ -2828,7 +2888,20 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           }
           rootScreenKey.currentState?.showSnack(
               AppLocalizations(SettingsManager.appLocale.value).leftGroup);
-          Navigator.of(context).pop();
+          final username = _currentUsername ?? '';
+          if (username.isNotEmpty) {
+            final cached = await AccountManager.loadGroupsCache(username);
+            await AccountManager.saveGroupsCache(
+              username,
+              cached.where((g) => g.id != widget.group.id).toList(),
+            );
+            groupsVersion.value++;
+          }
+          if (isDesktop) {
+            rootScreenKey.currentState?.hideDetailPanel();
+          } else {
+            Navigator.of(context).pop();
+          }
         }
       } else {
         if (mounted) {
@@ -2850,8 +2923,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(l.leaveGroupTitle(false)),
-        content: Text(l.leaveGroupContent('')),
+        title: Text(l.leaveGroupTitle(widget.group.isChannel)),
+        content: Text(l.leaveGroupContent(widget.group.name)),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
@@ -3247,14 +3320,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                 width: 32,
                                 height: 32,
                                 decoration: BoxDecoration(
-                                  color:
-                                      cs.onSurface.withValues(alpha: 0.07),
+                                  color: cs.onSurface.withValues(alpha: 0.07),
                                   borderRadius: BorderRadius.circular(10),
                                 ),
                                 child: Icon(Icons.close_rounded,
                                     size: 18,
-                                    color: cs.onSurface
-                                        .withValues(alpha: 0.55)),
+                                    color:
+                                        cs.onSurface.withValues(alpha: 0.55)),
                               ),
                             ),
                           ],
@@ -3273,8 +3345,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                 alignment: Alignment.center,
                                 children: [
                                   GestureDetector(
-                                    onTap: () => changeAvatarInDialog(
-                                        setDialogState),
+                                    onTap: () =>
+                                        changeAvatarInDialog(setDialogState),
                                     onLongPress: () =>
                                         removeAvatarInDialog(setDialogState),
                                     child: CircleAvatar(
@@ -3330,22 +3402,19 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                             .groupNameHint,
                                     counterText: '',
                                     filled: true,
-                                    fillColor:
-                                        baseColor.withValues(alpha: 0.3),
+                                    fillColor: baseColor.withValues(alpha: 0.3),
                                     border: OutlineInputBorder(
                                         borderRadius:
                                             BorderRadius.circular(14)),
                                     enabledBorder: OutlineInputBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(14),
                                       borderSide: BorderSide(
                                           color: cs.outlineVariant
                                               .withValues(alpha: 0.3),
                                           width: 0.8),
                                     ),
                                     focusedBorder: OutlineInputBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(14),
                                       borderSide: BorderSide(
                                           color: cs.primary, width: 1.4),
                                     ),
@@ -3357,8 +3426,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                             Center(
                               child: TextButton.icon(
                                 icon: const Icon(Icons.copy, size: 16),
-                                label: Text(
-                                    AppLocalizations.of(context).copyLink),
+                                label:
+                                    Text(AppLocalizations.of(context).copyLink),
                                 onPressed: () {
                                   Clipboard.setData(ClipboardData(
                                       text: widget.group.inviteLink
@@ -3367,8 +3436,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                   if (mounted) {
                                     rootScreenKey.currentState?.showSnack(
                                         AppLocalizations(
-                                                SettingsManager
-                                                    .appLocale.value)
+                                                SettingsManager.appLocale.value)
                                             .tokenCopied);
                                   }
                                 },
@@ -3381,108 +3449,121 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                 shape: btnShape,
                               ),
                               onPressed: () async {
-                final newName = controller.text.trim();
-                if (newName.isEmpty || newName.length > 50) {
-                  if (mounted) {
-                    rootScreenKey.currentState?.showSnack(
-                        AppLocalizations(SettingsManager.appLocale.value)
-                            .groupNameLength);
-                  }
-                  return;
-                }
+                                final newName = controller.text.trim();
+                                if (newName.isEmpty || newName.length > 50) {
+                                  if (mounted) {
+                                    rootScreenKey.currentState?.showSnack(
+                                        AppLocalizations(
+                                                SettingsManager.appLocale.value)
+                                            .groupNameLength);
+                                  }
+                                  return;
+                                }
 
-                final token =
-                    await AccountManager.getToken(_currentUsername ?? '');
-                if (token == null) return;
-                try {
-                  final res = await http.post(
-                    Uri.parse('$serverBase/group/${widget.group.id}/rename'),
-                    headers: {
-                      'authorization': 'Bearer $token',
-                      'content-type': 'application/json'
-                    },
-                    body: jsonEncode({'name': newName}),
-                  );
-                  if (res.statusCode == 200) {
-                    try {
-                      final j = jsonDecode(res.body) as Map<String, dynamic>;
-                      final updatedName = j['name']?.toString();
-                      if (updatedName != null) {
-                        final username =
-                            rootScreenKey.currentState?.currentUsername ?? '';
-                        final cached =
-                            await AccountManager.loadGroupsCache(username);
-                        final updated = cached
-                            .map((g) => g.id == widget.group.id
-                                ? Group(
-                                    id: g.id,
-                                    name: updatedName,
-                                    isChannel: g.isChannel,
-                                    owner: g.owner,
-                                    inviteLink: g.inviteLink,
-                                    avatarVersion: g.avatarVersion,
-                                    myRole: g.myRole)
-                                : g)
-                            .toList();
-                        await AccountManager.saveGroupsCache(username, updated);
+                                final token = await AccountManager.getToken(
+                                    _currentUsername ?? '');
+                                if (token == null) return;
+                                try {
+                                  final res = await http.post(
+                                    Uri.parse(
+                                        '$serverBase/group/${widget.group.id}/rename'),
+                                    headers: {
+                                      'authorization': 'Bearer $token',
+                                      'content-type': 'application/json'
+                                    },
+                                    body: jsonEncode({'name': newName}),
+                                  );
+                                  if (res.statusCode == 200) {
+                                    try {
+                                      final j = jsonDecode(res.body)
+                                          as Map<String, dynamic>;
+                                      final updatedName = j['name']?.toString();
+                                      if (updatedName != null) {
+                                        final username = rootScreenKey
+                                                .currentState
+                                                ?.currentUsername ??
+                                            '';
+                                        final cached = await AccountManager
+                                            .loadGroupsCache(username);
+                                        final updated = cached
+                                            .map((g) => g.id == widget.group.id
+                                                ? Group(
+                                                    id: g.id,
+                                                    name: updatedName,
+                                                    isChannel: g.isChannel,
+                                                    owner: g.owner,
+                                                    inviteLink: g.inviteLink,
+                                                    avatarVersion:
+                                                        g.avatarVersion,
+                                                    myRole: g.myRole)
+                                                : g)
+                                            .toList();
+                                        await AccountManager.saveGroupsCache(
+                                            username, updated);
 
-                        groupsVersion.value++;
+                                        groupsVersion.value++;
 
-                        final root = rootScreenKey.currentState;
-                        if (root != null &&
-                            root.selectedGroup != null &&
-                            root.selectedGroup!.id == widget.group.id) {
-                          root.selectedGroup = Group(
-                              id: widget.group.id,
-                              name: updatedName,
-                              isChannel: widget.group.isChannel,
-                              owner: widget.group.owner,
-                              inviteLink: widget.group.inviteLink,
-                              avatarVersion: widget.group.avatarVersion,
-                              myRole: widget.group.myRole);
-                          root.setState(() {});
-                        }
-                        setState(() {});
-                      }
-                    } catch (e) {
-                      debugPrint('[err] $e');
-                    }
+                                        final root = rootScreenKey.currentState;
+                                        if (root != null &&
+                                            root.selectedGroup != null &&
+                                            root.selectedGroup!.id ==
+                                                widget.group.id) {
+                                          root.selectedGroup = Group(
+                                              id: widget.group.id,
+                                              name: updatedName,
+                                              isChannel: widget.group.isChannel,
+                                              owner: widget.group.owner,
+                                              inviteLink:
+                                                  widget.group.inviteLink,
+                                              avatarVersion:
+                                                  widget.group.avatarVersion,
+                                              myRole: widget.group.myRole);
+                                          root.setState(() {});
+                                        }
+                                        setState(() {});
+                                      }
+                                    } catch (e) {
+                                      debugPrint('[err] $e');
+                                    }
 
-                    if (mounted) {
-                      rootScreenKey.currentState?.showSnack(
-                          AppLocalizations(SettingsManager.appLocale.value)
-                              .groupUpdated);
-                    }
-                    Navigator.of(ctx).pop(true);
-                  } else {
-                    if (mounted) {
-                      rootScreenKey.currentState?.showSnack(
-                          AppLocalizations(SettingsManager.appLocale.value)
-                              .failedUpdateGroup);
-                    }
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    rootScreenKey.currentState?.showSnack(
-                        AppLocalizations(SettingsManager.appLocale.value)
-                            .networkError);
-                  }
-                }
-              },
+                                    if (mounted) {
+                                      rootScreenKey.currentState?.showSnack(
+                                          AppLocalizations(SettingsManager
+                                                  .appLocale.value)
+                                              .groupUpdated);
+                                    }
+                                    Navigator.of(ctx).pop(true);
+                                  } else {
+                                    if (mounted) {
+                                      rootScreenKey.currentState?.showSnack(
+                                          AppLocalizations(SettingsManager
+                                                  .appLocale.value)
+                                              .failedUpdateGroup);
+                                    }
+                                  }
+                                } catch (e) {
+                                  if (mounted) {
+                                    rootScreenKey.currentState?.showSnack(
+                                        AppLocalizations(
+                                                SettingsManager.appLocale.value)
+                                            .networkError);
+                                  }
+                                }
+                              },
                               child: Text(AppLocalizations.of(context).save),
                             ),
-                          ],        // inner Column children
-                        ),          // inner Column
-                      ),            // Padding
-                    ],              // outer Column children
-                  ),                // outer Column
-                ),                  // Material
-              ),                    // ConstrainedBox
-            ),                      // ClipRRect
-          );                        // Dialog return
-        },                          // StatefulBuilder.builder
-      ),                            // StatefulBuilder
-    );                              // showDialog
+                          ], // inner Column children
+                        ), // inner Column
+                      ), // Padding
+                    ], // outer Column children
+                  ), // outer Column
+                ), // Material
+              ), // ConstrainedBox
+            ), // ClipRRect
+          ); // Dialog return
+        }, // StatefulBuilder.builder
+      ), // StatefulBuilder
+    ); // showDialog
 
     _shouldPreserveExternalFocus = false;
     if (mounted && isDesktop && !recordingNotifier.value) {
@@ -3506,301 +3587,456 @@ class _GroupChatScreenState extends State<GroupChatScreen>
             }
           },
           child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AnimatedSize(
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOut,
-              child: _editingMsgId != null
-                  ? ValueListenableBuilder<double>(
-                      valueListenable: SettingsManager.elementBrightness,
-                      builder: (_, brightness, ___) {
-                        final baseColor = SettingsManager.getElementColor(
-                          colorScheme.surfaceContainerHighest,
-                          brightness,
-                        );
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: baseColor.withValues(alpha: opacity),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: colorScheme.outlineVariant
-                                  .withValues(alpha: 0.15),
-                              width: 1,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedSize(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOut,
+                child: _editingMsgId != null
+                    ? ValueListenableBuilder<double>(
+                        valueListenable: SettingsManager.elementBrightness,
+                        builder: (_, brightness, ___) {
+                          final baseColor = SettingsManager.getElementColor(
+                            colorScheme.surfaceContainerHighest,
+                            brightness,
+                          );
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: baseColor.withValues(alpha: opacity),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: colorScheme.outlineVariant
+                                    .withValues(alpha: 0.15),
+                                width: 1,
+                              ),
                             ),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(Icons.edit,
-                                  size: 16, color: colorScheme.primary),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      'Edit message',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: colorScheme.primary,
+                            child: Row(
+                              children: [
+                                Icon(Icons.edit,
+                                    size: 16, color: colorScheme.primary),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        'Edit message',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: colorScheme.primary,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      _editingOriginalContent ?? '',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: colorScheme.onSurface
-                                            .withValues(alpha: 0.7),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        _editingOriginalContent ?? '',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: colorScheme.onSurface
+                                              .withValues(alpha: 0.7),
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: _cancelEditingGroupMessage,
-                                visualDensity: VisualDensity.compact,
-                                splashRadius: 18,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                    minWidth: 32, minHeight: 32),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    )
-                  : const SizedBox.shrink(),
-            ),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOut,
-              child: _replyingToMessage != null
-                  ? ValueListenableBuilder<double>(
-                      valueListenable: SettingsManager.elementBrightness,
-                      builder: (_, brightness, ___) {
-                        final baseColor = SettingsManager.getElementColor(
-                          colorScheme.surfaceContainerHighest,
-                          brightness,
-                        );
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: baseColor.withValues(alpha: opacity),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: colorScheme.outlineVariant
-                                  .withValues(alpha: 0.15),
-                              width: 1,
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  onPressed: _cancelEditingGroupMessage,
+                                  visualDensity: VisualDensity.compact,
+                                  splashRadius: 18,
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(
+                                      minWidth: 32, minHeight: 32),
+                                ),
+                              ],
                             ),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      widget.group.isChannel
-                                          ? widget.group.name
-                                          : (_replyingToMessage![
-                                                      'senderDisplayName']
-                                                  ?.toString() ??
-                                              _replyingToMessage!['sender']
-                                                  ?.toString() ??
-                                              'Unknown'),
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: colorScheme.primary,
+                          );
+                        },
+                      )
+                    : const SizedBox.shrink(),
+              ),
+              AnimatedSize(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOut,
+                child: _replyingToMessage != null
+                    ? ValueListenableBuilder<double>(
+                        valueListenable: SettingsManager.elementBrightness,
+                        builder: (_, brightness, ___) {
+                          final baseColor = SettingsManager.getElementColor(
+                            colorScheme.surfaceContainerHighest,
+                            brightness,
+                          );
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: baseColor.withValues(alpha: opacity),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: colorScheme.outlineVariant
+                                    .withValues(alpha: 0.15),
+                                width: 1,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        widget.group.isChannel
+                                            ? widget.group.name
+                                            : (_replyingToMessage![
+                                                        'senderDisplayName']
+                                                    ?.toString() ??
+                                                _replyingToMessage!['sender']
+                                                    ?.toString() ??
+                                                'Unknown'),
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: colorScheme.primary,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      getPreviewText(
-                                        (_replyingToMessage!['content'] ?? '')
-                                            .toString(),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        getPreviewText(
+                                          (_replyingToMessage!['content'] ?? '')
+                                              .toString(),
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: colorScheme.onSurface
+                                              .withOpacity(0.7),
+                                        ),
                                       ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: colorScheme.onSurface
-                                            .withOpacity(0.7),
-                                      ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: _cancelReplying,
-                                visualDensity: VisualDensity.compact,
-                                splashRadius: 18,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                    minWidth: 32, minHeight: 32),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    )
-                  : const SizedBox.shrink(),
-            ),
-            AnimatedBuilder(
-              animation: _inputEntryController,
-              builder: (context, child) {
-                return Transform.scale(
-                  scaleX: _inputEntryScaleX.value,
-                  alignment: Alignment.center,
-                  child: Opacity(
-                    opacity: _inputEntryOpacity.value,
-                    child: child,
-                  ),
-                );
-              },
-              child: ListenableBuilder(
-                listenable: Listenable.merge([
-                  SettingsManager.elementBrightness,
-                  SettingsManager.liquidGlassOnInput,
-                  SettingsManager.liquidGlassInputQuality,
-                  SettingsManager.liquidGlassInputBlur,
-                  SettingsManager.liquidGlassInputTint,
-                  SettingsManager.liquidGlassInputSaturation,
-                  SettingsManager.liquidGlassInputChromatic,
-                  SettingsManager.liquidGlassInputRefractive,
-                  SettingsManager.liquidGlassInputLightIntensity,
-                  SettingsManager.liquidGlassInputThickness,
-                ]),
-                builder: (_, __) {
-                  final brightness = SettingsManager.elementBrightness.value;
-                  final baseColor = SettingsManager.getElementColor(
-                    colorScheme.surfaceContainerHighest,
-                    brightness,
-                  );
-                  final isMobile = !Platform.isWindows && !Platform.isLinux;
-                  final useGlass = isMobile && SettingsManager.liquidGlassOnInput.value;
-                  final bar = ChatInputBar(
-                    controller: _textCtrl,
-                    textFocusNode: _focusNode,
-                    recordingListenable: recordingNotifier,
-                    onCancelRecording: () {
-                      rootScreenKey.currentState?.cancelRecording();
-                    },
-                    onMicPressed: (isRecording) {
-                      if (isRecording) {
-                        _stopRecordingAndUpload();
-                      } else {
-                        _startRecording();
-                      }
-                    },
-                    onAttachPressed: _pickAndUploadMedia,
-                    onSendPressed: () => _sendMessage(_textCtrl.text),
-                    onPaste: _handlePasteFromClipboard,
-                    hintText:
-                        AppLocalizations.of(context).localizeHint(_inputHint),
-                    backgroundColor: useGlass ? Colors.white : baseColor,
-                    opacity: useGlass ? 0.0 : opacity,
-                    borderColor: useGlass
-                        ? Colors.transparent
-                        : colorScheme.outlineVariant.withValues(alpha: 0.15),
-                    glassMode: useGlass,
-                    contentInsertionConfiguration:
-                        ContentInsertionConfiguration(
-                      allowedMimeTypes: const [
-                        'image/png',
-                        'image/jpeg',
-                        'image/gif',
-                        'image/webp',
-                      ],
-                      onContentInserted: (data) async {
-                        try {
-                          Uint8List? bytes = data.data;
-                          if (bytes == null && data.uri.isNotEmpty) {
-                            try {
-                              bytes = await _clipboardChannel
-                                  .invokeMethod<Uint8List>(
-                                      'readContentUri', {'uri': data.uri});
-                            } catch (e) {
-                              debugPrint('[err] $e');
-                            }
-                          }
-                          if (bytes != null && bytes.isNotEmpty && mounted) {
-                            final ext = data.mimeType.contains('/')
-                                ? data.mimeType.split('/').last
-                                : 'png';
-                            final tempDir = await getTemporaryDirectory();
-                            final tempFile = File(
-                                '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext');
-                            await tempFile.writeAsBytes(bytes);
-                            _handleGroupDroppedFiles([tempFile.path]);
-                          }
-                        } catch (e) {
-                          debugPrint('[ContentInsert] Error: $e');
-                        }
-                      },
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  onPressed: _cancelReplying,
+                                  visualDensity: VisualDensity.compact,
+                                  splashRadius: 18,
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(
+                                      minWidth: 32, minHeight: 32),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      )
+                    : const SizedBox.shrink(),
+              ),
+              // Below the reply/edit preview, above the input bar — plain
+              // Column children, so they stack instead of overlapping.
+              AnimatedSize(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOut,
+                child: _pendingUploads.isNotEmpty
+                    ? UploadProgressBar(
+                        tasks: _pendingUploads,
+                        maxWidth: double.infinity,
+                        showProgress:
+                            false, // catbox upload — no byte-level progress
+                        onCancelAll: _cancelAllUploads,
+                      )
+                    : const SizedBox.shrink(),
+              ),
+              AnimatedBuilder(
+                animation: _inputEntryController,
+                builder: (context, child) {
+                  return Transform.translate(
+                    offset: Offset(0, _inputEntryTranslateY.value),
+                    child: Opacity(
+                      opacity: _inputEntryOpacity.value,
+                      child: child,
                     ),
-                    readOnly: _isReadOnlyChannel,
-                  );
-                  if (!useGlass) return bar;
-                  final quality = SettingsManager.liquidGlassInputQuality.value;
-                  final blur = SettingsManager.liquidGlassInputBlur.value;
-                  final tint = SettingsManager.liquidGlassInputTint.value;
-                  final saturation = SettingsManager.liquidGlassInputSaturation.value;
-                  final chromatic = SettingsManager.liquidGlassInputChromatic.value;
-                  final refractive = SettingsManager.liquidGlassInputRefractive.value;
-                  final lightIntensity = SettingsManager.liquidGlassInputLightIntensity.value;
-                  final thickness = SettingsManager.liquidGlassInputThickness.value;
-                  final glassQuality = switch (quality) {
-                    LiquidGlassQuality.fast    => GlassQuality.standard,
-                    LiquidGlassQuality.medium  => GlassQuality.minimal,
-                    LiquidGlassQuality.quality => GlassQuality.premium,
-                  };
-                  final isDark = Theme.of(context).brightness == Brightness.dark;
-                  final tintColor = isDark
-                      ? Colors.white.withValues(alpha: tint)
-                      : Colors.black.withValues(alpha: tint);
-                  final settings = LiquidGlassSettings(
-                    thickness: thickness,
-                    blur: blur,
-                    chromaticAberration: chromatic,
-                    lightIntensity: lightIntensity,
-                    refractiveIndex: refractive,
-                    saturation: saturation,
-                    ambientStrength: 0.8,
-                    lightAngle: 0.75 * pi,
-                    glassColor: tintColor,
-                  );
-                  return GlassCard(
-                    useOwnLayer: true,
-                    settings: settings,
-                    quality: glassQuality,
-                    padding: EdgeInsets.zero,
-                    shape: LiquidRoundedRectangle(borderRadius: 24),
-                    clipBehavior: Clip.antiAlias,
-                    child: bar,
                   );
                 },
+                child: ListenableBuilder(
+                  listenable: Listenable.merge([
+                    SettingsManager.elementBrightness,
+                    SettingsManager.liquidGlassOnInput,
+                    SettingsManager.liquidGlassInputQuality,
+                    SettingsManager.liquidGlassInputBlur,
+                    SettingsManager.liquidGlassInputTint,
+                    SettingsManager.liquidGlassInputSaturation,
+                    SettingsManager.liquidGlassInputChromatic,
+                    SettingsManager.liquidGlassInputRefractive,
+                    SettingsManager.liquidGlassInputLightIntensity,
+                    SettingsManager.liquidGlassInputThickness,
+                  ]),
+                  builder: (_, __) {
+                    final brightness = SettingsManager.elementBrightness.value;
+                    final baseColor = SettingsManager.getElementColor(
+                      colorScheme.surfaceContainerHighest,
+                      brightness,
+                    );
+                    final isMobile = !Platform.isWindows && !Platform.isLinux;
+                    final useGlass =
+                        isMobile && SettingsManager.liquidGlassOnInput.value;
+                    final bar = ChatInputBar(
+                      inputAreaKey: _inputAreaKey,
+                      controller: _textCtrl,
+                      textFocusNode: _focusNode,
+                      recordingListenable: recordingNotifier,
+                      recordingLevelListenable: recordingLevelNotifier,
+                      onCancelRecording: () {
+                        rootScreenKey.currentState?.cancelRecording();
+                      },
+                      onMicPressed: (isRecording) {
+                        if (isRecording) {
+                          _stopRecordingAndUpload();
+                        } else {
+                          _startRecording();
+                        }
+                      },
+                      onAttachPressed: _pickAndUploadMedia,
+                      onSendPressed: () => _sendMessage(_textCtrl.text),
+                      onPaste: _handlePasteFromClipboard,
+                      hintText:
+                          AppLocalizations.of(context).localizeHint(_inputHint),
+                      backgroundColor: useGlass ? Colors.white : baseColor,
+                      opacity: useGlass ? 0.0 : opacity,
+                      borderColor: useGlass
+                          ? Colors.transparent
+                          : colorScheme.outlineVariant.withValues(alpha: 0.15),
+                      glassMode: useGlass,
+                      contentInsertionConfiguration:
+                          ContentInsertionConfiguration(
+                        allowedMimeTypes: const [
+                          'image/png',
+                          'image/jpeg',
+                          'image/gif',
+                          'image/webp',
+                        ],
+                        onContentInserted: (data) async {
+                          try {
+                            Uint8List? bytes = data.data;
+                            if (bytes == null && data.uri.isNotEmpty) {
+                              try {
+                                bytes = await _clipboardChannel
+                                    .invokeMethod<Uint8List>(
+                                        'readContentUri', {'uri': data.uri});
+                              } catch (e) {
+                                debugPrint('[err] $e');
+                              }
+                            }
+                            if (bytes != null && bytes.isNotEmpty && mounted) {
+                              final ext = data.mimeType.contains('/')
+                                  ? data.mimeType.split('/').last
+                                  : 'png';
+                              final tempDir = await getTemporaryDirectory();
+                              final tempFile = File(
+                                  '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext');
+                              await tempFile.writeAsBytes(bytes);
+                              _handleGroupDroppedFiles([tempFile.path]);
+                            }
+                          } catch (e) {
+                            debugPrint('[ContentInsert] Error: $e');
+                          }
+                        },
+                      ),
+                      readOnly: _isReadOnlyChannel,
+                    );
+                    if (!useGlass) return bar;
+                    final quality =
+                        SettingsManager.liquidGlassInputQuality.value;
+                    final blur = SettingsManager.liquidGlassInputBlur.value;
+                    final tint = SettingsManager.liquidGlassInputTint.value;
+                    final saturation =
+                        SettingsManager.liquidGlassInputSaturation.value;
+                    final chromatic =
+                        SettingsManager.liquidGlassInputChromatic.value;
+                    final refractive =
+                        SettingsManager.liquidGlassInputRefractive.value;
+                    final lightIntensity =
+                        SettingsManager.liquidGlassInputLightIntensity.value;
+                    final thickness =
+                        SettingsManager.liquidGlassInputThickness.value;
+                    final glassQuality = switch (quality) {
+                      LiquidGlassQuality.fast => GlassQuality.standard,
+                      LiquidGlassQuality.medium => GlassQuality.minimal,
+                      LiquidGlassQuality.quality => GlassQuality.premium,
+                    };
+                    final isDark =
+                        Theme.of(context).brightness == Brightness.dark;
+                    final tintColor = isDark
+                        ? Colors.white.withValues(alpha: tint)
+                        : Colors.black.withValues(alpha: tint);
+                    final settings = LiquidGlassSettings(
+                      thickness: thickness,
+                      blur: blur,
+                      chromaticAberration: chromatic,
+                      lightIntensity: lightIntensity,
+                      refractiveIndex: refractive,
+                      saturation: saturation,
+                      ambientStrength: 0.8,
+                      lightAngle: 0.75 * pi,
+                      glassColor: tintColor,
+                    );
+                    return GlassCard(
+                      useOwnLayer: true,
+                      settings: settings,
+                      quality: glassQuality,
+                      padding: EdgeInsets.zero,
+                      shape: LiquidRoundedRectangle(borderRadius: 24),
+                      clipBehavior: Clip.antiAlias,
+                      child: bar,
+                    );
+                  },
+                ),
               ),
-            ),
-          ],
+            ],
           ),
         );
       },
+    );
+  }
+
+  // One-time dialog explaining that this group/channel is NOT end-to-end
+  // encrypted (the server can read content) and that attached media is uploaded
+  // to a public host (catbox.moe) reachable by anyone with the link.
+  Future<void> _showE2eeWarningDialog() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        final cs = Theme.of(dialogContext).colorScheme;
+        final t = AppLocalizations.of(dialogContext);
+        return Dialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          clipBehavior: Clip.antiAlias,
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header with icon on a tinted band.
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+                  color: cs.errorContainer,
+                  child: Column(
+                    children: [
+                      Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          color: cs.error.withValues(alpha: 0.18),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(Icons.lock_open_rounded,
+                            size: 30, color: cs.onErrorContainer),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        t.e2eeWarnTitle,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: cs.onErrorContainer,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Body copy.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        t.e2eeWarnGroupBody,
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.4,
+                          color: cs.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _e2eeWarnRow(
+                        cs,
+                        Icons.public_rounded,
+                        t.e2eeWarnGroupMedia,
+                      ),
+                      const SizedBox(height: 10),
+                      _e2eeWarnRow(
+                        cs,
+                        Icons.visibility_off_rounded,
+                        t.e2eeWarnDoNotShare,
+                      ),
+                    ],
+                  ),
+                ),
+                // Action.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      FilledButton(
+                        onPressed: () async {
+                          final prefs =
+                              await SharedPreferences.getInstance();
+                          await prefs.setBool(_e2eeWarnPrefsKey, true);
+                          if (dialogContext.mounted) {
+                            Navigator.of(dialogContext).pop();
+                          }
+                        },
+                        child: Text(t.e2eeWarnUnderstand),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // Small icon + text row used inside the E2EE warning dialog body.
+  Widget _e2eeWarnRow(ColorScheme cs, IconData icon, String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: cs.error),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.35,
+              color: cs.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -3810,224 +4046,494 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     final avatarUrl =
         '$serverBase/group/${widget.group.id}/avatar?v=${_avatarVersion}';
     return Scaffold(
-              extendBodyBehindAppBar: true,
-              backgroundColor: colorScheme.surface,
-              appBar: AppBar(
-                backgroundColor: Colors.transparent,
-                elevation: 0,
-                scrolledUnderElevation: 0,
-                automaticallyImplyLeading: false,
-                leading: isDesktop
-                    ? null
-                    : ValueListenableBuilder(
-                        valueListenable: _selectionNotifier,
-                        builder: (_, sel, __) => sel.active
-                            ? IconButton(
-                                icon: const Icon(Icons.close_rounded),
-                                onPressed: _exitGroupSelectionMode,
-                              )
-                            : const BackButton(),
-                      ),
-                flexibleSpace: ValueListenableBuilder<double>(
-                  valueListenable: SettingsManager.elementOpacity,
-                  builder: (_, opacity, __) {
-                    return ClipRect(
-                      child: Container(
-                        color: colorScheme.surface.withValues(alpha: opacity),
-                      ),
-                    );
-                  },
-                ),
-                title: ValueListenableBuilder(
-                  valueListenable: _selectionNotifier,
-                  builder: (_, sel, __) => sel.active
-                      ? Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (isDesktop)
-                              IconButton(
-                                icon: const Icon(Icons.close_rounded),
-                                onPressed: _exitGroupSelectionMode,
+      extendBodyBehindAppBar: true,
+      backgroundColor: colorScheme.surface,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shadowColor: Colors.transparent,
+        toolbarHeight: 70,
+        leadingWidth: isDesktop ? 162 : 66,
+        centerTitle: true,
+        automaticallyImplyLeading: false,
+        leading: isDesktop
+            ? ValueListenableBuilder(
+                valueListenable: _selectionNotifier,
+                builder: (_, sel, __) => AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  transitionBuilder: (child, anim) => FadeTransition(
+                    opacity:
+                        CurvedAnimation(parent: anim, curve: Curves.easeInOut),
+                    child: child,
+                  ),
+                  child: sel.active
+                      ? AnimatedBuilder(
+                          key: const ValueKey(true),
+                          animation: Listenable.merge([
+                            SettingsManager.elementOpacity,
+                            SettingsManager.elementBrightness,
+                          ]),
+                          builder: (ctx, _) {
+                            final op = SettingsManager.elementOpacity.value;
+                            final br = SettingsManager.elementBrightness.value;
+                            final cs = Theme.of(ctx).colorScheme;
+                            final bgColor = SettingsManager.getElementColor(
+                              cs.surfaceContainerHighest,
+                              br,
+                            ).withValues(alpha: op);
+                            final borderColor =
+                                cs.outlineVariant.withValues(alpha: 0.3);
+                            return Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: AdaptiveGlassIconButton(
+                                  backgroundColor: bgColor,
+                                  borderColor: borderColor,
+                                  child: IconButton(
+                                    padding: EdgeInsets.zero,
+                                    icon: Icon(Icons.close_rounded,
+                                        size: 18,
+                                        color: cs.onSurface
+                                            .withValues(alpha: 0.7)),
+                                    onPressed: _exitGroupSelectionMode,
+                                  ),
+                                ),
                               ),
-                            Text(
-                              '${sel.selected.length} selected',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                          ],
+                            );
+                          },
                         )
-                      : Row(
-                          children: [
-                            GestureDetector(
-                              onTap:
-                                  _canManageGroup ? _showEditGroupDialog : null,
-                              onLongPress: _canManageGroup
-                                  ? () async {
-                                      final confirmed = await showDialog<bool>(
-                                        context: context,
-                                        builder: (ctx) => AlertDialog(
-                                          title: Text(
-                                              AppLocalizations.of(context)
-                                                  .deleteAvatarTitle),
-                                          content: Text(
-                                              AppLocalizations.of(context)
-                                                  .deleteAvatarContent),
-                                          actions: [
-                                            TextButton(
-                                                onPressed: () =>
-                                                    Navigator.of(ctx)
-                                                        .pop(false),
-                                                child: Text(
-                                                    AppLocalizations.of(context)
-                                                        .cancel)),
-                                            FilledButton.tonal(
-                                                onPressed: () =>
-                                                    Navigator.of(ctx).pop(true),
-                                                child: Text(
-                                                    AppLocalizations.of(context)
-                                                        .delete)),
-                                          ],
-                                        ),
-                                      );
-                                      if (confirmed == true)
-                                        await _deleteGroupAvatar();
-                                    }
-                                  : null,
-                              child: CircleAvatar(
-                                radius: 20,
-                                backgroundImage: NetworkImage(avatarUrl),
+                      : const SizedBox.shrink(key: ValueKey(false)),
+                ),
+              )
+            : ValueListenableBuilder(
+                valueListenable: _selectionNotifier,
+                builder: (_, sel, __) => AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  transitionBuilder: (child, anim) => FadeTransition(
+                    opacity:
+                        CurvedAnimation(parent: anim, curve: Curves.easeInOut),
+                    child: child,
+                  ),
+                  child: AnimatedBuilder(
+                    key: ValueKey(sel.active),
+                    animation: Listenable.merge([
+                      SettingsManager.elementOpacity,
+                      SettingsManager.elementBrightness,
+                    ]),
+                    builder: (ctx, _) {
+                      final op = SettingsManager.elementOpacity.value;
+                      final br = SettingsManager.elementBrightness.value;
+                      final cs = Theme.of(ctx).colorScheme;
+                      final bgColor = SettingsManager.getElementColor(
+                        cs.surfaceContainerHighest,
+                        br,
+                      ).withValues(alpha: op);
+                      final borderColor =
+                          cs.outlineVariant.withValues(alpha: 0.3);
+                      return Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: Center(
+                          child: AdaptiveGlassIconButton(
+                            backgroundColor: bgColor,
+                            borderColor: borderColor,
+                            child: IconButton(
+                              padding: EdgeInsets.zero,
+                              icon: Icon(
+                                sel.active
+                                    ? Icons.close_rounded
+                                    : Icons.arrow_back_ios_new_rounded,
+                                size: 18,
+                                color: cs.onSurface.withValues(alpha: 0.7),
                               ),
+                              onPressed: sel.active
+                                  ? _exitGroupSelectionMode
+                                  : () => Navigator.of(ctx).maybePop(),
                             ),
-                            const SizedBox(width: 12),
-                            GestureDetector(
-                              onTap:
-                                  _canManageGroup ? _showEditGroupDialog : null,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+        title: ValueListenableBuilder(
+          valueListenable: _selectionNotifier,
+          builder: (_, sel, __) => AnimatedSize(
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOut,
+            alignment: Alignment.center,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 280),
+              transitionBuilder: (child, animation) {
+                final slide = Tween<Offset>(
+                  begin: const Offset(0, 0.15),
+                  end: Offset.zero,
+                ).animate(
+                    CurvedAnimation(parent: animation, curve: Curves.easeOut));
+                return FadeTransition(
+                  opacity: CurvedAnimation(
+                      parent: animation, curve: Curves.easeInOut),
+                  child: SlideTransition(position: slide, child: child),
+                );
+              },
+              child: sel.active
+                  ? AnimatedBuilder(
+                      key: const ValueKey(true),
+                      animation: Listenable.merge([
+                        SettingsManager.elementOpacity,
+                        SettingsManager.elementBrightness,
+                      ]),
+                      builder: (titleCtx, _) {
+                        final op = SettingsManager.elementOpacity.value;
+                        final br = SettingsManager.elementBrightness.value;
+                        final cs = Theme.of(titleCtx).colorScheme;
+                        final bgColor = SettingsManager.getElementColor(
+                          cs.surfaceContainerHighest,
+                          br,
+                        ).withValues(alpha: op);
+                        final borderColor =
+                            cs.outlineVariant.withValues(alpha: 0.3);
+                        return Align(
+                          alignment: Alignment.center,
+                          child: AdaptiveGlassPill(
+                            backgroundColor: bgColor,
+                            borderColor: borderColor,
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Text(
+                                  '${sel.selected.length} selected',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: cs.onSurface.withValues(alpha: 0.85),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    )
+                  : AnimatedBuilder(
+                      key: const ValueKey(false),
+                      animation: Listenable.merge([
+                        SettingsManager.elementOpacity,
+                        SettingsManager.elementBrightness,
+                      ]),
+                      builder: (titleCtx, _) {
+                        final op = SettingsManager.elementOpacity.value;
+                        final br = SettingsManager.elementBrightness.value;
+                        final cs = Theme.of(titleCtx).colorScheme;
+                        final bgColor = SettingsManager.getElementColor(
+                          cs.surfaceContainerHighest,
+                          br,
+                        ).withValues(alpha: op);
+                        final borderColor =
+                            cs.outlineVariant.withValues(alpha: 0.3);
+                        final isWide = MediaQuery.sizeOf(titleCtx).width > 700;
+                        final textContent = GestureDetector(
+                          onTap: _canManageGroup ? _showEditGroupDialog : null,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Flexible(
-                                        child: MarqueeText(
-                                          text: widget.group.name,
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 16),
-                                        ),
-                                      ),
-                                      if (widget.group.inviteLink == '12e01467-c154-447b-84f8-133ae76684a1')
-                                        Padding(
-                                          padding: const EdgeInsets.only(left: 4),
-                                          child: Icon(Icons.verified_rounded, size: 15, color: Colors.blue.shade400),
-                                        ),
-                                    ],
+                                  Flexible(
+                                    child: MarqueeText(
+                                      text: widget.group.name,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16),
+                                    ),
                                   ),
-                                  if (_memberCount != null)
-                                    Text(
-                                      AppLocalizations.of(context)
-                                          .memberCount(_memberCount!),
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.normal,
-                                        color: colorScheme.onSurface
-                                            .withValues(alpha: 0.55),
-                                      ),
+                                  if (widget.group.inviteLink ==
+                                      '12e01467-c154-447b-84f8-133ae76684a1')
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 4),
+                                      child: Icon(Icons.verified_rounded,
+                                          size: 15,
+                                          color: Colors.blue.shade400),
                                     ),
                                 ],
                               ),
-                            ),
-                          ],
-                        ),
+                              if (_memberCount != null)
+                                Text(
+                                  AppLocalizations.of(context)
+                                      .memberCount(_memberCount!),
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.normal,
+                                      color: colorScheme.onSurface
+                                          .withValues(alpha: 0.55)),
+                                ),
+                            ],
+                          ),
+                        );
+                        final pill = AdaptiveGlassPill(
+                          backgroundColor: bgColor,
+                          borderColor: borderColor,
+                          child: Row(
+                            mainAxisSize:
+                                isWide ? MainAxisSize.min : MainAxisSize.max,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              GestureDetector(
+                                onTap: _canManageGroup
+                                    ? _showEditGroupDialog
+                                    : null,
+                                onLongPress: _canManageGroup
+                                    ? () async {
+                                        final confirmed =
+                                            await showDialog<bool>(
+                                          context: context,
+                                          builder: (ctx) => AlertDialog(
+                                            title: Text(
+                                                AppLocalizations.of(context)
+                                                    .deleteAvatarTitle),
+                                            content: Text(
+                                                AppLocalizations.of(context)
+                                                    .deleteAvatarContent),
+                                            actions: [
+                                              TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.of(ctx)
+                                                          .pop(false),
+                                                  child: Text(
+                                                      AppLocalizations.of(
+                                                              context)
+                                                          .cancel)),
+                                              FilledButton.tonal(
+                                                  onPressed: () =>
+                                                      Navigator.of(ctx)
+                                                          .pop(true),
+                                                  child: Text(
+                                                      AppLocalizations.of(
+                                                              context)
+                                                          .delete)),
+                                            ],
+                                          ),
+                                        );
+                                        if (confirmed == true)
+                                          await _deleteGroupAvatar();
+                                      }
+                                    : null,
+                                child: CircleAvatar(
+                                    radius: 20,
+                                    backgroundImage: NetworkImage(avatarUrl)),
+                              ),
+                              const SizedBox(width: 12),
+                              if (isWide)
+                                textContent
+                              else
+                                Expanded(child: textContent),
+                            ],
+                          ),
+                        );
+                        final wrappedPill = GestureDetector(
+                          onTap: _canManageGroup ? _showEditGroupDialog : null,
+                          child: MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            child: pill,
+                          ),
+                        );
+                        return isWide
+                            ? Align(
+                                alignment: Alignment.center, child: wrappedPill)
+                            : wrappedPill;
+                      },
+                    ),
+            ),
+          ),
+        ),
+        actions: [
+          ValueListenableBuilder(
+            valueListenable: _selectionNotifier,
+            builder: (_, sel, __) {
+              final switcher = AnimatedSwitcher(
+                duration: const Duration(milliseconds: 280),
+                layoutBuilder: (currentChild, previousChildren) => Stack(
+                  alignment: Alignment.centerRight,
+                  children: [
+                    ...previousChildren,
+                    if (currentChild != null) currentChild,
+                  ],
                 ),
-                actions: [
-                  ValueListenableBuilder(
-                    valueListenable: _selectionNotifier,
-                    builder: (_, sel, __) => sel.active
-                        ? Row(mainAxisSize: MainAxisSize.min, children: [
+                transitionBuilder: (child, anim) => FadeTransition(
+                  opacity:
+                      CurvedAnimation(parent: anim, curve: Curves.easeInOut),
+                  child: child,
+                ),
+                child: sel.active
+                    ? AnimatedBuilder(
+                        key: const ValueKey('sel-actions'),
+                        animation: Listenable.merge([
+                          SettingsManager.elementOpacity,
+                          SettingsManager.elementBrightness,
+                        ]),
+                        builder: (ctx, _) {
+                          final op = SettingsManager.elementOpacity.value;
+                          final br = SettingsManager.elementBrightness.value;
+                          final cs = Theme.of(ctx).colorScheme;
+                          final btnBg = SettingsManager.getElementColor(
+                            cs.surfaceContainerHighest,
+                            br,
+                          ).withValues(alpha: op);
+                          final border =
+                              cs.outlineVariant.withValues(alpha: 0.3);
+                          final iconColor =
+                              cs.onSurface.withValues(alpha: 0.75);
+                          Widget selBtn(IconData ic, Color? icColor, String tip,
+                                  VoidCallback? onTap) =>
+                              Padding(
+                                padding: const EdgeInsets.only(right: 4),
+                                child: Tooltip(
+                                  message: tip,
+                                  child: MouseRegion(
+                                    cursor: SystemMouseCursors.click,
+                                    child: GestureDetector(
+                                      onTap: onTap,
+                                      child: AdaptiveGlassIconButton(
+                                        backgroundColor: btnBg,
+                                        borderColor: border,
+                                        child: Center(
+                                            child: Icon(ic,
+                                                size: 20,
+                                                color: icColor ?? iconColor)),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                          return Row(mainAxisSize: MainAxisSize.min, children: [
                             if (sel.selected.values.any(_isGroupTextMessage))
-                              IconButton(
-                                icon: const Icon(Icons.copy_rounded),
-                                tooltip: 'Copy',
-                                onPressed: _copySelectedGroupMessages,
-                              ),
+                              selBtn(Icons.copy_rounded, null, 'Copy',
+                                  _copySelectedGroupMessages),
                             if (sel.selected.isNotEmpty)
-                              IconButton(
-                                icon: const Icon(Icons.forward_rounded),
-                                tooltip: 'Forward',
-                                onPressed: _forwardSelectedGroupMessages,
-                              ),
+                              selBtn(Icons.forward_rounded, null, 'Forward',
+                                  _forwardSelectedGroupMessages),
                             if (sel.selected.values.any(_isMyGroupMessage))
-                              IconButton(
-                                icon: Icon(Icons.delete_outline_rounded,
-                                    color: Colors.red.shade400),
-                                tooltip: 'Delete',
-                                onPressed: _confirmDeleteSelectedGroupMessages,
+                              selBtn(
+                                  Icons.delete_outline_rounded,
+                                  cs.error,
+                                  'Delete',
+                                  _confirmDeleteSelectedGroupMessages),
+                          ]);
+                        },
+                      )
+                    : AnimatedBuilder(
+                        key: const ValueKey('normal-actions'),
+                        animation: Listenable.merge([
+                          SettingsManager.elementOpacity,
+                          SettingsManager.elementBrightness,
+                        ]),
+                        builder: (actCtx, _) {
+                          final op = SettingsManager.elementOpacity.value;
+                          final br = SettingsManager.elementBrightness.value;
+                          final csA = Theme.of(actCtx).colorScheme;
+                          final btnBg = SettingsManager.getElementColor(
+                            csA.surfaceContainerHighest,
+                            br,
+                          ).withValues(alpha: op);
+                          final btnBorder =
+                              csA.outlineVariant.withValues(alpha: 0.3);
+                          final iconColor =
+                              csA.onSurface.withValues(alpha: 0.75);
+                          return Row(mainAxisSize: MainAxisSize.min, children: [
+                            MouseRegion(
+                              cursor: SystemMouseCursors.click,
+                              child: Tooltip(
+                                message: 'Search (Ctrl+F)',
+                                child: GestureDetector(
+                                  onTap: () {
+                                    if (_showSearch)
+                                      _closeSearch();
+                                    else
+                                      _openSearch();
+                                  },
+                                  child: AdaptiveGlassIconButton(
+                                    backgroundColor: btnBg,
+                                    borderColor: btnBorder,
+                                    child: Center(
+                                        child: Icon(Icons.search,
+                                            size: 20, color: iconColor)),
+                                  ),
+                                ),
                               ),
-                          ])
-                        : Row(mainAxisSize: MainAxisSize.min, children: [
-                            IconButton(
-                              icon: const Icon(Icons.search),
-                              tooltip: 'Search (Ctrl+F)',
-                              onPressed: () {
-                                if (_showSearch) {
-                                  _closeSearch();
-                                } else {
-                                  _openSearch();
-                                }
-                              },
                             ),
-                            if (_canManageGroup)
-                              IconButton(
-                                icon: const Icon(Icons.edit),
-                                onPressed: _showEditGroupDialog,
-                              ),
-                            PopupMenuButton<String>(
-                              onSelected: (String value) async {
-                                if (value == 'gallery') {
-                                  showMediaGalleryDialog(
-                                    context,
-                                    items: extractGalleryItemsFromMaps(_messages),
-                                    peerUsername: widget.group.name,
-                                  );
-                                } else if (value == 'copy_link') {
-                                  Clipboard.setData(ClipboardData(
-                                      text: widget.group.inviteLink
-                                          .split('/')
-                                          .last));
-                                  if (mounted) {
-                                    rootScreenKey.currentState?.showSnack(
+                            const SizedBox(width: 4),
+                            AdaptiveGlassIconButton(
+                              backgroundColor: btnBg,
+                              borderColor: btnBorder,
+                              child: PopupMenuButton<String>(
+                                padding: EdgeInsets.zero,
+                                icon: Icon(Icons.more_vert,
+                                    size: 20, color: iconColor),
+                                onSelected: (String value) async {
+                                  if (value == 'edit') {
+                                    _showEditGroupDialog();
+                                  } else if (value == 'gallery') {
+                                    showMediaGalleryDialog(
+                                      context,
+                                      items: extractGalleryItemsFromMaps(
+                                          _messages),
+                                      peerUsername: widget.group.name,
+                                      onJumpToMessage: (id) =>
+                                          _scrollToGroupMessageById(id),
+                                    );
+                                  } else if (value == 'copy_link') {
+                                    Clipboard.setData(ClipboardData(
+                                        text: widget.group.inviteLink
+                                            .split('/')
+                                            .last));
+                                    if (mounted) {
+                                      rootScreenKey.currentState?.showSnack(
                                         AppLocalizations(
                                                 SettingsManager.appLocale.value)
-                                            .tokenCopied);
+                                            .tokenCopied,
+                                      );
+                                    }
+                                  } else if (value == 'leave') {
+                                    final confirmed =
+                                        await _showLeaveConfirmation(context);
+                                    if (confirmed == true) await _leaveGroup();
                                   }
-                                } else if (value == 'leave') {
-                                  final confirmed =
-                                      await _showLeaveConfirmation(context);
-                                  if (confirmed == true) {
-                                    await _leaveGroup();
-                                  }
-                                }
-                              },
-                              itemBuilder: (context) => [
-                                PopupMenuItem<String>(
-                                  value: 'gallery',
-                                  child: Row(
-                                    children: [
+                                },
+                                itemBuilder: (context) => [
+                                  if (_canManageGroup)
+                                    PopupMenuItem<String>(
+                                      value: 'edit',
+                                      child: Row(children: [
+                                        Icon(Icons.edit,
+                                            size: 18,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .primary),
+                                        const SizedBox(width: 10),
+                                        Text(AppLocalizations.of(context)
+                                            .editGroupTitle),
+                                      ]),
+                                    ),
+                                  PopupMenuItem<String>(
+                                    value: 'gallery',
+                                    child: Row(children: [
                                       const Icon(Icons.photo_library_outlined,
                                           size: 18),
                                       const SizedBox(width: 10),
                                       Text(AppLocalizations.of(context)
                                           .galleryMenuLabel),
-                                    ],
+                                    ]),
                                   ),
-                                ),
-                                if (widget.group.inviteLink.isNotEmpty)
-                                  PopupMenuItem<String>(
-                                    value: 'copy_link',
-                                    child: Row(
-                                      children: [
+                                  if (widget.group.inviteLink.isNotEmpty)
+                                    PopupMenuItem<String>(
+                                      value: 'copy_link',
+                                      child: Row(children: [
                                         Icon(Icons.copy,
                                             size: 18,
                                             color: Theme.of(context)
@@ -4035,13 +4541,11 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                                 .onSurface),
                                         const SizedBox(width: 10),
                                         const Text('Token'),
-                                      ],
+                                      ]),
                                     ),
-                                  ),
-                                PopupMenuItem<String>(
-                                  value: 'leave',
-                                  child: Row(
-                                    children: [
+                                  PopupMenuItem<String>(
+                                    value: 'leave',
+                                    child: Row(children: [
                                       Icon(Icons.logout_rounded,
                                           size: 18,
                                           color: Theme.of(context)
@@ -4050,418 +4554,420 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                       const SizedBox(width: 10),
                                       Text(AppLocalizations.of(context)
                                           .leaveGroupAction),
-                                    ],
+                                    ]),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ]),
-                  ),
-                ],
-              ),
-              body: DragDropZone(
-                onFilesDropped: _handleGroupDroppedFiles,
-                enabled: !_isReadOnlyChannel,
-                child: Stack(
-                  children: [
-                    const ChatBackgroundLayer(),
-                    ValueListenableBuilder<bool>(
-                      valueListenable: SettingsManager.showAvatarInChats,
-                      builder: (_, showAvatar, __) {
-                        return ValueListenableBuilder<bool>(
-                          valueListenable: SettingsManager.swapMessageAlignment,
-                          builder: (_, swapped, __) {
-                            return ValueListenableBuilder<bool>(
-                              valueListenable:
-                                  SettingsManager.alignAllMessagesRight,
-                              builder: (_, alignRight, __) {
-                                if (!_hasBuiltMessageListOnce) {
-                                  WidgetsBinding.instance
-                                      .addPostFrameCallback((_) {
-                                    _hasBuiltMessageListOnce = true;
-                                  });
-                                }
-                                if (_messages.isEmpty) {
-                                  return EmptyChatPlaceholder(
-                                      label: AppLocalizations.of(context)
-                                          .noMessagesYet);
+                            const SizedBox(width: 4),
+                          ]);
+                        },
+                      ),
+              );
+              if (isDesktop)
+                return SizedBox(
+                  width: 162,
+                  child:
+                      Align(alignment: Alignment.centerRight, child: switcher),
+                );
+              return AnimatedSize(
+                duration: const Duration(milliseconds: 280),
+                curve: Curves.easeInOutCubic,
+                alignment: Alignment.centerRight,
+                child: switcher,
+              );
+            },
+          ),
+        ],
+      ),
+      body: DragDropZone(
+        onFilesDropped: _handleGroupDroppedFiles,
+        enabled: !_isReadOnlyChannel,
+        child: Stack(
+          children: [
+            const ChatBackgroundLayer(),
+            ValueListenableBuilder<bool>(
+              valueListenable: SettingsManager.showAvatarInChats,
+              builder: (_, showAvatar, __) {
+                return ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.swapMessageAlignment,
+                  builder: (_, swapped, __) {
+                    return ValueListenableBuilder<bool>(
+                      valueListenable: SettingsManager.alignAllMessagesRight,
+                      builder: (_, alignRight, __) {
+                        if (_messages.isEmpty) {
+                          return EmptyChatPlaceholder(
+                              label:
+                                  AppLocalizations.of(context).noMessagesYet);
+                        }
+                        // Only flip this after a frame that actually
+                        // had history loaded — flipping it on an
+                        // empty/placeholder frame (history still
+                        // loading from cache/network) meant the real
+                        // history, once it arrived, looked like
+                        // "newly arrived" messages and animated in.
+                        if (!_hasBuiltMessageListOnce) {
+                          if (_alreadyRenderedMessageIds.isEmpty) {
+                            // No pre-seeded history → first message
+                            // in a brand-new group. Set immediately
+                            // so the bubble mounts with animate:true
+                            // (AnimatedMessageBubble.didUpdateWidget
+                            // is a no-op — must be true at mount).
+                            _hasBuiltMessageListOnce = true;
+                          } else {
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              _hasBuiltMessageListOnce = true;
+                            });
+                          }
+                        }
+
+                        // Compute search matches (indices into display items)
+                        final displayItems = _rebuildGroupDisplayItems();
+
+                        final stampLast =
+                            _messages.isEmpty ? '' : '${_messages.last['id']}';
+                        if (_messages.length != _preloadStampCount ||
+                            stampLast != _preloadStampLast) {
+                          _preloadStampCount = _messages.length;
+                          _preloadStampLast = stampLast;
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            ChatImagePreloader.preloadGroupMessages(_messages);
+                          });
+                        }
+
+                        if (_showSearch && _searchQuery.isNotEmpty) {
+                          final newMatches = <int>[];
+                          for (int j = 0; j < displayItems.length; j++) {
+                            final item = displayItems[j];
+                            if (item is Map<String, dynamic>) {
+                              final c = item['content']?.toString() ?? '';
+                              if (c.toLowerCase().contains(_searchQuery)) {
+                                newMatches.add(j);
+                              }
+                            }
+                          }
+                          newMatches.sort();
+                          _cachedSearchMatches = newMatches;
+                          final clampedIdx = newMatches.isEmpty
+                              ? 0
+                              : _currentMatchIdx.clamp(
+                                  0, newMatches.length - 1);
+                          final stats = (
+                            current: newMatches.isEmpty ? 0 : clampedIdx + 1,
+                            total: newMatches.length,
+                          );
+                          if (_searchStats.value != stats) {
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (mounted) _searchStats.value = stats;
+                            });
+                          }
+                        } else {
+                          _cachedSearchMatches = [];
+                          if (_searchStats.value.total != 0) {
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (mounted)
+                                _searchStats.value = (current: 0, total: 0);
+                            });
+                          }
+                        }
+                        // Deferred for the same reason as ChatScreen:
+                        // both caches go stale on every send (hash
+                        // derived from message count), and the
+                        // full-history recompute is expensive enough
+                        // in heavy chats to block the frame the new
+                        // bubble's entrance animation starts on.
+                        if (_cachedDragHash != _groupDisplayHash) {
+                          final targetHash = _groupDisplayHash;
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (!mounted || _cachedDragHash == targetHash)
+                              return;
+                            final dragMessages = displayItems
+                                .whereType<Map<String, dynamic>>()
+                                .toList(growable: false);
+                            setState(() {
+                              _cachedDragHash = targetHash;
+                              _dragSelectionOrder = dragMessages
+                                  .map(_selectionKeyForGroupMessage)
+                                  .toList(growable: false);
+                              _dragSelectionLookup = {
+                                for (final msg in dragMessages)
+                                  _selectionKeyForGroupMessage(msg): msg,
+                              };
+                              _dragSelectionIndices = {
+                                for (int idx = 0;
+                                    idx < _dragSelectionOrder.length;
+                                    idx++)
+                                  _dragSelectionOrder[idx]: idx,
+                              };
+                            });
+                          });
+                        }
+                        if (_cachedAllImages == null) {
+                          _cachedAllImages =
+                              ChatImagesScope.computeFromGroupMessages(
+                                  _messages);
+                          _cachedAllImagesHash = _groupDisplayHash;
+                        } else if (_cachedAllImagesHash != _groupDisplayHash) {
+                          final targetHash = _groupDisplayHash;
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (!mounted || _cachedAllImagesHash == targetHash)
+                              return;
+                            final recomputed =
+                                ChatImagesScope.computeFromGroupMessages(
+                                    _messages);
+                            if (!mounted) return;
+                            setState(() {
+                              _cachedAllImages = recomputed;
+                              _cachedAllImagesHash = targetHash;
+                            });
+                          });
+                        }
+
+                        // Maps each item's stable String key to its
+                        // current flat ListView index — see the
+                        // matching findChildIndexCallback below for
+                        // why this exists (without it, every visible
+                        // bubble gets destroyed + rebuilt from
+                        // scratch on every single send).
+                        final Map<String, int> itemKeyToFlatIndex = {};
+                        for (int idx = 0; idx < displayItems.length; idx++) {
+                          final flatIndex = idx;
+                          final item = displayItems[idx];
+                          if (item is DateTime) {
+                            itemKeyToFlatIndex[
+                                'day_${item.toIso8601String()}'] = flatIndex;
+                          } else if (item is Map<String, dynamic>) {
+                            final itemAnimKey = item['animationId']
+                                    ?.toString() ??
+                                item['id']?.toString() ??
+                                '${item['timestamp']}_${widget.group.isChannel ? widget.group.name : (item['sender']?.toString() ?? '?')}_${(item['content']?.toString() ?? '').hashCode}';
+                            itemKeyToFlatIndex['msg_$itemAnimKey'] = flatIndex;
+                          }
+                        }
+
+                        return ChatImagesScope(
+                          allImages: _cachedAllImages!,
+                          child: Listener(
+                            key: _messageListViewportKey,
+                            onPointerDown: (_) {
+                              if (!isDesktop) return;
+                              _suppressAutoRefocus = true;
+                              _focusNode.unfocus();
+                            },
+                            onPointerUp: (_) {
+                              if (_isDragSelectingMessages)
+                                _endGroupDragSelection();
+                            },
+                            onPointerCancel: (_) {
+                              if (_isDragSelectingMessages)
+                                _endGroupDragSelection();
+                            },
+                            child: ListView.builder(
+                              controller: _scroll,
+                              reverse: true,
+                              itemCount: displayItems.length,
+                              cacheExtent:
+                                  SettingsManager.chatCacheExtent.value,
+                              addRepaintBoundaries: true,
+                              padding: EdgeInsets.only(
+                                top: MediaQuery.of(context).padding.top +
+                                    kToolbarHeight +
+                                    (_showSearch ? 64 : 12),
+                                bottom:
+                                    72 + MediaQuery.of(context).padding.bottom,
+                              ),
+                              findChildIndexCallback: (Key key) {
+                                if (key is! ValueKey<String>) return null;
+                                return itemKeyToFlatIndex[key.value];
+                              },
+                              itemBuilder: (ctx, i) {
+                                final adjustedI = i;
+                                final item = displayItems[adjustedI];
+
+                                // Day separator
+                                if (item is DateTime) {
+                                  return KeyedSubtree(
+                                    key: ValueKey<String>(
+                                        'day_${item.toIso8601String()}'),
+                                    child: _buildGroupDaySeparator(ctx, item),
+                                  );
                                 }
 
-                                // Compute search matches (indices into display items)
-                                final displayItems =
-                                    _rebuildGroupDisplayItems();
+                                final msg = item as Map<String, dynamic>;
+                                final rawSender =
+                                    msg['sender']?.toString() ?? '?';
+                                final sender = widget.group.isChannel
+                                    ? widget.group.name
+                                    : rawSender;
+                                final content =
+                                    msg['content']?.toString() ?? '';
+                                final isMe = widget.group.isChannel
+                                    ? false
+                                    : (rawSender == _currentUsername ||
+                                        rawSender == _currentDisplayName);
+                                final isSearchMatch = _searchQuery.isNotEmpty &&
+                                    content
+                                        .toLowerCase()
+                                        .contains(_searchQuery);
+                                final isCurrentSearchMatch = isSearchMatch &&
+                                    _cachedSearchMatches.isNotEmpty &&
+                                    _cachedSearchMatches[_currentMatchIdx] ==
+                                        adjustedI;
 
-                                final stampLast = _messages.isEmpty
-                                    ? ''
-                                    : '${_messages.last['id']}';
-                                if (_messages.length != _preloadStampCount ||
-                                    stampLast != _preloadStampLast) {
-                                  _preloadStampCount = _messages.length;
-                                  _preloadStampLast = stampLast;
-                                  WidgetsBinding.instance
-                                      .addPostFrameCallback((_) {
-                                    ChatImagePreloader
-                                        .preloadGroupMessages(_messages);
-                                  });
-                                }
+                                bool showSenderInfo = !widget.group.isChannel;
 
-                                if (_showSearch && _searchQuery.isNotEmpty) {
-                                  final newMatches = <int>[];
-                                  for (int j = 0;
+                                final bool showAvatarForThisMessage = (() {
+                                  for (int j = adjustedI + 1;
                                       j < displayItems.length;
                                       j++) {
-                                    final item = displayItems[j];
-                                    if (item is Map<String, dynamic>) {
-                                      final c =
-                                          item['content']?.toString() ?? '';
-                                      if (c
-                                          .toLowerCase()
-                                          .contains(_searchQuery)) {
-                                        newMatches.add(j);
-                                      }
+                                    final next = displayItems[j];
+                                    if (next is Map<String, dynamic>) {
+                                      return next['sender']?.toString() !=
+                                          rawSender;
                                     }
                                   }
-                                  newMatches.sort();
-                                  _cachedSearchMatches = newMatches;
-                                  final clampedIdx = newMatches.isEmpty
-                                      ? 0
-                                      : _currentMatchIdx.clamp(
-                                          0, newMatches.length - 1);
-                                  final stats = (
-                                    current:
-                                        newMatches.isEmpty ? 0 : clampedIdx + 1,
-                                    total: newMatches.length,
-                                  );
-                                  if (_searchStats.value != stats) {
-                                    WidgetsBinding.instance
-                                        .addPostFrameCallback((_) {
-                                      if (mounted) _searchStats.value = stats;
-                                    });
-                                  }
-                                } else {
-                                  _cachedSearchMatches = [];
-                                  if (_searchStats.value.total != 0) {
-                                    WidgetsBinding.instance
-                                        .addPostFrameCallback((_) {
-                                      if (mounted)
-                                        _searchStats.value =
-                                            (current: 0, total: 0);
-                                    });
-                                  }
-                                }
-                                if (_cachedDragHash != _groupDisplayHash) {
-                                  _cachedDragHash = _groupDisplayHash;
-                                  final dragMessages = displayItems
-                                      .whereType<Map<String, dynamic>>()
-                                      .toList(growable: false);
-                                  _dragSelectionOrder = dragMessages
-                                      .map(_selectionKeyForGroupMessage)
-                                      .toList(growable: false);
-                                  _dragSelectionLookup = {
-                                    for (final msg in dragMessages)
-                                      _selectionKeyForGroupMessage(msg): msg,
-                                  };
-                                  _dragSelectionIndices = {
-                                    for (int idx = 0;
-                                        idx < _dragSelectionOrder.length;
-                                        idx++)
-                                      _dragSelectionOrder[idx]: idx,
-                                  };
-                                }
-                                if (_cachedAllImages == null || _cachedAllImagesHash != _groupDisplayHash) {
-                                  _cachedAllImages = ChatImagesScope.computeFromGroupMessages(_messages);
-                                  _cachedAllImagesHash = _groupDisplayHash;
-                                }
-                                return ChatImagesScope(
-                                  allImages: _cachedAllImages!,
-                                  child: Listener(
-                                  key: _messageListViewportKey,
-                                  onPointerDown: (_) {
-                                    if (!isDesktop) return;
-                                    _suppressAutoRefocus = true;
-                                    _focusNode.unfocus();
-                                  },
-                                  onPointerUp: (_) {
-                                    if (_isDragSelectingMessages) _endGroupDragSelection();
-                                  },
-                                  onPointerCancel: (_) {
-                                    if (_isDragSelectingMessages) _endGroupDragSelection();
-                                  },
-                                  child: ListView.builder(
-                                    controller: _scroll,
-                                    reverse: true,
-                                    itemCount: _pendingUploads.length +
-                                        displayItems.length,
-                                    cacheExtent: SettingsManager.chatCacheExtent.value,
-                                    addRepaintBoundaries: true,
-                                    padding: EdgeInsets.only(
-                                      top: MediaQuery.of(context).padding.top +
-                                          kToolbarHeight +
-                                          (_showSearch ? 64 : 12),
-                                      bottom: 72 +
-                                          MediaQuery.of(context).padding.bottom,
+                                  return true;
+                                })();
+
+                                final bubble = Container(
+                                  constraints: BoxConstraints(
+                                      maxWidth:
+                                          MediaQuery.of(context).size.width *
+                                              0.7),
+                                  child: SwipeableMessageWrapper(
+                                    onSwipeRight: () => _onGroupLongPress(msg),
+                                    onSwipeLeft: () {
+                                      final preview = {
+                                        'id': msg['id']?.toString(),
+                                        'sender': rawSender,
+                                        'senderDisplayName': sender,
+                                        'content': getPreviewText(content),
+                                      };
+                                      _startReplyingToMessage(preview);
+                                    },
+                                    child: GestureDetector(
+                                      onTapDown: (tap) {
+                                        debugPrint(
+                                            '[group_chat_screen::msgTapDown] tapped message id=${msg['id']} replying=${_replyingToMessage != null} reply=${_replyingToMessage?.toString()}\n${StackTrace.current}');
+                                      },
+                                      child: MessageBubble(
+                                        key: ValueKey<String>(
+                                            'mb_${msg['timestamp']}_${sender}_${content.hashCode}'),
+                                        text: content,
+                                        outgoing: isMe,
+                                        rawPreview: null,
+                                        serverMessageId: null,
+                                        time: (msg['timestamp_ms'] != null)
+                                            ? DateTime
+                                                .fromMillisecondsSinceEpoch(
+                                                    msg['timestamp_ms'] as int)
+                                            : (DateTime.tryParse(
+                                                    msg['timestamp']) ??
+                                                DateTime.now()),
+                                        onRequestResend: (_) {},
+                                        desktopMenuItems: isDesktop
+                                            ? _buildGroupDesktopMenuItems(msg)
+                                            : null,
+                                        peerUsername: sender,
+                                        replyToId: msg['reply_to_id'] is int
+                                            ? msg['reply_to_id'] as int
+                                            : (msg['reply_to_id'] != null
+                                                ? int.tryParse(
+                                                    msg['reply_to_id']
+                                                        .toString())
+                                                : null),
+                                        replyToUsername:
+                                            msg['reply_to_sender'] != null
+                                                ? (widget.group.isChannel
+                                                    ? widget.group.name
+                                                    : msg['reply_to_sender']
+                                                        .toString())
+                                                : null,
+                                        replyToContent:
+                                            msg['reply_to_content']?.toString(),
+                                        highlighted:
+                                            (_replyingToMessage != null &&
+                                                _replyingToMessage!['id']
+                                                        ?.toString() ==
+                                                    msg['id']?.toString()),
+                                        onReplyTap: msg['reply_to_id'] != null
+                                            ? () => _scrollToGroupMessageById(
+                                                msg['reply_to_id'].toString())
+                                            : null,
+                                        onRightClick: isDesktop
+                                            ? (offset) {
+                                                debugPrint(
+                                                    '[RightClickMenu] group_chat onRightClick invoked, msgId=${msg['id']}');
+                                                final items =
+                                                    _buildGroupDesktopMenuItems(
+                                                        msg);
+                                                debugPrint(
+                                                    '[RightClickMenu] group_chat items=${items.length}');
+                                                if (items.isNotEmpty) {
+                                                  showMessageDesktopMenu(
+                                                      context, offset, items);
+                                                }
+                                              }
+                                            : null,
+                                      ),
                                     ),
-                                    itemBuilder: (ctx, i) {
-                                      if (i < _pendingUploads.length) {
-                                        final task = _pendingUploads[
-                                            _pendingUploads.length - 1 - i];
-                                        return _buildPendingUploadWidget(task);
-                                      }
-                                      final adjustedI =
-                                          i - _pendingUploads.length;
-                                      final item = displayItems[adjustedI];
+                                  ),
+                                );
+                                final uniqueKey =
+                                    '${msg['timestamp']}_${sender}_${content.hashCode}';
+                                // Stable server-based key for reactions
+                                final rMsgId =
+                                    int.tryParse(msg['id']?.toString() ?? '');
+                                final reactionKey = 'gm_${msg['id']}';
+                                if (rMsgId != null)
+                                  _msgIdToReactionKey[rMsgId] = reactionKey;
+                                final animKey =
+                                    msg['animationId']?.toString() ??
+                                        msg['id']?.toString() ??
+                                        uniqueKey;
 
-                                      // Day separator
-                                      if (item is DateTime) {
-                                        return _buildGroupDaySeparator(
-                                            ctx, item);
-                                      }
+                                final isFirstAppearance =
+                                    !_alreadyRenderedMessageIds
+                                        .contains(animKey);
+                                if (isFirstAppearance) {
+                                  _alreadyRenderedMessageIds.add(animKey);
+                                }
 
-                                      final msg = item as Map<String, dynamic>;
-                                      final rawSender =
-                                          msg['sender']?.toString() ?? '?';
-                                      final sender = widget.group.isChannel
-                                          ? widget.group.name
-                                          : rawSender;
-                                      final content =
-                                          msg['content']?.toString() ?? '';
-                                      final isMe = widget.group.isChannel
-                                          ? false
-                                          : (rawSender == _currentUsername ||
-                                              rawSender == _currentDisplayName);
-                                      final isSearchMatch =
-                                          _searchQuery.isNotEmpty &&
-                                              content
-                                                  .toLowerCase()
-                                                  .contains(_searchQuery);
-                                      final isCurrentSearchMatch =
-                                          isSearchMatch &&
-                                              _cachedSearchMatches.isNotEmpty &&
-                                              _cachedSearchMatches[
-                                                      _currentMatchIdx] ==
-                                                  adjustedI;
-
-                                      bool showSenderInfo =
-                                          !widget.group.isChannel;
-
-                                      final bool showAvatarForThisMessage =
-                                          (() {
-                                        for (int j = adjustedI + 1;
-                                            j < displayItems.length;
-                                            j++) {
-                                          final next = displayItems[j];
-                                          if (next is Map<String, dynamic>) {
-                                            return next['sender']?.toString() !=
-                                                rawSender;
-                                          }
-                                        }
-                                        return true;
-                                      })();
-
-                                      final bubble = Container(
-                                        constraints: BoxConstraints(
-                                            maxWidth: MediaQuery.of(context)
-                                                    .size
-                                                    .width *
-                                                0.7),
-                                        child: SwipeableMessageWrapper(
-                                          onSwipeRight: () =>
-                                              _onGroupLongPress(msg),
-                                          onSwipeLeft: () {
-                                            final preview = {
-                                              'id': msg['id']?.toString(),
-                                              'sender': rawSender,
-                                              'senderDisplayName': sender,
-                                              'content':
-                                                  getPreviewText(content),
-                                            };
-                                            _startReplyingToMessage(preview);
-                                          },
-                                          child: GestureDetector(
-                                          onTapDown: (tap) {
-                                            debugPrint(
-                                                '[group_chat_screen::msgTapDown] tapped message id=${msg['id']} replying=${_replyingToMessage != null} reply=${_replyingToMessage?.toString()}\n${StackTrace.current}');
-                                          },
-                                          child: MessageBubble(
-                                            key: ValueKey<String>(
-                                                'mb_${msg['timestamp']}_${sender}_${content.hashCode}'),
-                                            text: content,
-                                            outgoing: isMe,
-                                            rawPreview: null,
-                                            serverMessageId: null,
-                                            time: (msg['timestamp_ms'] != null)
-                                                ? DateTime
-                                                    .fromMillisecondsSinceEpoch(
-                                                        msg['timestamp_ms']
-                                                            as int)
-                                                : (DateTime.tryParse(
-                                                        msg['timestamp']) ??
-                                                    DateTime.now()),
-                                            onRequestResend: (_) {},
-                                            desktopMenuItems: isDesktop
-                                                ? _buildGroupDesktopMenuItems(
-                                                    msg)
-                                                : null,
-                                            peerUsername: sender,
-                                            replyToId: msg['reply_to_id'] is int
-                                                ? msg['reply_to_id'] as int
-                                                : (msg['reply_to_id'] != null
-                                                    ? int.tryParse(
-                                                        msg['reply_to_id']
-                                                            .toString())
-                                                    : null),
-                                            replyToUsername:
-                                                msg['reply_to_sender'] != null
-                                                    ? (widget.group.isChannel
-                                                        ? widget.group.name
-                                                        : msg['reply_to_sender']
-                                                            .toString())
-                                                    : null,
-                                            replyToContent:
-                                                msg['reply_to_content']
-                                                    ?.toString(),
-                                            highlighted:
-                                                (_replyingToMessage != null &&
-                                                    _replyingToMessage!['id']
-                                                            ?.toString() ==
-                                                        msg['id']?.toString()),
-                                            onReplyTap: msg['reply_to_id'] !=
-                                                    null
-                                                ? () =>
-                                                    _scrollToGroupMessageById(
-                                                        msg['reply_to_id']
-                                                            .toString())
-                                                : null,
-                                            onRightClick: isDesktop
-                                                ? (offset) {
-                                                    debugPrint('[RightClickMenu] group_chat onRightClick invoked, msgId=${msg['id']}');
-                                                    final items =
-                                                        _buildGroupDesktopMenuItems(
-                                                            msg);
-                                                    debugPrint('[RightClickMenu] group_chat items=${items.length}');
-                                                    if (items.isNotEmpty) {
-                                                      showMessageDesktopMenu(
-                                                          context,
-                                                          offset,
-                                                          items);
-                                                    }
-                                                  }
-                                                : null,
-                                          ),
-                                        ),
-                                        ),
-                                      );
-                                      final uniqueKey =
-                                          '${msg['timestamp']}_${sender}_${content.hashCode}';
-                                      // Stable server-based key for reactions
-                                      final rMsgId = int.tryParse(msg['id']?.toString() ?? '');
-                                      final reactionKey = 'gm_${msg['id']}';
-                                      if (rMsgId != null) _msgIdToReactionKey[rMsgId] = reactionKey;
-                                      final animKey =
-                                          msg['animationId']?.toString() ??
-                                              msg['id']?.toString() ??
-                                              uniqueKey;
-
-                                      final isFirstAppearance =
-                                          !_alreadyRenderedMessageIds
-                                              .contains(animKey);
-                                      if (isFirstAppearance) {
-                                        _alreadyRenderedMessageIds.add(animKey);
-                                      }
-
-                                      final bool suppressed =
-                                          msg['suppressAnimation'] == true;
-                                      final bubbleWithContext =
-                                          AnimatedMessageBubble(
-                                              key: ValueKey<String>(animKey),
-                                              outgoing: isMe,
-                                              animate: _hasBuiltMessageListOnce &&
-                                                  isFirstAppearance &&
-                                                  !suppressed &&
-                                                  SettingsManager.messageAnimationsEnabled.value,
-                                              child: RepaintBoundary(
-                                                  child: bubble));
-                                      final shouldAlignRight = alignRight
-                                          ? !swapped
-                                          : ((swapped && !isMe) ||
-                                              (!swapped && isMe));
-                                      Widget contentWithSender;
-                                      if (showSenderInfo) {
-                                        contentWithSender = Column(
-                                          crossAxisAlignment: shouldAlignRight
-                                              ? CrossAxisAlignment.end
-                                              : CrossAxisAlignment.start,
+                                final shouldAlignRight = alignRight
+                                    ? !swapped
+                                    : ((swapped && !isMe) ||
+                                        (!swapped && isMe));
+                                // Sender name/avatar row lives INSIDE
+                                // AnimatedMessageBubble's child (below)
+                                // rather than as a sibling above it.
+                                // It used to sit outside, so it popped
+                                // in at full height in a single frame
+                                // while only the bubble below it grew
+                                // smoothly — the mismatch is what made
+                                // the whole row look like it jumped.
+                                final Widget? senderInfoRow = showSenderInfo
+                                    ? Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 4.0),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.end,
                                           children: [
-                                            Padding(
-                                              padding: const EdgeInsets.only(
-                                                  bottom: 4.0),
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.end,
-                                                children: [
-                                                  if ((swapped && isMe) ||
-                                                      (!swapped && !isMe))
-                                                    (showAvatar &&
-                                                            showAvatarForThisMessage)
-                                                        ? RepaintBoundary(
-                                                            child: widget.group
-                                                                    .isChannel
-                                                                ? CircleAvatar(
-                                                                    radius: 10,
-                                                                    backgroundImage:
-                                                                        NetworkImage(
-                                                                            '$serverBase/group/${widget.group.id}/avatar?v=${_avatarVersion}'),
-                                                                  )
-                                                                : AvatarWidget(
-                                                                    key: ValueKey(
-                                                                        'avatar-$sender'),
-                                                                    username:
-                                                                        sender,
-                                                                    tokenProvider:
-                                                                        () async =>
-                                                                            null,
-                                                                    size: 20,
-                                                                    editable:
-                                                                        false,
-                                                                  ),
-                                                          )
-                                                        : const SizedBox
-                                                            .shrink(),
-                                                  if (((swapped && isMe) ||
-                                                          (!swapped &&
-                                                              !isMe)) &&
-                                                      showAvatar &&
+                                            if ((swapped && isMe) ||
+                                                (!swapped && !isMe))
+                                              (showAvatar &&
                                                       showAvatarForThisMessage)
-                                                    const SizedBox(width: 6),
-                                                  Flexible(
-                                                    child: Text(
-                                                      sender,
-                                                      style: TextStyle(
-                                                        fontWeight:
-                                                            FontWeight.w600,
-                                                        fontSize: 12,
-                                                        color: colorScheme
-                                                            .onSurface
-                                                            .withValues(
-                                                                alpha: 0.7),
-                                                      ),
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                    ),
-                                                  ),
-                                                  if (((swapped && !isMe) ||
-                                                          (!swapped && isMe)) &&
-                                                      showAvatar &&
-                                                      showAvatarForThisMessage)
-                                                    const SizedBox(width: 6),
-                                                  if ((swapped && !isMe) ||
-                                                      (!swapped && isMe))
-                                                    (showAvatar &&
-                                                            showAvatarForThisMessage)
-                                                        ? RepaintBoundary(
-                                                            child: AvatarWidget(
+                                                  ? RepaintBoundary(
+                                                      child: widget
+                                                              .group.isChannel
+                                                          ? CircleAvatar(
+                                                              radius: 10,
+                                                              backgroundImage:
+                                                                  NetworkImage(
+                                                                      '$serverBase/group/${widget.group.id}/avatar?v=${_avatarVersion}'),
+                                                            )
+                                                          : AvatarWidget(
                                                               key: ValueKey(
                                                                   'avatar-$sender'),
                                                               username: sender,
@@ -4471,451 +4977,521 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                                               size: 20,
                                                               editable: false,
                                                             ),
-                                                          )
-                                                        : const SizedBox
-                                                            .shrink(),
-                                                ],
-                                              ),
-                                            ),
-                                            bubbleWithContext,
-                                            MessageReactionBar(
-                                              reactions: reactionsFor(reactionKey),
-                                              myUsername: _currentUsername ?? '',
-                                              outgoing: isMe,
-                                              onToggle: (emoji) {
-                                                final wasReacted = hasReaction(reactionKey, emoji, _currentUsername ?? '');
-                                                toggleReaction(reactionKey, emoji, _currentUsername ?? '');
-                                                if (rMsgId != null) _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
-                                              },
-                                              onAddReaction: (ctx2) => openEmojiPicker(ctx2, reactionKey, _currentUsername ?? '', onAfterToggle: (emoji, wasReacted) {
-                                                if (rMsgId != null) _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
-                                              }),
-                                            ),
-                                          ],
-                                        );
-                                      } else {
-                                        contentWithSender = Column(
-                                          crossAxisAlignment: shouldAlignRight
-                                              ? CrossAxisAlignment.end
-                                              : CrossAxisAlignment.start,
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            bubbleWithContext,
-                                            MessageReactionBar(
-                                              reactions: reactionsFor(reactionKey),
-                                              myUsername: _currentUsername ?? '',
-                                              outgoing: isMe,
-                                              onToggle: (emoji) {
-                                                final wasReacted = hasReaction(reactionKey, emoji, _currentUsername ?? '');
-                                                toggleReaction(reactionKey, emoji, _currentUsername ?? '');
-                                                if (rMsgId != null) _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
-                                              },
-                                              onAddReaction: (ctx2) => openEmojiPicker(ctx2, reactionKey, _currentUsername ?? '', onAfterToggle: (emoji, wasReacted) {
-                                                if (rMsgId != null) _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
-                                              }),
-                                            ),
-                                          ],
-                                        );
-                                      }
-
-                                      final gcs = Theme.of(context).colorScheme;
-                                      return ValueListenableBuilder<
-                                          ({
-                                            bool active,
-                                            Map<String,
-                                                Map<String, dynamic>> selected
-                                          })>(
-                                        valueListenable: _selectionNotifier,
-                                        child: RepaintBoundary(
-                                          child: Align(
-                                            alignment: shouldAlignRight
-                                                ? Alignment.centerRight
-                                                : Alignment.centerLeft,
-                                            child: contentWithSender,
-                                          ),
-                                        ),
-                                        builder: (_, sel, contentChild) {
-                                          final isGroupSelected = sel.selected
-                                              .containsKey(uniqueKey);
-                                          final groupCheckmark =
-                                              GestureDetector(
-                                            onTap: () =>
-                                                _toggleGroupMsgSelection(
-                                                    msg, uniqueKey),
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.only(
-                                                      right: 8),
-                                              child: AnimatedContainer(
-                                                duration: const Duration(
-                                                    milliseconds: 150),
-                                                width: 22,
-                                                height: 22,
-                                                decoration: BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  color: isGroupSelected
-                                                      ? gcs.primary
-                                                      : Colors.transparent,
-                                                  border: Border.all(
-                                                    color: isGroupSelected
-                                                        ? gcs.primary
-                                                        : gcs.onSurface
-                                                            .withValues(
-                                                                alpha: 0.35),
-                                                    width: 2,
-                                                  ),
-                                                ),
-                                                child: isGroupSelected
-                                                    ? Icon(Icons.check,
-                                                        size: 14,
-                                                        color: gcs.onPrimary)
-                                                    : null,
-                                              ),
-                                            ),
-                                          );
-                                          return KeyedSubtree(
-                                            key: _messageItemKey(uniqueKey),
-                                            child: RawGestureDetector(
-                                            behavior:
-                                                HitTestBehavior.translucent,
-                                            gestures: {
-                                              LongPressGestureRecognizer:
-                                                  GestureRecognizerFactoryWithHandlers<
-                                                      LongPressGestureRecognizer>(
-                                                () =>
-                                                    LongPressGestureRecognizer(
-                                                        duration:
-                                                            _messageLongPressDuration),
-                                                (instance) {
-                                                  instance.onLongPressStart = (_) =>
-                                                      _startGroupDragSelection(
-                                                          msg, uniqueKey);
-                                                  instance.onLongPressMoveUpdate =
-                                                      (details) =>
-                                                          _updateGroupDragSelection(
-                                                              details.globalPosition);
-                                                  instance.onLongPressEnd = (_) =>
-                                                      _endGroupDragSelection();
-                                                },
-                                              ),
-                                            },
-                                            child: GestureDetector(
-                                              behavior:
-                                                  HitTestBehavior.translucent,
-                                              onTap: sel.active
-                                                  ? () =>
-                                                      _toggleGroupMsgSelection(
-                                                          msg, uniqueKey)
-                                                  : null,
-                                              onDoubleTap: sel.active
-                                                  ? null
-                                                  : () =>
-                                                      _enterGroupSelectionMode(
-                                                          msg, uniqueKey),
-                                              child: AnimatedContainer(
-                                                key: (_scrollTargetId != null &&
-                                                        _scrollTargetId ==
-                                                            msg['id']
-                                                                ?.toString())
-                                                    ? _scrollTargetKey
-                                                    : null,
-                                                duration: const Duration(
-                                                    milliseconds: 150),
-                                                color: isCurrentSearchMatch
-                                                    ? gcs.primary
-                                                        .withValues(alpha: 0.28)
-                                                    : isSearchMatch
-                                                        ? gcs.primary
-                                                            .withValues(
-                                                                alpha: 0.12)
-                                                        : isGroupSelected
-                                                            ? gcs
-                                                                .primaryContainer
-                                                                .withValues(
-                                                                    alpha: 0.45)
-                                                            : (_scrollHighlightId !=
-                                                                        null &&
-                                                                    _scrollHighlightId ==
-                                                                        msg['id']
-                                                                            ?.toString())
-                                                                ? gcs.primary
-                                                                    .withValues(
-                                                                        alpha:
-                                                                            0.18)
-                                                                : Colors
-                                                                    .transparent,
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 12,
-                                                        vertical: 4),
-                                                child: Row(
-                                                  children: [
-                                                    if (sel.active)
-                                                      groupCheckmark,
-                                                    Expanded(
-                                                        child: AbsorbPointer(
-                                                          absorbing: sel.active,
-                                                          child: contentChild!,
-                                                        )),
-                                                  ],
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                          );
-                                        },
-                                      );
-                                    },
-                                  ),
-                                ),
-                                );
-                              },
-                            );
-                          },
-                        );
-                      },
-                    ),
-                    if (_pinnedMessage != null)
-                      Positioned(
-                        top: MediaQuery.of(context).padding.top +
-                            kToolbarHeight +
-                            8,
-                        left: 16,
-                        right: 16,
-                        child: _buildGroupPinnedBanner(context),
-                      ),
-                      Positioned(
-                        top: MediaQuery.of(context).padding.top +
-                            kToolbarHeight +
-                            (_pinnedMessage != null ? 68.0 : 8.0),
-                        left: 16,
-                        right: 16,
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 220),
-                          reverseDuration: const Duration(milliseconds: 180),
-                          transitionBuilder: (child, animation) =>
-                              FadeTransition(
-                            opacity: CurvedAnimation(
-                                parent: animation, curve: Curves.easeOut),
-                            child: SlideTransition(
-                              position: Tween<Offset>(
-                                begin: const Offset(0, -0.4),
-                                end: Offset.zero,
-                              ).animate(CurvedAnimation(
-                                  parent: animation,
-                                  curve: Curves.easeOutCubic)),
-                              child: child,
-                            ),
-                          ),
-                          child: _showSearch
-                              ? ChatSearchBar(
-                                  key: const ValueKey('csb'),
-                                  controller: _searchController,
-                                  focusNode: _searchFocusNode,
-                                  statsNotifier: _searchStats,
-                                  onChanged: _onSearchChanged,
-                                  onPrevious: _navigateSearchPrev,
-                                  onNext: _navigateSearchNext,
-                                  onClose: _closeSearch,
-                                )
-                              : const SizedBox.shrink(),
-                        ),
-                      ),
-                    Positioned(
-                      bottom: 12 + MediaQuery.of(context).padding.bottom,
-                      left: 16,
-                      right: 16,
-                      child: Center(
-                        child: _isReadOnlyChannel
-                            ? ListenableBuilder(
-                                listenable: Listenable.merge([
-                                  SettingsManager.elementOpacity,
-                                  SettingsManager.inputBarMaxWidth,
-                                  SettingsManager.elementBrightness,
-                                  SettingsManager.liquidGlassOnInput,
-                                  SettingsManager.liquidGlassInputQuality,
-                                  SettingsManager.liquidGlassInputBlur,
-                                  SettingsManager.liquidGlassInputTint,
-                                  SettingsManager.liquidGlassInputSaturation,
-                                  SettingsManager.liquidGlassInputChromatic,
-                                  SettingsManager.liquidGlassInputRefractive,
-                                  SettingsManager.liquidGlassInputLightIntensity,
-                                  SettingsManager.liquidGlassInputThickness,
-                                ]),
-                                builder: (_, __) {
-                                  final opacity = SettingsManager.elementOpacity.value;
-                                  final width = SettingsManager.inputBarMaxWidth.value;
-                                  final brightness = SettingsManager.elementBrightness.value;
-                                  final isMobile = !Platform.isWindows && !Platform.isLinux;
-                                  final useGlass = isMobile && SettingsManager.liquidGlassOnInput.value;
-                                  final baseColor = SettingsManager.getElementColor(
-                                    colorScheme.surfaceContainerHighest,
-                                    brightness,
-                                  );
-                                  final label = Container(
-                                    constraints: BoxConstraints(maxWidth: width),
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 12, horizontal: 16),
-                                    decoration: useGlass ? null : BoxDecoration(
-                                      color: baseColor.withValues(alpha: opacity),
-                                      borderRadius: BorderRadius.circular(28),
-                                      border: Border.all(
-                                        color: colorScheme.outlineVariant
-                                            .withValues(alpha: 0.15),
-                                        width: 1,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      'This is a channel. You cannot send messages here.',
-                                      style: TextStyle(
-                                        color: colorScheme.onSurface
-                                            .withValues(alpha: 0.6),
-                                        fontSize: 14,
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  );
-                                  if (!useGlass) return label;
-                                  final quality = SettingsManager.liquidGlassInputQuality.value;
-                                  final blur = SettingsManager.liquidGlassInputBlur.value;
-                                  final tint = SettingsManager.liquidGlassInputTint.value;
-                                  final saturation = SettingsManager.liquidGlassInputSaturation.value;
-                                  final chromatic = SettingsManager.liquidGlassInputChromatic.value;
-                                  final refractive = SettingsManager.liquidGlassInputRefractive.value;
-                                  final lightIntensity = SettingsManager.liquidGlassInputLightIntensity.value;
-                                  final thickness = SettingsManager.liquidGlassInputThickness.value;
-                                  final glassQuality = switch (quality) {
-                                    LiquidGlassQuality.fast    => GlassQuality.standard,
-                                    LiquidGlassQuality.medium  => GlassQuality.minimal,
-                                    LiquidGlassQuality.quality => GlassQuality.premium,
-                                  };
-                                  final isDark = Theme.of(context).brightness == Brightness.dark;
-                                  final tintColor = isDark
-                                      ? Colors.white.withValues(alpha: tint)
-                                      : Colors.black.withValues(alpha: tint);
-                                  final settings = LiquidGlassSettings(
-                                    thickness: thickness,
-                                    blur: blur,
-                                    chromaticAberration: chromatic,
-                                    lightIntensity: lightIntensity,
-                                    refractiveIndex: refractive,
-                                    saturation: saturation,
-                                    ambientStrength: 0.8,
-                                    lightAngle: 0.75 * pi,
-                                    glassColor: tintColor,
-                                  );
-                                  return GlassCard(
-                                    useOwnLayer: true,
-                                    settings: settings,
-                                    quality: glassQuality,
-                                    padding: EdgeInsets.zero,
-                                    shape: LiquidRoundedRectangle(borderRadius: 28),
-                                    clipBehavior: Clip.antiAlias,
-                                    child: label,
-                                  );
-                                },
-                              )
-                            : ValueListenableBuilder<double>(
-                                valueListenable:
-                                    SettingsManager.inputBarMaxWidth,
-                                builder: (_, width, __) {
-                                  return Container(
-                                    constraints:
-                                        BoxConstraints(maxWidth: width),
-                                    child: _buildInputBar(context, colorScheme),
-                                  );
-                                },
-                              ),
-                      ),
-                    ),
-                    ValueListenableBuilder<bool>(
-                      valueListenable: _showScrollDownButton,
-                      builder: (_, show, __) => AnimatedOpacity(
-                        opacity: show ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 200),
-                        child: IgnorePointer(
-                          ignoring: !show,
-                          child: ValueListenableBuilder<double>(
-                            valueListenable: _bottomBarHeight,
-                            builder: (_, barHeight, __) => ValueListenableBuilder<ScrollDownButtonPosition>(
-                              valueListenable: SettingsManager.scrollDownButtonPosition,
-                              builder: (_, position, __) => ValueListenableBuilder<double>(
-                                valueListenable: SettingsManager.scrollDownButtonSize,
-                                builder: (_, btnSize, __) {
-                                  final alignment = switch (position) {
-                                    ScrollDownButtonPosition.left => Alignment.bottomLeft,
-                                    ScrollDownButtonPosition.center => Alignment.bottomCenter,
-                                    ScrollDownButtonPosition.right => Alignment.bottomRight,
-                                  };
-                                  return Align(
-                                    alignment: alignment,
-                                    child: Padding(
-                                      padding: EdgeInsets.only(
-                                        bottom: barHeight + 12 + MediaQuery.of(context).padding.bottom + 16,
-                                        left: position == ScrollDownButtonPosition.left ? 16 : 0,
-                                        right: position == ScrollDownButtonPosition.right ? 16 : 0,
-                                      ),
-                                      child: Material(
-                                        color: Colors.transparent,
-                                        child: ValueListenableBuilder<double>(
-                                          valueListenable:
-                                              SettingsManager.elementBrightness,
-                                          builder: (_, brightness, ___) {
-                                            final baseColor =
-                                                SettingsManager.getElementColor(
-                                              Theme.of(context)
-                                                  .colorScheme
-                                                  .surfaceContainerHighest,
-                                              brightness,
-                                            );
-                                            return IconButton(
-                                              splashRadius: btnSize / 2 + 4,
-                                              padding: EdgeInsets.zero,
-                                              icon: Container(
-                                                width: btnSize,
-                                                height: btnSize,
-                                                decoration: BoxDecoration(
-                                                  color:
-                                                      baseColor.withValues(alpha: 0.5),
-                                                  shape: BoxShape.circle,
-                                                  border: Border.all(
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .outlineVariant
-                                                        .withValues(alpha: 0.15),
-                                                    width: 1,
-                                                  ),
-                                                ),
-                                                child: Icon(
-                                                  Icons.arrow_downward,
-                                                  size: btnSize * 0.56,
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .onSurface
+                                                    )
+                                                  : const SizedBox.shrink(),
+                                            if (((swapped && isMe) ||
+                                                    (!swapped && !isMe)) &&
+                                                showAvatar &&
+                                                showAvatarForThisMessage)
+                                              const SizedBox(width: 6),
+                                            Flexible(
+                                              child: Text(
+                                                sender,
+                                                style: TextStyle(
+                                                  fontWeight: FontWeight.w600,
+                                                  fontSize: 12,
+                                                  color: colorScheme.onSurface
                                                       .withValues(alpha: 0.7),
                                                 ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
                                               ),
-                                              onPressed: _scrollToBottom,
-                                            );
-                                          },
+                                            ),
+                                            if (((swapped && !isMe) ||
+                                                    (!swapped && isMe)) &&
+                                                showAvatar &&
+                                                showAvatarForThisMessage)
+                                              const SizedBox(width: 6),
+                                            if ((swapped && !isMe) ||
+                                                (!swapped && isMe))
+                                              (showAvatar &&
+                                                      showAvatarForThisMessage)
+                                                  ? RepaintBoundary(
+                                                      child: AvatarWidget(
+                                                        key: ValueKey(
+                                                            'avatar-$sender'),
+                                                        username: sender,
+                                                        tokenProvider:
+                                                            () async => null,
+                                                        size: 20,
+                                                        editable: false,
+                                                      ),
+                                                    )
+                                                  : const SizedBox.shrink(),
+                                          ],
+                                        ),
+                                      )
+                                    : null;
+
+                                final bubbleWithContext = AnimatedMessageBubble(
+                                    key: ValueKey<String>(animKey),
+                                    outgoing: isMe,
+                                    animate: _hasBuiltMessageListOnce &&
+                                        isFirstAppearance &&
+                                        SettingsManager
+                                            .messageAnimationsEnabled.value,
+                                    flightOriginKey:
+                                        isMe ? _inputAreaKey : null,
+                                    flightFromEdge: !isMe,
+                                    alignRight: shouldAlignRight,
+                                    child: RepaintBoundary(
+                                        child: senderInfoRow == null
+                                            ? bubble
+                                            : Column(
+                                                crossAxisAlignment:
+                                                    shouldAlignRight
+                                                        ? CrossAxisAlignment.end
+                                                        : CrossAxisAlignment
+                                                            .start,
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  senderInfoRow,
+                                                  bubble,
+                                                ],
+                                              )));
+                                final contentWithSender = Column(
+                                  crossAxisAlignment: shouldAlignRight
+                                      ? CrossAxisAlignment.end
+                                      : CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    bubbleWithContext,
+                                    MessageReactionBar(
+                                      reactions: reactionsFor(reactionKey),
+                                      myUsername: _currentUsername ?? '',
+                                      outgoing: isMe,
+                                      onToggle: (emoji) {
+                                        final wasReacted = hasReaction(
+                                            reactionKey,
+                                            emoji,
+                                            _currentUsername ?? '');
+                                        toggleReaction(reactionKey, emoji,
+                                            _currentUsername ?? '');
+                                        if (rMsgId != null)
+                                          _serverToggleGroupReaction(
+                                              rMsgId, emoji, wasReacted);
+                                      },
+                                      onAddReaction: (ctx2) => openEmojiPicker(
+                                          ctx2,
+                                          reactionKey,
+                                          _currentUsername ?? '',
+                                          onAfterToggle: (emoji, wasReacted) {
+                                        if (rMsgId != null)
+                                          _serverToggleGroupReaction(
+                                              rMsgId, emoji, wasReacted);
+                                      }),
+                                    ),
+                                  ],
+                                );
+
+                                final gcs = Theme.of(context).colorScheme;
+                                return ValueListenableBuilder<
+                                    ({
+                                      bool active,
+                                      Map<String, Map<String, dynamic>> selected
+                                    })>(
+                                  key: ValueKey<String>('msg_$animKey'),
+                                  valueListenable: _selectionNotifier,
+                                  child: RepaintBoundary(
+                                    child: Align(
+                                      alignment: shouldAlignRight
+                                          ? Alignment.centerRight
+                                          : Alignment.centerLeft,
+                                      child: contentWithSender,
+                                    ),
+                                  ),
+                                  builder: (_, sel, contentChild) {
+                                    final isGroupSelected =
+                                        sel.selected.containsKey(uniqueKey);
+                                    final groupCheckmark = GestureDetector(
+                                      onTap: () => _toggleGroupMsgSelection(
+                                          msg, uniqueKey),
+                                      child: Padding(
+                                        padding:
+                                            const EdgeInsets.only(right: 8),
+                                        child: AnimatedContainer(
+                                          duration:
+                                              const Duration(milliseconds: 150),
+                                          width: 22,
+                                          height: 22,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: isGroupSelected
+                                                ? gcs.primary
+                                                : Colors.transparent,
+                                            border: Border.all(
+                                              color: isGroupSelected
+                                                  ? gcs.primary
+                                                  : gcs.onSurface
+                                                      .withValues(alpha: 0.35),
+                                              width: 2,
+                                            ),
+                                          ),
+                                          child: isGroupSelected
+                                              ? Icon(Icons.check,
+                                                  size: 14,
+                                                  color: gcs.onPrimary)
+                                              : null,
                                         ),
                                       ),
-                                    ),
-                                  );
-                                },
-                              ),
+                                    );
+                                    return KeyedSubtree(
+                                      key: _messageItemKey(animKey),
+                                      child: RawGestureDetector(
+                                        behavior: HitTestBehavior.translucent,
+                                        gestures: {
+                                          LongPressGestureRecognizer:
+                                              GestureRecognizerFactoryWithHandlers<
+                                                  LongPressGestureRecognizer>(
+                                            () => LongPressGestureRecognizer(
+                                                duration:
+                                                    _messageLongPressDuration),
+                                            (instance) {
+                                              instance.onLongPressStart = (_) =>
+                                                  _startGroupDragSelection(
+                                                      msg, uniqueKey);
+                                              instance.onLongPressMoveUpdate =
+                                                  (details) =>
+                                                      _updateGroupDragSelection(
+                                                          details
+                                                              .globalPosition);
+                                              instance.onLongPressEnd = (_) =>
+                                                  _endGroupDragSelection();
+                                            },
+                                          ),
+                                        },
+                                        child: GestureDetector(
+                                          behavior: HitTestBehavior.translucent,
+                                          onTap: sel.active
+                                              ? () => _toggleGroupMsgSelection(
+                                                  msg, uniqueKey)
+                                              : null,
+                                          onDoubleTap: sel.active
+                                              ? null
+                                              : () => _enterGroupSelectionMode(
+                                                  msg, uniqueKey),
+                                          child: AnimatedContainer(
+                                            key: (_scrollTargetId != null &&
+                                                    _scrollTargetId ==
+                                                        msg['id']?.toString())
+                                                ? _scrollTargetKey
+                                                : null,
+                                            duration: const Duration(
+                                                milliseconds: 150),
+                                            color: isCurrentSearchMatch
+                                                ? gcs.primary
+                                                    .withValues(alpha: 0.28)
+                                                : isSearchMatch
+                                                    ? gcs.primary
+                                                        .withValues(alpha: 0.12)
+                                                    : isGroupSelected
+                                                        ? gcs.primaryContainer
+                                                            .withValues(
+                                                                alpha: 0.45)
+                                                        : (_scrollHighlightId !=
+                                                                    null &&
+                                                                _scrollHighlightId ==
+                                                                    msg['id']
+                                                                        ?.toString())
+                                                            ? gcs.primary
+                                                                .withValues(
+                                                                    alpha: 0.18)
+                                                            : Colors
+                                                                .transparent,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 12, vertical: 4),
+                                            child: Row(
+                                              children: [
+                                                if (sel.active) groupCheckmark,
+                                                Expanded(
+                                                    child: AbsorbPointer(
+                                                  absorbing: sel.active,
+                                                  child: contentChild!,
+                                                )),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
                             ),
                           ),
-                        ),
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+            ),
+            if (_pinnedMessage != null)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + kToolbarHeight + 8,
+                left: 16,
+                right: 16,
+                child: _buildGroupPinnedBanner(context),
+              ),
+            Positioned(
+              top: MediaQuery.of(context).padding.top +
+                  kToolbarHeight +
+                  (_pinnedMessage != null ? 68.0 : 8.0),
+              left: 16,
+              right: 16,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                reverseDuration: const Duration(milliseconds: 180),
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity:
+                      CurvedAnimation(parent: animation, curve: Curves.easeOut),
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, -0.4),
+                      end: Offset.zero,
+                    ).animate(CurvedAnimation(
+                        parent: animation, curve: Curves.easeOutCubic)),
+                    child: child,
+                  ),
+                ),
+                child: _showSearch
+                    ? ChatSearchBar(
+                        key: const ValueKey('csb'),
+                        controller: _searchController,
+                        focusNode: _searchFocusNode,
+                        statsNotifier: _searchStats,
+                        onChanged: _onSearchChanged,
+                        onPrevious: _navigateSearchPrev,
+                        onNext: _navigateSearchNext,
+                        onClose: _closeSearch,
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ),
+            Positioned(
+              bottom: 12 + MediaQuery.of(context).padding.bottom,
+              left: 16,
+              right: 16,
+              child: Center(
+                child: _isReadOnlyChannel
+                    ? ListenableBuilder(
+                        listenable: Listenable.merge([
+                          SettingsManager.elementOpacity,
+                          SettingsManager.inputBarMaxWidth,
+                          SettingsManager.elementBrightness,
+                          SettingsManager.liquidGlassOnInput,
+                          SettingsManager.liquidGlassInputQuality,
+                          SettingsManager.liquidGlassInputBlur,
+                          SettingsManager.liquidGlassInputTint,
+                          SettingsManager.liquidGlassInputSaturation,
+                          SettingsManager.liquidGlassInputChromatic,
+                          SettingsManager.liquidGlassInputRefractive,
+                          SettingsManager.liquidGlassInputLightIntensity,
+                          SettingsManager.liquidGlassInputThickness,
+                        ]),
+                        builder: (_, __) {
+                          final opacity = SettingsManager.elementOpacity.value;
+                          final width = SettingsManager.inputBarMaxWidth.value;
+                          final brightness =
+                              SettingsManager.elementBrightness.value;
+                          final isMobile =
+                              !Platform.isWindows && !Platform.isLinux;
+                          final useGlass = isMobile &&
+                              SettingsManager.liquidGlassOnInput.value;
+                          final baseColor = SettingsManager.getElementColor(
+                            colorScheme.surfaceContainerHighest,
+                            brightness,
+                          );
+                          final label = Container(
+                            constraints: BoxConstraints(maxWidth: width),
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 12, horizontal: 16),
+                            decoration: useGlass
+                                ? null
+                                : BoxDecoration(
+                                    color: baseColor.withValues(alpha: opacity),
+                                    borderRadius: BorderRadius.circular(28),
+                                    border: Border.all(
+                                      color: colorScheme.outlineVariant
+                                          .withValues(alpha: 0.15),
+                                      width: 1,
+                                    ),
+                                  ),
+                            child: Text(
+                              'This is a channel. You cannot send messages here.',
+                              style: TextStyle(
+                                color: colorScheme.onSurface
+                                    .withValues(alpha: 0.6),
+                                fontSize: 14,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          );
+                          if (!useGlass) return label;
+                          final quality =
+                              SettingsManager.liquidGlassInputQuality.value;
+                          final blur =
+                              SettingsManager.liquidGlassInputBlur.value;
+                          final tint =
+                              SettingsManager.liquidGlassInputTint.value;
+                          final saturation =
+                              SettingsManager.liquidGlassInputSaturation.value;
+                          final chromatic =
+                              SettingsManager.liquidGlassInputChromatic.value;
+                          final refractive =
+                              SettingsManager.liquidGlassInputRefractive.value;
+                          final lightIntensity = SettingsManager
+                              .liquidGlassInputLightIntensity.value;
+                          final thickness =
+                              SettingsManager.liquidGlassInputThickness.value;
+                          final glassQuality = switch (quality) {
+                            LiquidGlassQuality.fast => GlassQuality.standard,
+                            LiquidGlassQuality.medium => GlassQuality.minimal,
+                            LiquidGlassQuality.quality => GlassQuality.premium,
+                          };
+                          final isDark =
+                              Theme.of(context).brightness == Brightness.dark;
+                          final tintColor = isDark
+                              ? Colors.white.withValues(alpha: tint)
+                              : Colors.black.withValues(alpha: tint);
+                          final settings = LiquidGlassSettings(
+                            thickness: thickness,
+                            blur: blur,
+                            chromaticAberration: chromatic,
+                            lightIntensity: lightIntensity,
+                            refractiveIndex: refractive,
+                            saturation: saturation,
+                            ambientStrength: 0.8,
+                            lightAngle: 0.75 * pi,
+                            glassColor: tintColor,
+                          );
+                          return GlassCard(
+                            useOwnLayer: true,
+                            settings: settings,
+                            quality: glassQuality,
+                            padding: EdgeInsets.zero,
+                            shape: LiquidRoundedRectangle(borderRadius: 28),
+                            clipBehavior: Clip.antiAlias,
+                            child: label,
+                          );
+                        },
+                      )
+                    : ValueListenableBuilder<double>(
+                        valueListenable: SettingsManager.inputBarMaxWidth,
+                        builder: (_, width, __) {
+                          return Container(
+                            constraints: BoxConstraints(maxWidth: width),
+                            child: _buildInputBar(context, colorScheme),
+                          );
+                        },
+                      ),
+              ),
+            ),
+            ValueListenableBuilder<bool>(
+              valueListenable: _showScrollDownButton,
+              builder: (_, show, __) => AnimatedOpacity(
+                opacity: show ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 200),
+                child: IgnorePointer(
+                  ignoring: !show,
+                  child: ValueListenableBuilder<double>(
+                    valueListenable: _bottomBarHeight,
+                    builder: (_, barHeight, __) =>
+                        ValueListenableBuilder<ScrollDownButtonPosition>(
+                      valueListenable: SettingsManager.scrollDownButtonPosition,
+                      builder: (_, position, __) =>
+                          ValueListenableBuilder<double>(
+                        valueListenable: SettingsManager.scrollDownButtonSize,
+                        builder: (_, btnSize, __) {
+                          final alignment = switch (position) {
+                            ScrollDownButtonPosition.left =>
+                              Alignment.bottomLeft,
+                            ScrollDownButtonPosition.center =>
+                              Alignment.bottomCenter,
+                            ScrollDownButtonPosition.right =>
+                              Alignment.bottomRight,
+                          };
+                          return Align(
+                            alignment: alignment,
+                            child: Padding(
+                              padding: EdgeInsets.only(
+                                bottom: barHeight +
+                                    12 +
+                                    MediaQuery.of(context).padding.bottom +
+                                    16,
+                                left: position == ScrollDownButtonPosition.left
+                                    ? 16
+                                    : 0,
+                                right:
+                                    position == ScrollDownButtonPosition.right
+                                        ? 16
+                                        : 0,
+                              ),
+                              child: Material(
+                                color: Colors.transparent,
+                                child: AnimatedBuilder(
+                                  animation: Listenable.merge([
+                                    SettingsManager.elementBrightness,
+                                    SettingsManager.elementOpacity,
+                                  ]),
+                                  builder: (_, ___) {
+                                    final baseColor =
+                                        SettingsManager.getElementColor(
+                                      Theme.of(context)
+                                          .colorScheme
+                                          .surfaceContainerHighest,
+                                      SettingsManager.elementBrightness.value,
+                                    );
+                                    return IconButton(
+                                      splashRadius: btnSize / 2 + 4,
+                                      padding: EdgeInsets.zero,
+                                      icon: Container(
+                                        width: btnSize,
+                                        height: btnSize,
+                                        decoration: BoxDecoration(
+                                          color: baseColor.withValues(
+                                              alpha: SettingsManager
+                                                  .elementOpacity.value),
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .outlineVariant
+                                                .withValues(alpha: 0.15),
+                                            width: 1,
+                                          ),
+                                        ),
+                                        child: Icon(
+                                          Icons.arrow_downward,
+                                          size: btnSize * 0.56,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withValues(alpha: 0.7),
+                                        ),
+                                      ),
+                                      onPressed: _scrollToBottom,
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ),
-                  ],
+                  ),
                 ),
               ),
-            );
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
-  Future<void> _handleGroupDroppedFiles(List<String> filePaths) async {
+  Future<void> _handleGroupDroppedFiles(List<String> filePaths,
+      {bool skipBulkConfirm = false}) async {
     if (filePaths.isEmpty) return;
 
     final existing = <String>[];
@@ -4938,8 +5514,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       return;
     }
 
-    // Multiple files — batch consecutive images (≤10 per album), send others individually.
-    // Each album batch shows its own confirmation dialog (one dialog per 10 images).
+    // Pre-collect segments: List<String> for image batches, String for non-image files.
+    final segments = <Object>[];
     int i = 0;
     while (i < existing.length) {
       final fp = existing[i];
@@ -4951,20 +5527,52 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           batch.add(existing[i]);
           i++;
         }
-        if (!mounted) return;
-        var proceed = false;
-        await showDialog<void>(
-          context: context,
-          builder: (_) => AlbumPreviewDialog(
-            filePaths: batch,
-            onSend: () => proceed = true,
-            onCancel: () {},
-          ),
-        );
-        if (!proceed) continue;
-        await _processAndUploadAlbum(batch);
+        segments.add(batch);
       } else {
-        if (!mounted) return;
+        segments.add(fp);
+        i++;
+      }
+    }
+
+    final albumBatches = segments.whereType<List<String>>().toList();
+    final useBulkConfirm = albumBatches.length > 1 && !skipBulkConfirm;
+
+    if (useBulkConfirm) {
+      if (!mounted) return;
+      var proceed = false;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => BulkAlbumConfirmDialog(
+          imageCount: albumBatches.fold(0, (sum, b) => sum + b.length),
+          albumCount: albumBatches.length,
+          onSend: () => proceed = true,
+          onCancel: () {},
+        ),
+      );
+      if (!proceed) return;
+    }
+
+    for (final segment in segments) {
+      if (segment is List<String>) {
+        if (useBulkConfirm || skipBulkConfirm) {
+          unawaited(_processAndUploadAlbum(segment));
+        } else {
+          if (!mounted) return;
+          var proceed = false;
+          await showDialog<void>(
+            context: context,
+            builder: (_) => AlbumPreviewDialog(
+              filePaths: segment,
+              onSend: () => proceed = true,
+              onCancel: () {},
+            ),
+          );
+          if (!proceed) continue;
+          await _processAndUploadAlbum(segment);
+        }
+      } else if (segment is String) {
+        if (!mounted) continue;
+        final fp = segment;
         final basename = p.basename(fp);
         final ext = p.extension(basename).toLowerCase();
         var proceed = false;
@@ -4979,7 +5587,6 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           ),
         );
         if (proceed) await _sendGroupFile(fp, basename, ext);
-        i++;
       }
     }
   }

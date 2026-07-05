@@ -32,6 +32,7 @@ import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory, getOnyxSupp
 
 import '../globals.dart';
 import '../models/chat_message.dart';
+import 'wardlink/wardlink_crypto.dart';
 import '../models/favorite_chat.dart';
 import '../utils/image_file_cache.dart';
 import '../utils/media_cache.dart';
@@ -44,7 +45,12 @@ class LanFavSyncStatus extends LanFavSyncEvent {
   final String message;
   final int current;
   final int total;
-  LanFavSyncStatus(this.message, {this.current = 0, this.total = 0});
+  // Byte-level progress for the current file being transferred.
+  // Both are 0 when no file-level progress is available.
+  final int bytesTransferred;
+  final int fileBytes;
+  LanFavSyncStatus(this.message, {this.current = 0, this.total = 0,
+      this.bytesTransferred = 0, this.fileBytes = 0});
 }
 
 class LanFavSyncFileResult extends LanFavSyncEvent {
@@ -246,6 +252,9 @@ class LanFavSyncService {
     int expectedFiles = 0;
     int receivedFiles = 0;
     final List<FavSyncFileError> fileErrors = [];
+    // Streaming key negotiated during /fav/meta: used by /fav/file/stream to
+    // decrypt large files without loading them fully into memory.
+    SecretKey? streamKey;
 
     final timeout = Timer(const Duration(hours: 24), () async {
       if (!controller.isClosed) {
@@ -265,6 +274,142 @@ class LanFavSyncService {
       (req) async {
         if (req.method != 'POST') {
           req.response.statusCode = 405;
+          await req.response.close();
+          return;
+        }
+
+        // ── /fav/file/stream (streaming — must handle before reading body) ───────
+        // Large files arrive as WardLink-style AES-GCM frames; we decrypt and
+        // write each 64 KB chunk to disk without ever holding the full file in
+        // RAM. Auth is a tiny ECDH-encrypted blob in the X-Fav-Auth header.
+        if (req.uri.path == '/fav/file/stream') {
+          final sk = streamKey;
+          if (sk == null || metaFavorites == null) {
+            req.response.statusCode = 400;
+            req.response.write(jsonEncode({'error': 'Session not initialised — call /fav/meta first'}));
+            await req.response.close();
+            return;
+          }
+
+          final authB64 = req.headers.value('x-fav-auth');
+          if (authB64 == null) {
+            req.response.statusCode = 400;
+            req.response.write(jsonEncode({'error': 'Missing x-fav-auth header'}));
+            await req.response.close();
+            return;
+          }
+
+          // Decrypt the auth blob (tiny ECDH envelope → {nonce, key, size}).
+          Map<String, dynamic>? auth;
+          try {
+            final authJson = utf8.decode(base64Decode(authB64));
+            final authPlain = await _decrypt(authJson, keyPair);
+            if (authPlain != null) {
+              auth = jsonDecode(utf8.decode(authPlain)) as Map<String, dynamic>;
+            }
+          } catch (_) {}
+          if (auth == null || auth['nonce'] != nonce) {
+            req.response.statusCode = 400;
+            req.response.write(jsonEncode({'error': 'Auth failed'}));
+            await req.response.close();
+            return;
+          }
+
+          final fileKey = auth['key'] as String? ?? '';
+          final type = fileTypeMap[fileKey] ?? 'file';
+          // Total size from the auth blob (sent by the sender); used for progress.
+          final fileSize = auth['size'] as int? ?? 0;
+          String? savePath;
+          try {
+            savePath = await targetPathForKey(fileKey, type);
+            final fileSink = File(savePath).openWrite();
+
+            // Compute SHA-256 incrementally so we never re-read the file.
+            dart_crypto.Digest? sha256Digest;
+            final hashSink = dart_crypto.sha256.startChunkedConversion(
+              ChunkedConversionSink<dart_crypto.Digest>.withCallback(
+                  (d) => sha256Digest = d.single),
+            );
+
+            int bytesReceived = 0;
+            int lastPct = -1;
+
+            final reader = WardLinkFrameReader(req);
+            try {
+              while (true) {
+                final lenBytes = await reader.readExact(4);
+                if (lenBytes == null) break;
+                final len =
+                    ByteData.sublistView(lenBytes).getUint32(0, Endian.big);
+                if (len == 0) break; // terminator
+                final sealed = await reader.readExact(len);
+                if (sealed == null) throw const FormatException('truncated frame');
+                final plain = await WardLinkCrypto.openFrame(sealed, sk);
+                fileSink.add(plain);
+                hashSink.add(plain);
+                // Emit per-1% byte progress to keep the UI updated.
+                if (fileSize > 0) {
+                  bytesReceived += plain.length;
+                  final pct = bytesReceived * 100 ~/ fileSize;
+                  if (pct != lastPct) {
+                    lastPct = pct;
+                    controller.add(LanFavSyncStatus(
+                      'Receiving ${p.basename(fileKey)}',
+                      current: receivedFiles,
+                      total: expectedFiles,
+                      bytesTransferred: bytesReceived,
+                      fileBytes: fileSize,
+                    ));
+                  }
+                }
+              }
+              hashSink.close();
+              await fileSink.flush();
+              await fileSink.close();
+            } catch (e) {
+              await reader.cancel();
+              await fileSink.close();
+              rethrow;
+            }
+            await reader.cancel();
+
+            // Verify integrity via SHA-256 when the sender supplied one.
+            final expectedSha = fileSha256Map[fileKey] ?? '';
+            if (expectedSha.isNotEmpty) {
+              final actualSha = sha256Digest?.toString() ?? '';
+              if (actualSha != expectedSha) {
+                await File(savePath).delete();
+                throw Exception('Integrity check failed (sha256 mismatch)');
+              }
+            }
+
+            registerSavedFile(fileKey, type, savePath,
+                await File(savePath).length());
+            savedFilePaths[fileKey] = savePath;
+            receivedFiles++;
+
+            controller.add(LanFavSyncFileResult(fileKey, success: true));
+            controller.add(LanFavSyncStatus(
+              'Received: ${p.basename(fileKey)} ($receivedFiles/$expectedFiles)',
+              current: receivedFiles,
+              total: expectedFiles,
+            ));
+
+            req.response.statusCode = 200;
+            req.response.write(jsonEncode({'ok': true}));
+          } catch (e) {
+            final errMsg = e.toString();
+            if (savePath != null) {
+              try {
+                await File(savePath).delete();
+              } catch (_) {}
+            }
+            fileErrors.add(FavSyncFileError(fileKey, errMsg));
+            controller.add(
+                LanFavSyncFileResult(fileKey, success: false, error: errMsg));
+            req.response.statusCode = 422;
+            req.response.write(jsonEncode({'error': errMsg}));
+          }
           await req.response.close();
           return;
         }
@@ -300,6 +445,23 @@ class LanFavSyncService {
 
           metaFavorites = (payload['favorites'] as List)
               .cast<Map<String, dynamic>>();
+
+          // Derive per-session stream key from the sender's ephemeral pub.
+          // Used by /fav/file/stream for large-file streaming (no base64/OOM).
+          final streamPubB64 = payload['stream_pub'] as String?;
+          if (streamPubB64 != null) {
+            try {
+              final streamPubBytes = base64Decode(streamPubB64);
+              final shared = await _x25519.sharedSecretKey(
+                keyPair: keyPair,
+                remotePublicKey:
+                    SimplePublicKey(streamPubBytes, type: KeyPairType.x25519),
+              );
+              final sharedBytes = await shared.extractBytes();
+              streamKey = SecretKey(WardLinkCrypto.hkdf(
+                  sharedBytes, utf8.encode('onyx-fav-stream-v1'), 32));
+            } catch (_) {}
+          }
 
           // Build file manifest
           for (final fav in metaFavorites!) {
@@ -843,18 +1005,40 @@ class LanFavSyncService {
     final receiverPubBytes = base64Decode(qr['pub'] as String);
     final nonce = qr['nonce'] as String;
 
-    // Try IPs to find the receiver
+    // Generate an ephemeral X25519 key pair for streaming file transfers.
+    // The receiver derives the same AES-256 stream key via ECDH when it sees
+    // stream_pub in the /fav/meta payload, then uses it for /fav/file/stream.
+    final streamKp = await _x25519.newKeyPair();
+    final streamPubBytes = (await streamKp.extractPublicKey()).bytes;
+    final streamShared = await _x25519.sharedSecretKey(
+      keyPair: streamKp,
+      remotePublicKey:
+          SimplePublicKey(receiverPubBytes, type: KeyPairType.x25519),
+    );
+    final streamKey = SecretKey(WardLinkCrypto.hkdf(
+      await streamShared.extractBytes(),
+      utf8.encode('onyx-fav-stream-v1'),
+      32,
+    ));
+
+    // Try IPs to find the receiver — up to 3 attempts with 1-second gaps to
+    // survive a brief OS-firewall prompt or server-startup race condition.
     String? reachableBase;
-    for (final ip in ips) {
-      try {
-        final testSock = await Socket.connect(ip, port,
-            timeout: const Duration(seconds: 4));
-        testSock.destroy();
-        reachableBase = 'http://$ip:$port';
-        if (kDebugMode) print('[FavSync] Reached receiver at $ip:$port');
-        break;
-      } catch (_) {
-        if (kDebugMode) print('[FavSync] $ip:$port unreachable');
+    for (var attempt = 0; attempt < 3 && reachableBase == null; attempt++) {
+      if (attempt > 0) await Future.delayed(const Duration(seconds: 1));
+      for (final ip in ips) {
+        try {
+          final testSock = await Socket.connect(ip, port,
+              timeout: const Duration(seconds: 4));
+          testSock.destroy();
+          reachableBase = 'http://$ip:$port';
+          if (kDebugMode) print('[FavSync] Reached receiver at $ip:$port');
+          break;
+        } catch (_) {
+          if (kDebugMode) {
+            print('[FavSync] $ip:$port unreachable (attempt ${attempt + 1})');
+          }
+        }
       }
     }
 
@@ -917,13 +1101,19 @@ class LanFavSyncService {
       for (final msg in messages) {
         final entries = await _extractFileEntries(msg.content, appDir);
         for (final entry in entries) {
-          filesToSend[entry.key] = File(entry.path);
+          final entryFile = File(entry.path);
+          filesToSend[entry.key] = entryFile;
           fileTypes[entry.key] = entry.type;
-          final bytes = await File(entry.path).readAsBytes();
+          final fileLen = await entryFile.length();
+          // Stream sha256 for large files to avoid loading them into RAM twice
+          // (once here for the manifest and again during transfer).
+          final sha256 = fileLen > _streamThresholdBytes
+              ? await _sha256hexStream(entryFile)
+              : _sha256hex(await entryFile.readAsBytes());
           fileManifest.add({
             'key': entry.key,
-            'sha256': _sha256hex(bytes),
-            'size': bytes.length,
+            'sha256': sha256,
+            'size': fileLen,
             'type': entry.type,
           });
         }
@@ -947,6 +1137,8 @@ class LanFavSyncService {
     final metaPlain = utf8.encode(jsonEncode({
       'nonce': nonce,
       'favorites': favPayloads,
+      // Ephemeral pub for the receiver to derive the streaming AES-256 key.
+      'stream_pub': base64Encode(streamPubBytes),
     }));
 
     final metaError = await _post(
@@ -957,7 +1149,9 @@ class LanFavSyncService {
       return;
     }
 
-    // ── POST /fav/file for each file ───────────────────────────────────────────
+    // ── POST /fav/file or /fav/file/stream for each file ──────────────────────
+    // Files ≤ _streamThresholdBytes: legacy base64-in-JSON (fine for small media).
+    // Files > _streamThresholdBytes: AES-GCM streaming frames — no OOM on sender.
     int sent = 0;
     for (final entry in filesToSend.entries) {
       final key = entry.key;
@@ -969,8 +1163,8 @@ class LanFavSyncService {
         continue;
       }
 
-      final bytes = await file.readAsBytes();
-      if (bytes.length > _maxFileSizeBytes) {
+      final fileSize = await file.length();
+      if (fileSize > _maxFileSizeBytes) {
         emit(LanFavSyncFileResult(key,
             success: false,
             error: 'File too large (>${_maxFileSizeBytes ~/ 1024 ~/ 1024} MB), skipped'));
@@ -978,18 +1172,40 @@ class LanFavSyncService {
       }
 
       emit(LanFavSyncStatus(
-          'Sending ${p.basename(key)} (${_humanSize(bytes.length)})…',
+          'Sending ${p.basename(key)} (${_humanSize(fileSize)})…',
           current: sent, total: totalFiles));
 
-      final filePlain = utf8.encode(jsonEncode({
-        'nonce': nonce,
-        'key': key,
-        'sha256': _sha256hex(bytes),
-        'data': base64Encode(bytes),
-      }));
+      String? fileError;
+      if (fileSize > _streamThresholdBytes) {
+        // Auth blob: tiny ECDH envelope carrying {nonce, key} — sha256 is
+        // already in the manifest the receiver has from /fav/meta, and AES-GCM
+        // auth tags guarantee per-frame integrity without it.
+        final authPayload = utf8.encode(jsonEncode({
+          'nonce': nonce,
+          'key': key,
+          'size': fileSize,
+        }));
+        fileError = await _postFileStream(
+            reachableBase, authPayload, receiverPubBytes, streamKey, file,
+            onProgress: (bytesSent, totalBytes) {
+              emit(LanFavSyncStatus(
+                'Sending ${p.basename(key)} (${_humanSize(fileSize)})…',
+                current: sent, total: totalFiles,
+                bytesTransferred: bytesSent, fileBytes: totalBytes,
+              ));
+            });
+      } else {
+        final bytes = await file.readAsBytes();
+        final filePlain = utf8.encode(jsonEncode({
+          'nonce': nonce,
+          'key': key,
+          'sha256': _sha256hex(bytes),
+          'data': base64Encode(bytes),
+        }));
+        fileError =
+            await _post('$reachableBase/fav/file', filePlain, receiverPubBytes);
+      }
 
-      final fileError = await _post(
-          '$reachableBase/fav/file', filePlain, receiverPubBytes);
       if (fileError != null) {
         emit(LanFavSyncFileResult(key, success: false, error: fileError));
       } else {
@@ -1243,6 +1459,102 @@ class LanFavSyncService {
     if (bytes < 1024) return '${bytes}B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)}KB';
     return '${(bytes / 1024 / 1024).toStringAsFixed(1)}MB';
+  }
+
+  // Files larger than this are transferred via /fav/file/stream (WardLink-style
+  // AES-GCM frames) instead of base64-in-JSON, preventing OOM on the sender.
+  static const int _streamThresholdBytes = 5 * 1024 * 1024; // 5 MB
+
+  /// Compute SHA-256 of [file] without loading it fully into memory.
+  static Future<String> _sha256hexStream(File file) async {
+    dart_crypto.Digest? digest;
+    final sink = dart_crypto.sha256.startChunkedConversion(
+      ChunkedConversionSink<dart_crypto.Digest>.withCallback(
+          (d) => digest = d.single),
+    );
+    final raf = await file.open();
+    try {
+      while (true) {
+        final chunk = await raf.read(64 * 1024);
+        if (chunk.isEmpty) break;
+        sink.add(chunk);
+      }
+    } finally {
+      await raf.close();
+    }
+    sink.close();
+    return digest?.toString() ?? '';
+  }
+
+  /// Stream [file] to [base]/fav/file/stream as WardLink AES-GCM frames.
+  /// The [authPayload] bytes are ECDH-encrypted into the X-Fav-Auth header
+  /// so the receiver can validate the session nonce before accepting the body.
+  static Future<String?> _postFileStream(
+    String base,
+    List<int> authPayload,
+    List<int> receiverPub,
+    SecretKey streamKey,
+    File file, {
+    void Function(int sent, int total)? onProgress,
+  }) async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 30);
+    try {
+      // Encrypt tiny auth blob (nonce + key) with one-off ECDH.
+      final authEnc = await _encrypt(Uint8List.fromList(authPayload), receiverPub);
+      final authB64 = base64Encode(utf8.encode(authEnc));
+
+      final plainSize = await file.length();
+      final req = await client.postUrl(Uri.parse('$base/fav/file/stream'));
+      req.headers.set('x-fav-auth', authB64);
+      req.headers.set('x-wardlink-size', '$plainSize');
+      req.headers.contentType = ContentType.binary;
+
+      // Stream file in 64 KB chunks — each chunk is independently AES-GCM
+      // sealed, so memory usage is bounded to ~one chunk at a time.
+      int bytesSent = 0;
+      int lastPct = -1;
+      final raf = await file.open();
+      try {
+        while (true) {
+          final chunk = await raf.read(64 * 1024);
+          if (chunk.isEmpty) break;
+          req.add(await WardLinkCrypto.sealFrame(chunk, streamKey));
+          await req.flush();
+          bytesSent += chunk.length;
+          // Throttle to 1% increments so we don't spam the UI.
+          if (onProgress != null && plainSize > 0) {
+            final pct = bytesSent * 100 ~/ plainSize;
+            if (pct != lastPct) {
+              lastPct = pct;
+              onProgress(bytesSent, plainSize);
+            }
+          }
+        }
+        req.add(WardLinkCrypto.terminatorFrame());
+        await req.flush();
+      } finally {
+        await raf.close();
+      }
+
+      final resp = await req.close().timeout(const Duration(minutes: 30));
+      final respBody = await resp.transform(utf8.decoder).join();
+      if (resp.statusCode == 200) return null;
+      try {
+        final j = jsonDecode(respBody) as Map<String, dynamic>;
+        return j['error']?.toString() ?? 'HTTP ${resp.statusCode}';
+      } catch (_) {
+        return 'HTTP ${resp.statusCode}';
+      }
+    } on SocketException catch (e) {
+      return 'Network error: ${e.message}';
+    } on TimeoutException {
+      return 'Timed out sending file';
+    } catch (e) {
+      return e.toString();
+    } finally {
+      client.close();
+    }
   }
 }
 

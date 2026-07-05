@@ -120,7 +120,12 @@ class WardLinkPairedDevices {
 
   static Future<void> add(PairedDevice device) async {
     final list = List<PairedDevice>.from(devices.value)
-      ..removeWhere((d) => d.identityPubB64 == device.identityPubB64);
+      // Remove by identity key (same device, same install) OR by name+os
+      // (same device after reinstall — identity key regenerated but hardware
+      // is the same). Prevents duplicate entries after reinstalling the app.
+      ..removeWhere((d) =>
+          d.identityPubB64 == device.identityPubB64 ||
+          (d.name == device.name && d.os == device.os));
     list.add(device);
     devices.value = list;
     await _persist();

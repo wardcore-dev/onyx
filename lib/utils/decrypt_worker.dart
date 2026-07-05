@@ -16,6 +16,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:crypto/crypto.dart' as dart_crypto;
 
 /// A single decrypt request handed to a worker isolate.
 class _DecryptJob {
@@ -28,6 +29,32 @@ class _DecryptJob {
     required this.cipherData,
     required this.aeadKey,
     required this.prefixLen,
+  });
+}
+
+/// A full E2EE chat-message decrypt request: X25519 ECDH + HKDF-SHA256 key
+/// derivation + XChaCha20-Poly1305, all done off the UI thread. Text-message
+/// decryption was previously inlined on the main isolate per message, which
+/// is fine for one message but stalls the UI for several ms per message when
+/// a burst arrives (e.g. many messages synced or sent in quick succession).
+class _MsgDecryptJob {
+  final int id;
+  final Uint8List ownPrivateKey;
+  final Uint8List ownPublicKey;
+  final Uint8List remotePublicKey;
+  final Uint8List info;
+  final Uint8List nonce;
+  final Uint8List cipherText;
+  final Uint8List tag;
+  const _MsgDecryptJob({
+    required this.id,
+    required this.ownPrivateKey,
+    required this.ownPublicKey,
+    required this.remotePublicKey,
+    required this.info,
+    required this.nonce,
+    required this.cipherText,
+    required this.tag,
   });
 }
 
@@ -113,6 +140,52 @@ class DecryptWorker {
     return completer.future;
   }
 
+  /// Decrypts one E2EE chat message (X25519 ECDH + HKDF-SHA256 +
+  /// XChaCha20-Poly1305) on a pooled isolate. Returns the plaintext bytes, or
+  /// null on failure. Never throws — falls back to an in-process decrypt if
+  /// the pool can't be started for any reason.
+  Future<Uint8List?> decryptMessage({
+    required Uint8List ownPrivateKey,
+    required Uint8List ownPublicKey,
+    required Uint8List remotePublicKey,
+    required Uint8List info,
+    required Uint8List nonce,
+    required Uint8List cipherText,
+    required Uint8List tag,
+  }) async {
+    try {
+      await _ensureStarted();
+    } catch (_) {
+      return _decryptMessageInIsolate(_MsgDecryptJob(
+        id: -1,
+        ownPrivateKey: ownPrivateKey,
+        ownPublicKey: ownPublicKey,
+        remotePublicKey: remotePublicKey,
+        info: info,
+        nonce: nonce,
+        cipherText: cipherText,
+        tag: tag,
+      ));
+    }
+
+    final id = _nextId++;
+    final completer = Completer<Uint8List?>();
+    _pending[id] = completer;
+    final worker = _workers[_rr % _workers.length];
+    _rr++;
+    worker.send(_MsgDecryptJob(
+      id: id,
+      ownPrivateKey: ownPrivateKey,
+      ownPublicKey: ownPublicKey,
+      remotePublicKey: remotePublicKey,
+      info: info,
+      nonce: nonce,
+      cipherText: cipherText,
+      tag: tag,
+    ));
+    return completer.future;
+  }
+
   // ── Worker isolate ──────────────────────────────────────────────────────────
 
   static void _workerEntry(SendPort mainPort) {
@@ -122,8 +195,62 @@ class DecryptWorker {
       if (msg is _DecryptJob) {
         final result = await _decryptInIsolate(msg);
         mainPort.send([msg.id, result]);
+      } else if (msg is _MsgDecryptJob) {
+        final result = await _decryptMessageInIsolate(msg);
+        mainPort.send([msg.id, result]);
       }
     });
+  }
+
+  static Future<Uint8List?> _decryptMessageInIsolate(
+      _MsgDecryptJob job) async {
+    try {
+      final x25519 = X25519();
+      final keyPair = SimpleKeyPairData(
+        job.ownPrivateKey,
+        publicKey: SimplePublicKey(job.ownPublicKey, type: KeyPairType.x25519),
+        type: KeyPairType.x25519,
+      );
+      final remotePublicKey =
+          SimplePublicKey(job.remotePublicKey, type: KeyPairType.x25519);
+      final sharedSecret = await x25519.sharedSecretKey(
+        keyPair: keyPair,
+        remotePublicKey: remotePublicKey,
+      );
+      final sharedBytes = Uint8List.fromList(await sharedSecret.extractBytes());
+      final aeadKey = _hkdfSha256(sharedBytes, job.info, 32);
+
+      final xchacha = Xchacha20.poly1305Aead();
+      final secretKey = SecretKey(aeadKey);
+      final box = SecretBox(
+        job.cipherText,
+        nonce: job.nonce,
+        mac: Mac(job.tag),
+      );
+      final plain =
+          await xchacha.decrypt(box, secretKey: secretKey, aad: const <int>[]);
+      return Uint8List.fromList(plain);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Uint8List _hkdfSha256(List<int> ikm, List<int> info, int length) {
+    final salt = List<int>.filled(32, 0);
+    final mac1 = dart_crypto.Hmac(dart_crypto.sha256, salt);
+    final prk = mac1.convert(ikm).bytes;
+    List<int> okm = [];
+    List<int> previous = [];
+    int counter = 1;
+    while (okm.length < length) {
+      final data = <int>[...previous, ...info, counter];
+      final mac = dart_crypto.Hmac(dart_crypto.sha256, prk);
+      final t = mac.convert(data).bytes;
+      okm.addAll(t);
+      previous = t;
+      counter++;
+    }
+    return Uint8List.fromList(okm.sublist(0, length));
   }
 
   static Future<Uint8List?> _decryptInIsolate(_DecryptJob job) async {

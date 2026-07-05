@@ -45,6 +45,8 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../services/wardlink/wardlink_sync_service.dart';
 import '../services/wardlink/wardlink_paired_devices.dart';
+import '../services/mesh/mesh_manager.dart';
+import 'mesh_graph_screen.dart' show showMeshRadarSheet;
 import 'package:permission_handler/permission_handler.dart';
 import '../managers/trash_manager.dart';
 import '../widgets/inline_search_bar.dart';
@@ -360,7 +362,10 @@ class _SettingsTabState extends State<SettingsTab>
   List<MediaDeviceInfo>? _audioDevices;
 
   SectionType? _expandedSection;
-  final Map<String, bool> _expandedSubsections = {};
+  // Accordion, same as _expandedSection above: opening a subsection closes
+  // whichever other one was open (only one parent section is ever visible
+  // at a time, so this only ever needs to track one open subsection).
+  String? _expandedSubsectionKey;
 
   final TextEditingController _settingsSearchCtrl = TextEditingController();
   final GlobalKey _settingsSearchBarKey = GlobalKey();
@@ -544,6 +549,7 @@ class _SettingsTabState extends State<SettingsTab>
   void _toggleSection(SectionType section) {
     setState(() {
       _expandedSection = _expandedSection == section ? null : section;
+      _expandedSubsectionKey = null;
     });
   }
 
@@ -1632,6 +1638,17 @@ class _SettingsTabState extends State<SettingsTab>
           ),
           const SizedBox(height: 16),
           ],
+          if (_sectionVisible(l.meshTitle, l.meshSubtitle, ['Mesh', 'Bluetooth', 'BLE', 'Radar', 'mesh', 'radar'])) ...[
+          _buildLiquidGlassSection(
+            icon: Icons.radar_rounded,
+            iconHue: 1,
+            title: l.meshTitle,
+            subtitle: l.meshSubtitle,
+            section: SectionType.mesh,
+            expandedContentBuilder: _buildMeshContent,
+          ),
+          const SizedBox(height: 16),
+          ],
           if (_sectionVisible(l.backupTitle, l.backupSubtitle,
               [l.backupExport, l.backupRestore, l.backupScope, l.backupFavorites, l.backupPersonal, l.backupIncludeMedia, l.backupSchedule, l.backupFolder, l.backupMediaImages, l.backupMediaVideos, l.backupMediaVoice, l.backupMediaOther])) ...[
           _buildLiquidGlassSection(
@@ -1759,7 +1776,7 @@ class _SettingsTabState extends State<SettingsTab>
           
           Center( 
             child: Text(
-              'open-beta 1.7',
+              'open-beta 1.8',
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
@@ -2281,6 +2298,89 @@ class _SettingsTabState extends State<SettingsTab>
     if (diff.inHours < 1) return '${diff.inMinutes}m ago';
     if (diff.inDays < 1) return '${diff.inHours}h ago';
     return '${diff.inDays}d ago';
+  }
+
+  Widget _buildMeshContent() {
+    final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
+
+    Future<void> toggleMesh(bool v) async {
+      await SettingsManager.setMeshModeEnabled(v);
+      final username = await AccountManager.getCurrentAccount();
+      if (v && username != null) {
+        await MeshManager.instance.start(username);
+      } else {
+        await MeshManager.instance.stop();
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ValueListenableBuilder<bool>(
+          valueListenable: SettingsManager.meshModeEnabled,
+          builder: (_, enabled, __) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  l.meshEnable,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(
+                  l.meshEnableDesc,
+                  style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
+                ),
+                value: enabled,
+                onChanged: MeshManager.isPlatformSupported ? toggleMesh : null,
+              ),
+              if (!MeshManager.isPlatformSupported)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    l.meshUnavailable,
+                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                  ),
+                ),
+              if (enabled) ...[
+                const SizedBox(height: 8),
+                _buildLiquidGlassButton(
+                  icon: Icons.radar_rounded,
+                  label: l.meshOpenRadar,
+                  onPressed: () => showMeshRadarSheet(context),
+                ),
+                const SizedBox(height: 4),
+                ListenableBuilder(
+                  listenable: MeshManager.instance.neighbors,
+                  builder: (_, __) {
+                    final count = MeshManager.instance.neighbors.neighbors.length;
+                    if (count == 0) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        children: [
+                          Icon(Icons.bluetooth_rounded,
+                              size: 14, color: cs.primary),
+                          const SizedBox(width: 6),
+                          Text(
+                            l.meshNearbyCount(count),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: cs.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildNotificationsContent() {
@@ -3097,12 +3197,19 @@ class _SettingsTabState extends State<SettingsTab>
                   );
                 },
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest
+                        .withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(50),
                     border: Border.all(
-                      color: Theme.of(context).colorScheme.outline,
-                      width: 1,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .outlineVariant
+                          .withValues(alpha: 0.22),
+                      width: 0.8,
                     ),
                   ),
                   child: Row(
@@ -4385,7 +4492,7 @@ class _SettingsTabState extends State<SettingsTab>
     if (searchActive && !searchShowAll && !_sectionVisible(title, subtitle, keywords)) {
       return const SizedBox.shrink();
     }
-    final isExpanded = (_expandedSubsections[key] ?? false) || searchActive;
+    final isExpanded = (_expandedSubsectionKey == key) || searchActive;
     final colorScheme = Theme.of(context).colorScheme;
 
     final card = AdaptiveGlassCard(
@@ -4395,7 +4502,8 @@ class _SettingsTabState extends State<SettingsTab>
         children: [
           InkWell(
             borderRadius: BorderRadius.circular(12),
-            onTap: () => setState(() => _expandedSubsections[key] = !isExpanded),
+            onTap: () => setState(
+                () => _expandedSubsectionKey = isExpanded ? null : key),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               child: Row(
@@ -4442,15 +4550,16 @@ class _SettingsTabState extends State<SettingsTab>
             ),
           ),
           ClipRect(
-            child: AnimatedAlign(
-              alignment: Alignment.topCenter,
-              heightFactor: isExpanded ? 1.0 : 0.0,
+            child: AnimatedSize(
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeInOut,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-                child: expandedContent,
-              ),
+              clipBehavior: Clip.hardEdge,
+              child: isExpanded
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                      child: expandedContent,
+                    )
+                  : const SizedBox(width: double.infinity, height: 0),
             ),
           ),
         ],
@@ -5233,7 +5342,8 @@ class _SettingsTabState extends State<SettingsTab>
             keywords: [
               l.liquidGlassNavBarLabel, l.liquidGlassNavBarDesc, l.liquidGlassCardsLabel,
               l.liquidGlassCardsDesc, l.liquidGlassInputLabel, l.liquidGlassInputDesc,
-              l.liquidGlassSearchLabel, l.liquidGlassSearchDesc, 'blur', 'tint', 'glass',
+              l.liquidGlassSearchLabel, l.liquidGlassSearchDesc,
+              l.liquidGlassAppBarLabel, l.liquidGlassAppBarDesc, 'blur', 'tint', 'glass',
               'chromatic', 'refraction', 'opacity', 'saturation',
             ],
             expandedContent: Column(
@@ -5319,6 +5429,26 @@ class _SettingsTabState extends State<SettingsTab>
                     _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassSearchRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassSearchRefractive),
                     _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassSearchLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassSearchLightIntensity),
                     _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassSearchThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassSearchThickness),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _buildLiquidElementSection(
+                  context: context,
+                  label: l.liquidGlassAppBarLabel,
+                  description: l.liquidGlassAppBarDesc,
+                  toggleListenable: SettingsManager.liquidGlassOnAppBar,
+                  toggleGetter: (v) => v as bool,
+                  onToggle: SettingsManager.setLiquidGlassOnAppBar,
+                  qualityNotifier: SettingsManager.liquidGlassAppBarQuality,
+                  onQualityChanged: SettingsManager.setLiquidGlassAppBarQuality,
+                  sliders: [
+                    _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassAppBarBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassAppBarBlur),
+                    _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassAppBarTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassAppBarTint),
+                    _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassAppBarSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassAppBarSaturation),
+                    _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassAppBarChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassAppBarChromatic),
+                    _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassAppBarRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassAppBarRefractive),
+                    _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassAppBarLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassAppBarLightIntensity),
+                    _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassAppBarThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassAppBarThickness),
                   ],
                 ),
               ],
@@ -5438,7 +5568,7 @@ class _SettingsTabState extends State<SettingsTab>
   }
 }
 
-enum SectionType { security, keyManagement, notifications, appearance, language, cache, connection, interact, contact, audio, wardLink, backup, recycleBin }
+enum SectionType { security, keyManagement, notifications, appearance, language, cache, connection, interact, contact, audio, wardLink, mesh, backup, recycleBin }
 
 // ── WardLink QR pairing dialog ────────────────────────────────────────────────
 
@@ -6035,6 +6165,16 @@ class _PresetsSheetState extends State<_PresetsSheet> {
       'lgSearchRefractive': SettingsManager.liquidGlassSearchRefractive.value,
       'lgSearchLightIntensity': SettingsManager.liquidGlassSearchLightIntensity.value,
       'lgSearchThickness': SettingsManager.liquidGlassSearchThickness.value,
+      // Liquid glass — app bar
+      'lgOnAppBar': SettingsManager.liquidGlassOnAppBar.value,
+      'lgAppBarQuality': SettingsManager.liquidGlassAppBarQuality.value.name,
+      'lgAppBarBlur': SettingsManager.liquidGlassAppBarBlur.value,
+      'lgAppBarTint': SettingsManager.liquidGlassAppBarTint.value,
+      'lgAppBarSaturation': SettingsManager.liquidGlassAppBarSaturation.value,
+      'lgAppBarChromatic': SettingsManager.liquidGlassAppBarChromatic.value,
+      'lgAppBarRefractive': SettingsManager.liquidGlassAppBarRefractive.value,
+      'lgAppBarLightIntensity': SettingsManager.liquidGlassAppBarLightIntensity.value,
+      'lgAppBarThickness': SettingsManager.liquidGlassAppBarThickness.value,
     };
     await SettingsManager.saveThemePreset(preset);
     _nameCtrl.clear();
@@ -6126,6 +6266,18 @@ class _PresetsSheetState extends State<_PresetsSheet> {
       await SettingsManager.setLiquidGlassSearchRefractive(d('lgSearchRefractive', 1.40));
       await SettingsManager.setLiquidGlassSearchLightIntensity(d('lgSearchLightIntensity', 0.50));
       await SettingsManager.setLiquidGlassSearchThickness(d('lgSearchThickness', 24.0));
+
+      // Liquid glass — app bar
+      await SettingsManager.setLiquidGlassOnAppBar(b('lgOnAppBar', false));
+      await SettingsManager.setLiquidGlassAppBarQuality(
+          qualityByName(preset['lgAppBarQuality'] as String?));
+      await SettingsManager.setLiquidGlassAppBarBlur(d('lgAppBarBlur', 7.0));
+      await SettingsManager.setLiquidGlassAppBarTint(d('lgAppBarTint', 0.10));
+      await SettingsManager.setLiquidGlassAppBarSaturation(d('lgAppBarSaturation', 1.0));
+      await SettingsManager.setLiquidGlassAppBarChromatic(d('lgAppBarChromatic', 0.15));
+      await SettingsManager.setLiquidGlassAppBarRefractive(d('lgAppBarRefractive', 1.40));
+      await SettingsManager.setLiquidGlassAppBarLightIntensity(d('lgAppBarLightIntensity', 0.50));
+      await SettingsManager.setLiquidGlassAppBarThickness(d('lgAppBarThickness', 20.0));
 
       widget.onSnack('Preset "${preset['name']}" applied');
     } catch (e) {
@@ -6925,7 +7077,8 @@ class _RecycleBinSection extends StatefulWidget {
 
 class _RecycleBinSectionState extends State<_RecycleBinSection> {
   bool _busy = false;
-  final Map<String, bool> _expandedSubsections = {};
+  // Accordion — opening one subsection closes whichever other one was open.
+  String? _expandedSubsectionKey;
 
   Widget _buildSubSection({
     required String key,
@@ -6934,7 +7087,7 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
     required Widget expandedContent,
     IconData? icon,
   }) {
-    final isExpanded = _expandedSubsections[key] ?? false;
+    final isExpanded = _expandedSubsectionKey == key;
     final cs = Theme.of(context).colorScheme;
     return AdaptiveGlassCard(
       borderRadius: 12,
@@ -6943,7 +7096,8 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
         children: [
           InkWell(
             borderRadius: BorderRadius.circular(12),
-            onTap: () => setState(() => _expandedSubsections[key] = !isExpanded),
+            onTap: () => setState(
+                () => _expandedSubsectionKey = isExpanded ? null : key),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               child: Row(
@@ -6973,15 +7127,16 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
             ),
           ),
           ClipRect(
-            child: AnimatedAlign(
-              alignment: Alignment.topCenter,
-              heightFactor: isExpanded ? 1.0 : 0.0,
+            child: AnimatedSize(
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeInOut,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-                child: expandedContent,
-              ),
+              clipBehavior: Clip.hardEdge,
+              child: isExpanded
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                      child: expandedContent,
+                    )
+                  : const SizedBox(width: double.infinity, height: 0),
             ),
           ),
         ],
@@ -7049,6 +7204,39 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
     }
   }
 
+  void _clearAll(BuildContext ctx) {
+    final totalChats = TrashManager.instance.deletedChats.length;
+    final totalMsgs  = TrashManager.instance.deletedMessages.length;
+    if (totalChats == 0 && totalMsgs == 0) return;
+    final cs = Theme.of(ctx).colorScheme;
+    showDialog(
+      context: ctx,
+      builder: (dlgCtx) => AlertDialog(
+        title: const Text('Empty Trash?'),
+        content: Text(
+          'Permanently delete $totalChats chat${totalChats == 1 ? '' : 's'} '
+          'and $totalMsgs message${totalMsgs == 1 ? '' : 's'}? '
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dlgCtx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: cs.error),
+            onPressed: () {
+              Navigator.pop(dlgCtx);
+              TrashManager.instance.clearAll();
+              _snack('Trash emptied');
+            },
+            child: const Text('Empty Trash'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _restoreChat(TrashedChat chat) {
     rootScreenKey.currentState?.restoreDeletedChat(chat);
     _snack('Chat "${chat.displayName}" restored');
@@ -7110,6 +7298,29 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
     return '${dt.day}.${dt.month.toString().padLeft(2, '0')}.${dt.year}';
   }
 
+  Widget _tooManyItems(int count, String kind, ColorScheme cs) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cs.errorContainer.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: cs.error.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, size: 18, color: cs.error),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '$count $kind — too many to display safely. Use "Empty Trash" above to clear all.',
+              style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.75)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _chatTypeIcon(TrashedChatType type, ColorScheme cs) {
     final icon = switch (type) {
       TrashedChatType.group    => Icons.group,
@@ -7131,6 +7342,48 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // ── Empty-trash banner ──────────────────────────────────────────────
+        ValueListenableBuilder<int>(
+          valueListenable: TrashManager.instance.chatsNotifier,
+          builder: (_, __, ___) {
+            final totalChats = TrashManager.instance.deletedChats.length;
+            final totalMsgs  = TrashManager.instance.deletedMessages.length;
+            final isEmpty = totalChats == 0 && totalMsgs == 0;
+            return AdaptiveGlassCard(
+              borderRadius: 12,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(Icons.delete_sweep_rounded,
+                      size: 18, color: cs.onSurface.withValues(alpha: isEmpty ? 0.3 : 0.6)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      isEmpty
+                          ? 'Trash is empty'
+                          : '$totalChats chat${totalChats == 1 ? '' : 's'}, '
+                            '$totalMsgs message${totalMsgs == 1 ? '' : 's'}',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: cs.onSurface.withValues(alpha: isEmpty ? 0.35 : 0.75),
+                      ),
+                    ),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: isEmpty ? null : () => _clearAll(context),
+                    icon: const Icon(Icons.delete_forever_rounded, size: 16),
+                    label: const Text('Empty Trash'),
+                    style: FilledButton.styleFrom(
+                      foregroundColor: isEmpty ? null : cs.error,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 8),
         _buildSubSection(
           key: 'trash_chats',
           title: 'Deleted Chats',
@@ -7149,6 +7402,9 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
                         style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
                   ],
                 );
+              }
+              if (chats.length > 200) {
+                return _tooManyItems(chats.length, 'chats', cs);
               }
               return Column(
                 children: chats.map((chat) => Container(
@@ -7210,6 +7466,9 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
                         style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
                   ],
                 );
+              }
+              if (messages.length > 200) {
+                return _tooManyItems(messages.length, 'messages', cs);
               }
               return Column(
                 children: messages.map((item) => Container(

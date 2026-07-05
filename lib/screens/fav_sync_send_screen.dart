@@ -57,6 +57,8 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
   String _statusText = '';
   int _current = 0;
   int _total = 0;
+  int _bytesTransferred = 0;
+  int _fileBytes = 0;
   StreamSubscription<LanFavSyncEvent>? _sub;
   final List<({String filename, bool success, String? error})> _fileResults = [];
   bool _logExpanded = false;
@@ -96,6 +98,8 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
     _current = wardLinkBubbleController.current;
     _total = wardLinkBubbleController.total;
     _statusText = wardLinkBubbleController.statusText;
+    _bytesTransferred = wardLinkBubbleController.bytesTransferred;
+    _fileBytes = wardLinkBubbleController.fileBytes;
     wardLinkBubbleController.addListener(_onControllerUpdate);
   }
 
@@ -107,6 +111,8 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
       _current = wardLinkBubbleController.current;
       _total = wardLinkBubbleController.total;
       _statusText = wardLinkBubbleController.statusText;
+      _bytesTransferred = wardLinkBubbleController.bytesTransferred;
+      _fileBytes = wardLinkBubbleController.fileBytes;
     });
   }
 
@@ -276,6 +282,8 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
         _statusText = event.message;
         _current = event.current;
         _total = event.total;
+        _bytesTransferred = event.bytesTransferred;
+        _fileBytes = event.fileBytes;
       } else if (event is LanFavSyncFileResult) {
         _fileResults.add((
           filename: event.filename,
@@ -975,6 +983,28 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
                       color: cs.onSurface.withValues(alpha: 0.5),
                     ),
                   ),
+                  // Per-file byte progress bar — shown only during active streaming.
+                  if (_fileBytes > 0 && !_done) ...[
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: _bytesTransferred / _fileBytes,
+                        minHeight: 4,
+                        color: cs.secondary,
+                        backgroundColor: cs.secondaryContainer.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_bytesTransferred * 100 ~/ _fileBytes}%  ·  '
+                      '${_fmtBytes(_bytesTransferred)} / ${_fmtBytes(_fileBytes)}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: cs.onSurface.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ],
                 ],
               ],
             ),
@@ -1005,6 +1035,12 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
           ),
       ],
     );
+  }
+
+  String _fmtBytes(int bytes) {
+    if (bytes < 1024) return '${bytes}B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)}KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)}MB';
   }
 
   Widget _buildFileResultsList(ColorScheme cs) => AdaptiveGlassCard(

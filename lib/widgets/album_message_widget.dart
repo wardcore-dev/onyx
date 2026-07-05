@@ -12,6 +12,10 @@ import '../globals.dart';
 import 'chat_images_scope.dart';
 import 'blur_placeholder.dart';
 import '../utils/blurhash_cache.dart';
+import '../utils/wallpaper_util.dart';
+import '../utils/font_utils.dart';
+
+enum _MenuAction { download, setWallpaper }
 
 class AlbumItem {
   final String filename;
@@ -369,16 +373,13 @@ class _AlbumThumbState extends State<_AlbumThumb> {
       initialIdx = widget.index;
     }
 
-    Navigator.of(context).push(MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => AlbumGallery(
-        allItems: galleryItems,
-        albumItems: widget.allItems.length > 1 ? widget.allItems : null,
-        initialIndex: initialIdx,
-        peerUsername: widget.peerUsername,
-        isOutgoing: widget.isOutgoing,
-      ),
-    ));
+    Navigator.of(context).push(buildGalleryRoute(AlbumGallery(
+      allItems: galleryItems,
+      albumItems: widget.allItems.length > 1 ? widget.allItems : null,
+      initialIndex: initialIdx,
+      peerUsername: widget.peerUsername,
+      isOutgoing: widget.isOutgoing,
+    )));
   }
 
   @override
@@ -441,6 +442,29 @@ class _AlbumThumbState extends State<_AlbumThumb> {
       filterQuality: FilterQuality.medium,
     );
   }
+}
+
+/// Snappy scale+fade entrance for the fullscreen gallery — replaces the
+/// default MaterialPageRoute slide, which felt sluggish opening straight
+/// into a solid black scaffold with no sense of motion from the tapped thumb.
+Route<T> buildGalleryRoute<T>(Widget page) {
+  return PageRouteBuilder<T>(
+    opaque: true,
+    barrierColor: Colors.black,
+    transitionDuration: const Duration(milliseconds: 260),
+    reverseTransitionDuration: const Duration(milliseconds: 200),
+    pageBuilder: (_, __, ___) => page,
+    transitionsBuilder: (_, animation, __, child) {
+      final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+      return FadeTransition(
+        opacity: curved,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.94, end: 1.0).animate(curved),
+          child: child,
+        ),
+      );
+    },
+  );
 }
 
 class AlbumGallery extends StatefulWidget {
@@ -533,7 +557,11 @@ class _AlbumGalleryState extends State<AlbumGallery> {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(3),
-          child: _StripThumb(item: widget.allItems[i]),
+          child: _StripThumb(
+            item: widget.allItems[i],
+            peerUsername: widget.peerUsername,
+            isOutgoing: widget.isOutgoing,
+          ),
         ),
       ),
     );
@@ -600,13 +628,44 @@ class _AlbumGalleryState extends State<AlbumGallery> {
           iconTheme: const IconThemeData(color: Colors.white),
           title: Text(
             '${_current + 1} / ${widget.allItems.length}',
-            style: const TextStyle(color: Colors.white, fontSize: 16),
+            style: buildMessageTextStyle(
+              context: context,
+              baseFontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
           ),
           actions: [
-            IconButton(
-              icon: const Icon(Icons.download, color: Colors.white),
-              tooltip: 'Save',
-              onPressed: _showSaveDialog,
+            PopupMenuButton<_MenuAction>(
+              icon: const Icon(Icons.more_vert, color: Colors.white),
+              tooltip: 'More',
+              useRootNavigator: true,
+              onSelected: (action) {
+                switch (action) {
+                  case _MenuAction.download:
+                    _showSaveDialog();
+                    break;
+                  case _MenuAction.setWallpaper:
+                    _setCurrentAsWallpaper();
+                    break;
+                }
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: _MenuAction.download,
+                  child: ListTile(
+                    leading: Icon(Icons.download_rounded),
+                    title: Text('Download'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: _MenuAction.setWallpaper,
+                  child: ListTile(
+                    leading: Icon(Icons.wallpaper_rounded),
+                    title: Text('Set as wallpaper'),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -687,6 +746,21 @@ class _AlbumGalleryState extends State<AlbumGallery> {
     );
     if (result == _SaveChoice.current) await _saveCurrentImage();
     if (result == _SaveChoice.all) await _saveAllImages();
+  }
+
+  Future<void> _setCurrentAsWallpaper() async {
+    final item = widget.allItems[_current];
+    final cached = imageFileCache[item.filename];
+    if (cached == null) {
+      rootScreenKey.currentState?.showSnack('Image not loaded yet');
+      return;
+    }
+    try {
+      await setFileAsChatWallpaper(cached.file, isVideo: false);
+      rootScreenKey.currentState?.showSnack('Wallpaper set');
+    } catch (e) {
+      rootScreenKey.currentState?.showSnack('Failed to set wallpaper: $e');
+    }
   }
 
   Future<void> _saveCurrentImage() async {
@@ -807,7 +881,13 @@ class _AlbumGalleryState extends State<AlbumGallery> {
 
 class _StripThumb extends StatefulWidget {
   final AlbumItem item;
-  const _StripThumb({required this.item});
+  final String peerUsername;
+  final bool isOutgoing;
+  const _StripThumb({
+    required this.item,
+    required this.peerUsername,
+    required this.isOutgoing,
+  });
 
   @override
   State<_StripThumb> createState() => _StripThumbState();
@@ -815,28 +895,97 @@ class _StripThumb extends StatefulWidget {
 
 class _StripThumbState extends State<_StripThumb> {
   File? _file;
+  // Filename this thumb is currently subscribed to via ImageLoader's per-file
+  // listeners (null when not subscribed) — mirrors _AlbumThumb's pattern.
+  String? _listeningFilename;
 
   @override
   void initState() {
     super.initState();
-    _refresh();
+    final cached = imageFileCache[widget.item.filename];
+    if (cached != null && cached.file.existsSync()) {
+      _file = cached.file;
+    } else {
+      // Unlike a chat thumb, this strip entry previously only ever read the
+      // cache once and never triggered a fetch — distant images in the
+      // fullscreen filmstrip that hadn't been viewed/cached yet stayed a flat
+      // gray box forever. Fetch + listen just like _AlbumThumb does.
+      _startListeningCache();
+      _loadFile();
+    }
   }
 
   @override
   void didUpdateWidget(covariant _StripThumb old) {
     super.didUpdateWidget(old);
-    if (old.item.filename != widget.item.filename) setState(_refresh);
+    if (old.item.filename != widget.item.filename) {
+      _stopListeningCache();
+      final cached = imageFileCache[widget.item.filename];
+      if (cached != null && cached.file.existsSync()) {
+        setState(() => _file = cached.file);
+      } else {
+        setState(() => _file = null);
+        _startListeningCache();
+        _loadFile();
+      }
+    }
   }
 
-  void _refresh() {
+  void _onCacheChanged() {
+    if (!mounted || _file != null) return;
     final cached = imageFileCache[widget.item.filename];
-    if (cached != null && cached.file.existsSync()) {
-      _file = cached.file;
+    if (cached != null) {
+      _stopListeningCache();
+      setState(() => _file = cached.file);
+    }
+  }
+
+  void _startListeningCache() {
+    if (_listeningFilename == widget.item.filename) return;
+    _stopListeningCache();
+    ImageLoader.addFileListener(widget.item.filename, _onCacheChanged);
+    _listeningFilename = widget.item.filename;
+  }
+
+  void _stopListeningCache() {
+    final fn = _listeningFilename;
+    if (fn != null) {
+      ImageLoader.removeFileListener(fn, _onCacheChanged);
+      _listeningFilename = null;
+    }
+  }
+
+  Future<void> _loadFile() async {
+    final entry = await ImageLoader.load(
+      widget.item.filename,
+      peerUsername: widget.peerUsername,
+      owner: widget.item.owner,
+      mediaKeyB64: widget.item.mediaKeyB64,
+      computeMetadata: false,
+    );
+    if (!mounted || _file != null) return;
+    if (entry != null) {
+      _stopListeningCache();
+      setState(() => _file = entry.file);
     }
   }
 
   @override
+  void dispose() {
+    _stopListeningCache();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // Self-heal on rebuild in case the fetch/listener path was missed.
+    if (_file == null) {
+      final cached = imageFileCache[widget.item.filename];
+      if (cached != null && cached.file.existsSync()) {
+        _file = cached.file;
+        _stopListeningCache();
+      }
+    }
     if (_file != null) {
       return Image.file(_file!, fit: BoxFit.cover, gaplessPlayback: true);
     }

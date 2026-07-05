@@ -1,7 +1,9 @@
 // lib/widgets/mini_player_banner.dart
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../utils/global_audio_controller.dart';
 import 'full_player_sheet.dart';
+import 'scrub_slider.dart';
 
 /// Telegram / iPhone-style mini-player that slides in from the top whenever
 /// a voice or music file is playing. Controlled entirely by
@@ -96,19 +98,29 @@ class _MiniPlayerCard extends StatelessWidget {
                       onTap: () => FullPlayerSheet.show(context),
                       child: Row(
                         children: [
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 250),
-                            child: Icon(
-                              key: ValueKey(ctrl.isPlaying),
-                              ctrl.isPlaying
-                                  ? Icons.graphic_eq_rounded
-                                  : (ctrl.isFile
-                                      ? Icons.music_note_rounded
-                                      : Icons.mic_rounded),
-                              size: 20,
-                              color: cs.primary,
-                            ),
-                          ),
+                          ctrl.artPath != null
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(5),
+                                  child: Image.file(
+                                    File(ctrl.artPath!),
+                                    width: 20,
+                                    height: 20,
+                                    fit: BoxFit.cover,
+                                  ),
+                                )
+                              : AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 250),
+                                  child: Icon(
+                                    key: ValueKey(ctrl.isPlaying),
+                                    ctrl.isPlaying
+                                        ? Icons.graphic_eq_rounded
+                                        : (ctrl.isFile
+                                            ? Icons.music_note_rounded
+                                            : Icons.mic_rounded),
+                                    size: 20,
+                                    color: cs.primary,
+                                  ),
+                                ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
@@ -179,8 +191,9 @@ class _MiniPlayerCard extends StatelessWidget {
             // ── Progress slider ─────────────────────────────────────
             SizedBox(
               height: 28,
-              child: SliderTheme(
-                data: SliderTheme.of(context).copyWith(
+              child: ScrubSlider(
+                progress: progress,
+                sliderTheme: SliderTheme.of(context).copyWith(
                   trackHeight: 2.5,
                   thumbShape: const RoundSliderThumbShape(
                       enabledThumbRadius: 5.5),
@@ -191,16 +204,12 @@ class _MiniPlayerCard extends StatelessWidget {
                   thumbColor: cs.primary,
                   overlayColor: cs.primary.withValues(alpha: 0.15),
                 ),
-                child: Slider(
-                  value: progress,
-                  onChanged: (v) {
-                    if (ctrl.duration == Duration.zero) return;
-                    ctrl.seek(Duration(
-                      milliseconds:
-                          (v * ctrl.duration.inMilliseconds).round(),
-                    ));
-                  },
-                ),
+                onSeekEnd: (v) {
+                  if (ctrl.duration == Duration.zero) return;
+                  ctrl.seek(Duration(
+                    milliseconds: (v * ctrl.duration.inMilliseconds).round(),
+                  ));
+                },
               ),
             ),
           ],

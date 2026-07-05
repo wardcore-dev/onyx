@@ -585,6 +585,7 @@ class _AccountGraphViewState extends State<AccountGraphView>
     }
 
     groupsVersion.addListener(_onGroupsChanged);
+    groupsCacheVersion.addListener(_onGroupsChanged);
     chatsVersion.addListener(_scheduleRebuild);
     favoritesVersion.addListener(_onFavoritesChanged);
     accountSwitchVersion.addListener(_onAccountSwitch);
@@ -629,6 +630,7 @@ class _AccountGraphViewState extends State<AccountGraphView>
     _debounce?.cancel();
 
     groupsVersion.removeListener(_onGroupsChanged);
+    groupsCacheVersion.removeListener(_onGroupsChanged);
     chatsVersion.removeListener(_scheduleRebuild);
     favoritesVersion.removeListener(_onFavoritesChanged);
     accountSwitchVersion.removeListener(_onAccountSwitch);

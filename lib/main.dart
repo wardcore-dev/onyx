@@ -18,6 +18,8 @@ import 'package:tray_manager/tray_manager.dart';
 import 'utils/autostart_manager.dart';
 import 'utils/onyx_base_dir.dart';
 import 'package:audio_session/audio_session.dart';
+import 'package:audio_service/audio_service.dart';
+import 'services/onyx_audio_handler.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:just_audio/just_audio.dart' as ja;
 import 'package:workmanager/workmanager.dart';
@@ -40,6 +42,7 @@ import 'widgets/debug_overlay_v2.dart';
 import 'widgets/wardlink_bubble.dart';
 import 'widgets/wardlink_sync_bubble.dart';
 import 'widgets/vinyl_player_button.dart';
+import 'utils/global_audio_controller.dart';
 import 'widgets/voice_channel_bar.dart';
 import 'voice/voice_channel_manager.dart';
 import 'screens/call_overlay.dart';
@@ -55,7 +58,6 @@ import 'l10n/app_localizations.dart';
 
 import 'database/db_provider.dart';
 import 'globals.dart';
-import 'utils/global_audio_controller.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
@@ -124,11 +126,18 @@ Future<bool> _checkSingleInstance() async {
       final tempDir = Platform.environment['TEMP'] ?? Platform.environment['TMP'] ?? 'C:\\Temp';
       lockDir = Directory(tempDir);
     } else if (Platform.isMacOS) {
-      lockDir = Directory('/tmp');
+      // Per-user temp dir ($TMPDIR → /var/folders/.../T/). NEVER /tmp, which is
+      // shared across all macOS accounts: a lock/file created by one user is
+      // owned by that user and a second account cannot open it for writing
+      // (EACCES) nor acquire the lock, causing an immediate exit(0) on launch.
+      final tmp = Platform.environment['TMPDIR'];
+      lockDir = Directory((tmp != null && tmp.isNotEmpty) ? tmp : '/tmp');
     } else if (Platform.isLinux) {
-      lockDir = Directory('/tmp');
+      // Prefer the per-user XDG runtime dir; fall back to /tmp.
+      final xdg = Platform.environment['XDG_RUNTIME_DIR'];
+      lockDir = Directory((xdg != null && xdg.isNotEmpty) ? xdg : '/tmp');
     } else {
-      return true; 
+      return true;
     }
 
     final lockFilePath = '${lockDir.path}${Platform.pathSeparator}onyx_app.lock';
@@ -246,6 +255,7 @@ void main() async {
   await BlocklistManager.init();
   await MuteManager.init();
   await LockManager.init();
+  await globalAudioController.loadPersistedVolume();
 
   await MediaCache.instance.init();
   await AppPaths.ensureInit();
@@ -326,47 +336,50 @@ void main() async {
         .then((_) => appLog('[services] NotificationService initialized')),
   );
 
-  await Future.wait(initFutures, eagerError: false);
-
-  _initMediaNotificationListener();
+  if (!kIsWeb && Platform.isAndroid) {
+    initFutures.add(() async {
+      // Read the persisted theme up front so the notification's accent color
+      // matches it from the start — audio_service has no live-update API for
+      // this, so it can only be set once here at service creation.
+      AppTheme notifTheme = AppTheme.deepPurple;
+      try {
+        final pref = await SettingsManager.loadThemePreference();
+        notifTheme = AppTheme.fromStoredName(pref.name);
+      } catch (e) {
+        appLog('[services] Theme read for notification color failed: $e');
+      }
+      await AudioService.init(
+        builder: () => OnyxAudioHandler(),
+        config: AudioServiceConfig(
+          androidNotificationChannelId: 'com.wardcore.onyx.media',
+          androidNotificationChannelName: 'Media Player',
+          androidNotificationOngoing: true,
+          androidStopForegroundOnPause: true,
+          notificationColor: notifTheme.color,
+        ),
+      );
+      appLog('[services] AudioService initialized');
+    }());
+  }
 
   setupDebugPrintCapture();
   appLog('[debug] Debug print capture ready');
 
-  appLog('');
-  appLog('' * 60);
-  appLog(' ONYX App Initialization Complete');
-  appLog('' * 60);
-  appLog('');
-
   runApp(LiquidGlassWidgets.wrap(child: const MyApp()));
-}
 
-void _initMediaNotificationListener() {
-  String? lastTrack;
-  bool? lastPlaying;
-  bool lastActive = false;
-
-  globalAudioController.addListener(() {
-    final ctrl = globalAudioController;
-    if (ctrl.isActive == lastActive &&
-        ctrl.isPlaying == lastPlaying &&
-        ctrl.trackName == lastTrack) {
-      return;
-    }
-    lastActive = ctrl.isActive;
-    lastPlaying = ctrl.isPlaying;
-    lastTrack = ctrl.trackName;
-
-    if (!ctrl.isActive) {
-      NotificationService.cancelMediaNotification();
-    } else {
-      NotificationService.showMediaNotification(
-        trackName: ctrl.trackName ?? 'Audio',
-        isPlaying: ctrl.isPlaying,
-      );
-    }
-  });
+  // None of initFutures (window manager/tray, workmanager, foreground task,
+  // notification service, audio service) gate the first frame — awaiting
+  // them here used to hold the native splash on screen for however long the
+  // slowest one took, which is what made the "black screen on open" reports
+  // intermittent (cold start / slow disk / OS scheduling made this stretch
+  // out unpredictably). Let them finish in the background instead.
+  unawaited(Future.wait(initFutures, eagerError: false).then((_) {
+    appLog('');
+    appLog('' * 60);
+    appLog(' ONYX App Initialization Complete');
+    appLog('' * 60);
+    appLog('');
+  }));
 }
 
 Future<void> _optimizePerformance() async {
@@ -669,22 +682,7 @@ class _ElegantMessengerState extends State<ElegantMessenger> with WindowListener
       debugPrint('[main] Theme read failed: $e');
     }
 
-    AppTheme theme = AppTheme.deepPurple;
-    if (themeName != null) {
-      try {
-        String normalize(String s) =>
-            s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
-        final normalizedThemeName = normalize(themeName);
-        theme = AppTheme.values.firstWhere(
-          (t) =>
-              normalize(t.name) == normalizedThemeName ||
-              normalize(t.toString().split('.').last) == normalizedThemeName,
-          orElse: () => AppTheme.deepPurple,
-        );
-      } catch (e) {
-        theme = AppTheme.deepPurple;
-      }
-    }
+    final theme = AppTheme.fromStoredName(themeName);
 
     setState(() {
       _currentTheme = theme;
@@ -820,12 +818,29 @@ class _PinGateWidgetState extends State<_PinGateWidget>
     final pinActive = SettingsManager.pinEnabled.value || FallbackStorage.main.isLocked;
 
     final isDesktop = !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+    // Temporary diagnostic logging (see audio-glow chat thread) — the
+    // lock-on-resume PIN screen has been reported as not appearing when a
+    // track is playing (audio_service keeps a persistent foreground
+    // notification/service alive), and it's not reproducible without a
+    // device log showing exactly which branch/condition this hits.
+    appLog('[lock] lifecycle=$state audioActive=${globalAudioController.isActive} '
+        '_unlocked=$_unlocked pinActive=$pinActive '
+        'lockOnResume=${SettingsManager.lockOnResume.value} '
+        '_isAuthenticating=$_isAuthenticating _wasInBackground=$_wasInBackground '
+        '_showCover=$_showCover');
     if (state == AppLifecycleState.inactive) {
       if (!isDesktop && _unlocked && pinActive && !_isAuthenticating &&
           SettingsManager.lockOnResume.value) {
         if (mounted) setState(() => _showCover = true);
       }
-    } else if (state == AppLifecycleState.paused) {
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      // `hidden` (added in Flutter 3.13) can fire instead of/alongside
+      // `paused` once a persistent foreground service is running — which is
+      // now the case whenever audio_service's media notification is active.
+      // Not treating it as "went to background" left _wasInBackground false
+      // on some backgrounding paths while music was playing, so returning to
+      // the app skipped the PIN screen entirely even with lockOnResume on.
       _wasInBackground = !isDesktop;
       if (!isDesktop && _unlocked && pinActive && !_isAuthenticating &&
           SettingsManager.lockOnResume.value) {
@@ -840,6 +855,8 @@ class _PinGateWidgetState extends State<_PinGateWidget>
         _wasInBackground = false;
         _pushResumeLockScreen(); // cover stays visible behind PIN screen
       } else {
+        appLog('[lock] resumed WITHOUT pushing lock screen '
+            '(_wasInBackground was false, or a guard above blocked it)');
         _wasInBackground = false;
         // No lock required — remove cover after one frame so the transition
         // feels instant rather than flickering.
@@ -917,6 +934,25 @@ class _PinGateWidgetState extends State<_PinGateWidget>
     }
   }
 
+  // The native BiometricPrompt future can be abandoned by the OS (e.g. the
+  // app gets backgrounded again while the system biometric dialog is still
+  // showing) without ever resolving or throwing. Without a timeout that
+  // leaves the `await` in _tryBiometric/_tryBiometricResume hanging forever,
+  // so their `finally` block never runs and _isAuthenticating stays stuck
+  // true — which permanently blocks the resume-lock screen's `!_isAuthenticating`
+  // guard for the rest of the session (confirmed in the field: [lock] logs
+  // showed _isAuthenticating stuck true across many resume cycles).
+  static const _biometricTimeout = Duration(seconds: 30);
+
+  Future<bool> _authenticateBiometric() {
+    return _localAuth
+        .authenticate(
+          localizedReason: 'Unlock ONYX',
+          options: const AuthenticationOptions(biometricOnly: false),
+        )
+        .timeout(_biometricTimeout, onTimeout: () => false);
+  }
+
   Future<void> _tryBiometricResume(NavigatorState nav, VoidCallback onUnlocked) async {
     if (_isAuthenticating) return;
     _isAuthenticating = true;
@@ -928,17 +964,11 @@ class _PinGateWidgetState extends State<_PinGateWidget>
       if (isDesktop) {
         final pin = await SettingsManager.getBiometricPin();
         if (pin == null || pin.isEmpty) return;
-        final didAuth = await _localAuth.authenticate(
-          localizedReason: 'Unlock ONYX',
-          options: const AuthenticationOptions(biometricOnly: false),
-        );
+        final didAuth = await _authenticateBiometric();
         if (didAuth) onUnlocked();
         return;
       }
-      final didAuth = await _localAuth.authenticate(
-        localizedReason: 'Unlock ONYX',
-        options: const AuthenticationOptions(biometricOnly: false),
-      );
+      final didAuth = await _authenticateBiometric();
       if (didAuth) onUnlocked();
     } catch (_) {
     } finally {
@@ -974,10 +1004,7 @@ class _PinGateWidgetState extends State<_PinGateWidget>
             appLog('[biometric] abort: no stashed PIN — unlock once with PIN first');
             return;
           }
-          final didAuth = await _localAuth.authenticate(
-            localizedReason: 'Unlock ONYX',
-            options: const AuthenticationOptions(biometricOnly: false),
-          );
+          final didAuth = await _authenticateBiometric();
           appLog('[biometric] authenticate returned $didAuth');
           if (!didAuth) return;
           final unlocked = await FallbackStorage.main.unlockWithPin(pin);
@@ -989,10 +1016,7 @@ class _PinGateWidgetState extends State<_PinGateWidget>
         }
       }
 
-      final didAuth = await _localAuth.authenticate(
-        localizedReason: 'Unlock ONYX',
-        options: const AuthenticationOptions(biometricOnly: false),
-      );
+      final didAuth = await _authenticateBiometric();
       appLog('[biometric] authenticate returned $didAuth');
       if (didAuth && mounted) _completeUnlock();
     } catch (e, st) {

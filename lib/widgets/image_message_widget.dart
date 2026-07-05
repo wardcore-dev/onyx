@@ -17,6 +17,9 @@ import 'blur_placeholder.dart';
 import '../utils/image_size_cache.dart';
 import '../utils/image_file_cache.dart';
 import '../utils/blurhash_cache.dart';
+import '../utils/wallpaper_util.dart';
+
+enum _ImageMenuAction { download, setWallpaper }
 
 // Singleton future so all widgets share one async init instead of each awaiting separately.
 Future<String>? _imageDirFuture;
@@ -122,7 +125,12 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
 
       File? cachedFile;
 
-      if (widget.filename.startsWith('lan://')) {
+      if (widget.filename.startsWith('file://')) {
+        cachedFile = File(widget.filename.substring(7));
+        if (!(await cachedFile.exists())) {
+          throw Exception('Mesh file not found: ${widget.filename}');
+        }
+      } else if (widget.filename.startsWith('lan://')) {
         debugPrint('[ImageWidget] LAN file detected: ${widget.filename}');
 
         final lanFilename = widget.filename.substring(6);
@@ -233,11 +241,25 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
     return null;
   }
 
+  Future<void> _setImageAsWallpaper() async {
+    final file = _imageFile;
+    if (file == null || !(await file.exists())) {
+      rootScreenKey.currentState?.showSnack('Image not downloaded');
+      return;
+    }
+    try {
+      await setFileAsChatWallpaper(file, isVideo: false);
+      rootScreenKey.currentState?.showSnack('Wallpaper set');
+    } catch (e) {
+      rootScreenKey.currentState?.showSnack('Failed to set wallpaper: $e');
+    }
+  }
+
   Future<void> _saveImageToGalleryOrFolder() async {
     final file = _imageFile;
     if (file == null || !(await file.exists())) {
       rootScreenKey.currentState?.showSnack('Image not downloaded');
-      return; 
+      return;
     }
 
     final filename = _suggestFilename(widget.filename);
@@ -327,15 +349,12 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
     if (scope != null && scope.allImages.isNotEmpty) {
       final idx = scope.allImages.indexWhere((i) => i.filename == widget.filename);
       if (idx >= 0) {
-        Navigator.of(context).push(MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (_) => AlbumGallery(
-            allItems: scope.allImages,
-            initialIndex: idx,
-            peerUsername: widget.peerUsername,
-            isOutgoing: widget.isOutgoing,
-          ),
-        ));
+        Navigator.of(context).push(buildGalleryRoute(AlbumGallery(
+          allItems: scope.allImages,
+          initialIndex: idx,
+          peerUsername: widget.peerUsername,
+          isOutgoing: widget.isOutgoing,
+        )));
         return;
       }
     }
@@ -374,10 +393,36 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
                       child: ClipOval(
                         child: Material(
                           color: Colors.black45,
-                          child: IconButton(
-                            icon: const Icon(Icons.download_rounded, size: 20, color: Colors.white),
-                            onPressed: _saveImageToGalleryOrFolder,
-                            tooltip: Platform.isAndroid ? 'Save to gallery' : 'Save image',
+                          child: PopupMenuButton<_ImageMenuAction>(
+                            icon: const Icon(Icons.more_vert, size: 20, color: Colors.white),
+                            tooltip: 'More',
+                            useRootNavigator: true,
+                            onSelected: (action) {
+                              switch (action) {
+                                case _ImageMenuAction.download:
+                                  _saveImageToGalleryOrFolder();
+                                  break;
+                                case _ImageMenuAction.setWallpaper:
+                                  _setImageAsWallpaper();
+                                  break;
+                              }
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(
+                                value: _ImageMenuAction.download,
+                                child: ListTile(
+                                  leading: Icon(Icons.download_rounded),
+                                  title: Text('Download'),
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: _ImageMenuAction.setWallpaper,
+                                child: ListTile(
+                                  leading: Icon(Icons.wallpaper_rounded),
+                                  title: Text('Set as wallpaper'),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),

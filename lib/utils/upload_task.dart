@@ -24,16 +24,24 @@ class UploadTask {
   String? presignExt;
   String? presignContentType;
 
-  /// Progress 0.0..1.0 — backed by notifier so PendingUploadCard auto-rebuilds.
+  /// Progress 0.0..1.0 — backed by notifier so UploadProgressBar auto-rebuilds.
   final ValueNotifier<double> progressNotifier = ValueNotifier(0.0);
   double get progress => progressNotifier.value;
   set progress(double v) => progressNotifier.value = v;
 
-  /// Upload status — backed by notifier so PendingUploadCard auto-rebuilds.
+  /// Upload status — backed by notifier so UploadProgressBar auto-rebuilds.
   final ValueNotifier<UploadStatus> statusNotifier =
       ValueNotifier(UploadStatus.preparing);
   UploadStatus get status => statusNotifier.value;
   set status(UploadStatus v) => statusNotifier.value = v;
+
+  /// For album uploads: total number of images in this album.
+  int albumTotal = 0;
+
+  /// For album uploads: how many images have finished uploading so far.
+  final ValueNotifier<int> albumDoneNotifier = ValueNotifier(0);
+  int get albumDone => albumDoneNotifier.value;
+  set albumDone(int v) => albumDoneNotifier.value = v;
 
   http.Client? activeClient;
 

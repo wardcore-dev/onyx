@@ -33,6 +33,9 @@ class Messages extends Table {
 
   TextColumn get reactionsJson => text().nullable()(); // JSON-encoded map
 
+  // JSON blob for mesh file transfer metadata (meshFileId, meshFileName, etc.)
+  TextColumn get meshMetaJson => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {messageId, accountId, serverHost};
 }

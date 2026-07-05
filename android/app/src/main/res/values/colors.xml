@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the Flutter app's light-theme surface color (AppTheme.deepPurple,
+         see lib/models/app_themes.dart) so the native splash never flashes a
+         mismatched background while main() is still initializing. -->
+    <color name="launch_background">#FCFCFC</color>
+</resources>

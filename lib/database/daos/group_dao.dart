@@ -37,7 +37,7 @@ class GroupDao extends DatabaseAccessor<AppDatabase> with _$GroupDaoMixin {
     String accountId,
     String serverHost,
     List<model.Group> groupList,
-  ) {
+  ) async {
     final entries = groupList
         .map((g) => GroupsCompanion(
               groupId: Value(g.id),
@@ -52,7 +52,14 @@ class GroupDao extends DatabaseAccessor<AppDatabase> with _$GroupDaoMixin {
               myRole: Value(g.myRole),
             ))
         .toList();
-    return batch((b) => b.insertAllOnConflictUpdate(groups, entries));
+    await transaction(() async {
+      await (delete(groups)
+            ..where((t) =>
+                t.accountId.equals(accountId) &
+                t.serverHost.equals(serverHost)))
+          .go();
+      await batch((b) => b.insertAll(groups, entries));
+    });
   }
 
   Future<int> deleteGroup(

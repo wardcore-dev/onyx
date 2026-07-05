@@ -20,6 +20,8 @@ import '../widgets/animated_reorder_list.dart';
 import '../widgets/tab_pull_search.dart';
 import '../widgets/inline_search_bar.dart';
 import '../utils/dialog_utils.dart';
+import '../enums/delivery_mode.dart';
+import '../services/mesh/mesh_manager.dart';
 
 String _getFileTypeLabel(String filename) {
   final ext = filename.toLowerCase();
@@ -111,7 +113,30 @@ String _getFileTypeLabel(String filename) {
   return 'File';
 }
 
+/// Returns a human-readable preview for a message, correctly distinguishing
+/// mesh voice recordings (voice_*.m4a) from music file attachments.
+String _meshAwarePreview(dynamic msg) {
+  // msg is ChatMessage but we avoid importing the type here; use dynamic.
+  if (msg == null) return '';
+  final content = (msg.content as String?) ?? '';
+  // Mesh file transfers: use MIME type + filename to pick the right label.
+  if (content.startsWith('MESH_FILE:')) {
+    final filename = content.substring(10);
+    final mime = (msg.meshFileMimeType as String?) ?? '';
+    if (mime.startsWith('audio/') || mime.startsWith('video/')) {
+      // Voice recordings produced by the mic have filename prefix "voice_".
+      final base = filename.contains('/') ? filename.split('/').last : filename;
+      if (base.startsWith('voice_')) return 'Voice message';
+    }
+    return _getFileTypeLabel(filename);
+  }
+  return getPreviewText(content);
+}
+
 String getPreviewText(String rawContent) {
+  if (rawContent.startsWith('MESH_FILE:')) {
+    return _getFileTypeLabel(rawContent.substring(10));
+  }
   if (rawContent.startsWith('VOICEv1:')) return 'Voice message';
   if (rawContent.startsWith('AUDIOv1:')) return 'Music';
   if (rawContent.startsWith('IMAGEv1:')) return 'Image';
@@ -182,6 +207,9 @@ class _ChatSumm {
   final String displayName;
   final DateTime lastTs;
   final String preview;
+  final bool isBle;
+  /// 'wifi' | 'ble' | null — actual transport of the last mesh message.
+  final String? meshTransportUsed;
 
   const _ChatSumm({
     required this.chatId,
@@ -189,6 +217,8 @@ class _ChatSumm {
     required this.displayName,
     required this.lastTs,
     required this.preview,
+    this.isBle = false,
+    this.meshTransportUsed,
   });
 }
 
@@ -345,7 +375,8 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
       final prev = _byChatId[chatId];
       final last = msgs.isNotEmpty ? msgs.last : null;
       final lastTs = last?.time ?? DateTime.fromMillisecondsSinceEpoch(0);
-      final preview = last != null ? getPreviewText(last.content) : '';
+      final preview = last != null ? _meshAwarePreview(last) : '';
+      final isBle = last?.deliveryMode == DeliveryMode.bleMesh;
       final cached = UserCache.getSync(other);
       final displayName = (cached != null &&
               cached.displayName.isNotEmpty &&
@@ -358,6 +389,8 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
         displayName: displayName,
         lastTs: lastTs,
         preview: preview,
+        isBle: isBle,
+        meshTransportUsed: last?.meshTransportUsed,
       );
       updatedIds.add(chatId);
     }
@@ -460,10 +493,14 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
       final prev = _byChatId[chatId];
       DateTime lastTs = prev?.lastTs ?? DateTime.fromMillisecondsSinceEpoch(0);
       String preview = prev?.preview ?? '';
+      bool isBle = prev?.isBle ?? false;
+      String? meshTransportUsed;
       if (msgs.isNotEmpty) {
         final last = msgs.last;
         lastTs = last.time;
-        preview = getPreviewText(last.content);
+        preview = _meshAwarePreview(last);
+        isBle = last.deliveryMode == DeliveryMode.bleMesh;
+        meshTransportUsed = last.meshTransportUsed;
       }
       final cached = UserCache.getSync(other);
       String displayName = prev?.displayName ?? other;
@@ -478,6 +515,8 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
         displayName: displayName,
         lastTs: lastTs,
         preview: preview,
+        isBle: isBle,
+        meshTransportUsed: meshTransportUsed,
       );
     }
     _summaries = _byChatId.values.toList()
@@ -1242,14 +1281,42 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                             onTap: () => _openChatWithLockCheck(context, it.otherUsername),
                             onLongPress: () => _showUserProfileDialog(
                                 it.otherUsername, it.displayName),
-                            child: Text(
-                              it.displayName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w500,
-                                fontSize: 15,
-                              ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    it.displayName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w500,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                ),
+                                ValueListenableBuilder<bool>(
+                                  valueListenable: SettingsManager.meshModeEnabled,
+                                  builder: (_, meshOn, __) {
+                                    if (!meshOn) return const SizedBox.shrink();
+                                    return ListenableBuilder(
+                                      listenable: MeshManager.instance.neighbors,
+                                      builder: (_, __) {
+                                        final nb = MeshManager.instance.neighbors.neighborByUsername(it.otherUsername);
+                                        if (nb == null) return const SizedBox.shrink();
+                                        return Padding(
+                                          padding: const EdgeInsets.only(left: 5),
+                                          child: Icon(
+                                            nb.isLan ? Icons.wifi_rounded : Icons.bluetooth_rounded,
+                                            size: 12,
+                                            color: nb.isLan ? const Color(0xFF34C759) : const Color(0xFF2196F3),
+                                          ),
+                                        );
+                                      },
+                                    );
+                                  },
+                                ),
+                              ],
                             ),
                           ),
                           if (it.displayName != it.otherUsername)
@@ -1269,23 +1336,45 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                               ),
                             ),
                           const SizedBox(height: 2),
-                          Text(
-                            AppLocalizations.of(context).localizePreview(it.preview),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: _isPurplePreview(it.preview)
-                                  ? FontWeight.w500
-                                  : null,
-                              color: _isPurplePreview(it.preview)
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .onSurface
-                                      .withValues(alpha: 0.7),
+                          if (it.isBle)
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    AppLocalizations.of(context).localizePreview(it.preview),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: _isPurplePreview(it.preview) ? FontWeight.w500 : null,
+                                      color: _isPurplePreview(it.preview)
+                                          ? Theme.of(context).colorScheme.primary
+                                          : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                if (it.meshTransportUsed == 'wifi')
+                                  const Icon(Icons.wifi_rounded, size: 14, color: Color(0xFF34C759))
+                                else
+                                  const Icon(Icons.bluetooth_rounded, size: 14, color: Color(0xFF2196F3)),
+                              ],
+                            )
+                          else
+                            Text(
+                              AppLocalizations.of(context).localizePreview(it.preview),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: _isPurplePreview(it.preview) ? FontWeight.w500 : null,
+                                color: _isPurplePreview(it.preview)
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                              ),
                             ),
-                          ),
                         ],
                       ),
                     ),

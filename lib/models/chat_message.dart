@@ -1,6 +1,6 @@
 // lib/models/chat_message.dart
-import 'package:flutter/foundation.dart';
 import '../enums/delivery_mode.dart';
+import '../enums/mesh_delivery_status.dart';
 
 class ChatMessage {
   final String id;
@@ -24,6 +24,23 @@ class ChatMessage {
 
   /// When the message content was last edited (used for WardLink edit sync).
   DateTime? editedAt;
+
+  /// Mesh-only: delivery progress for outgoing bleMesh messages.
+  MeshDeliveryStatus? meshDeliveryStatus;
+
+  /// Mesh-only: packet ID used to match incoming ACKs to this message.
+  int? meshPacketId;
+
+  /// Mesh-only: which transport was actually used ('wifi' | 'ble' | null=unknown).
+  String? meshTransportUsed;
+
+  // ── Mesh file transfer fields (bleMesh only) ──────────────────────────────
+  final String? meshFileId;        // unique 16-char hex transfer ID
+  final String? meshFileName;      // original filename
+  final String? meshFileMimeType;  // e.g. "image/jpeg", "video/mp4"
+  final int? meshFileSize;         // total bytes
+  String? meshFileLocalPath;       // set when fully received
+  double meshFileProgress = 0.0;   // 0.0..1.0, in-memory only
 
   /// emoji → [usernames], cached from server
   Map<String, List<String>> reactions;
@@ -51,6 +68,14 @@ class ChatMessage {
     DeliveryMode? deliveryMode,
     this.deliveredAt,
     this.editedAt,
+    this.meshDeliveryStatus,
+    this.meshPacketId,
+    this.meshFileId,
+    this.meshFileName,
+    this.meshFileMimeType,
+    this.meshFileSize,
+    this.meshFileLocalPath,
+    this.meshTransportUsed,
     Map<String, List<String>>? reactions,
   })  : reactions = reactions ?? {},
         _content = content,
@@ -98,6 +123,14 @@ class ChatMessage {
     'deliveryMode': deliveryMode.name,
     'deliveredAt': deliveredAt?.toIso8601String(),
     if (editedAt != null) 'editedAt': editedAt!.toIso8601String(),
+    if (meshDeliveryStatus != null) 'meshDeliveryStatus': meshDeliveryStatus!.name,
+    if (meshPacketId != null) 'meshPacketId': meshPacketId,
+    if (meshFileId != null) 'meshFileId': meshFileId,
+    if (meshFileName != null) 'meshFileName': meshFileName,
+    if (meshFileMimeType != null) 'meshFileMimeType': meshFileMimeType,
+    if (meshFileSize != null) 'meshFileSize': meshFileSize,
+    if (meshFileLocalPath != null) 'meshFileLocalPath': meshFileLocalPath,
+    if (meshTransportUsed != null) 'meshTransportUsed': meshTransportUsed,
     if (reactions.isNotEmpty)
       'reactions': reactions.map((e, u) => MapEntry(e, u)),
   };
@@ -129,6 +162,18 @@ class ChatMessage {
       editedAt: j['editedAt'] != null
           ? DateTime.tryParse(j['editedAt'].toString())
           : null,
+      meshDeliveryStatus: _parseMeshDeliveryStatus(j['meshDeliveryStatus']),
+      meshPacketId: j['meshPacketId'] is int
+          ? j['meshPacketId'] as int
+          : (j['meshPacketId'] != null ? int.tryParse(j['meshPacketId'].toString()) : null),
+      meshFileId: j['meshFileId']?.toString(),
+      meshFileName: j['meshFileName']?.toString(),
+      meshFileMimeType: j['meshFileMimeType']?.toString(),
+      meshFileSize: j['meshFileSize'] is int
+          ? j['meshFileSize'] as int
+          : (j['meshFileSize'] != null ? int.tryParse(j['meshFileSize'].toString()) : null),
+      meshFileLocalPath: j['meshFileLocalPath']?.toString(),
+      meshTransportUsed: j['meshTransportUsed']?.toString(),
       reactions: _parseReactions(j['reactions']),
     );
   }
@@ -142,9 +187,10 @@ class ChatMessage {
   }
 
   static DeliveryMode _parseDeliveryMode(dynamic value) {
-    if (value == null) return DeliveryMode.internet;                              
+    if (value == null) return DeliveryMode.internet;
     final str = value.toString().toLowerCase();
     if (str == 'lan') return DeliveryMode.lan;
+    if (str == 'blemesh' || str == 'mesh') return DeliveryMode.bleMesh;
     return DeliveryMode.internet;
   }
 
@@ -152,5 +198,16 @@ class ChatMessage {
     if (value is int) return value;
     if (value != null) return int.tryParse(value.toString());
     return null;
+  }
+
+  static MeshDeliveryStatus? _parseMeshDeliveryStatus(dynamic value) {
+    if (value == null) return null;
+    switch (value.toString()) {
+      case 'sending':   return MeshDeliveryStatus.sending;
+      case 'relayed':   return MeshDeliveryStatus.relayed;
+      case 'delivered': return MeshDeliveryStatus.delivered;
+      case 'failed':    return MeshDeliveryStatus.failed;
+      default:          return null;
+    }
   }
 }

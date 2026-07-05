@@ -3,16 +3,33 @@ import 'font_family.dart';
 import '../managers/settings_manager.dart';
 
 enum AppTheme {
-  deepPurple, 
-  darkBlue, 
-  darkGreen, 
-  orange, 
-  pink, 
-  red, 
-  cyan, 
-  indigo, 
-  teal, 
-  grey, 
+  deepPurple,
+  darkBlue,
+  darkGreen,
+  orange,
+  pink,
+  red,
+  cyan,
+  indigo,
+  teal,
+  grey;
+
+  /// Resolves a persisted theme name (as saved by
+  /// [SettingsManager.saveThemePreference]) back to an [AppTheme], tolerant of
+  /// naming drift between the enum's `.name` and its display name — falls
+  /// back to [AppTheme.deepPurple] if [name] is null/unrecognized.
+  static AppTheme fromStoredName(String? name) {
+    if (name == null) return AppTheme.deepPurple;
+    String normalize(String s) =>
+        s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    final normalizedName = normalize(name);
+    return AppTheme.values.firstWhere(
+      (t) =>
+          normalize(t.name) == normalizedName ||
+          normalize(t.toString().split('.').last) == normalizedName,
+      orElse: () => AppTheme.deepPurple,
+    );
+  }
 }
 
 extension AppThemeExtension on AppTheme {

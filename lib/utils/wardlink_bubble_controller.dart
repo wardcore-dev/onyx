@@ -12,6 +12,8 @@ class WardLinkBubbleController extends ChangeNotifier {
   int current = 0;
   int total = 0;
   String statusText = '';
+  int bytesTransferred = 0;
+  int fileBytes = 0;
   bool isSend = false;
   String? receiveQrJson;
 
@@ -39,6 +41,8 @@ class WardLinkBubbleController extends ChangeNotifier {
     current = 0;
     total = 0;
     statusText = '';
+    bytesTransferred = 0;
+    fileBytes = 0;
     notifyListeners();
   }
 
@@ -51,6 +55,8 @@ class WardLinkBubbleController extends ChangeNotifier {
     current = 0;
     total = 0;
     statusText = '';
+    bytesTransferred = 0;
+    fileBytes = 0;
     notifyListeners();
   }
 
@@ -63,6 +69,8 @@ class WardLinkBubbleController extends ChangeNotifier {
       current = event.current;
       total = event.total;
       statusText = event.message;
+      bytesTransferred = event.bytesTransferred;
+      fileBytes = event.fileBytes;
       notifyListeners();
     } else if (event is LanFavSyncDone) {
       _markDone();
@@ -124,6 +132,8 @@ class WardLinkBubbleController extends ChangeNotifier {
     current = 0;
     total = 0;
     statusText = '';
+    bytesTransferred = 0;
+    fileBytes = 0;
     isSend = false;
     receiveQrJson = null;
     notifyListeners();
@@ -141,6 +151,8 @@ class WardLinkBubbleController extends ChangeNotifier {
     current = 0;
     total = 0;
     statusText = '';
+    bytesTransferred = 0;
+    fileBytes = 0;
     isSend = false;
     receiveQrJson = null;
     _receiverSession?.close();

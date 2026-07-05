@@ -88,6 +88,9 @@ class TrashManager {
   TrashManager._();
 
   static const _cleanDaysKey = 'trash_auto_clean_days';
+  // If the trash JSON file on disk exceeds this size, it is wiped before
+  // loading to prevent OOM crashes. 100 MB is a safe ceiling for mobile.
+  static const _maxSizeMb = 100;
 
   // 0 = never, otherwise number of days before items are auto-deleted.
   // Default: 30 days.
@@ -135,6 +138,12 @@ class TrashManager {
     try {
       final file = await _trashFile();
       if (!await file.exists()) return;
+      final fileSize = await file.length();
+      if (fileSize > _maxSizeMb * 1024 * 1024) {
+        debugPrint('[TrashManager] trash file ${fileSize ~/ (1024 * 1024)} MB > $_maxSizeMb MB limit – auto-clearing');
+        await file.delete();
+        return;
+      }
       final raw = await file.readAsString();
       final json = jsonDecode(raw) as Map<String, dynamic>;
       for (final j in (json['chats'] as List? ?? [])) {

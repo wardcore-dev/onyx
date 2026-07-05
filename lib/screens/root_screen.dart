@@ -23,7 +23,8 @@ import '../managers/secure_store.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
-import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
+import '../utils/onyx_base_dir.dart'
+    show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:record/record.dart';
@@ -65,6 +66,7 @@ import '../models/chat_message.dart';
 import '../enums/delivery_mode.dart';
 import '../managers/lan_message_manager.dart';
 import '../services/wardlink/wardlink_sync_service.dart';
+import '../services/mesh/mesh_manager.dart';
 import '../services/wardlink/wardlink_tombstones.dart';
 import '../widgets/avatar_widget.dart';
 import '../widgets/adaptive_nav_bar.dart';
@@ -78,8 +80,8 @@ import '../call/call_manager.dart';
 import '../screens/groups_tab.dart';
 import '../screens/group_chat_screen.dart';
 import '../screens/external_group_chat_screen.dart';
+import '../screens/mesh_chat_screen.dart';
 import '../managers/user_cache.dart';
-import '../utils/optimized_message_sender.dart';
 import '../utils/app_paths.dart';
 import '../utils/decrypt_worker.dart';
 import '../utils/media_cache.dart';
@@ -147,6 +149,61 @@ class RootScreen extends StatefulWidget {
 class RootScreenState extends State<RootScreen>
     with SingleTickerProviderStateMixin, OptimizedStateMixin<RootScreen> {
   Map<String, List<ChatMessage>> chats = {};
+
+  final Map<String, ValueNotifier<int>> _bleUnreadNotifiers = {};
+  String? _activeMeshChatId;
+
+  ValueNotifier<int> getBleUnreadNotifier(String chatId) =>
+      _bleUnreadNotifiers.putIfAbsent(chatId, () => ValueNotifier(0));
+
+  void clearBleUnread(String chatId) {
+    if (_bleUnreadNotifiers.containsKey(chatId)) {
+      _bleUnreadNotifiers[chatId]!.value = 0;
+    }
+  }
+
+  void setActiveMeshChat(String? chatId) {
+    _activeMeshChatId = chatId;
+  }
+
+  /// Opens a mesh chat. On desktop embeds it in the right panel;
+  /// on mobile pushes a full-screen route (caller is responsible for that).
+  void openMeshChat(String myUsername, String otherUsername) {
+    if (isDesktop) {
+      setState(() {
+        selectedMeshChatOther = otherUsername;
+        selectedChatOther = null;
+        selectedGroup = null;
+        selectedExternalGroup = null;
+        selectedExternalServer = null;
+      });
+    } else {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => MeshChatScreen(
+            myUsername: myUsername,
+            otherUsername: otherUsername,
+          ),
+        ),
+      );
+    }
+  }
+
+  /// Switches the desktop detail panel from MeshChat back to the regular
+  /// ChatScreen for the same user. On desktop MeshChat is embedded in the
+  /// right panel (not pushed on the Navigator), so its back button/Esc/
+  /// mouse-back can't just pop a route — they call this instead.
+  void returnToChatScreenFromMesh(String otherUsername) {
+    if (!isDesktop) return;
+    setState(() {
+      selectedChatOther = otherUsername;
+      selectedMeshChatOther = null;
+      selectedGroup = null;
+      selectedExternalGroup = null;
+      selectedExternalServer = null;
+      _selectedFavoriteId = null;
+    });
+  }
 
   Completer<void>? _chatsLoadCompleter;
 
@@ -222,9 +279,14 @@ class RootScreenState extends State<RootScreen>
   bool _handleYInitialized = false;
   SimpleKeyPair? _identityKeyPair;
   SimplePublicKey? _identityPublicKey;
+  // Raw private key bytes, cached alongside _identityKeyPair so message
+  // decryption can hand them to a pooled isolate (see DecryptWorker) instead
+  // of running X25519/HKDF/XChaCha20 inline on the UI thread per message.
+  Uint8List? _identityPrivateKeyBytes;
   String? identityPubKeyBase64;
   WebSocketChannel? _ws;
   StreamSubscription? _wsSub;
+  StreamSubscription? _meshIncomingSub;
 
   // Messages queued when WS was offline — drained on reconnect
   final List<Map<String, dynamic>> _pendingMsgQueue = [];
@@ -258,8 +320,14 @@ class RootScreenState extends State<RootScreen>
   final Map<String, String> _pendingNotifications = {};
   Timer? _notifFlushTimer;
 
+  // Snackbar debounce: a burst of showSnack() calls collapses into a single
+  // snackbar showing only the latest message, so rapid actions don't spam a
+  // queue of snackbars one after another.
+  Timer? _snackDebounce;
+  String? _pendingSnackText;
 
   String? selectedChatOther;
+  String? selectedMeshChatOther;
   Group? selectedGroup;
   Group? selectedExternalGroup;
   ExternalServer? selectedExternalServer;
@@ -308,7 +376,19 @@ class RootScreenState extends State<RootScreen>
 
   final AudioPlayer _audioPlayer = AudioPlayer();
 
+  // Dedicated player for the notification ding, kept separate from
+  // _audioPlayer (used for voice-message playback). _audioPlayer runs in
+  // PlayerMode.mediaPlayer so voice messages can be seeked/scrubbed — that
+  // mode has noticeably higher start-up latency/buffering overhead than
+  // PlayerMode.lowLatency, which is what made the notification sound seem
+  // to start mid-way or get clipped, especially when a voice message and a
+  // notification ding landed close together on the same shared player.
+  final AudioPlayer _notificationPlayer = AudioPlayer()
+    ..setReleaseMode(ReleaseMode.stop)
+    ..setPlayerMode(PlayerMode.lowLatency);
+
   final AudioRecorder _recorder = AudioRecorder();
+  StreamSubscription<Amplitude>? _amplitudeSub;
 
   bool _isRecording = false;
   DateTime? _recordingStartTime;
@@ -317,7 +397,8 @@ class RootScreenState extends State<RootScreen>
   String? get lastRecordedPathForUpload => _lastRecordedPathForUpload;
 
   void _handlePageChanged(int newIndex) {
-    if (mounted) FocusScope.of(context).unfocus(disposition: UnfocusDisposition.scope);
+    if (mounted)
+      FocusScope.of(context).unfocus(disposition: UnfocusDisposition.scope);
     if (newIndex == 5 + _graphTabOffset && !_isPrimaryDevice) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _pageController.hasClients) {
@@ -338,7 +419,21 @@ class RootScreenState extends State<RootScreen>
     });
   }
 
+  // Public entry point. Coalesces bursts: only the last message in a rapid
+  // sequence is actually shown, after a short quiet period.
   void showSnack(String text) {
+    if (!mounted) return;
+    if (!SettingsManager.snackbarEnabled.value) return;
+    _pendingSnackText = text;
+    _snackDebounce?.cancel();
+    _snackDebounce = Timer(const Duration(milliseconds: 350), () {
+      final t = _pendingSnackText;
+      _pendingSnackText = null;
+      if (t != null) _presentSnack(t);
+    });
+  }
+
+  void _presentSnack(String text) {
     if (!mounted) return;
     if (!SettingsManager.snackbarEnabled.value) return;
     final colorScheme = Theme.of(context).colorScheme;
@@ -428,7 +523,6 @@ class RootScreenState extends State<RootScreen>
       }
 
       _lastRecordedPathForUpload = null;
-
 
       _appendLog('[record] canceled');
     } catch (e, st) {
@@ -561,10 +655,10 @@ class RootScreenState extends State<RootScreen>
           final newTitle = fav.title.isNotEmpty && fav.title != existing.title
               ? fav.title
               : null;
-          final newAvatar = fav.avatarPath != null &&
-                  fav.avatarPath != existing.avatarPath
-              ? fav.avatarPath
-              : null;
+          final newAvatar =
+              fav.avatarPath != null && fav.avatarPath != existing.avatarPath
+                  ? fav.avatarPath
+                  : null;
           if (newTitle != null || newAvatar != null) {
             _favorites[existingIdx] = existing.copyWith(
               title: newTitle,
@@ -740,8 +834,8 @@ class RootScreenState extends State<RootScreen>
             .map(FavFolder.fromJson)
             .toList();
         topOrder = (j['topOrder'] as List? ?? []).cast<String>();
-        updatedAt = DateTime.tryParse(j['updatedAt'] as String? ?? '') ??
-            updatedAt;
+        updatedAt =
+            DateTime.tryParse(j['updatedAt'] as String? ?? '') ?? updatedAt;
       } catch (_) {}
     }
     setState(() {
@@ -838,23 +932,21 @@ class RootScreenState extends State<RootScreen>
         .toList();
     final peerTopOrder = (data['topOrder'] as List? ?? []).cast<String>();
 
-    // Build merged folder list: start from local, apply peer additions.
+    // Build merged folder list: start from local, apply peer state.
+    // Peer timestamp is newer (guard above), so peer's chatIds list is
+    // authoritative — use it exactly. A union would prevent removals from
+    // ever propagating: if the user removed chat X from a folder on device A,
+    // device B would re-add X via union on every sync.
     final mergedFolders = [..._favFolders];
     for (final pf in peerFolders) {
       final localIdx = mergedFolders.indexWhere((f) => f.id == pf.id);
       if (localIdx >= 0) {
-        // Folder exists locally — union the chatIds, keep local name/avatar.
+        // Folder exists locally — adopt peer's chatIds exactly (peer wins on
+        // timestamp), preserve local name/avatar which are not in the structure.
         final lf = mergedFolders[localIdx];
-        final union = {...lf.chatIds, ...pf.chatIds}.toList();
-        // Preserve peer's chatId order for items that appear in peer's list,
-        // then append local-only items at the end.
-        final ordered = [
-          for (final id in pf.chatIds) if (union.contains(id)) id,
-          for (final id in lf.chatIds) if (!pf.chatIds.contains(id)) id,
-        ];
         lf.chatIds
           ..clear()
-          ..addAll(ordered);
+          ..addAll(pf.chatIds);
       } else {
         // New folder from peer — add it.
         mergedFolders.add(pf);
@@ -876,11 +968,15 @@ class RootScreenState extends State<RootScreen>
           final lf = _favFolders[e.key];
           return e.value.id == lf.id &&
               e.value.chatIds.length == lf.chatIds.length &&
-              e.value.chatIds.asMap().entries
+              e.value.chatIds
+                  .asMap()
+                  .entries
                   .every((ce) => ce.value == lf.chatIds[ce.key]);
         });
     final orderUnchanged = mergedTopOrder.length == _favTopOrder.length &&
-        mergedTopOrder.asMap().entries
+        mergedTopOrder
+            .asMap()
+            .entries
             .every((e) => e.value == _favTopOrder[e.key]);
 
     if (foldersUnchanged && orderUnchanged && ts == _favStructureUpdatedAt) {
@@ -1127,7 +1223,6 @@ class RootScreenState extends State<RootScreen>
       } catch (e) {
         debugPrint('<<_startRecording>> file check error: $e');
       }
-
     } catch (e, st) {
       _appendLog('[record] start failed: $e');
       debugPrint('<<_startRecording>> start failed: $e\n$st');
@@ -1214,6 +1309,27 @@ class RootScreenState extends State<RootScreen>
     }
   }
 
+  /// Stops recording and returns the local file path for mesh sending.
+  /// Returns null if not recording or on error.
+  Future<String?> stopRecordingForMesh() async {
+    if (!_isRecording) return null;
+    try {
+      final path = await _recorder.stop();
+      setState(() => _isRecording = false);
+      try {
+        recordingNotifier.value = false;
+      } catch (_) {}
+      return path;
+    } catch (e) {
+      debugPrint('<<stopRecordingForMesh>> error: $e');
+      setState(() => _isRecording = false);
+      try {
+        recordingNotifier.value = false;
+      } catch (_) {}
+      return null;
+    }
+  }
+
   Future<void> stopRecordingAndUpload(
     String to, [
     Map<String, dynamic>? replyTo,
@@ -1274,9 +1390,7 @@ class RootScreenState extends State<RootScreen>
                     _performVoiceUpload(to, path!, replyTo, onTaskCreated);
                   },
                   onCancel: () {
-                    if (mounted) {
-
-                    }
+                    if (mounted) {}
 
                     try {
                       if (File(path!).existsSync()) {
@@ -1613,7 +1727,6 @@ class RootScreenState extends State<RootScreen>
       );
 
       chats.putIfAbsent(chatId, () => []).add(msgLocal);
-      messageListNotifier.addMessageOptimized(chatId, msgLocal);
       _bumpForChat(chatId);
 
       schedulePersistChats(chatId: chatId);
@@ -2590,8 +2703,8 @@ class RootScreenState extends State<RootScreen>
         if (!_autoBackupChecked) {
           _autoBackupChecked = true;
           Future.delayed(const Duration(seconds: 5), () {
-            unawaited(BackupService.runScheduledIfDue(
-                username: uname, chats: chats));
+            unawaited(
+                BackupService.runScheduledIfDue(username: uname, chats: chats));
           });
         }
         Future.delayed(const Duration(seconds: 20), () {
@@ -2823,8 +2936,8 @@ class RootScreenState extends State<RootScreen>
     }
     if (content.startsWith('ALBUMv1:')) {
       try {
-        for (final item
-            in (jsonDecode(content.substring(8)) as List).cast<Map<String, dynamic>>()) {
+        for (final item in (jsonDecode(content.substring(8)) as List)
+            .cast<Map<String, dynamic>>()) {
           final n = fn(item);
           if (n.isNotEmpty) yield (basename: n, cacheDirs: ['image_cache']);
         }
@@ -2841,7 +2954,8 @@ class RootScreenState extends State<RootScreen>
     if (content.startsWith('VOICEv1:')) {
       try {
         final n = fn(jsonDecode(content.substring(8)) as Map<String, dynamic>);
-        if (n.isNotEmpty) yield (basename: n, cacheDirs: ['voice_cache', 'audio_cache']);
+        if (n.isNotEmpty)
+          yield (basename: n, cacheDirs: ['voice_cache', 'audio_cache']);
       } catch (_) {}
       return;
     }
@@ -2890,7 +3004,16 @@ class RootScreenState extends State<RootScreen>
     for (final fav in _favorites) {
       if (fav.avatarPath != null) kept.add(p.basename(fav.avatarPath!));
     }
-    const dirs = ['image_cache', 'video_cache', 'audio_cache', 'voice_cache', 'document_cache', 'archive_cache', 'data_cache', 'fav_avatars'];
+    const dirs = [
+      'image_cache',
+      'video_cache',
+      'audio_cache',
+      'voice_cache',
+      'document_cache',
+      'archive_cache',
+      'data_cache',
+      'fav_avatars'
+    ];
     int totalBytes = 0;
     for (final dirName in dirs) {
       final dir = Directory('$appDir/$dirName');
@@ -2900,7 +3023,9 @@ class RootScreenState extends State<RootScreen>
         var base = p.basename(entity.path);
         if (base.endsWith('.enc')) base = base.substring(0, base.length - 4);
         if (kept.contains(base)) continue;
-        try { totalBytes += await entity.length(); } catch (_) {}
+        try {
+          totalBytes += await entity.length();
+        } catch (_) {}
       }
     }
     return totalBytes;
@@ -2924,8 +3049,14 @@ class RootScreenState extends State<RootScreen>
     }
 
     const dirs = [
-      'image_cache', 'video_cache', 'audio_cache', 'voice_cache',
-      'document_cache', 'archive_cache', 'data_cache', 'fav_avatars',
+      'image_cache',
+      'video_cache',
+      'audio_cache',
+      'voice_cache',
+      'document_cache',
+      'archive_cache',
+      'data_cache',
+      'fav_avatars',
     ];
 
     int deletedFiles = 0;
@@ -2996,6 +3127,31 @@ class RootScreenState extends State<RootScreen>
     super.initState();
     HardwareKeyboard.instance.addHandler(_onGlobalKeyEvent);
     _motivationalHintIndex = Random().nextInt(_motivationalHints.length);
+
+    // Live mic level for voice-reactive recording UI (e.g. ChatInputBar's
+    // recording glow). The package only pushes values while _recorder is
+    // actually recording (internally gated on isRecording()), so this can
+    // stay subscribed for the widget's whole lifetime with no per-session
+    // start/stop bookkeeping — it simply goes quiet between recordings.
+    _amplitudeSub = _recorder
+        .onAmplitudeChanged(const Duration(milliseconds: 40))
+        .listen((amplitude) {
+      // dBFS: silence is very negative (-160 or so), 0 is the loudest the
+      // input can be without clipping. Speech at a normal talking volume
+      // into a phone/laptop mic usually lands around -35..-10dB, so that's
+      // mapped to the visible 0..1 range rather than the full dB scale —
+      // using the whole range would make normal speech barely register.
+      const floorDb = -45.0;
+      final level = ((amplitude.current - floorDb) / -floorDb).clamp(0.0, 1.0);
+      recordingLevelNotifier.value = level;
+    });
+    // The amplitude stream itself just stops emitting once recording ends
+    // (see above) rather than emitting a final 0 — without this, the glow
+    // would freeze at whatever loudness it was at the instant recording
+    // stopped instead of settling back down.
+    recordingNotifier.addListener(() {
+      if (!recordingNotifier.value) recordingLevelNotifier.value = 0.0;
+    });
 
     if (!kIsWeb && Platform.isWindows) {
       WindowsNotificationPopup.onNotificationTapped((username) async {
@@ -3191,6 +3347,13 @@ class RootScreenState extends State<RootScreen>
 
     if (hadPopup) return; // closed a dialog — stay in chat
 
+    // MeshChat is opened from the regular ChatScreen for the same user —
+    // Esc/mouse-back should return there, not close straight to the list.
+    if (selectedMeshChatOther != null) {
+      returnToChatScreenFromMesh(selectedMeshChatOther!);
+      return;
+    }
+
     if (selectedChatOther != null ||
         selectedGroup != null ||
         selectedExternalGroup != null ||
@@ -3212,6 +3375,7 @@ class RootScreenState extends State<RootScreen>
 
     setState(() {
       selectedChatOther = null;
+      selectedMeshChatOther = null;
       selectedGroup = null;
       selectedExternalGroup = null;
       selectedExternalServer = null;
@@ -3225,6 +3389,12 @@ class RootScreenState extends State<RootScreen>
         state == AppLifecycleState.detached) {
       if (callManager.isInCall.value) {
         callManager.hangup();
+      }
+      // Flush any pending chat persist so BLE-only messages aren't lost
+      // when the OS kills the process before the 2-second debounce fires.
+      if (_hasPendingPersist) {
+        _persistChatsTimer?.cancel();
+        unawaited(persistChats());
       }
     }
 
@@ -3262,6 +3432,15 @@ class RootScreenState extends State<RootScreen>
         }
         ExternalServerManager.reconnectIfNeeded();
       });
+
+      // Restart Mesh scan + UDP broadcast after wakeup so the first BLE
+      // message doesn't get lost while the radio is still warming up.
+      if (SettingsManager.meshModeEnabled.value &&
+          MeshManager.instance.isRunning) {
+        Future.delayed(const Duration(milliseconds: 800), () {
+          MeshManager.instance.onResume();
+        });
+      }
     }
 
     if (state == AppLifecycleState.detached && isDesktop) {
@@ -3286,6 +3465,7 @@ class RootScreenState extends State<RootScreen>
 
   @override
   void dispose() {
+    _snackDebounce?.cancel();
     callManager.isIncomingCall.removeListener(_onCallStateChanged);
     callManager.isInCall.removeListener(_onCallStateChanged);
     callManager.isConnecting.removeListener(_onCallStateChanged);
@@ -3310,9 +3490,14 @@ class RootScreenState extends State<RootScreen>
     try {
       _wsSub?.cancel();
     } catch (_) {}
+    try {
+      _meshIncomingSub?.cancel();
+    } catch (_) {}
 
     _audioPlayer.dispose();
+    _notificationPlayer.dispose();
 
+    _amplitudeSub?.cancel();
     _recorder.dispose();
 
     try {
@@ -3330,12 +3515,18 @@ class RootScreenState extends State<RootScreen>
     if (!isDesktop) return;
     if (!SettingsManager.notifSoundEnabled.value) return;
     try {
+      // Stop whatever is currently on this player first — calling play()
+      // directly on top of an in-progress sound (e.g. a LAN message and its
+      // WebSocket echo landing a few ms apart) abruptly swaps the audio
+      // source mid-stream, which is what made the notification sound like
+      // it was clipped.
+      await _notificationPlayer.stop();
       final sound = SettingsManager.notifSound.value;
       if (sound.startsWith('custom:')) {
         final path = sound.substring(7);
-        await _audioPlayer.play(DeviceFileSource(path));
+        await _notificationPlayer.play(DeviceFileSource(path));
       } else {
-        await _audioPlayer.play(AssetSource('$sound.wav'));
+        await _notificationPlayer.play(AssetSource('$sound.wav'));
       }
     } catch (e) {
       debugPrint('[sound] error playing notification: $e');
@@ -3422,6 +3613,10 @@ class RootScreenState extends State<RootScreen>
         LANMessageManager().onMessageReceived = (message) {
           _handleIncomingLANMessage(message);
         };
+
+        _meshIncomingSub?.cancel();
+        _meshIncomingSub = MeshManager.instance.incomingMessages
+            .listen(_handleIncomingMeshMessage);
         LANMessageManager().onMediaReceived =
             (mediaType, filename, data, from, to, replyTo) {
           _handleIncomingLANMedia(mediaType, filename, data, from, to, replyTo);
@@ -3440,6 +3635,9 @@ class RootScreenState extends State<RootScreen>
         if (SettingsManager.wardLinkEnabled.value) {
           unawaited(WardLinkSyncService.instance.start(currentUsername!));
         }
+        if (SettingsManager.meshModeEnabled.value) {
+          unawaited(MeshManager.instance.start(currentUsername!));
+        }
       }
 
       final wsReadyFuture = _ensurePubkeyAndWsReady(
@@ -3448,7 +3646,6 @@ class RootScreenState extends State<RootScreen>
       );
 
       unawaited(_loadFavorites());
-
 
       unawaited(ExternalServerManager.loadServers().then((_) {
         return ExternalServerManager.refreshAllExternalGroups();
@@ -3480,6 +3677,7 @@ class RootScreenState extends State<RootScreen>
   Future<void> _loadAccountData(String username) async {
     _identityKeyPair = null;
     _identityPublicKey = null;
+    _identityPrivateKeyBytes = null;
     identityPubKeyBase64 = null;
     currentUsername = username;
     currentUin = null;
@@ -3550,6 +3748,8 @@ class RootScreenState extends State<RootScreen>
         final keyPairData = await compute(_decodeIdentity, identity);
         _identityKeyPair = keyPairData.keyPair;
         _identityPublicKey = keyPairData.publicKey;
+        _identityPrivateKeyBytes =
+            Uint8List.fromList(keyPairData.keyPair.bytes);
         identityPubKeyBase64 = identity['pub'];
         _appendLog('[identity] loaded for $username');
       } catch (e) {
@@ -3707,6 +3907,9 @@ class RootScreenState extends State<RootScreen>
       if (SettingsManager.wardLinkEnabled.value) {
         unawaited(WardLinkSyncService.instance.start(username));
       }
+      if (SettingsManager.meshModeEnabled.value) {
+        unawaited(MeshManager.instance.start(username));
+      }
 
       accountSwitchVersion.value++;
 
@@ -3822,14 +4025,15 @@ class RootScreenState extends State<RootScreen>
   ///   1. Adds a hint so ChatsTab can do an incremental (not full) rebuild.
   ///   2. Increments the global chatsVersion (triggers ChatsTab listener).
   ///   3. Increments the per-chat message version (triggers that ChatScreen only).
+  ///
+  /// Routed through the same 50ms debounce as websocket-incoming messages
+  /// (_scheduleUiUpdate) so a burst of sends or LAN-incoming messages in
+  /// ChatScreen coalesces into one rebuild instead of one per message — each
+  /// immediate bump previously forced a full ListView rebuild plus two more
+  /// deferred setState calls (drag-select/all-images cache recompute), which
+  /// is what made fast bursts feel jittery compared to GroupScreen's batching.
   void _bumpForChat(String chatId) {
-    addChatListHint(chatId);
-    chatsVersion.value++;
-    bumpChatMessageVersion(chatId);
-    if (chatId.startsWith('fav:')) {
-      final favId = chatId.substring(4);
-      bumpFavToTop(favId);
-    }
+    _scheduleUiUpdate(chatId: chatId);
   }
 
   /// Rebuilds the serverMessageId → chatId index from scratch.
@@ -3862,6 +4066,9 @@ class RootScreenState extends State<RootScreen>
         // Bump per-chat versions so only the affected ChatScreen rebuilds.
         for (final id in _pendingChatUpdates) {
           bumpChatMessageVersion(id);
+          if (id.startsWith('fav:')) {
+            bumpFavToTop(id.substring(4));
+          }
         }
         _pendingChatUpdates.clear();
       }
@@ -4010,14 +4217,15 @@ class RootScreenState extends State<RootScreen>
     _identityKeyPair = kp;
     _identityPublicKey = pub as SimplePublicKey;
     identityPubKeyBase64 = base64Encode(_identityPublicKey!.bytes);
+    final extracted = await kp.extract();
+    List<int> privBytes;
+    if (extracted is SimpleKeyPairData) {
+      privBytes = extracted.bytes;
+    } else {
+      privBytes = (extracted as dynamic).bytes as List<int>;
+    }
+    _identityPrivateKeyBytes = Uint8List.fromList(privBytes);
     if (currentUsername != null) {
-      final extracted = await kp.extract();
-      List<int> privBytes;
-      if (extracted is SimpleKeyPairData) {
-        privBytes = extracted.bytes;
-      } else {
-        privBytes = (extracted as dynamic).bytes as List<int>;
-      }
       await AccountManager.saveIdentity(
         currentUsername!,
         base64Encode(privBytes),
@@ -4686,6 +4894,7 @@ class RootScreenState extends State<RootScreen>
     currentUin = null;
     _identityKeyPair = null;
     _identityPublicKey = null;
+    _identityPrivateKeyBytes = null;
     identityPubKeyBase64 = null;
     chats.clear();
     _serverMsgIndex.clear();
@@ -4772,7 +4981,8 @@ class RootScreenState extends State<RootScreen>
       _wsSub = _ws!.stream.listen(
         (event) async {
           if (!identical(_ws, boundWs) || currentUsername != boundUsername) {
-            _appendLog('[ws] dropping event from stale connection ($boundUsername)');
+            _appendLog(
+                '[ws] dropping event from stale connection ($boundUsername)');
             return;
           }
           try {
@@ -5068,7 +5278,8 @@ class RootScreenState extends State<RootScreen>
                 if (u != null) {
                   _devicePubkeysCache.remove(u);
                   _devicePubkeysCacheAge.remove(u);
-                  _appendLog('[ws] device_list_stale: silently cleared device cache for $u');
+                  _appendLog(
+                      '[ws] device_list_stale: silently cleared device cache for $u');
                 }
                 return;
               }
@@ -5078,7 +5289,8 @@ class RootScreenState extends State<RootScreen>
                 if (u != null) {
                   _devicePubkeysCache.remove(u);
                   _devicePubkeysCacheAge.remove(u);
-                  _appendLog('[ws] device_list_updated: contact $u added a trusted device, cache cleared');
+                  _appendLog(
+                      '[ws] device_list_updated: contact $u added a trusted device, cache cleared');
                 }
                 return;
               }
@@ -6158,7 +6370,8 @@ class RootScreenState extends State<RootScreen>
       );
 
       if (plain == null) {
-        _appendLog('[media.decrypt.$kind] isolate returned null – keeping ciphertext');
+        _appendLog(
+            '[media.decrypt.$kind] isolate returned null – keeping ciphertext');
         return data;
       }
 
@@ -6324,7 +6537,8 @@ class RootScreenState extends State<RootScreen>
   Future<List<Map<String, dynamic>>> _fetchAllDevicePubkeys(
       String recipient) async {
     final age = _devicePubkeysCacheAge[recipient];
-    final isFresh = age != null && DateTime.now().difference(age) < _kDeviceCacheTTL;
+    final isFresh =
+        age != null && DateTime.now().difference(age) < _kDeviceCacheTTL;
     if (isFresh && _devicePubkeysCache.containsKey(recipient)) {
       return _devicePubkeysCache[recipient]!;
     }
@@ -6450,6 +6664,45 @@ class RootScreenState extends State<RootScreen>
     final eph = base64Decode(ephB64);
     final nonce = base64Decode(nonceB64);
     final ctAndTag = base64Decode(ctB64);
+    const tagLen = 16;
+    if (ctAndTag.length < tagLen) {
+      _appendLog('[decrypt] ct too short');
+      return '[cannot-decrypt:ct_too_short]';
+    }
+    final cipherText = ctAndTag.sublist(0, ctAndTag.length - tagLen);
+    final tag = ctAndTag.sublist(ctAndTag.length - tagLen);
+    final info = utf8.encode('chat:$from:${currentUsername ?? "me"}');
+
+    // The ECDH + HKDF + AEAD work below is CPU-bound pure-Dart crypto. Doing
+    // it inline on the UI isolate stalls a few ms per message, which adds up
+    // to visible jank when a burst of messages arrives at once. Offload it to
+    // the pooled decrypt isolates (see DecryptWorker) whenever we have the
+    // raw private key bytes cached; fall back to the inline path otherwise
+    // (e.g. very first message right after identity load).
+    if (_identityPrivateKeyBytes != null) {
+      try {
+        final plain = await DecryptWorker.instance.decryptMessage(
+          ownPrivateKey: _identityPrivateKeyBytes!,
+          ownPublicKey: Uint8List.fromList(_identityPublicKey!.bytes),
+          remotePublicKey: eph,
+          info: Uint8List.fromList(info),
+          nonce: nonce,
+          cipherText: cipherText,
+          tag: tag,
+        );
+        if (plain == null) {
+          _appendLog('[decrypt] decrypt failed (pooled isolate)');
+          return '[cannot-decrypt:auth_fail]';
+        }
+        final plainText = utf8.decode(plain);
+        _appendLog('[decrypt] success from=$from');
+        return plainText;
+      } catch (e) {
+        _appendLog('[decrypt] pooled decrypt failed: $e');
+        return '[cannot-decrypt:auth_fail]';
+      }
+    }
+
     final ephPubKey = SimplePublicKey(eph, type: KeyPairType.x25519);
     final sharedSecret = await _x25519.sharedSecretKey(
       keyPair: _identityKeyPair!,
@@ -6463,17 +6716,9 @@ class RootScreenState extends State<RootScreen>
       final b = dyn.bytes as List<int>;
       sharedBytes = Uint8List.fromList(b);
     }
-    final info = utf8.encode('chat:$from:${currentUsername ?? "me"}');
     final aeadKeyBytes = _hkdfSha256(sharedBytes, info, 32);
     final aeadSecretKey = SecretKey(aeadKeyBytes);
     try {
-      const tagLen = 16;
-      if (ctAndTag.length < tagLen) {
-        _appendLog('[decrypt] ct too short');
-        return '[cannot-decrypt:ct_too_short]';
-      }
-      final cipherText = ctAndTag.sublist(0, ctAndTag.length - tagLen);
-      final tag = ctAndTag.sublist(ctAndTag.length - tagLen);
       final box = SecretBox(
         Uint8List.fromList(cipherText),
         nonce: Uint8List.fromList(nonce),
@@ -6517,7 +6762,6 @@ class RootScreenState extends State<RootScreen>
         time: DateTime.now(),
       );
       chats.putIfAbsent(chatId, () => []).add(msg);
-      messageListNotifier.addMessageOptimized(chatId, msg);
       _bumpForChat(chatId);
       unawaited(DecoyDataManager.addMessageToContact(
           to, currentUsername!, text, true));
@@ -6569,20 +6813,106 @@ class RootScreenState extends State<RootScreen>
     chats.putIfAbsent(chatId, () => []).add(msgLocal);
     if (msgLocal.serverMessageId != null)
       _serverMsgIndex[msgLocal.serverMessageId!] = chatId;
-    debugPrint(
-        '[RootScreen] Added message to chatId=$chatId, total messages: ${chats[chatId]!.length}');
 
-    messageListNotifier.addMessageOptimized(chatId, msgLocal);
-
-    final oldVersion = chatsVersion.value;
     _bumpForChat(chatId);
-    debugPrint(
-        '[RootScreen] Updated chatsVersion: $oldVersion -> ${chatsVersion.value}');
 
     schedulePersistChats(chatId: chatId);
 
     if (!isLANMode) {
       _sendChatMessageInBackground(to, text, localId, replyTo);
+    }
+  }
+
+  /// Called by MeshChatScreen when the local user sends a BLE message, so the
+  /// message is persisted in the shared chat history and the chat list updates.
+  void addMeshMessage(String chatId, ChatMessage message) {
+    if (chats[chatId]?.any((m) => m.id == message.id) ?? false) return;
+    chats.putIfAbsent(chatId, () => []).add(message);
+    _bumpForChat(chatId);
+    schedulePersistChats(chatId: chatId);
+  }
+
+  /// Called by MeshChatScreen to delete selected messages locally.
+  void removeMeshMessages(String chatId, List<String> messageIds) =>
+      removeMessagesLocally(chatId, messageIds);
+
+  /// Removes messages from local storage only — no server call, no effect
+  /// on the other party's copy. Used for mesh chat deletes (mesh has no
+  /// server to notify) and for "delete for me" on regular chat messages we
+  /// didn't send (we can't ask the server to delete someone else's
+  /// message, we can only stop showing it to ourselves).
+  void removeMessagesLocally(String chatId, List<String> messageIds) {
+    final msgs = chats[chatId];
+    if (msgs == null || messageIds.isEmpty) return;
+    final toRemove = messageIds.toSet();
+    chats[chatId] = msgs.where((m) => !toRemove.contains(m.id)).toList();
+    _bumpForChat(chatId);
+    schedulePersistChats(chatId: chatId);
+  }
+
+  void _handleIncomingMeshMessage(ChatMessage message) {
+    if (currentUsername == null) return;
+
+    final chatId = chatIdForUser(message.from);
+
+    // Deduplicate: drop if we already have this message id in chat
+    final existing = chats[chatId];
+    if (existing != null && existing.any((m) => m.id == message.id)) return;
+
+    final incomingMessage = ChatMessage(
+      id: message.id,
+      from: message.from,
+      to: message.to,
+      content: message.content,
+      outgoing: false,
+      delivered: true,
+      isRead: false,
+      time: message.time,
+      replyToId: message.replyToId,
+      replyToSender: message.replyToSender,
+      replyToContent: message.replyToContent,
+      deliveryMode: DeliveryMode.bleMesh,
+      meshTransportUsed: message.meshTransportUsed,
+      meshFileId: message.meshFileId,
+      meshFileName: message.meshFileName,
+      meshFileMimeType: message.meshFileMimeType,
+      meshFileSize: message.meshFileSize,
+      meshFileLocalPath: message.meshFileLocalPath,
+    );
+
+    chats.putIfAbsent(chatId, () => []).add(incomingMessage);
+    _bumpForChat(chatId);
+    schedulePersistChats(chatId: chatId);
+
+    final meshChatOpen = _activeMeshChatId == chatId;
+
+    if (!MuteManager.isMuted(message.from)) {
+      _scheduleNotificationSound();
+    }
+    if (!meshChatOpen) {
+      unreadManager.incrementUnread(chatId);
+      getBleUnreadNotifier(chatId).value++;
+    }
+
+    if (!meshChatOpen &&
+        !kIsWeb &&
+        Platform.isAndroid &&
+        !MuteManager.isMuted(message.from)) {
+      unawaited(() async {
+        final hideContent = SettingsManager.notifHideContent.value;
+        final notifTitle = hideContent ? 'ONYX' : message.from;
+        final notifBody = hideContent ? 'New Mesh message' : message.content;
+        final avatarBytes =
+            hideContent ? null : await getAvatarCachedBytes(message.from);
+        await NotificationService.showMessageNotification(
+          title: notifTitle,
+          body: notifBody,
+          username: message.from,
+          avatarBytes: avatarBytes,
+          timestamp: DateTime.now(),
+          conversationTitle: notifTitle,
+        );
+      }());
     }
   }
 
@@ -6610,12 +6940,11 @@ class RootScreenState extends State<RootScreen>
     if (incomingMessage.serverMessageId != null)
       _serverMsgIndex[incomingMessage.serverMessageId!] = chatId;
 
-    messageListNotifier.addMessageOptimized(chatId, incomingMessage);
     _bumpForChat(chatId);
 
     schedulePersistChats(chatId: chatId);
     if (!MuteManager.isMuted(message.from)) {
-      unawaited(_playNotificationSound());
+      _scheduleNotificationSound();
     }
 
     if (selectedChatOther != message.from) {
@@ -6646,6 +6975,16 @@ class RootScreenState extends State<RootScreen>
       final file = File(filePath);
       await file.writeAsBytes(data);
 
+      // The sender stages LAN media under a unique wire filename
+      // (`<timestamp>_<original name>`, see _sendFileLAN in chat_screen.dart)
+      // to avoid collisions when two files share a basename. Recover the
+      // original name for display by stripping that numeric prefix; falls
+      // back to the raw filename for senders/paths that don't match (e.g.
+      // recorded voice messages, which use their own `voice_<ts>.<ext>`
+      // naming and have no separate display name anyway).
+      final origMatch = RegExp(r'^\d+_(.+)$').firstMatch(filename);
+      final orig = origMatch?.group(1) ?? filename;
+
       String content;
       if (mediaType == 'voice') {
         final duration = data.length ~/ (16000 * 2);
@@ -6657,11 +6996,20 @@ class RootScreenState extends State<RootScreen>
         });
         content = 'VOICEv1:$voiceContent';
       } else if (mediaType == 'image') {
-        content = 'IMAGEv1:${jsonEncode({'url': 'lan://$filename'})}';
+        content = 'IMAGEv1:${jsonEncode({
+              'url': 'lan://$filename',
+              'orig': orig,
+            })}';
       } else if (mediaType == 'video') {
-        content = 'VIDEOv1:${jsonEncode({'url': 'lan://$filename'})}';
+        content = 'VIDEOv1:${jsonEncode({
+              'url': 'lan://$filename',
+              'orig': orig,
+            })}';
       } else if (mediaType == 'file') {
-        content = 'FILEv1:${jsonEncode({'filename': 'lan://$filename'})}';
+        content = 'FILEv1:${jsonEncode({
+              'filename': 'lan://$filename',
+              'orig': orig,
+            })}';
       } else {
         content = 'Unknown media type: $mediaType';
       }
@@ -6691,12 +7039,11 @@ class RootScreenState extends State<RootScreen>
 
       chats.putIfAbsent(chatId, () => []).add(incomingMessage);
 
-      messageListNotifier.addMessageOptimized(chatId, incomingMessage);
       _bumpForChat(chatId);
 
       schedulePersistChats(chatId: chatId);
       if (!MuteManager.isMuted(from)) {
-        unawaited(_playNotificationSound());
+        _scheduleNotificationSound();
       }
 
       if (selectedChatOther != from) {
@@ -6957,7 +7304,10 @@ class RootScreenState extends State<RootScreen>
           final before = msgs.length;
           ChatMessage? toTrash;
           for (final m in msgs) {
-            if (m.serverMessageId == messageId) { toTrash = m; break; }
+            if (m.serverMessageId == messageId) {
+              toTrash = m;
+              break;
+            }
           }
           msgs.removeWhere((m) => m.serverMessageId == messageId);
           if (msgs.length != before) {
@@ -6967,7 +7317,8 @@ class RootScreenState extends State<RootScreen>
               final me = currentUsername ?? '';
               final parts = removedChatId.split(':');
               final other = parts.length == 2
-                  ? parts.firstWhere((p) => p != me, orElse: () => removedChatId)
+                  ? parts.firstWhere((p) => p != me,
+                      orElse: () => removedChatId)
                   : removedChatId;
               TrashManager.instance.addDeletedMessage(TrashedMessage(
                 id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -6985,7 +7336,10 @@ class RootScreenState extends State<RootScreen>
           final before = entry.value.length;
           ChatMessage? toTrash;
           for (final m in entry.value) {
-            if (m.serverMessageId == messageId) { toTrash = m; break; }
+            if (m.serverMessageId == messageId) {
+              toTrash = m;
+              break;
+            }
           }
           entry.value.removeWhere((m) => m.serverMessageId == messageId);
           if (entry.value.length != before) {
@@ -7386,50 +7740,47 @@ class RootScreenState extends State<RootScreen>
                 child: SizedBox(
                   width: isDesktop ? 640 : double.infinity,
                   child: SearchDialogContent(
-                          controller: _dialogSearchCtrl,
-                          onSelect: (username) {
-                            Navigator.of(context).pop();
-                            if (username != null && username.isNotEmpty) {
-                              try {
-                                final chatId = chatIdForUser(username);
-                                chats.putIfAbsent(chatId, () => []);
-                                setState(() {
-                                  selectedChatOther = username;
-                                  selectedExternalGroup = null;
-                                  selectedExternalServer = null;
-                                });
-                              } catch (_) {}
-                              if (!isDesktop) {
-                                Navigator.of(context)
-                                    .push(
-                                  _chatRoute((_) => ChatScreen(
-                                        myUsername: currentUsername ?? 'me',
-                                        otherUsername: username,
-                                        onSend: (t, replyTo) =>
-                                            _sendChatMessage(
-                                                username, t, replyTo),
-                                        onTyping: () =>
-                                            _handleSendTyping(username),
-                                        onRequestResend: (id) {
-                                          if (id != null) _requestResend(id);
-                                        },
-                                        onEditMessage: (id, text) =>
-                                            _editChatMessage(
-                                                username, id, text),
-                                        onDeleteMessage: (id) =>
-                                            _deleteChatMessage(id),
-                                      )),
-                                )
-                                    .then((_) {
-                                  if (mounted)
-                                    setState(() {
-                                      selectedChatOther = null;
-                                    });
-                                });
-                              }
-                            }
-                          },
-                        ),
+                    controller: _dialogSearchCtrl,
+                    onSelect: (username) {
+                      Navigator.of(context).pop();
+                      if (username != null && username.isNotEmpty) {
+                        try {
+                          final chatId = chatIdForUser(username);
+                          chats.putIfAbsent(chatId, () => []);
+                          setState(() {
+                            selectedChatOther = username;
+                            selectedExternalGroup = null;
+                            selectedExternalServer = null;
+                          });
+                        } catch (_) {}
+                        if (!isDesktop) {
+                          Navigator.of(context)
+                              .push(
+                            _chatRoute((_) => ChatScreen(
+                                  myUsername: currentUsername ?? 'me',
+                                  otherUsername: username,
+                                  onSend: (t, replyTo) =>
+                                      _sendChatMessage(username, t, replyTo),
+                                  onTyping: () => _handleSendTyping(username),
+                                  onRequestResend: (id) {
+                                    if (id != null) _requestResend(id);
+                                  },
+                                  onEditMessage: (id, text) =>
+                                      _editChatMessage(username, id, text),
+                                  onDeleteMessage: (id) =>
+                                      _deleteChatMessage(id),
+                                )),
+                          )
+                              .then((_) {
+                            if (mounted)
+                              setState(() {
+                                selectedChatOther = null;
+                              });
+                          });
+                        }
+                      }
+                    },
+                  ),
                 ),
               ),
             ),
@@ -7454,98 +7805,102 @@ class RootScreenState extends State<RootScreen>
         return ValueListenableBuilder<String?>(
           valueListenable: SettingsManager.chatVideoBackground,
           builder: (_, videoPath, __) {
-        return ValueListenableBuilder<String?>(
-          valueListenable: SettingsManager.chatBackground,
-          builder: (_, path, __) {
-            final makeTransparent = apply &&
-                ((path != null && File(path).existsSync()) ||
-                    (videoPath != null && File(videoPath).existsSync()));
-            return ValueListenableBuilder<bool>(
-              valueListenable: SettingsManager.showAccountIndicator,
-              builder: (_, showInd, __) => AppBar(
-                title: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ValueListenableBuilder<bool>(
-                      valueListenable: wsConnectedNotifier,
-                      builder: (_, connected, __) {
-                        final baseStyle = const TextStyle(
-                            fontSize: 20, fontWeight: FontWeight.bold);
-                        final targetScale =
-                            (baseStyle.fontSize ?? 20) * 1.2 / 24.0;
-                        return TweenAnimationBuilder<double>(
-                          tween: Tween<double>(
-                              begin: 1.0, end: connected ? targetScale : 1.0),
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeInOut,
-                          builder: (_, scale, child) =>
-                              Transform.scale(scale: scale, child: child),
-                          child: GestureDetector(
-                            onTap: () => showAboutOnyxDialog(context),
-                            child: Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: Image.asset('assets/onyx-512.png',
-                                  width: 25, height: 25, fit: BoxFit.contain),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: () => showAboutOnyxDialog(context),
-                      child: ConnectionTitle(
-                        style: const TextStyle(
-                            fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    const ProxyShieldBadge(),
-                  ],
-                ),
-                centerTitle: true,
-                leading: (showInd && currentUsername != null)
-                    ? Container(
-                        padding: const EdgeInsets.only(left: 17, top: 12),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              currentDisplayName ?? currentUsername!,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey,
+            return ValueListenableBuilder<String?>(
+              valueListenable: SettingsManager.chatBackground,
+              builder: (_, path, __) {
+                final makeTransparent = apply &&
+                    ((path != null && File(path).existsSync()) ||
+                        (videoPath != null && File(videoPath).existsSync()));
+                return ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.showAccountIndicator,
+                  builder: (_, showInd, __) => AppBar(
+                    title: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ValueListenableBuilder<bool>(
+                          valueListenable: wsConnectedNotifier,
+                          builder: (_, connected, __) {
+                            final baseStyle = const TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.bold);
+                            final targetScale =
+                                (baseStyle.fontSize ?? 20) * 1.2 / 24.0;
+                            return TweenAnimationBuilder<double>(
+                              tween: Tween<double>(
+                                  begin: 1.0,
+                                  end: connected ? targetScale : 1.0),
+                              duration: const Duration(milliseconds: 300),
+                              curve: Curves.easeInOut,
+                              builder: (_, scale, child) =>
+                                  Transform.scale(scale: scale, child: child),
+                              child: GestureDetector(
+                                onTap: () => showAboutOnyxDialog(context),
+                                child: Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Image.asset('assets/onyx-512.png',
+                                      width: 25,
+                                      height: 25,
+                                      fit: BoxFit.contain),
+                                ),
                               ),
-                            ),
-                            Text(
-                              '@$currentUsername',
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ],
+                            );
+                          },
                         ),
-                      )
-                    : null,
-                leadingWidth: (showInd && currentUsername != null) ? 100 : null,
-                backgroundColor: makeTransparent
-                    ? Colors.transparent
-                    : Theme.of(context).colorScheme.surface,
-                elevation: makeTransparent ? 0 : 0,
-                actions: [
-                  if (_index == 0 || !isDesktop)
-                    IconButton(
-                      icon: const Icon(Icons.search),
-                      onPressed: _onSearchRequested,
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          onTap: () => showAboutOnyxDialog(context),
+                          child: ConnectionTitle(
+                            style: const TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        const ProxyShieldBadge(),
+                      ],
                     ),
-                ],
-              ),
+                    centerTitle: true,
+                    leading: (showInd && currentUsername != null)
+                        ? Container(
+                            padding: const EdgeInsets.only(left: 17, top: 12),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  currentDisplayName ?? currentUsername!,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                                Text(
+                                  '@$currentUsername',
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : null,
+                    leadingWidth:
+                        (showInd && currentUsername != null) ? 100 : null,
+                    backgroundColor: makeTransparent
+                        ? Colors.transparent
+                        : Theme.of(context).colorScheme.surface,
+                    elevation: makeTransparent ? 0 : 0,
+                    actions: [
+                      if (_index == 0 || !isDesktop)
+                        IconButton(
+                          icon: const Icon(Icons.search),
+                          onPressed: _onSearchRequested,
+                        ),
+                    ],
+                  ),
+                );
+              },
             );
-          },
-        );
           },
         );
       },
@@ -8121,128 +8476,137 @@ class RootScreenState extends State<RootScreen>
                                                             selectedExternalServer!,
                                                       ),
                                                     )
-                                                  : ValueListenableBuilder<
-                                                      bool>(
-                                                      valueListenable:
-                                                          SettingsManager
-                                                              .showAccountGraph,
-                                                      builder:
-                                                          (_, showGraph, __) {
-                                                        if (showGraph &&
-                                                            isDesktop) {
-                                                          return AccountGraphView(
-                                                            onChatTap:
-                                                                (username) =>
-                                                                    setState(
-                                                                        () {
-                                                              selectedChatOther =
-                                                                  username;
-                                                            }),
-                                                            onGroupTap:
-                                                                (group) =>
-                                                                    setState(
-                                                                        () {
-                                                              selectedGroup =
-                                                                  group;
-                                                              selectedExternalGroup =
-                                                                  null;
-                                                              selectedExternalServer =
-                                                                  null;
-                                                            }),
-                                                            onExternalGroupTap:
-                                                                (group) {
-                                                              try {
-                                                                final srv = ExternalServerManager
-                                                                    .servers
-                                                                    .value
-                                                                    .firstWhere((s) =>
-                                                                        s.id ==
-                                                                        group
-                                                                            .externalServerId);
-                                                                setState(() {
-                                                                  selectedExternalGroup =
-                                                                      group;
-                                                                  selectedExternalServer =
-                                                                      srv;
+                                                  : (selectedMeshChatOther !=
+                                                              null &&
+                                                          currentUsername !=
+                                                              null)
+                                                      ? MeshChatScreen(
+                                                          key: ValueKey<String>(
+                                                              'mesh_${selectedMeshChatOther!}:${currentUsername!}'),
+                                                          myUsername:
+                                                              currentUsername!,
+                                                          otherUsername:
+                                                              selectedMeshChatOther!,
+                                                        )
+                                                      : ValueListenableBuilder<
+                                                          bool>(
+                                                          valueListenable:
+                                                              SettingsManager
+                                                                  .showAccountGraph,
+                                                          builder: (_,
+                                                              showGraph, __) {
+                                                            if (showGraph &&
+                                                                isDesktop) {
+                                                              return AccountGraphView(
+                                                                onChatTap:
+                                                                    (username) =>
+                                                                        setState(
+                                                                            () {
+                                                                  selectedChatOther =
+                                                                      username;
+                                                                }),
+                                                                onGroupTap:
+                                                                    (group) =>
+                                                                        setState(
+                                                                            () {
                                                                   selectedGroup =
+                                                                      group;
+                                                                  selectedExternalGroup =
                                                                       null;
-                                                                });
-                                                              } catch (_) {}
-                                                            },
-                                                            onFavoriteTap:
-                                                                (favId) =>
+                                                                  selectedExternalServer =
+                                                                      null;
+                                                                }),
+                                                                onExternalGroupTap:
+                                                                    (group) {
+                                                                  try {
+                                                                    final srv = ExternalServerManager
+                                                                        .servers
+                                                                        .value
+                                                                        .firstWhere((s) =>
+                                                                            s.id ==
+                                                                            group.externalServerId);
                                                                     setState(
                                                                         () {
-                                                              _selectedFavoriteId =
-                                                                  favId;
-                                                            }),
-                                                          );
-                                                        }
-                                                        return Center(
-                                                          child: glassCard(
-                                                            context: context,
-                                                            child: Padding(
-                                                              padding:
-                                                                  const EdgeInsets
+                                                                      selectedExternalGroup =
+                                                                          group;
+                                                                      selectedExternalServer =
+                                                                          srv;
+                                                                      selectedGroup =
+                                                                          null;
+                                                                    });
+                                                                  } catch (_) {}
+                                                                },
+                                                                onFavoriteTap:
+                                                                    (favId) =>
+                                                                        setState(
+                                                                            () {
+                                                                  _selectedFavoriteId =
+                                                                      favId;
+                                                                }),
+                                                              );
+                                                            }
+                                                            return Center(
+                                                              child: glassCard(
+                                                                context:
+                                                                    context,
+                                                                child: Padding(
+                                                                  padding: const EdgeInsets
                                                                       .symmetric(
                                                                       horizontal:
                                                                           24,
                                                                       vertical:
                                                                           32),
-                                                              child: Column(
-                                                                mainAxisSize:
-                                                                    MainAxisSize
-                                                                        .min,
-                                                                mainAxisAlignment:
-                                                                    MainAxisAlignment
-                                                                        .center,
-                                                                children: [
-                                                                  Image.asset(
-                                                                    'assets/onyx_icon.png',
-                                                                    width: 56,
-                                                                    height: 56,
-                                                                    opacity:
-                                                                        const AlwaysStoppedAnimation(
-                                                                            0.85),
-                                                                  ),
-                                                                  const SizedBox(
-                                                                      height:
-                                                                          16),
-                                                                  ValueListenableBuilder<
-                                                                      Locale>(
-                                                                    valueListenable:
-                                                                        SettingsManager
-                                                                            .appLocale,
-                                                                    builder: (_,
-                                                                            locale,
-                                                                            __) =>
-                                                                        Text(
-                                                                      AppLocalizations(
-                                                                              locale)
-                                                                          .localizeMotivationalHint(
-                                                                              _motivationalHints[_motivationalHintIndex]),
-                                                                      textAlign:
-                                                                          TextAlign
-                                                                              .center,
-                                                                      style:
-                                                                          TextStyle(
-                                                                        fontSize:
-                                                                            16,
-                                                                        fontWeight:
-                                                                            FontWeight.w500,
-                                                                        color: Theme.of(context)
-                                                                            .colorScheme
-                                                                            .onSurface,
+                                                                  child: Column(
+                                                                    mainAxisSize:
+                                                                        MainAxisSize
+                                                                            .min,
+                                                                    mainAxisAlignment:
+                                                                        MainAxisAlignment
+                                                                            .center,
+                                                                    children: [
+                                                                      Image
+                                                                          .asset(
+                                                                        'assets/onyx_icon.png',
+                                                                        width:
+                                                                            56,
+                                                                        height:
+                                                                            56,
+                                                                        opacity:
+                                                                            const AlwaysStoppedAnimation(0.85),
                                                                       ),
-                                                                    ),
+                                                                      const SizedBox(
+                                                                          height:
+                                                                              16),
+                                                                      ValueListenableBuilder<
+                                                                          Locale>(
+                                                                        valueListenable:
+                                                                            SettingsManager.appLocale,
+                                                                        builder: (_,
+                                                                                locale,
+                                                                                __) =>
+                                                                            Text(
+                                                                          AppLocalizations(locale)
+                                                                              .localizeMotivationalHint(_motivationalHints[_motivationalHintIndex]),
+                                                                          textAlign:
+                                                                              TextAlign.center,
+                                                                          style:
+                                                                              TextStyle(
+                                                                            fontSize:
+                                                                                16,
+                                                                            fontWeight:
+                                                                                FontWeight.w500,
+                                                                            color:
+                                                                                Theme.of(context).colorScheme.onSurface,
+                                                                          ),
+                                                                        ),
+                                                                      ),
+                                                                    ],
                                                                   ),
-                                                                ],
+                                                                ),
                                                               ),
-                                                            ),
-                                                          ),
+                                                            );
+                                                          },
                                                         );
-                                                      },
-                                                    );
 
                               if (isDesktop && apply) {
                                 return Stack(
@@ -8595,125 +8959,136 @@ class RootScreenState extends State<RootScreen>
     return GlassBackdropScope(
       child: Scaffold(
         body: Stack(
-        children: [
-          ValueListenableBuilder<bool>(
-            valueListenable: SettingsManager.applyGlobally,
-            builder: (ctx, apply, _) {
-              if (!apply || isDesktop) return const SizedBox.shrink();
-              return const ChatBackgroundLayer();
-            },
-          ),
-          SafeArea(
-            bottom: false,
-            child: mainContent,
-          ),
-          ValueListenableBuilder<String>(
-            valueListenable: SettingsManager.desktopNavPosition,
-            builder: (ctx, navPosition, _) {
-              final showOnDesktop = navPosition == 'bottom';
-              final shouldShow = !isDesktop || (isDesktop && showOnDesktop);
-              if (!shouldShow) return const SizedBox.shrink();
+          children: [
+            ValueListenableBuilder<bool>(
+              valueListenable: SettingsManager.applyGlobally,
+              builder: (ctx, apply, _) {
+                if (!apply || isDesktop) return const SizedBox.shrink();
+                return const ChatBackgroundLayer();
+              },
+            ),
+            SafeArea(
+              bottom: false,
+              child: mainContent,
+            ),
+            ValueListenableBuilder<String>(
+              valueListenable: SettingsManager.desktopNavPosition,
+              builder: (ctx, navPosition, _) {
+                final showOnDesktop = navPosition == 'bottom';
+                final shouldShow = !isDesktop || (isDesktop && showOnDesktop);
+                if (!shouldShow) return const SizedBox.shrink();
 
-              return ValueListenableBuilder<double>(
-                valueListenable: SettingsManager.elementBrightness,
-                builder: (_, brightness, __) {
-                  return ValueListenableBuilder<double>(
-                    valueListenable: SettingsManager.elementOpacity,
-                    builder: (_, opacity, __) {
-                      return ValueListenableBuilder<bool>(
-                        valueListenable: tabPullSearchOpen,
-                        builder: (_, pullSearchOpen, __) {
-                      final panelW = _chatsPanelWidthNotifier.value;
-                      final navWidth = isDesktop
-                          ? min(panelW - 24.0, 420.0)
-                          : MediaQuery.of(context).size.width / 1.8;
-                      final leftPad =
-                          isDesktop ? max(12.0, (panelW - navWidth) / 2) : 70.0;
+                return ValueListenableBuilder<double>(
+                  valueListenable: SettingsManager.elementBrightness,
+                  builder: (_, brightness, __) {
+                    return ValueListenableBuilder<double>(
+                      valueListenable: SettingsManager.elementOpacity,
+                      builder: (_, opacity, __) {
+                        return ValueListenableBuilder<bool>(
+                          valueListenable: tabPullSearchOpen,
+                          builder: (_, pullSearchOpen, __) {
+                            final panelW = _chatsPanelWidthNotifier.value;
+                            final navWidth = isDesktop
+                                ? min(panelW - 24.0, 420.0)
+                                : MediaQuery.of(context).size.width / 1.8;
+                            final leftPad = isDesktop
+                                ? max(12.0, (panelW - navWidth) / 2)
+                                : 70.0;
 
-                      final scheme = Theme.of(context).colorScheme;
-                      final navBackground = SettingsManager.getElementColor(
-                              scheme.surfaceContainerHighest, brightness)
-                          .withValues(alpha: opacity);
-                      final hideBottomNav = !isDesktop && _graphOverlayVisible;
-                      final isLiquidGlass = !isDesktop &&
-                          SettingsManager.liquidGlassOnNavBar.value;
-                      // The Scaffold resizes for the keyboard, which would
-                      // otherwise drag this floating bottom nav bar up over
-                      // the per-tab pull-search panel — hide it the same way
-                      // the global search dialog does.
-                      final hideForSearch =
-                          !isDesktop && (_isSearchOpen || pullSearchOpen);
+                            final scheme = Theme.of(context).colorScheme;
+                            final navBackground =
+                                SettingsManager.getElementColor(
+                                        scheme.surfaceContainerHighest,
+                                        brightness)
+                                    .withValues(alpha: opacity);
+                            final hideBottomNav =
+                                !isDesktop && _graphOverlayVisible;
+                            final isLiquidGlass = !isDesktop &&
+                                SettingsManager.liquidGlassOnNavBar.value;
+                            // The Scaffold resizes for the keyboard, which would
+                            // otherwise drag this floating bottom nav bar up over
+                            // the per-tab pull-search panel — hide it the same way
+                            // the global search dialog does.
+                            final hideForSearch =
+                                !isDesktop && (_isSearchOpen || pullSearchOpen);
 
-                      return Positioned.fill(
-                        child: Align(
-                          alignment: isDesktop
-                              ? Alignment.bottomLeft
-                              : Alignment.bottomCenter,
-                          child: TweenAnimationBuilder<double>(
-                            tween: Tween<double>(begin: 100.0, end: 0.0),
-                            duration: const Duration(milliseconds: 600),
-                            curve: Curves.easeOutCubic,
-                            builder: (context, offset, child) {
-                              return Transform.translate(
-                                offset: Offset(0, offset),
-                                child: Opacity(
-                                  opacity:
-                                      (1.0 - (offset / 100.0)).clamp(0.0, 1.0),
-                                  child: AnimatedSlide(
-                                    offset: hideBottomNav
-                                        ? const Offset(0.0, 1.75)
-                                        : (hideForSearch && !isLiquidGlass)
-                                            ? const Offset(0.0, 1.75)
-                                            : Offset.zero,
-                                    duration: const Duration(milliseconds: 320),
-                                    curve: (hideBottomNav || hideForSearch)
-                                        ? Curves.easeInCubic
-                                        : Curves.easeOutCubic,
-                                    child: AnimatedOpacity(
-                                      opacity: (hideBottomNav ||
-                                              (hideForSearch && isLiquidGlass))
-                                          ? 0.0
-                                          : 1.0,
-                                      duration:
-                                          const Duration(milliseconds: 260),
-                                      curve: (hideBottomNav || hideForSearch)
-                                          ? Curves.easeInCubic
-                                          : Curves.easeOutCubic,
-                                      child: AnimatedScale(
-                                        scale: (hideForSearch && isLiquidGlass)
-                                            ? 0.88
-                                            : 1.0,
-                                        duration: const Duration(milliseconds: 280),
-                                        curve: Curves.easeInCubic,
-                                        child: child,
+                            return Positioned.fill(
+                              child: Align(
+                                alignment: isDesktop
+                                    ? Alignment.bottomLeft
+                                    : Alignment.bottomCenter,
+                                child: TweenAnimationBuilder<double>(
+                                  tween: Tween<double>(begin: 100.0, end: 0.0),
+                                  duration: const Duration(milliseconds: 600),
+                                  curve: Curves.easeOutCubic,
+                                  builder: (context, offset, child) {
+                                    return Transform.translate(
+                                      offset: Offset(0, offset),
+                                      child: Opacity(
+                                        opacity: (1.0 - (offset / 100.0))
+                                            .clamp(0.0, 1.0),
+                                        child: AnimatedSlide(
+                                          offset: hideBottomNav
+                                              ? const Offset(0.0, 1.75)
+                                              : (hideForSearch &&
+                                                      !isLiquidGlass)
+                                                  ? const Offset(0.0, 1.75)
+                                                  : Offset.zero,
+                                          duration:
+                                              const Duration(milliseconds: 320),
+                                          curve:
+                                              (hideBottomNav || hideForSearch)
+                                                  ? Curves.easeInCubic
+                                                  : Curves.easeOutCubic,
+                                          child: AnimatedOpacity(
+                                            opacity: (hideBottomNav ||
+                                                    (hideForSearch &&
+                                                        isLiquidGlass))
+                                                ? 0.0
+                                                : 1.0,
+                                            duration: const Duration(
+                                                milliseconds: 260),
+                                            curve:
+                                                (hideBottomNav || hideForSearch)
+                                                    ? Curves.easeInCubic
+                                                    : Curves.easeOutCubic,
+                                            child: AnimatedScale(
+                                              scale: (hideForSearch &&
+                                                      isLiquidGlass)
+                                                  ? 0.88
+                                                  : 1.0,
+                                              duration: const Duration(
+                                                  milliseconds: 280),
+                                              curve: Curves.easeInCubic,
+                                              child: child,
+                                            ),
+                                          ),
+                                        ),
                                       ),
-                                    ),
+                                    );
+                                  },
+                                  child: AdaptiveNavBar(
+                                    selectedIndex: _index,
+                                    onTap: _onTabSelected,
+                                    isDesktop: isDesktop,
+                                    navWidth: navWidth,
+                                    leftPad: leftPad,
+                                    navBackground: navBackground,
                                   ),
                                 ),
-                              );
-                            },
-                            child: AdaptiveNavBar(
-                              selectedIndex: _index,
-                              onTap: _onTabSelected,
-                              isDesktop: isDesktop,
-                              navWidth: navWidth,
-                              leftPad: leftPad,
-                              navBackground: navBackground,
-                            ),
-                          ),
-                        ),
-                      );
-                        },
-                      );
-                    },
-                  );
-                },
-              );
-            },
-          ),
-        ],
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+            ),
+          ],
+        ),
       ),
-    ),
     );
   }
 }

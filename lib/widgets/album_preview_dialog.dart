@@ -1,6 +1,7 @@
 // lib/widgets/album_preview_dialog.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../managers/settings_manager.dart';
 
 class AlbumPreviewDialog extends StatefulWidget {
@@ -21,8 +22,35 @@ class AlbumPreviewDialog extends StatefulWidget {
 }
 
 class _AlbumPreviewDialogState extends State<AlbumPreviewDialog> {
-  
+
   static const int _maxThumb = 4;
+
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_handleKeyEvent);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
+    super.dispose();
+  }
+
+  bool _handleKeyEvent(KeyEvent event) {
+    if (event is KeyDownEvent &&
+        (event.logicalKey == LogicalKeyboardKey.enter ||
+            event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
+      _confirmSend();
+      return true;
+    }
+    return false;
+  }
+
+  void _confirmSend() {
+    Navigator.pop(context);
+    widget.onSend();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -164,10 +192,7 @@ class _AlbumPreviewDialogState extends State<AlbumPreviewDialog> {
                           ),
                           const SizedBox(width: 12),
                           FilledButton.tonal(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              widget.onSend();
-                            },
+                            onPressed: _confirmSend,
                             child: const Text('Send Album'),
                           ),
                         ],
@@ -263,6 +288,84 @@ class _AlbumPreviewDialogState extends State<AlbumPreviewDialog> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Single confirmation for a drop/paste that will be split into several
+/// album messages (e.g. dragging in hundreds of photos at once). Replaces
+/// showing one [AlbumPreviewDialog] per album, which was the source of
+/// heavy per-album lag (route transition + full-res thumbnail decode)
+/// when sending thousands of images.
+class BulkAlbumConfirmDialog extends StatefulWidget {
+  final int imageCount;
+  final int albumCount;
+  final VoidCallback onSend;
+  final VoidCallback onCancel;
+
+  const BulkAlbumConfirmDialog({
+    super.key,
+    required this.imageCount,
+    required this.albumCount,
+    required this.onSend,
+    required this.onCancel,
+  });
+
+  @override
+  State<BulkAlbumConfirmDialog> createState() =>
+      _BulkAlbumConfirmDialogState();
+}
+
+class _BulkAlbumConfirmDialogState extends State<BulkAlbumConfirmDialog> {
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_handleKeyEvent);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
+    super.dispose();
+  }
+
+  bool _handleKeyEvent(KeyEvent event) {
+    if (event is KeyDownEvent &&
+        (event.logicalKey == LogicalKeyboardKey.enter ||
+            event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
+      _confirmSend();
+      return true;
+    }
+    return false;
+  }
+
+  void _confirmSend() {
+    Navigator.pop(context);
+    widget.onSend();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      icon: Icon(Icons.photo_library_outlined, color: cs.primary),
+      title: const Text('Send Albums'),
+      content: Text(
+        'Send ${widget.imageCount} images as ${widget.albumCount} albums?',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.pop(context);
+            widget.onCancel();
+          },
+          child: const Text('Cancel'),
+        ),
+        FilledButton.tonal(
+          onPressed: _confirmSend,
+          child: const Text('Send All'),
+        ),
+      ],
     );
   }
 }

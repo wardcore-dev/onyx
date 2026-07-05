@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
-import 'dart:ui' show lerpDouble;
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/services.dart';
@@ -19,9 +18,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
-import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
+import '../utils/onyx_base_dir.dart'
+    show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
 import '../globals.dart';
 import 'forward_screen.dart';
+import 'mesh_chat_screen.dart';
 import 'dart:math' as math;
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import '../enums/liquid_glass_quality.dart';
@@ -49,11 +50,12 @@ import '../utils/image_file_cache.dart';
 import '../utils/upload_task.dart';
 import '../utils/blurhash_util.dart';
 import '../utils/video_info.dart';
-import '../widgets/pending_upload_card.dart';
+import '../widgets/upload_progress_bar.dart';
 import '../widgets/chat_search_bar.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import '../managers/lan_message_manager.dart';
 import '../enums/delivery_mode.dart';
+import '../services/mesh/mesh_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../l10n/app_localizations.dart';
 import '../managers/blocklist_manager.dart';
@@ -61,6 +63,7 @@ import '../widgets/message_reaction_bar.dart';
 import '../widgets/swipeable_message_wrapper.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../widgets/chat_input_bar.dart';
+import '../widgets/adaptive_glass_icon_button.dart';
 import '../widgets/measure_size.dart';
 import '../enums/scroll_down_button_position.dart';
 import '../utils/chat_image_preloader.dart';
@@ -137,7 +140,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class ChatScreenState extends State<ChatScreen>
-    with SingleTickerProviderStateMixin, ReactionStateMixin {
+    with TickerProviderStateMixin, ReactionStateMixin {
   static final Set<String> _sessionInputAnimationsShown = {};
 
   final TextEditingController _textCtrl = TextEditingController();
@@ -169,18 +172,21 @@ class ChatScreenState extends State<ChatScreen>
   ChatMessage? _editingMessage;
   Map<String, dynamic>? _pinnedMessage;
 
-  bool _isLANMode = false;
-  bool _fastChangeMode = false;
+  final bool _isLANMode = false;
   final _lanManager = LANMessageManager();
 
   late AnimationController _inputEntryController;
-  late Animation<double> _inputEntryScaleX;
+  late Animation<double> _inputEntryTranslateY;
   late Animation<double> _inputEntryOpacity;
   bool _hasInputAnimated = false;
 
   List<ChatMessage>? _cachedMessages;
   List<_ListItem>? _cachedItems;
   int _cachedMessagesHash = 0;
+  // Cached index map for ListView's findChildIndexCallback — rebuilt only
+  // when _cachedMessagesHash changes, not on every deferred-setState rebuild.
+  Map<String, int>? _cachedItemKeyToFlatIndex;
+  int _cachedItemKeyHash = 0;
 
   List<AlbumItem>? _cachedAllImages;
   int _cachedAllImagesHash = 0;
@@ -192,6 +198,9 @@ class ChatScreenState extends State<ChatScreen>
   Map<String, ChatMessage> get _selectedMessages =>
       _selectionNotifier.value.selected;
   final GlobalKey _messageListViewportKey = GlobalKey();
+  // The input bar's decorated "pill" container — read its rect at send time
+  // to fly a ghost of the typed text into the chat (see _flySendGhost).
+  final GlobalKey _inputAreaKey = GlobalKey();
   final Map<String, GlobalKey> _messageItemKeys = {};
   List<String> _dragSelectionOrder = const [];
   Map<String, ChatMessage> _dragSelectionLookup = const {};
@@ -202,8 +211,7 @@ class ChatScreenState extends State<ChatScreen>
   Map<String, ChatMessage> _dragSelectionBase = const {};
   Offset _lastDragPointerGlobal = Offset.zero;
   Timer? _dragAutoScrollTimer;
-  static const Duration _messageLongPressDuration =
-      Duration(milliseconds: 375);
+  static const Duration _messageLongPressDuration = Duration(milliseconds: 375);
   static const double _dragEdgeZone = 80.0;
   static const double _dragMaxSpeed = 14.0;
 
@@ -355,8 +363,8 @@ class ChatScreenState extends State<ChatScreen>
     }
     if (foundIdx == null || foundId == null) return;
 
-    final listviewIdx = foundIdx + _pendingUploads.length;
-    final totalItems = items.length + _pendingUploads.length;
+    final listviewIdx = foundIdx;
+    final totalItems = items.length;
     final maxExt = _scroll.position.maxScrollExtent;
     final proportional =
         totalItems > 0 ? (listviewIdx / totalItems) * maxExt : 0.0;
@@ -401,7 +409,8 @@ class ChatScreenState extends State<ChatScreen>
       if (_scroll.hasClients) {
         _scrollToMessageById(int.tryParse(pendingId), localId: pendingId);
       } else if (retries > 0) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => attempt(retries - 1));
+        WidgetsBinding.instance
+            .addPostFrameCallback((_) => attempt(retries - 1));
       }
     }
 
@@ -424,15 +433,12 @@ class ChatScreenState extends State<ChatScreen>
           final serverId = int.tryParse(pinId ?? '');
           return GestureDetector(
             onTap: () => _scrollToMessageById(serverId, localId: pinId),
-            child: Container(
+            child: AdaptiveGlassPill(
+              backgroundColor: bgColor.withValues(alpha: opacity),
+              borderColor: colorScheme.outlineVariant.withValues(alpha: 0.2),
+              height: null,
+              borderRadius: 28,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: bgColor.withValues(alpha: opacity),
-                borderRadius: BorderRadius.circular(28),
-                border: Border.all(
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.2),
-                ),
-              ),
               child: Row(
                 children: [
                   Icon(Icons.push_pin_rounded,
@@ -444,7 +450,7 @@ class ChatScreenState extends State<ChatScreen>
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          'Pinned Message',
+                          AppLocalizations.of(context).pinnedMessage,
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
@@ -522,8 +528,16 @@ class ChatScreenState extends State<ChatScreen>
   String _selectionKeyForMessage(ChatMessage msg) =>
       '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
 
-  GlobalKey _messageItemKey(String uniqueKey) =>
-      _messageItemKeys.putIfAbsent(uniqueKey, () => GlobalKey());
+  // Keyed by the message's STABLE local id (not `uniqueKey`, which embeds
+  // serverMessageId/time and changes the moment a sent message gets
+  // acknowledged). Using an unstable key here used to mint a brand-new
+  // GlobalKey via putIfAbsent every time a message synced — which Flutter
+  // treats as a totally different widget, tearing down and rebuilding the
+  // whole subtree (including the in-flight AnimatedMessageBubble) under it.
+  // That's what caused the send animation to cut out and snap to its final
+  // state moments after starting.
+  GlobalKey _messageItemKey(String stableId) =>
+      _messageItemKeys.putIfAbsent(stableId, () => GlobalKey());
 
   void _startMessageDragSelection(ChatMessage msg, String uniqueKey) {
     final cur = _selectionNotifier.value;
@@ -581,7 +595,9 @@ class ChatScreenState extends State<ChatScreen>
     String? bestKey;
     double bestCenterDist = double.infinity;
     for (final uniqueKey in _dragSelectionOrder) {
-      final context = _messageItemKeys[uniqueKey]?.currentContext;
+      final stableId = _dragSelectionLookup[uniqueKey]?.id;
+      final context =
+          stableId == null ? null : _messageItemKeys[stableId]?.currentContext;
       if (context == null) continue;
       final box = context.findRenderObject() as RenderBox?;
       if (box == null || !box.hasSize) continue;
@@ -597,8 +613,8 @@ class ChatScreenState extends State<ChatScreen>
   }
 
   void _updateDragAutoScroll() {
-    final box =
-        _messageListViewportKey.currentContext?.findRenderObject() as RenderBox?;
+    final box = _messageListViewportKey.currentContext?.findRenderObject()
+        as RenderBox?;
     if (box == null) return;
     final local = box.globalToLocal(_lastDragPointerGlobal);
     final height = box.size.height;
@@ -619,8 +635,8 @@ class ChatScreenState extends State<ChatScreen>
       _stopDragAutoScroll();
       return;
     }
-    final box =
-        _messageListViewportKey.currentContext?.findRenderObject() as RenderBox?;
+    final box = _messageListViewportKey.currentContext?.findRenderObject()
+        as RenderBox?;
     if (box == null) return;
     final local = box.globalToLocal(_lastDragPointerGlobal);
     final height = box.size.height;
@@ -735,7 +751,8 @@ class ChatScreenState extends State<ChatScreen>
     _shouldPreserveExternalFocus = true;
 
     final canEdit = msg.canEditOrDelete;
-    final canDelete = msg.outgoing;
+    // Own messages: full delete (asks the server, removes for everyone).
+    // Incoming messages: local-only "delete for me" — always available.
 
     showModalBottomSheet<void>(
       context: context,
@@ -778,45 +795,14 @@ class ChatScreenState extends State<ChatScreen>
           Navigator.pop(ctx);
           _togglePin(msg);
         },
-        onDelete: canDelete
-            ? () async {
-                Navigator.pop(ctx);
-                final cannotDeleteMsg = l.cannotDeleteMsg;
-                final confirmed = await showDialog<bool>(
-                  context: context,
-                  builder: (ctx2) => AlertDialog(
-                    title: Text(l.deleteMessageTitle),
-                    content: Text(l.deleteMessageContent),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx2, false),
-                        child: Text(l.cancel),
-                      ),
-                      FilledButton(
-                        style: FilledButton.styleFrom(
-                            backgroundColor: Colors.red.shade700),
-                        onPressed: () => Navigator.pop(ctx2, true),
-                        child: Text(l.delete,
-                            style: const TextStyle(color: Colors.white)),
-                      ),
-                    ],
-                  ),
-                );
-                if (confirmed == true) {
-                  if (msg.serverMessageId == null) {
-                    rootScreenKey.currentState?.showSnack(cannotDeleteMsg);
-                    return;
-                  }
-
-                  if (msg.content.startsWith('ALBUMv1:')) {
-                    await _deleteAlbumFiles(msg.content);
-                  } else {
-                    await _deleteMediaFile(msg.content);
-                  }
-                  await widget.onDeleteMessage(msg.serverMessageId!);
-                }
-              }
-            : null,
+        onDelete: () {
+          Navigator.pop(ctx);
+          if (msg.outgoing) {
+            _desktopDeleteMessage(msg);
+          } else {
+            _deleteMessageForMe(msg);
+          }
+        },
         onReact: () {
           Navigator.pop(ctx);
           final msgKey =
@@ -909,18 +895,21 @@ class ChatScreenState extends State<ChatScreen>
           onPressed: () => _startEditingMessage(msg),
         ),
       DesktopMenuItem(
-        icon: _isMsgPinned(msg) ? Icons.push_pin_outlined : Icons.push_pin_rounded,
+        icon: _isMsgPinned(msg)
+            ? Icons.push_pin_outlined
+            : Icons.push_pin_rounded,
         label: _isMsgPinned(msg) ? l.unpin : l.pin,
         onPressed: () => _togglePin(msg),
       ),
-      if (msg.outgoing)
-        DesktopMenuItem(
-          icon: Icons.delete_outline_rounded,
-          label: l.delete,
-          type: ContextMenuButtonType.delete,
-          color: Colors.red.shade400,
-          onPressed: () => _desktopDeleteMessage(msg),
-        ),
+      DesktopMenuItem(
+        icon: Icons.delete_outline_rounded,
+        label: l.delete,
+        type: ContextMenuButtonType.delete,
+        color: Colors.red.shade400,
+        onPressed: () => msg.outgoing
+            ? _desktopDeleteMessage(msg)
+            : _deleteMessageForMe(msg),
+      ),
       if (isFile)
         DesktopMenuItem(
           icon: Icons.folder_open_rounded,
@@ -939,8 +928,7 @@ class ChatScreenState extends State<ChatScreen>
             final localPath =
                 filename.isNotEmpty ? mediaFilePathRegistry[filename] : null;
             if (localPath == null) {
-              rootScreenKey.currentState
-                  ?.showSnack(l.fileNotLoadedOpenFirst);
+              rootScreenKey.currentState?.showSnack(l.fileNotLoadedOpenFirst);
               return;
             }
             revealInFileSystem(localPath);
@@ -1210,6 +1198,43 @@ class ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// "Delete for me" on an incoming message — purely local, doesn't touch
+  /// the server or the sender's copy. Unlike _desktopDeleteMessage this
+  /// works even when serverMessageId is null (a message that hasn't
+  /// finished syncing yet can still be hidden locally).
+  Future<void> _deleteMessageForMe(ChatMessage msg) async {
+    final l = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx2) => AlertDialog(
+        title: Text(l.deleteForMeTitle),
+        content: Text(l.deleteForMeContent),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx2, false),
+            child: Text(l.cancel),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(ctx2, true),
+            child: Text(l.delete, style: const TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (msg.content.startsWith('ALBUMv1:')) {
+      await _deleteAlbumFiles(msg.content);
+    } else {
+      await _deleteMediaFile(msg.content);
+    }
+    final chatId =
+        rootScreenKey.currentState?.chatIdForUser(widget.otherUsername);
+    if (chatId != null) {
+      rootScreenKey.currentState?.removeMessagesLocally(chatId, [msg.id]);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1224,21 +1249,21 @@ class ChatScreenState extends State<ChatScreen>
     _keyboardListenerFocusNode = FocusNode();
 
     _inputEntryController = AnimationController(
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 400),
       vsync: this,
     );
 
-    _inputEntryScaleX = Tween<double>(begin: 0.3, end: 1.0).animate(
+    _inputEntryTranslateY = Tween<double>(begin: 30.0, end: 0.0).animate(
       CurvedAnimation(
         parent: _inputEntryController,
-        curve: Curves.easeInOutCubic,
+        curve: Curves.easeOutCubic,
       ),
     );
 
     _inputEntryOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _inputEntryController,
-        curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+        curve: Curves.easeOut,
       ),
     );
 
@@ -1265,7 +1290,6 @@ class ChatScreenState extends State<ChatScreen>
       }
     }
 
-    _loadFastChangeSetting();
     _consumePendingScrollTarget();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1325,29 +1349,6 @@ class ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<void> _loadFastChangeSetting() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getBool('fast_change_mode') ?? false;
-      if (mounted) {
-        setState(() {
-          _fastChangeMode = saved;
-        });
-      }
-    } catch (e) {
-      debugPrint('[ChatScreen] Failed to load fast change setting: $e');
-    }
-  }
-
-  Future<void> _saveFastChangeSetting(bool value) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('fast_change_mode', value);
-    } catch (e) {
-      debugPrint('[ChatScreen] Failed to save fast change setting: $e');
-    }
-  }
-
   Future<void> _showUserProfileDialog(String username) async {
     await unfocusAndSettle(context);
     if (!mounted) return;
@@ -1363,7 +1364,8 @@ class ChatScreenState extends State<ChatScreen>
       barrierColor: Colors.black.withValues(alpha: 0.5),
       transitionDuration: const Duration(milliseconds: 187),
       transitionBuilder: (ctx, anim, _, child) {
-        final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+        final curved =
+            CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
         return FadeTransition(
           opacity: CurvedAnimation(parent: anim, curve: Curves.easeIn),
           child: ScaleTransition(
@@ -1381,7 +1383,8 @@ class ChatScreenState extends State<ChatScreen>
         const btnPadding = EdgeInsets.symmetric(vertical: 13);
         return Dialog(
           backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 40),
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 40, vertical: 40),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(28),
             child: ConstrainedBox(
@@ -1430,7 +1433,8 @@ class ChatScreenState extends State<ChatScreen>
                               const SizedBox(height: 4),
                               GestureDetector(
                                 onTap: () {
-                                  Clipboard.setData(ClipboardData(text: '@$username'));
+                                  Clipboard.setData(
+                                      ClipboardData(text: '@$username'));
                                   rootScreenKey.currentState?.showSnack(
                                       AppLocalizations.of(context)
                                           .copiedUsername(username));
@@ -1447,7 +1451,8 @@ class ChatScreenState extends State<ChatScreen>
                               if (desc.isNotEmpty) ...[
                                 const SizedBox(height: 8),
                                 Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 24),
                                   child: Text(
                                     desc,
                                     textAlign: TextAlign.center,
@@ -1557,7 +1562,9 @@ class ChatScreenState extends State<ChatScreen>
 
     final ids = [widget.myUsername, widget.otherUsername]..sort();
     final chatId = ids.join(':');
-    final mainMsgs = rootState.chats[chatId] ?? [];
+    final mainMsgs = (rootState.chats[chatId] ?? [])
+        .where((m) => m.deliveryMode != DeliveryMode.bleMesh)
+        .toList();
     final allMsgs = [...mainMsgs, ..._olderMessages];
 
     final oldest = allMsgs.isNotEmpty ? allMsgs.last : null;
@@ -1605,9 +1612,18 @@ class ChatScreenState extends State<ChatScreen>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.otherUsername != widget.otherUsername) {
       _alreadyRenderedMessageIds.clear();
+      final root = rootScreenKey.currentState;
+      if (root != null) {
+        final chatId = root.chatIdForUser(widget.otherUsername);
+        for (final m in root.chats[chatId] ?? const []) {
+          _alreadyRenderedMessageIds.add(m.id);
+        }
+      }
       _hasBuiltMessageListOnce = false;
       _cachedMessages = null;
       _cachedItems = null;
+      _cachedItemKeyToFlatIndex = null;
+      _cachedItemKeyHash = 0;
       _olderMessages.clear();
       _isLoadingMore = false;
       _hasMoreMessages = true;
@@ -1889,10 +1905,9 @@ class ChatScreenState extends State<ChatScreen>
       if (!mounted || !_scroll.hasClients || _cachedSearchMatches.isEmpty)
         return;
       final matchItemIdx = _cachedSearchMatches[_currentMatchIdx];
-      final pendingCount = _pendingUploads.length;
-      final totalItems = pendingCount + (_cachedItems?.length ?? 0);
+      final totalItems = _cachedItems?.length ?? 0;
       if (totalItems == 0) return;
-      final listIdx = pendingCount + matchItemIdx;
+      final listIdx = matchItemIdx;
       final maxExtent = _scroll.position.maxScrollExtent;
       final target = (maxExtent * listIdx / totalItems).clamp(0.0, maxExtent);
       _scroll.animateTo(target,
@@ -1984,127 +1999,11 @@ class ChatScreenState extends State<ChatScreen>
     _textCtrl.clear();
     _shouldPreserveExternalFocus = false;
     _requestFocus();
+    _scrollToBottom();
 
     setState(() {
       _replyingToMessage = null;
     });
-    _scrollToBottomAfterSend();
-  }
-
-  Future<void> _showDeliveryModeDialog() async {
-    final l = AppLocalizations.of(context);
-    final lanEnabledMsg = l.lanModeEnabled;
-    final internetEnabledMsg = l.internetModeEnabled;
-    final userNotInLanMsg = l.deliveryUserNotInLan;
-
-    if (_fastChangeMode) {
-      final lanAvailable =
-          _lanManager.isUserAvailableInLAN(widget.otherUsername);
-      if (lanAvailable) {
-        setState(() {
-          _isLANMode = !_isLANMode;
-
-          final modes = Map<String, bool>.from(lanModePerChat.value);
-          modes[widget.otherUsername] = _isLANMode;
-          lanModePerChat.value = modes;
-        });
-        if (_isLANMode) {
-          rootScreenKey.currentState?.showSnack(lanEnabledMsg);
-        } else {
-          rootScreenKey.currentState?.showSnack(internetEnabledMsg);
-        }
-        return;
-      } else {
-        rootScreenKey.currentState?.showSnack(userNotInLanMsg);
-        return;
-      }
-    }
-
-    bool tempFastChange = _fastChangeMode;
-    final choice = await showDialog<String>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Text(l.deliveryModeTitle),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.language, color: Colors.blue),
-                title: Text(l.deliveryInternet),
-                subtitle: Text(l.deliveryInternetSubtitle),
-                onTap: () => Navigator.of(ctx).pop('internet'),
-              ),
-              const SizedBox(height: 8),
-              ListTile(
-                leading: Icon(
-                  Icons.router,
-                  color: _lanManager.isUserAvailableInLAN(widget.otherUsername)
-                      ? Colors.green
-                      : Colors.grey,
-                ),
-                title: Text(
-                  'LAN',
-                  style: TextStyle(
-                    color:
-                        _lanManager.isUserAvailableInLAN(widget.otherUsername)
-                            ? null
-                            : Colors.grey,
-                  ),
-                ),
-                subtitle: Text(
-                  _lanManager.isUserAvailableInLAN(widget.otherUsername)
-                      ? l.deliveryLanSubtitle
-                      : l.deliveryUserNotInLan,
-                  style: TextStyle(
-                    color:
-                        _lanManager.isUserAvailableInLAN(widget.otherUsername)
-                            ? null
-                            : Colors.grey,
-                  ),
-                ),
-                enabled: _lanManager.isUserAvailableInLAN(widget.otherUsername),
-                onTap: () => Navigator.of(ctx).pop('lan'),
-              ),
-              const Divider(height: 24),
-              CheckboxListTile(
-                title: Text(l.fastChange),
-                subtitle: Text(l.fastChangeSubtitle),
-                value: tempFastChange,
-                onChanged: (value) {
-                  setDialogState(() {
-                    tempFastChange = value ?? false;
-                  });
-                },
-                controlAffinity: ListTileControlAffinity.leading,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    if (tempFastChange != _fastChangeMode) {
-      setState(() {
-        _fastChangeMode = tempFastChange;
-      });
-      _saveFastChangeSetting(tempFastChange);
-    }
-
-    if (choice != null) {
-      setState(() {
-        _isLANMode = choice == 'lan';
-
-        final modes = Map<String, bool>.from(lanModePerChat.value);
-        modes[widget.otherUsername] = _isLANMode;
-        lanModePerChat.value = modes;
-      });
-      if (_isLANMode) {
-        rootScreenKey.currentState?.showSnack(lanEnabledMsg);
-      } else {
-        rootScreenKey.currentState?.showSnack(internetEnabledMsg);
-      }
-    }
   }
 
   Future<void> _openAttachmentPicker() async {
@@ -2133,7 +2032,27 @@ class ChatScreenState extends State<ChatScreen>
     if (paths == null || paths.isEmpty) return;
 
     if (paths.length > 1) {
-      await _handleDroppedFiles(paths);
+      // If >10 images selected, show bulk-album confirmation before processing
+      // (mirrors the drag-and-drop behavior so user knows how albums are split).
+      final imagePaths = paths.where(FileTypeDetector.isImage).toList();
+      if (imagePaths.length > 10) {
+        final albumCount = (imagePaths.length / 10).ceil();
+        var proceed = false;
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          builder: (_) => BulkAlbumConfirmDialog(
+            imageCount: imagePaths.length,
+            albumCount: albumCount,
+            onSend: () => proceed = true,
+            onCancel: () {},
+          ),
+        );
+        if (!proceed) return;
+        await _handleDroppedFiles(paths, skipBulkConfirm: true);
+      } else {
+        await _handleDroppedFiles(paths);
+      }
       return;
     }
 
@@ -2258,8 +2177,6 @@ class ChatScreenState extends State<ChatScreen>
           }
         });
       }
-
-      _scrollToBottomAfterSend();
     }
   }
 
@@ -2286,26 +2203,6 @@ class ChatScreenState extends State<ChatScreen>
         );
       }
     }
-  }
-
-  /// Called specifically after sending a message so the new bubble "slides in"
-  /// instead of appearing statically. Waits one frame for the new item to be
-  /// in the tree, creates a small upward offset, then animates back to 0.
-  void _scrollToBottomAfterSend() {
-    if (!_scroll.hasClients) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scroll.hasClients) return;
-      final pixels = _scroll.position.pixels;
-      if (pixels <= 4.0) {
-        // Already at bottom — nudge up so the animate-to-0 is visible
-        _scroll.jumpTo(56.0);
-      }
-      _scroll.animateTo(
-        0.0,
-        duration: const Duration(milliseconds: 310),
-        curve: Curves.easeOutCubic,
-      );
-    });
   }
 
   void _onLongPress(ChatMessage msg, [TapDownDetails? details]) {
@@ -2363,13 +2260,8 @@ class ChatScreenState extends State<ChatScreen>
     if (_cachedMessages != null &&
         _cachedMessagesHash == currentHash &&
         _cachedItems != null) {
-      debugPrint(
-          '[ChatScreen] Using CACHED items (${_cachedItems!.length} items, hash: $currentHash)');
       return _cachedItems!;
     }
-
-    debugPrint(
-        '[ChatScreen] Building NEW items list from ${msgs.length} messages (hash changed: $_cachedMessagesHash → $currentHash)');
 
     final items = <_ListItem>[];
     DateTime? currentDay;
@@ -2400,7 +2292,11 @@ class ChatScreenState extends State<ChatScreen>
 
     final result = items.reversed.toList();
 
-    _cachedMessages = List.from(msgs);
+    // _cachedMessages' value is never read back (only null-checked above) —
+    // a reference is enough to mark "we have a cache", no need to pay for
+    // an O(n) full-list copy of potentially hundreds of messages on every
+    // single send.
+    _cachedMessages = msgs;
     _cachedItems = result;
     _cachedMessagesHash = currentHash;
 
@@ -2499,1112 +2395,1797 @@ class ChatScreenState extends State<ChatScreen>
 
     return DragDropZone(
       onFilesDropped: _handleDroppedFiles,
-      child: Scaffold(
-        extendBodyBehindAppBar: true,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          surfaceTintColor: Colors.transparent,
-          elevation: 0,
-          scrolledUnderElevation: 0,
-          shadowColor: Colors.transparent,
-          automaticallyImplyLeading: false,
-          leading: isDesktop
-              ? null
-              : ValueListenableBuilder(
-                  valueListenable: _selectionNotifier,
-                  builder: (_, sel, __) => sel.active
-                      ? IconButton(
-                          icon: const Icon(Icons.close_rounded),
-                          onPressed: _exitSelectionMode,
-                        )
-                      : const BackButton(),
-                ),
-          flexibleSpace: ValueListenableBuilder<double>(
-            valueListenable: SettingsManager.elementOpacity,
-            builder: (_, opacity, __) {
-              return ClipRect(
-                child: Container(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .surface
-                      .withOpacity(opacity),
-                ),
-              );
-            },
-          ),
-          title: ValueListenableBuilder(
-            valueListenable: _selectionNotifier,
-            builder: (_, sel, __) => sel.active
-                ? Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (isDesktop)
-                        IconButton(
-                          icon: const Icon(Icons.close_rounded),
-                          onPressed: _exitSelectionMode,
-                        ),
-                      Text(
-                        '${sel.selected.length} selected',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+      child: PopScope(
+        canPop: !isDesktop,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop && _showSearch) _closeSearch();
+        },
+        child: Scaffold(
+          extendBodyBehindAppBar: true,
+          appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            shadowColor: Colors.transparent,
+            toolbarHeight: 70,
+            leadingWidth: isDesktop ? 162 : 66,
+            centerTitle: true,
+            automaticallyImplyLeading: false,
+            leading: isDesktop
+                ? ValueListenableBuilder(
+                    valueListenable: _selectionNotifier,
+                    builder: (_, sel, __) => AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      transitionBuilder: (child, anim) => FadeTransition(
+                        opacity: CurvedAnimation(
+                            parent: anim, curve: Curves.easeInOut),
+                        child: child,
                       ),
-                    ],
-                  )
-                : Row(
-                    children: [
-                      GestureDetector(
-                        onTap: () =>
-                            _showUserProfileDialog(widget.otherUsername),
-                        onLongPress: () =>
-                            _showUserProfileDialog(widget.otherUsername),
-                        child: AvatarWidget(
-                          key: ValueKey('avatar-${widget.otherUsername}'),
-                          username: widget.otherUsername,
-                          tokenProvider: avatarTokenProvider,
-                          avatarBaseUrl: serverBase,
-                          size: 40.0,
-                          editable: false,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Builder(
-                          builder: (context) {
-                            final userInfo =
-                                UserCache.getSync(widget.otherUsername);
-                            final displayName =
-                                userInfo?.displayName ?? widget.otherUsername;
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                GestureDetector(
-                                  onTap: () => _showUserProfileDialog(
-                                      widget.otherUsername),
-                                  onLongPress: () => _showUserProfileDialog(
-                                      widget.otherUsername),
-                                  child: MarqueeText(
-                                    text: displayName,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold),
+                      child: sel.active
+                          ? AnimatedBuilder(
+                              key: const ValueKey(true),
+                              animation: Listenable.merge([
+                                SettingsManager.elementOpacity,
+                                SettingsManager.elementBrightness,
+                              ]),
+                              builder: (ctx, _) {
+                                final op = SettingsManager.elementOpacity.value;
+                                final br =
+                                    SettingsManager.elementBrightness.value;
+                                final cs = Theme.of(ctx).colorScheme;
+                                final bgColor = SettingsManager.getElementColor(
+                                  cs.surfaceContainerHighest,
+                                  br,
+                                ).withValues(alpha: op);
+                                final borderColor =
+                                    cs.outlineVariant.withValues(alpha: 0.3);
+                                return Padding(
+                                  padding: const EdgeInsets.only(left: 8),
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: AdaptiveGlassIconButton(
+                                      backgroundColor: bgColor,
+                                      borderColor: borderColor,
+                                      child: IconButton(
+                                        padding: EdgeInsets.zero,
+                                        icon: Icon(Icons.close_rounded,
+                                            size: 18,
+                                            color: cs.onSurface
+                                                .withValues(alpha: 0.7)),
+                                        onPressed: _exitSelectionMode,
+                                      ),
+                                    ),
                                   ),
-                                ),
-                                AnimatedBuilder(
-                                  animation: _combinedHeaderListenable,
-                                  builder: (context, child) {
-                                    final typing = typingUsersNotifier.value
-                                        .contains(widget.otherUsername);
-                                    if (typing) {
-                                      return const Text(
-                                        'typing...',
-                                        style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.orangeAccent),
-                                      );
-                                    }
-
-                                    final isConnected =
-                                        wsConnectedNotifier.value;
-                                    if (!isConnected) {
-                                      return const Text(
-                                        'no connection (auto mode)',
-                                        style: TextStyle(
-                                            fontSize: 12, color: Colors.grey),
-                                      );
-                                    }
-
-                                    final online = onlineUsersNotifier.value
-                                        .contains(widget.otherUsername);
-                                    final statuses = userStatusNotifier.value;
-                                    final visMap =
-                                        userStatusVisibilityNotifier.value;
-
-                                    final visibilityEntry =
-                                        visMap.containsKey(widget.otherUsername)
-                                            ? visMap[widget.otherUsername]
-                                            : null;
-
-                                    if (visibilityEntry == 'hide') {
-                                      return const SizedBox.shrink();
-                                    }
-
-                                    final customStatus =
-                                        statuses[widget.otherUsername];
-
-                                    if (customStatus != null &&
-                                        customStatus.isNotEmpty) {
-                                      return Builder(
-                                        builder: (ctx) {
-                                          final statusColor = online
-                                              ? const Color(0xFF2ECC71)
-                                              : Theme.of(ctx)
-                                                  .colorScheme
-                                                  .onSurfaceVariant
-                                                  .withValues(alpha: 0.9);
-                                          return Text(
-                                            customStatus,
-                                            style: TextStyle(
-                                                fontSize: 12,
-                                                color: statusColor),
-                                          );
-                                        },
-                                      );
-                                    }
-
-                                    if (visibilityEntry == 'show') {
-                                      final statusText =
-                                          online ? 'online' : 'offline';
-                                      return Builder(
-                                        builder: (ctx) {
-                                          final statusColor = online
-                                              ? const Color(0xFF2ECC71)
-                                              : Theme.of(ctx)
-                                                  .colorScheme
-                                                  .onSurfaceVariant
-                                                  .withValues(alpha: 0.9);
-                                          return Text(
-                                            statusText,
-                                            style: TextStyle(
-                                                fontSize: 12,
-                                                color: statusColor),
-                                          );
-                                        },
-                                      );
-                                    }
-
-                                    if (online) {
-                                      return Builder(
-                                        builder: (ctx) {
-                                          const statusColor = Color(0xFF2ECC71);
-                                          return const Text(
-                                            'online',
-                                            style: TextStyle(
-                                                fontSize: 12,
-                                                color: statusColor),
-                                          );
-                                        },
-                                      );
-                                    }
-
-                                    return const SizedBox.shrink();
-                                  },
-                                ),
-                              ],
-                            );
-                          },
-                        ),
+                                );
+                              },
+                            )
+                          : const SizedBox.shrink(key: ValueKey(false)),
+                    ),
+                  )
+                : ValueListenableBuilder(
+                    valueListenable: _selectionNotifier,
+                    builder: (_, sel, __) => AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      transitionBuilder: (child, anim) => FadeTransition(
+                        opacity: CurvedAnimation(
+                            parent: anim, curve: Curves.easeInOut),
+                        child: child,
                       ),
-                    ],
-                  ),
-          ),
-          actions: [
-            ValueListenableBuilder(
-              valueListenable: _selectionNotifier,
-              builder: (_, sel, __) => sel.active
-                  ? Row(mainAxisSize: MainAxisSize.min, children: [
-                      if (sel.selected.values.any(_isTextMessage))
-                        IconButton(
-                          icon: const Icon(Icons.copy_rounded),
-                          tooltip: l.copy,
-                          onPressed: _copySelectedMessages,
-                        ),
-                      if (sel.selected.isNotEmpty)
-                        IconButton(
-                          icon: const Icon(Icons.forward_rounded),
-                          tooltip: l.forward,
-                          onPressed: _forwardSelectedMessages,
-                        ),
-                      if (sel.selected.values.any((m) => m.outgoing))
-                        IconButton(
-                          icon: Icon(
-                            Icons.delete_outline_rounded,
-                            color: Colors.red.shade400,
-                          ),
-                          tooltip: 'Delete',
-                          onPressed: _confirmDeleteSelected,
-                        ),
-                    ])
-                  : Row(mainAxisSize: MainAxisSize.min, children: [
-                      IconButton(
-                        icon: const Icon(Icons.search),
-                        tooltip: 'Search (Ctrl+F)',
-                        onPressed: () {
-                          if (_showSearch)
-                            _closeSearch();
-                          else
-                            _openSearch();
+                      child: AnimatedBuilder(
+                        key: ValueKey(sel.active),
+                        animation: Listenable.merge([
+                          SettingsManager.elementOpacity,
+                          SettingsManager.elementBrightness,
+                        ]),
+                        builder: (ctx, _) {
+                          final op = SettingsManager.elementOpacity.value;
+                          final br = SettingsManager.elementBrightness.value;
+                          final cs = Theme.of(ctx).colorScheme;
+                          final bgColor = SettingsManager.getElementColor(
+                            cs.surfaceContainerHighest,
+                            br,
+                          ).withValues(alpha: op);
+                          final borderColor =
+                              cs.outlineVariant.withValues(alpha: 0.3);
+                          return Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: Center(
+                              child: AdaptiveGlassIconButton(
+                                backgroundColor: bgColor,
+                                borderColor: borderColor,
+                                child: IconButton(
+                                  padding: EdgeInsets.zero,
+                                  icon: Icon(
+                                    sel.active
+                                        ? Icons.close_rounded
+                                        : Icons.arrow_back_ios_new_rounded,
+                                    size: 18,
+                                    color: cs.onSurface.withValues(alpha: 0.7),
+                                  ),
+                                  onPressed: sel.active
+                                      ? _exitSelectionMode
+                                      : () => Navigator.of(ctx).maybePop(),
+                                ),
+                              ),
+                            ),
+                          );
                         },
                       ),
-                      ValueListenableBuilder<bool>(
-                        valueListenable: callManager.isInCall,
-                        builder: (ctx, inCall, _) => inCall
-                            ? const SizedBox()
-                            : IconButton(
-                                icon: Icon(
-                                  Icons.phone,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurface
-                                      .withOpacity(0.8),
-                                ),
-                                onPressed: () async {
-                                  final confirmed = await showDialog<bool>(
-                                    context: context,
-                                    builder: (dCtx) => AlertDialog(
-                                      title: Text(AppLocalizations.of(context)
-                                          .voiceCallsTitle),
-                                      content: Text(AppLocalizations.of(context)
-                                          .voiceCallsContent),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.of(dCtx).pop(false),
-                                          child: Text(
-                                              AppLocalizations.of(context)
-                                                  .cancel),
+                    ),
+                  ),
+            title: ValueListenableBuilder(
+              valueListenable: _selectionNotifier,
+              builder: (_, sel, __) => ClipRRect(
+                borderRadius: BorderRadius.circular(25),
+                child: AnimatedSize(
+                  duration: const Duration(milliseconds: 280),
+                  curve: Curves.easeInOutCubic,
+                  alignment: Alignment.center,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 250),
+                    transitionBuilder: (child, animation) {
+                      final slide = Tween<Offset>(
+                        begin: const Offset(0, 0.15),
+                        end: Offset.zero,
+                      ).animate(CurvedAnimation(
+                          parent: animation, curve: Curves.easeOut));
+                      return FadeTransition(
+                        opacity: CurvedAnimation(
+                            parent: animation, curve: Curves.easeInOut),
+                        child: SlideTransition(position: slide, child: child),
+                      );
+                    },
+                    child: sel.active
+                        ? AnimatedBuilder(
+                            key: const ValueKey(true),
+                            animation: Listenable.merge([
+                              SettingsManager.elementOpacity,
+                              SettingsManager.elementBrightness,
+                            ]),
+                            builder: (titleCtx, _) {
+                              final op = SettingsManager.elementOpacity.value;
+                              final br =
+                                  SettingsManager.elementBrightness.value;
+                              final cs = Theme.of(titleCtx).colorScheme;
+                              final bgColor = SettingsManager.getElementColor(
+                                cs.surfaceContainerHighest,
+                                br,
+                              ).withValues(alpha: op);
+                              final borderColor =
+                                  cs.outlineVariant.withValues(alpha: 0.3);
+                              return Align(
+                                alignment: Alignment.center,
+                                child: AdaptiveGlassPill(
+                                  backgroundColor: bgColor,
+                                  borderColor: borderColor,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        '${sel.selected.length} selected',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: cs.onSurface
+                                              .withValues(alpha: 0.85),
                                         ),
-                                        TextButton(
-                                          onPressed: () {
-                                            Navigator.of(dCtx).pop(false);
-                                            showModalBottomSheet(
-                                              context: context,
-                                              isScrollControlled: true,
-                                              backgroundColor:
-                                                  Colors.transparent,
-                                              builder: (_) =>
-                                                  const SupportSheet(),
-                                            );
-                                          },
-                                          child: Text(
-                                              AppLocalizations.of(context)
-                                                  .supportOnyxBtn),
-                                        ),
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.of(dCtx).pop(true),
-                                          child: Text(
-                                              AppLocalizations.of(context)
-                                                  .call),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                  if (confirmed == true) {
-                                    callManager
-                                        .startCall(widget.otherUsername!);
-                                  }
-                                },
-                              ),
-                      ),
-                      ValueListenableBuilder<Set<String>>(
-                        valueListenable: BlocklistManager.blockedUsers,
-                        builder: (_, blocked, __) {
-                          final isBlocked = widget.otherUsername != null &&
-                              blocked.contains(widget.otherUsername!);
-                          return PopupMenuButton<String>(
-                            icon: const Icon(Icons.more_vert),
-                            itemBuilder: (menuCtx) => [
-                              PopupMenuItem<String>(
-                                value: 'gallery',
-                                child: Row(
-                                  children: [
-                                    const Icon(Icons.photo_library_outlined, size: 18),
-                                    const SizedBox(width: 10),
-                                    Text(AppLocalizations.of(context).galleryMenuLabel),
-                                  ],
-                                ),
-                              ),
-                              PopupMenuItem<String>(
-                                value: isBlocked ? 'unblock' : 'security',
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                        isBlocked
-                                            ? Icons.lock_open_rounded
-                                            : Icons.shield_outlined,
-                                        size: 18),
-                                    const SizedBox(width: 10),
-                                    Text(isBlocked
-                                        ? AppLocalizations.of(context).unblockUserLabel
-                                        : AppLocalizations.of(context).securityCheckTitle),
-                                  ],
-                                ),
-                              ),
-                            ],
-                            onSelected: (value) async {
-                              if (value == 'gallery') {
-                                final rootState = rootScreenKey.currentState;
-                                final msgs = [
-                                  ...(rootState?.chats[chatId] ?? const <ChatMessage>[]),
-                                  ..._olderMessages,
-                                ];
-                                showMediaGalleryDialog(
-                                  context,
-                                  items: extractGalleryItemsFromChatMessages(msgs),
-                                  peerUsername: widget.otherUsername,
-                                );
-                                return;
-                              }
-                              if (BlocklistManager.isBlocked(
-                                  widget.otherUsername ?? '')) {
-                                final other = widget.otherUsername ?? '';
-                                final confirmed = await showDialog<bool>(
-                                  context: context,
-                                  builder: (dCtx) => AlertDialog(
-                                    title: Text(AppLocalizations.of(context)
-                                        .unblockUserLabel),
-                                    content: Text(AppLocalizations.of(context)
-                                        .unblockUserConfirmContent(other)),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () =>
-                                            Navigator.of(dCtx).pop(false),
-                                        child: Text(AppLocalizations.of(context)
-                                            .cancel),
-                                      ),
-                                      TextButton(
-                                        onPressed: () =>
-                                            Navigator.of(dCtx).pop(true),
-                                        child: Text(AppLocalizations.of(context)
-                                            .unblockUserLabel),
                                       ),
                                     ],
-                                  ),
-                                );
-                                if (confirmed != true) return;
-                                await BlocklistManager.unblock(other);
-                                try {
-                                  final token = await AccountManager.getToken(
-                                      widget.myUsername);
-                                  await http.delete(
-                                    Uri.parse('$serverBase/block/$other'),
-                                    headers: {'authorization': 'Bearer $token'},
-                                  );
-                                } catch (e) {
-                                  debugPrint('[unblock] failed: $e');
-                                }
-                                return;
-                              }
-                              final recipient = widget.otherUsername;
-                              final secTitle = AppLocalizations.of(context)
-                                  .securityCheckTitle;
-                              final secContent = AppLocalizations.of(context)
-                                  .securityCheckContent(recipient);
-                              final closeLabel =
-                                  AppLocalizations.of(context).close;
-                              String? theirPubB64;
-                              String? myPubB64;
-                              final token = await AccountManager.getToken(
-                                  widget.myUsername);
-                              try {
-                                final results = await Future.wait([
-                                  http.get(
-                                    Uri.parse('$serverBase/pubkey/$recipient'),
-                                    headers: {'authorization': 'Bearer $token'},
-                                  ),
-                                  http.get(
-                                    Uri.parse(
-                                        '$serverBase/pubkey/${widget.myUsername}'),
-                                    headers: {'authorization': 'Bearer $token'},
-                                  ),
-                                ]);
-                                if (results[0].statusCode == 200) {
-                                  theirPubB64 =
-                                      (jsonDecode(results[0].body))['pubkey']
-                                          as String?;
-                                }
-                                if (results[1].statusCode == 200) {
-                                  myPubB64 =
-                                      (jsonDecode(results[1].body))['pubkey']
-                                          as String?;
-                                }
-                              } catch (e) {
-                                rootScreenKey.currentState?.showSnack(
-                                    AppLocalizations(
-                                            SettingsManager.appLocale.value)
-                                        .failedToFetchPubkey);
-                                return;
-                              }
-                              if (theirPubB64 == null) {
-                                rootScreenKey.currentState?.showSnack(
-                                    AppLocalizations(
-                                            SettingsManager.appLocale.value)
-                                        .userHasNoPubkey);
-                                return;
-                              }
-                              if (myPubB64 == null) {
-                                rootScreenKey.currentState?.showSnack(
-                                    AppLocalizations(
-                                            SettingsManager.appLocale.value)
-                                        .userHasNoPubkey);
-                                return;
-                              }
-                              if (!mounted) return;
-
-                              final myUsername = widget.myUsername;
-                              final otherUsername = widget.otherUsername;
-                              final List<String> sortedNames = [
-                                myUsername,
-                                otherUsername
-                              ]..sort();
-                              final List<int> myPubBytes =
-                                  base64Decode(myPubB64);
-                              final List<int> theirPubBytes =
-                                  base64Decode(theirPubB64);
-                              final List<int> keyA =
-                                  sortedNames[0] == myUsername
-                                      ? myPubBytes
-                                      : theirPubBytes;
-                              final List<int> keyB =
-                                  sortedNames[0] == myUsername
-                                      ? theirPubBytes
-                                      : myPubBytes;
-                              final combined =
-                                  Uint8List.fromList([...keyA, ...keyB]);
-                              final hash =
-                                  dart_crypto.sha256.convert(combined).bytes;
-                              final indices = [
-                                hash[0],
-                                hash[1],
-                                hash[2],
-                                hash[3]
-                              ];
-
-                              const List<String> emojiList = [
-                                "😀",
-                                "😁",
-                                "😂",
-                                "🤣",
-                                "😃",
-                                "😄",
-                                "😅",
-                                "😆",
-                                "😇",
-                                "😈",
-                                "👿",
-                                "😉",
-                                "😊",
-                                "😋",
-                                "😌",
-                                "😍",
-                                "🥰",
-                                "😎",
-                                "😏",
-                                "😐",
-                                "😑",
-                                "😒",
-                                "😓",
-                                "😔",
-                                "😕",
-                                "🙂",
-                                "🙃",
-                                "😗",
-                                "😙",
-                                "😚",
-                                "😘",
-                                "🥲",
-                                "😭",
-                                "😢",
-                                "😥",
-                                "😰",
-                                "😨",
-                                "😱",
-                                "😳",
-                                "🥵",
-                                "🥶",
-                                "😮",
-                                "😤",
-                                "😠",
-                                "😡",
-                                "🤬",
-                                "😞",
-                                "😟",
-                                "😣",
-                                "😖",
-                                "😫",
-                                "😩",
-                                "🥺",
-                                "🤯",
-                                "😬",
-                                "🤔",
-                                "🤭",
-                                "🤫",
-                                "🤥",
-                                "🙄",
-                                "🤢",
-                                "🤮",
-                                "🤧",
-                                "🥴",
-                                "😵",
-                                "🤑",
-                                "🤠",
-                                "🥳",
-                                "🥸",
-                                "🧐",
-                                "🤓",
-                                "👻",
-                                "💀",
-                                "☠",
-                                "👹",
-                                "👺",
-                                "🤡",
-                                "👾",
-                                "🎃",
-                                "🎄",
-                                "🎆",
-                                "🎇",
-                                "🧨",
-                                "✨",
-                                "🎉",
-                                "🎊",
-                                "🎋",
-                                "🎍",
-                                "🎎",
-                                "🎏",
-                                "🎐",
-                                "🎑",
-                                "🎀",
-                                "🏆",
-                                "🥇",
-                                "🥈",
-                                "🥉",
-                                "🏅",
-                                "🥊",
-                                "🎯",
-                                "🎳",
-                                "🎮",
-                                "🎰",
-                                "🎲",
-                                "🧩",
-                                "🧸",
-                                "♟",
-                                "🎨",
-                                "🎪",
-                                "🎬",
-                                "🎤",
-                                "🎧",
-                                "🎼",
-                                "🎵",
-                                "🎶",
-                                "🎸",
-                                "🎹",
-                                "🥁",
-                                "🎷",
-                                "🎺",
-                                "🎻",
-                                "🪕",
-                                "📱",
-                                "💻",
-                                "🖥",
-                                "⌨",
-                                "🖱",
-                                "💾",
-                                "💿",
-                                "📀",
-                                "📺",
-                                "📻",
-                                "📷",
-                                "📸",
-                                "📹",
-                                "🎥",
-                                "🔍",
-                                "🔎",
-                                "🔦",
-                                "💡",
-                                "©",
-                                "®",
-                                "™",
-                                "🐶",
-                                "🐱",
-                                "🐭",
-                                "🐹",
-                                "🐰",
-                                "🦊",
-                                "🐻",
-                                "🐼",
-                                "🐨",
-                                "🐯",
-                                "🦁",
-                                "🐮",
-                                "🐷",
-                                "🐸",
-                                "🐵",
-                                "🐔",
-                                "🐧",
-                                "🐦",
-                                "🐤",
-                                "🦆",
-                                "🦅",
-                                "🦉",
-                                "🦇",
-                                "🐝",
-                                "🦋",
-                                "🐌",
-                                "🐞",
-                                "🐜",
-                                "🐢",
-                                "🐍",
-                                "🦎",
-                                "🦖",
-                                "🦕",
-                                "🦈",
-                                "🐬",
-                                "🐳",
-                                "🐋",
-                                "🦭",
-                                "🐊",
-                                "🐲",
-                                "🐉",
-                                "🦌",
-                                "🦙",
-                                "🦘",
-                                "🦡",
-                                "🦗",
-                                "🦂",
-                                "🌵",
-                                "🌲",
-                                "🌳",
-                                "🌴",
-                                "🌱",
-                                "🌿",
-                                "☘",
-                                "🍀",
-                                "🍁",
-                                "🍂",
-                                "🍃",
-                                "🌺",
-                                "🌻",
-                                "🌸",
-                                "🌼",
-                                "🌷",
-                                "🌹",
-                                "🥀",
-                                "🌞",
-                                "🌕",
-                                "🌙",
-                                "🌟",
-                                "💫",
-                                "⭐",
-                                "🌠",
-                                "☄",
-                                "☀",
-                                "⛅",
-                                "☁",
-                                "🌧",
-                                "⛈",
-                                "🌩",
-                                "🌨",
-                                "🌪",
-                                "🌈",
-                                "🌊",
-                                "💧",
-                                "💦",
-                                "🔥",
-                                "🌍",
-                                "🌎",
-                                "🌏",
-                                "🏔",
-                                "⛰",
-                                "🌋",
-                                "🏕",
-                                "🏖",
-                                "🏜",
-                                "🏝",
-                                "🏞",
-                                "🏟",
-                                "🏛",
-                                "🏗",
-                                "🧱",
-                                "🏠",
-                                "🏡",
-                              ];
-
-                              final emojis = indices
-                                  .map((i) => emojiList[i % emojiList.length])
-                                  .toList();
-
-                              final dialogColorScheme =
-                                  Theme.of(context).colorScheme;
-                              const cardBtnShape = RoundedRectangleBorder(
-                                borderRadius:
-                                    BorderRadius.all(Radius.circular(50)),
-                              );
-                              showDialog(
-                                context: context,
-                                builder: (dCtx) => Dialog(
-                                  backgroundColor: Colors.transparent,
-                                  insetPadding: const EdgeInsets.symmetric(
-                                      horizontal: 24, vertical: 32),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(28),
-                                    child: ConstrainedBox(
-                                      constraints: const BoxConstraints(
-                                          maxWidth: 400),
-                                      child: Material(
-                                        color: dialogColorScheme.surface,
-                                        borderRadius:
-                                            BorderRadius.circular(28),
-                                        child: Padding(
-                                          padding: const EdgeInsets.fromLTRB(
-                                              20, 16, 20, 20),
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.stretch,
-                                            children: [
-                                              Row(
-                                                children: [
-                                                  const Spacer(),
-                                                  GestureDetector(
-                                                    onTap: () => Navigator.of(
-                                                            dCtx)
-                                                        .pop(),
-                                                    child: Container(
-                                                      width: 32,
-                                                      height: 32,
-                                                      decoration: BoxDecoration(
-                                                        color: dialogColorScheme
-                                                            .onSurface
-                                                            .withValues(
-                                                                alpha: 0.07),
-                                                        borderRadius:
-                                                            BorderRadius
-                                                                .circular(10),
-                                                      ),
-                                                      child: Icon(
-                                                        Icons.close_rounded,
-                                                        size: 18,
-                                                        color: dialogColorScheme
-                                                            .onSurface
-                                                            .withValues(
-                                                                alpha: 0.55),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                              Container(
-                                                width: 64,
-                                                height: 64,
-                                                decoration: BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  color: dialogColorScheme
-                                                      .primary
-                                                      .withValues(alpha: 0.12),
-                                                ),
-                                                child: Icon(
-                                                  Icons.shield_rounded,
-                                                  size: 32,
-                                                  color:
-                                                      dialogColorScheme.primary,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 14),
-                                              Text(
-                                                secTitle,
-                                                textAlign: TextAlign.center,
-                                                style: const TextStyle(
-                                                  fontSize: 18,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 8),
-                                              Text(
-                                                secContent,
-                                                textAlign: TextAlign.center,
-                                                style: TextStyle(
-                                                  color: dialogColorScheme
-                                                      .onSurface
-                                                      .withValues(alpha: 0.6),
-                                                  fontSize: 14,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 18),
-                                              Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        vertical: 14),
-                                                decoration: BoxDecoration(
-                                                  color: dialogColorScheme
-                                                      .surfaceContainerHighest
-                                                      .withValues(alpha: 0.45),
-                                                  borderRadius:
-                                                      BorderRadius.circular(
-                                                          18),
-                                                  border: Border.all(
-                                                    color: dialogColorScheme
-                                                        .outlineVariant
-                                                        .withValues(
-                                                            alpha: 0.3),
-                                                    width: 0.8,
-                                                  ),
-                                                ),
-                                                child: Row(
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment
-                                                          .spaceEvenly,
-                                                  children: emojis
-                                                      .map((e) => Text(
-                                                            e,
-                                                            style:
-                                                                const TextStyle(
-                                                                    fontSize:
-                                                                        40),
-                                                          ))
-                                                      .toList(),
-                                                ),
-                                              ),
-                                              const SizedBox(height: 20),
-                                              OutlinedButton(
-                                                onPressed: () =>
-                                                    Navigator.of(dCtx).pop(),
-                                                style: OutlinedButton.styleFrom(
-                                                  padding:
-                                                      const EdgeInsets.symmetric(
-                                                          vertical: 13),
-                                                  shape: cardBtnShape,
-                                                ),
-                                                child: Text(closeLabel),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
                                   ),
                                 ),
                               );
                             },
-                          );
-                        },
-                      ),
-                    ]),
+                          )
+                        : AnimatedBuilder(
+                            key: const ValueKey(false),
+                            animation: Listenable.merge([
+                              SettingsManager.elementOpacity,
+                              SettingsManager.elementBrightness,
+                            ]),
+                            builder: (titleCtx, _) {
+                              final op = SettingsManager.elementOpacity.value;
+                              final br =
+                                  SettingsManager.elementBrightness.value;
+                              final cs = Theme.of(titleCtx).colorScheme;
+                              final bgColor = SettingsManager.getElementColor(
+                                cs.surfaceContainerHighest,
+                                br,
+                              ).withValues(alpha: op);
+                              final borderColor =
+                                  cs.outlineVariant.withValues(alpha: 0.3);
+                              final isWide =
+                                  MediaQuery.sizeOf(titleCtx).width > 700;
+                              final textContent = Builder(
+                                builder: (context) {
+                                  final userInfo =
+                                      UserCache.getSync(widget.otherUsername);
+                                  final displayName = userInfo?.displayName ??
+                                      widget.otherUsername;
+                                  return Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      GestureDetector(
+                                        onTap: () => _showUserProfileDialog(
+                                            widget.otherUsername),
+                                        onLongPress: () =>
+                                            _showUserProfileDialog(
+                                                widget.otherUsername),
+                                        child: MarqueeText(
+                                          text: displayName,
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16),
+                                        ),
+                                      ),
+                                      AnimatedBuilder(
+                                        animation: _combinedHeaderListenable,
+                                        builder: (context, child) {
+                                          final typing = typingUsersNotifier
+                                              .value
+                                              .contains(widget.otherUsername);
+                                          if (typing) {
+                                            return const Text('typing...',
+                                                style: TextStyle(
+                                                    fontSize: 12,
+                                                    color:
+                                                        Colors.orangeAccent));
+                                          }
+                                          final isConnected =
+                                              wsConnectedNotifier.value;
+                                          if (!isConnected) {
+                                            return const Text(
+                                                'no connection (auto mode)',
+                                                style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: Colors.grey));
+                                          }
+                                          final online = onlineUsersNotifier
+                                              .value
+                                              .contains(widget.otherUsername);
+                                          final statuses =
+                                              userStatusNotifier.value;
+                                          final visMap =
+                                              userStatusVisibilityNotifier
+                                                  .value;
+                                          final visibilityEntry =
+                                              visMap.containsKey(
+                                                      widget.otherUsername)
+                                                  ? visMap[widget.otherUsername]
+                                                  : null;
+                                          if (visibilityEntry == 'hide')
+                                            return const SizedBox.shrink();
+                                          final customStatus =
+                                              statuses[widget.otherUsername];
+                                          if (customStatus != null &&
+                                              customStatus.isNotEmpty) {
+                                            return Builder(builder: (ctx) {
+                                              final statusColor = online
+                                                  ? const Color(0xFF2ECC71)
+                                                  : Theme.of(ctx)
+                                                      .colorScheme
+                                                      .onSurfaceVariant
+                                                      .withValues(alpha: 0.9);
+                                              return Text(customStatus,
+                                                  style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: statusColor));
+                                            });
+                                          }
+                                          if (visibilityEntry == 'show') {
+                                            final statusText =
+                                                online ? 'online' : 'offline';
+                                            return Builder(builder: (ctx) {
+                                              final statusColor = online
+                                                  ? const Color(0xFF2ECC71)
+                                                  : Theme.of(ctx)
+                                                      .colorScheme
+                                                      .onSurfaceVariant
+                                                      .withValues(alpha: 0.9);
+                                              return Text(statusText,
+                                                  style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: statusColor));
+                                            });
+                                          }
+                                          if (online) {
+                                            return const Text('online',
+                                                style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: Color(0xFF2ECC71)));
+                                          }
+                                          return const SizedBox.shrink();
+                                        },
+                                      ),
+                                    ],
+                                  );
+                                },
+                              );
+                              final pill = AdaptiveGlassPill(
+                                backgroundColor: bgColor,
+                                borderColor: borderColor,
+                                child: Row(
+                                  mainAxisSize: isWide
+                                      ? MainAxisSize.min
+                                      : MainAxisSize.max,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    GestureDetector(
+                                      onTap: () => _showUserProfileDialog(
+                                          widget.otherUsername),
+                                      onLongPress: () => _showUserProfileDialog(
+                                          widget.otherUsername),
+                                      child: AvatarWidget(
+                                        key: ValueKey(
+                                            'avatar-${widget.otherUsername}'),
+                                        username: widget.otherUsername,
+                                        tokenProvider: avatarTokenProvider,
+                                        avatarBaseUrl: serverBase,
+                                        size: 40.0,
+                                        editable: false,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    if (isWide)
+                                      textContent
+                                    else
+                                      Expanded(child: textContent),
+                                  ],
+                                ),
+                              );
+                              final wrappedPill = GestureDetector(
+                                onTap: () => _showUserProfileDialog(
+                                    widget.otherUsername),
+                                child: MouseRegion(
+                                  cursor: SystemMouseCursors.click,
+                                  child: pill,
+                                ),
+                              );
+                              return isWide
+                                  ? Align(
+                                      alignment: Alignment.center,
+                                      child: wrappedPill)
+                                  : wrappedPill;
+                            },
+                          ),
+                  ),
+                ),
+              ),
             ),
-          ],
-        ),
-        body: Stack(
-          children: [
-            const ChatBackgroundLayer(),
-            ValueListenableBuilder<int>(
-              valueListenable: getChatMessageVersion(chatId),
-              builder: (_, __, ___) {
-                final rootState = rootScreenKey.currentState;
-                if (rootState == null) return const SizedBox();
-                if (!_hasBuiltMessageListOnce) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    _hasBuiltMessageListOnce = true;
-                  });
-                }
-                final mainMsgs = rootState.chats[chatId] ?? [];
-                final msgs = [...mainMsgs, ..._olderMessages];
-                if (msgs.isEmpty) {
-                  return EmptyChatPlaceholder(
-                      label: AppLocalizations.of(context).noMessagesYet);
-                }
+            actions: [
+              ValueListenableBuilder(
+                valueListenable: _selectionNotifier,
+                builder: (_, sel, __) {
+                  final switcher = AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 280),
+                    layoutBuilder: (currentChild, previousChildren) => Stack(
+                      alignment: Alignment.centerRight,
+                      children: [
+                        ...previousChildren,
+                        if (currentChild != null) currentChild,
+                      ],
+                    ),
+                    transitionBuilder: (child, anim) => FadeTransition(
+                      opacity: CurvedAnimation(
+                          parent: anim, curve: Curves.easeInOut),
+                      child: child,
+                    ),
+                    child: sel.active
+                        ? AnimatedBuilder(
+                            key: const ValueKey('sel-actions'),
+                            animation: Listenable.merge([
+                              SettingsManager.elementOpacity,
+                              SettingsManager.elementBrightness,
+                            ]),
+                            builder: (ctx, _) {
+                              final op = SettingsManager.elementOpacity.value;
+                              final br =
+                                  SettingsManager.elementBrightness.value;
+                              final cs = Theme.of(ctx).colorScheme;
+                              final btnBg = SettingsManager.getElementColor(
+                                cs.surfaceContainerHighest,
+                                br,
+                              ).withValues(alpha: op);
+                              final border =
+                                  cs.outlineVariant.withValues(alpha: 0.3);
+                              final iconColor =
+                                  cs.onSurface.withValues(alpha: 0.75);
+                              Widget selBtn(IconData ic, Color? icColor,
+                                      String tip, VoidCallback? onTap) =>
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 4),
+                                    child: Tooltip(
+                                      message: tip,
+                                      child: MouseRegion(
+                                        cursor: SystemMouseCursors.click,
+                                        child: GestureDetector(
+                                          onTap: onTap,
+                                          child: AdaptiveGlassIconButton(
+                                            backgroundColor: btnBg,
+                                            borderColor: border,
+                                            child: Center(
+                                                child: Icon(ic,
+                                                    size: 20,
+                                                    color:
+                                                        icColor ?? iconColor)),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                              return Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Visibility(
+                                      maintainSize: true,
+                                      maintainAnimation: true,
+                                      maintainState: true,
+                                      visible: sel.selected.values
+                                          .any(_isTextMessage),
+                                      child: selBtn(Icons.copy_rounded, null,
+                                          l.copy, _copySelectedMessages),
+                                    ),
+                                    selBtn(Icons.forward_rounded, null,
+                                        l.forward, _forwardSelectedMessages),
+                                    Visibility(
+                                      maintainSize: true,
+                                      maintainAnimation: true,
+                                      maintainState: true,
+                                      visible: sel.selected.values
+                                          .any((m) => m.outgoing),
+                                      child: selBtn(
+                                          Icons.delete_outline_rounded,
+                                          cs.error,
+                                          'Delete',
+                                          _confirmDeleteSelected),
+                                    ),
+                                  ]);
+                            },
+                          )
+                        : AnimatedBuilder(
+                            key: const ValueKey('normal-actions'),
+                            animation: Listenable.merge([
+                              SettingsManager.elementOpacity,
+                              SettingsManager.elementBrightness,
+                            ]),
+                            builder: (actCtx, _) {
+                              final op = SettingsManager.elementOpacity.value;
+                              final br =
+                                  SettingsManager.elementBrightness.value;
+                              final csA = Theme.of(actCtx).colorScheme;
+                              final btnBg = SettingsManager.getElementColor(
+                                csA.surfaceContainerHighest,
+                                br,
+                              ).withValues(alpha: op);
+                              final btnBorder =
+                                  csA.outlineVariant.withValues(alpha: 0.3);
+                              final iconColor =
+                                  csA.onSurface.withValues(alpha: 0.75);
 
-                final items = _buildMessagesWithDaySeparators(msgs);
+                              Widget frostedBtn({
+                                required Widget icon,
+                                required VoidCallback onTap,
+                                String? tooltip,
+                              }) =>
+                                  MouseRegion(
+                                    cursor: SystemMouseCursors.click,
+                                    child: Tooltip(
+                                      message: tooltip ?? '',
+                                      child: GestureDetector(
+                                        onTap: onTap,
+                                        child: AdaptiveGlassIconButton(
+                                          backgroundColor: btnBg,
+                                          borderColor: btnBorder,
+                                          child: Center(child: icon),
+                                        ),
+                                      ),
+                                    ),
+                                  );
 
-                // Preload images for all current messages so initState finds
-                // files in imageFileCache before widgets scroll into view.
-                // Guarded by a list fingerprint so we don't re-walk the whole
-                // list on every unrelated rebuild.
-                final stampLast = msgs.isEmpty ? '' : msgs.last.id;
-                if (msgs.length != _preloadStampCount ||
-                    stampLast != _preloadStampLast) {
-                  _preloadStampCount = msgs.length;
-                  _preloadStampLast = stampLast;
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    ChatImagePreloader.preload(msgs,
-                        peerUsername: widget.otherUsername);
-                  });
-                }
+                              return Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    frostedBtn(
+                                      tooltip: 'Search (Ctrl+F)',
+                                      icon: Icon(Icons.search,
+                                          size: 20, color: iconColor),
+                                      onTap: () {
+                                        if (_showSearch)
+                                          _closeSearch();
+                                        else
+                                          _openSearch();
+                                      },
+                                    ),
+                                    const SizedBox(width: 4),
+                                    ValueListenableBuilder<Set<String>>(
+                                      valueListenable:
+                                          BlocklistManager.blockedUsers,
+                                      builder: (_, blocked, __) {
+                                        final isBlocked =
+                                            widget.otherUsername != null &&
+                                                blocked.contains(
+                                                    widget.otherUsername!);
+                                        return AdaptiveGlassIconButton(
+                                          backgroundColor: btnBg,
+                                          borderColor: btnBorder,
+                                          child: PopupMenuButton<String>(
+                                            padding: EdgeInsets.zero,
+                                            icon: SettingsManager
+                                                    .meshModeEnabled.value
+                                                ? ValueListenableBuilder<int>(
+                                                    valueListenable: rootScreenKey
+                                                            .currentState
+                                                            ?.getBleUnreadNotifier(
+                                                                chatId) ??
+                                                        ValueNotifier(0),
+                                                    builder:
+                                                        (_, bleUnread, child) =>
+                                                            Badge(
+                                                      isLabelVisible:
+                                                          bleUnread > 0,
+                                                      backgroundColor:
+                                                          csA.primary,
+                                                      smallSize: 8,
+                                                      child: child!,
+                                                    ),
+                                                    child: Icon(Icons.more_vert,
+                                                        size: 20,
+                                                        color: iconColor),
+                                                  )
+                                                : Icon(Icons.more_vert,
+                                                    size: 20, color: iconColor),
+                                            itemBuilder: (menuCtx) => [
+                                              PopupMenuItem<String>(
+                                                value: 'call',
+                                                child: Row(children: [
+                                                  const Icon(
+                                                      Icons.phone_outlined,
+                                                      size: 18),
+                                                  const SizedBox(width: 10),
+                                                  Text(AppLocalizations.of(
+                                                          context)
+                                                      .call),
+                                                ]),
+                                              ),
+                                              PopupMenuItem<String>(
+                                                value: 'gallery',
+                                                child: Row(children: [
+                                                  const Icon(
+                                                      Icons
+                                                          .photo_library_outlined,
+                                                      size: 18),
+                                                  const SizedBox(width: 10),
+                                                  Text(AppLocalizations.of(
+                                                          context)
+                                                      .galleryMenuLabel),
+                                                ]),
+                                              ),
+                                              PopupMenuItem<String>(
+                                                value: isBlocked
+                                                    ? 'unblock'
+                                                    : 'security',
+                                                child: Row(
+                                                  children: [
+                                                    Icon(
+                                                        isBlocked
+                                                            ? Icons
+                                                                .lock_open_rounded
+                                                            : Icons
+                                                                .shield_outlined,
+                                                        size: 18),
+                                                    const SizedBox(width: 10),
+                                                    Text(isBlocked
+                                                        ? AppLocalizations.of(
+                                                                context)
+                                                            .unblockUserLabel
+                                                        : AppLocalizations.of(
+                                                                context)
+                                                            .securityCheckTitle),
+                                                  ],
+                                                ),
+                                              ),
+                                              if (SettingsManager
+                                                  .meshModeEnabled.value)
+                                                PopupMenuItem<String>(
+                                                  value: 'mesh_chat',
+                                                  child: ValueListenableBuilder<
+                                                      int>(
+                                                    valueListenable: rootScreenKey
+                                                            .currentState
+                                                            ?.getBleUnreadNotifier(
+                                                                chatId) ??
+                                                        ValueNotifier(0),
+                                                    builder:
+                                                        (bCtx, bleUnread, _) {
+                                                      return Row(children: [
+                                                        const Icon(
+                                                            Icons.radar_rounded,
+                                                            size: 18),
+                                                        const SizedBox(
+                                                            width: 10),
+                                                        Expanded(
+                                                            child: Text(
+                                                                AppLocalizations.of(
+                                                                        context)
+                                                                    .meshChatLabel)),
+                                                        if (bleUnread > 0)
+                                                          Container(
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .symmetric(
+                                                                    horizontal:
+                                                                        6,
+                                                                    vertical:
+                                                                        2),
+                                                            decoration:
+                                                                BoxDecoration(
+                                                              color: Theme.of(
+                                                                      bCtx)
+                                                                  .colorScheme
+                                                                  .primary,
+                                                              borderRadius:
+                                                                  BorderRadius
+                                                                      .circular(
+                                                                          10),
+                                                            ),
+                                                            child: Text(
+                                                              '$bleUnread',
+                                                              style: TextStyle(
+                                                                  color: Theme.of(
+                                                                          bCtx)
+                                                                      .colorScheme
+                                                                      .onPrimary,
+                                                                  fontSize: 11,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .bold),
+                                                            ),
+                                                          ),
+                                                      ]);
+                                                    },
+                                                  ),
+                                                ),
+                                            ],
+                                            onSelected: (value) async {
+                                              if (value == 'call') {
+                                                final confirmed =
+                                                    await showDialog<bool>(
+                                                  context: context,
+                                                  builder: (dCtx) =>
+                                                      AlertDialog(
+                                                    title: Text(
+                                                        AppLocalizations.of(
+                                                                context)
+                                                            .voiceCallsTitle),
+                                                    content: Text(
+                                                        AppLocalizations.of(
+                                                                context)
+                                                            .voiceCallsContent),
+                                                    actions: [
+                                                      TextButton(
+                                                        onPressed: () =>
+                                                            Navigator.of(dCtx)
+                                                                .pop(false),
+                                                        child: Text(
+                                                            AppLocalizations.of(
+                                                                    context)
+                                                                .cancel),
+                                                      ),
+                                                      TextButton(
+                                                        onPressed: () {
+                                                          Navigator.of(dCtx)
+                                                              .pop(false);
+                                                          showModalBottomSheet(
+                                                            context: context,
+                                                            isScrollControlled:
+                                                                true,
+                                                            backgroundColor:
+                                                                Colors
+                                                                    .transparent,
+                                                            builder: (_) =>
+                                                                const SupportSheet(),
+                                                          );
+                                                        },
+                                                        child: Text(
+                                                            AppLocalizations.of(
+                                                                    context)
+                                                                .supportOnyxBtn),
+                                                      ),
+                                                      TextButton(
+                                                        onPressed: () =>
+                                                            Navigator.of(dCtx)
+                                                                .pop(true),
+                                                        child: Text(
+                                                            AppLocalizations.of(
+                                                                    context)
+                                                                .call),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                );
+                                                if (confirmed == true) {
+                                                  callManager.startCall(
+                                                      widget.otherUsername!);
+                                                }
+                                                return;
+                                              }
+                                              if (value == 'mesh_chat') {
+                                                if (isDesktop) {
+                                                  rootScreenKey.currentState
+                                                      ?.openMeshChat(
+                                                    widget.myUsername,
+                                                    widget.otherUsername ?? '',
+                                                  );
+                                                } else {
+                                                  Navigator.of(context).push(
+                                                    PageRouteBuilder(
+                                                      opaque: true,
+                                                      transitionDuration:
+                                                          Duration.zero,
+                                                      reverseTransitionDuration:
+                                                          const Duration(
+                                                              milliseconds:
+                                                                  200),
+                                                      pageBuilder:
+                                                          (_, __, ___) =>
+                                                              MeshChatScreen(
+                                                        myUsername:
+                                                            widget.myUsername,
+                                                        otherUsername: widget
+                                                                .otherUsername ??
+                                                            '',
+                                                      ),
+                                                      transitionsBuilder: (_,
+                                                              animation,
+                                                              __,
+                                                              child) =>
+                                                          FadeTransition(
+                                                              opacity:
+                                                                  animation,
+                                                              child: child),
+                                                    ),
+                                                  );
+                                                }
+                                                return;
+                                              }
+                                              if (value == 'gallery') {
+                                                final rootState =
+                                                    rootScreenKey.currentState;
+                                                final msgs = [
+                                                  ...((rootState
+                                                              ?.chats[chatId] ??
+                                                          const <ChatMessage>[])
+                                                      .where((m) =>
+                                                          m.deliveryMode !=
+                                                          DeliveryMode
+                                                              .bleMesh)),
+                                                  ..._olderMessages,
+                                                ];
+                                                showMediaGalleryDialog(
+                                                  context,
+                                                  items:
+                                                      extractGalleryItemsFromChatMessages(
+                                                          msgs),
+                                                  peerUsername:
+                                                      widget.otherUsername,
+                                                  onJumpToMessage: (id) =>
+                                                      _scrollToMessageById(
+                                                          int.tryParse(id),
+                                                          localId: id),
+                                                );
+                                                return;
+                                              }
+                                              if (BlocklistManager.isBlocked(
+                                                  widget.otherUsername ?? '')) {
+                                                final other =
+                                                    widget.otherUsername ?? '';
+                                                final confirmed =
+                                                    await showDialog<bool>(
+                                                  context: context,
+                                                  builder: (dCtx) =>
+                                                      AlertDialog(
+                                                    title: Text(
+                                                        AppLocalizations.of(
+                                                                context)
+                                                            .unblockUserLabel),
+                                                    content: Text(AppLocalizations
+                                                            .of(context)
+                                                        .unblockUserConfirmContent(
+                                                            other)),
+                                                    actions: [
+                                                      TextButton(
+                                                        onPressed: () =>
+                                                            Navigator.of(dCtx)
+                                                                .pop(false),
+                                                        child: Text(
+                                                            AppLocalizations.of(
+                                                                    context)
+                                                                .cancel),
+                                                      ),
+                                                      TextButton(
+                                                        onPressed: () =>
+                                                            Navigator.of(dCtx)
+                                                                .pop(true),
+                                                        child: Text(
+                                                            AppLocalizations.of(
+                                                                    context)
+                                                                .unblockUserLabel),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                );
+                                                if (confirmed != true) return;
+                                                await BlocklistManager.unblock(
+                                                    other);
+                                                try {
+                                                  final token =
+                                                      await AccountManager
+                                                          .getToken(widget
+                                                              .myUsername);
+                                                  await http.delete(
+                                                    Uri.parse(
+                                                        '$serverBase/block/$other'),
+                                                    headers: {
+                                                      'authorization':
+                                                          'Bearer $token'
+                                                    },
+                                                  );
+                                                } catch (e) {
+                                                  debugPrint(
+                                                      '[unblock] failed: $e');
+                                                }
+                                                return;
+                                              }
+                                              final recipient =
+                                                  widget.otherUsername;
+                                              final secTitle =
+                                                  AppLocalizations.of(context)
+                                                      .securityCheckTitle;
+                                              final secContent =
+                                                  AppLocalizations.of(context)
+                                                      .securityCheckContent(
+                                                          recipient);
+                                              final closeLabel =
+                                                  AppLocalizations.of(context)
+                                                      .close;
+                                              String? theirPubB64;
+                                              String? myPubB64;
+                                              final token =
+                                                  await AccountManager.getToken(
+                                                      widget.myUsername);
+                                              try {
+                                                final results =
+                                                    await Future.wait([
+                                                  http.get(
+                                                    Uri.parse(
+                                                        '$serverBase/pubkey/$recipient'),
+                                                    headers: {
+                                                      'authorization':
+                                                          'Bearer $token'
+                                                    },
+                                                  ),
+                                                  http.get(
+                                                    Uri.parse(
+                                                        '$serverBase/pubkey/${widget.myUsername}'),
+                                                    headers: {
+                                                      'authorization':
+                                                          'Bearer $token'
+                                                    },
+                                                  ),
+                                                ]);
+                                                if (results[0].statusCode ==
+                                                    200) {
+                                                  theirPubB64 = (jsonDecode(
+                                                          results[0].body))[
+                                                      'pubkey'] as String?;
+                                                }
+                                                if (results[1].statusCode ==
+                                                    200) {
+                                                  myPubB64 = (jsonDecode(
+                                                          results[1].body))[
+                                                      'pubkey'] as String?;
+                                                }
+                                              } catch (e) {
+                                                rootScreenKey.currentState
+                                                    ?.showSnack(AppLocalizations(
+                                                            SettingsManager
+                                                                .appLocale
+                                                                .value)
+                                                        .failedToFetchPubkey);
+                                                return;
+                                              }
+                                              if (theirPubB64 == null) {
+                                                rootScreenKey.currentState
+                                                    ?.showSnack(
+                                                        AppLocalizations(
+                                                                SettingsManager
+                                                                    .appLocale
+                                                                    .value)
+                                                            .userHasNoPubkey);
+                                                return;
+                                              }
+                                              if (myPubB64 == null) {
+                                                rootScreenKey.currentState
+                                                    ?.showSnack(
+                                                        AppLocalizations(
+                                                                SettingsManager
+                                                                    .appLocale
+                                                                    .value)
+                                                            .userHasNoPubkey);
+                                                return;
+                                              }
+                                              if (!mounted) return;
 
-                // Update search matches (side-effect during build is safe here
-                // because we only assign fields, no setState).
-                if (_showSearch && _searchQuery.isNotEmpty) {
-                  _cachedSearchMatches = items
-                      .asMap()
-                      .entries
-                      .where((e) =>
-                          e.value is _MessageItem &&
-                          (e.value as _MessageItem)
-                              .message
-                              .content
-                              .toLowerCase()
-                              .contains(_searchQuery))
-                      .map((e) => e.key)
-                      .toList();
-                  final clampedIdx = _cachedSearchMatches.isEmpty
-                      ? 0
-                      : _currentMatchIdx.clamp(
-                          0, _cachedSearchMatches.length - 1);
-                  final stats = (
-                    current: _cachedSearchMatches.isEmpty ? 0 : clampedIdx + 1,
-                    total: _cachedSearchMatches.length,
+                                              final myUsername =
+                                                  widget.myUsername;
+                                              final otherUsername =
+                                                  widget.otherUsername;
+                                              final List<String> sortedNames = [
+                                                myUsername,
+                                                otherUsername
+                                              ]..sort();
+                                              final List<int> myPubBytes =
+                                                  base64Decode(myPubB64);
+                                              final List<int> theirPubBytes =
+                                                  base64Decode(theirPubB64);
+                                              final List<int> keyA =
+                                                  sortedNames[0] == myUsername
+                                                      ? myPubBytes
+                                                      : theirPubBytes;
+                                              final List<int> keyB =
+                                                  sortedNames[0] == myUsername
+                                                      ? theirPubBytes
+                                                      : myPubBytes;
+                                              final combined =
+                                                  Uint8List.fromList(
+                                                      [...keyA, ...keyB]);
+                                              final hash = dart_crypto.sha256
+                                                  .convert(combined)
+                                                  .bytes;
+                                              final indices = [
+                                                hash[0],
+                                                hash[1],
+                                                hash[2],
+                                                hash[3]
+                                              ];
+
+                                              const List<String> emojiList = [
+                                                "😀",
+                                                "😁",
+                                                "😂",
+                                                "🤣",
+                                                "😃",
+                                                "😄",
+                                                "😅",
+                                                "😆",
+                                                "😇",
+                                                "😈",
+                                                "👿",
+                                                "😉",
+                                                "😊",
+                                                "😋",
+                                                "😌",
+                                                "😍",
+                                                "🥰",
+                                                "😎",
+                                                "😏",
+                                                "😐",
+                                                "😑",
+                                                "😒",
+                                                "😓",
+                                                "😔",
+                                                "😕",
+                                                "🙂",
+                                                "🙃",
+                                                "😗",
+                                                "😙",
+                                                "😚",
+                                                "😘",
+                                                "🥲",
+                                                "😭",
+                                                "😢",
+                                                "😥",
+                                                "😰",
+                                                "😨",
+                                                "😱",
+                                                "😳",
+                                                "🥵",
+                                                "🥶",
+                                                "😮",
+                                                "😤",
+                                                "😠",
+                                                "😡",
+                                                "🤬",
+                                                "😞",
+                                                "😟",
+                                                "😣",
+                                                "😖",
+                                                "😫",
+                                                "😩",
+                                                "🥺",
+                                                "🤯",
+                                                "😬",
+                                                "🤔",
+                                                "🤭",
+                                                "🤫",
+                                                "🤥",
+                                                "🙄",
+                                                "🤢",
+                                                "🤮",
+                                                "🤧",
+                                                "🥴",
+                                                "😵",
+                                                "🤑",
+                                                "🤠",
+                                                "🥳",
+                                                "🥸",
+                                                "🧐",
+                                                "🤓",
+                                                "👻",
+                                                "💀",
+                                                "☠",
+                                                "👹",
+                                                "👺",
+                                                "🤡",
+                                                "👾",
+                                                "🎃",
+                                                "🎄",
+                                                "🎆",
+                                                "🎇",
+                                                "🧨",
+                                                "✨",
+                                                "🎉",
+                                                "🎊",
+                                                "🎋",
+                                                "🎍",
+                                                "🎎",
+                                                "🎏",
+                                                "🎐",
+                                                "🎑",
+                                                "🎀",
+                                                "🏆",
+                                                "🥇",
+                                                "🥈",
+                                                "🥉",
+                                                "🏅",
+                                                "🥊",
+                                                "🎯",
+                                                "🎳",
+                                                "🎮",
+                                                "🎰",
+                                                "🎲",
+                                                "🧩",
+                                                "🧸",
+                                                "♟",
+                                                "🎨",
+                                                "🎪",
+                                                "🎬",
+                                                "🎤",
+                                                "🎧",
+                                                "🎼",
+                                                "🎵",
+                                                "🎶",
+                                                "🎸",
+                                                "🎹",
+                                                "🥁",
+                                                "🎷",
+                                                "🎺",
+                                                "🎻",
+                                                "🪕",
+                                                "📱",
+                                                "💻",
+                                                "🖥",
+                                                "⌨",
+                                                "🖱",
+                                                "💾",
+                                                "💿",
+                                                "📀",
+                                                "📺",
+                                                "📻",
+                                                "📷",
+                                                "📸",
+                                                "📹",
+                                                "🎥",
+                                                "🔍",
+                                                "🔎",
+                                                "🔦",
+                                                "💡",
+                                                "©",
+                                                "®",
+                                                "™",
+                                                "🐶",
+                                                "🐱",
+                                                "🐭",
+                                                "🐹",
+                                                "🐰",
+                                                "🦊",
+                                                "🐻",
+                                                "🐼",
+                                                "🐨",
+                                                "🐯",
+                                                "🦁",
+                                                "🐮",
+                                                "🐷",
+                                                "🐸",
+                                                "🐵",
+                                                "🐔",
+                                                "🐧",
+                                                "🐦",
+                                                "🐤",
+                                                "🦆",
+                                                "🦅",
+                                                "🦉",
+                                                "🦇",
+                                                "🐝",
+                                                "🦋",
+                                                "🐌",
+                                                "🐞",
+                                                "🐜",
+                                                "🐢",
+                                                "🐍",
+                                                "🦎",
+                                                "🦖",
+                                                "🦕",
+                                                "🦈",
+                                                "🐬",
+                                                "🐳",
+                                                "🐋",
+                                                "🦭",
+                                                "🐊",
+                                                "🐲",
+                                                "🐉",
+                                                "🦌",
+                                                "🦙",
+                                                "🦘",
+                                                "🦡",
+                                                "🦗",
+                                                "🦂",
+                                                "🌵",
+                                                "🌲",
+                                                "🌳",
+                                                "🌴",
+                                                "🌱",
+                                                "🌿",
+                                                "☘",
+                                                "🍀",
+                                                "🍁",
+                                                "🍂",
+                                                "🍃",
+                                                "🌺",
+                                                "🌻",
+                                                "🌸",
+                                                "🌼",
+                                                "🌷",
+                                                "🌹",
+                                                "🥀",
+                                                "🌞",
+                                                "🌕",
+                                                "🌙",
+                                                "🌟",
+                                                "💫",
+                                                "⭐",
+                                                "🌠",
+                                                "☄",
+                                                "☀",
+                                                "⛅",
+                                                "☁",
+                                                "🌧",
+                                                "⛈",
+                                                "🌩",
+                                                "🌨",
+                                                "🌪",
+                                                "🌈",
+                                                "🌊",
+                                                "💧",
+                                                "💦",
+                                                "🔥",
+                                                "🌍",
+                                                "🌎",
+                                                "🌏",
+                                                "🏔",
+                                                "⛰",
+                                                "🌋",
+                                                "🏕",
+                                                "🏖",
+                                                "🏜",
+                                                "🏝",
+                                                "🏞",
+                                                "🏟",
+                                                "🏛",
+                                                "🏗",
+                                                "🧱",
+                                                "🏠",
+                                                "🏡",
+                                              ];
+
+                                              final emojis = indices
+                                                  .map((i) => emojiList[
+                                                      i % emojiList.length])
+                                                  .toList();
+
+                                              final dialogColorScheme =
+                                                  Theme.of(context).colorScheme;
+                                              const cardBtnShape =
+                                                  RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.all(
+                                                    Radius.circular(50)),
+                                              );
+                                              showDialog(
+                                                context: context,
+                                                builder: (dCtx) => Dialog(
+                                                  backgroundColor:
+                                                      Colors.transparent,
+                                                  insetPadding: const EdgeInsets
+                                                      .symmetric(
+                                                      horizontal: 24,
+                                                      vertical: 32),
+                                                  child: ClipRRect(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            28),
+                                                    child: ConstrainedBox(
+                                                      constraints:
+                                                          const BoxConstraints(
+                                                              maxWidth: 400),
+                                                      child: Material(
+                                                        color: dialogColorScheme
+                                                            .surface,
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(28),
+                                                        child: Padding(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .fromLTRB(20,
+                                                                  16, 20, 20),
+                                                          child: Column(
+                                                            mainAxisSize:
+                                                                MainAxisSize
+                                                                    .min,
+                                                            crossAxisAlignment:
+                                                                CrossAxisAlignment
+                                                                    .stretch,
+                                                            children: [
+                                                              Row(
+                                                                children: [
+                                                                  const Spacer(),
+                                                                  GestureDetector(
+                                                                    onTap: () =>
+                                                                        Navigator.of(dCtx)
+                                                                            .pop(),
+                                                                    child:
+                                                                        Container(
+                                                                      width: 32,
+                                                                      height:
+                                                                          32,
+                                                                      decoration:
+                                                                          BoxDecoration(
+                                                                        color: dialogColorScheme
+                                                                            .onSurface
+                                                                            .withValues(alpha: 0.07),
+                                                                        borderRadius:
+                                                                            BorderRadius.circular(10),
+                                                                      ),
+                                                                      child:
+                                                                          Icon(
+                                                                        Icons
+                                                                            .close_rounded,
+                                                                        size:
+                                                                            18,
+                                                                        color: dialogColorScheme
+                                                                            .onSurface
+                                                                            .withValues(alpha: 0.55),
+                                                                      ),
+                                                                    ),
+                                                                  ),
+                                                                ],
+                                                              ),
+                                                              Container(
+                                                                width: 64,
+                                                                height: 64,
+                                                                decoration:
+                                                                    BoxDecoration(
+                                                                  shape: BoxShape
+                                                                      .circle,
+                                                                  color: dialogColorScheme
+                                                                      .primary
+                                                                      .withValues(
+                                                                          alpha:
+                                                                              0.12),
+                                                                ),
+                                                                child: Icon(
+                                                                  Icons
+                                                                      .shield_rounded,
+                                                                  size: 32,
+                                                                  color: dialogColorScheme
+                                                                      .primary,
+                                                                ),
+                                                              ),
+                                                              const SizedBox(
+                                                                  height: 14),
+                                                              Text(
+                                                                secTitle,
+                                                                textAlign:
+                                                                    TextAlign
+                                                                        .center,
+                                                                style:
+                                                                    const TextStyle(
+                                                                  fontSize: 18,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .bold,
+                                                                ),
+                                                              ),
+                                                              const SizedBox(
+                                                                  height: 8),
+                                                              Text(
+                                                                secContent,
+                                                                textAlign:
+                                                                    TextAlign
+                                                                        .center,
+                                                                style:
+                                                                    TextStyle(
+                                                                  color: dialogColorScheme
+                                                                      .onSurface
+                                                                      .withValues(
+                                                                          alpha:
+                                                                              0.6),
+                                                                  fontSize: 14,
+                                                                ),
+                                                              ),
+                                                              const SizedBox(
+                                                                  height: 18),
+                                                              Container(
+                                                                padding:
+                                                                    const EdgeInsets
+                                                                        .symmetric(
+                                                                        vertical:
+                                                                            14),
+                                                                decoration:
+                                                                    BoxDecoration(
+                                                                  color: dialogColorScheme
+                                                                      .surfaceContainerHighest
+                                                                      .withValues(
+                                                                          alpha:
+                                                                              0.45),
+                                                                  borderRadius:
+                                                                      BorderRadius
+                                                                          .circular(
+                                                                              18),
+                                                                  border: Border
+                                                                      .all(
+                                                                    color: dialogColorScheme
+                                                                        .outlineVariant
+                                                                        .withValues(
+                                                                            alpha:
+                                                                                0.3),
+                                                                    width: 0.8,
+                                                                  ),
+                                                                ),
+                                                                child: Row(
+                                                                  mainAxisAlignment:
+                                                                      MainAxisAlignment
+                                                                          .spaceEvenly,
+                                                                  children: emojis
+                                                                      .map((e) => Text(
+                                                                            e,
+                                                                            style:
+                                                                                const TextStyle(fontSize: 40),
+                                                                          ))
+                                                                      .toList(),
+                                                                ),
+                                                              ),
+                                                              const SizedBox(
+                                                                  height: 20),
+                                                              OutlinedButton(
+                                                                onPressed: () =>
+                                                                    Navigator.of(
+                                                                            dCtx)
+                                                                        .pop(),
+                                                                style: OutlinedButton
+                                                                    .styleFrom(
+                                                                  padding: const EdgeInsets
+                                                                      .symmetric(
+                                                                      vertical:
+                                                                          13),
+                                                                  shape:
+                                                                      cardBtnShape,
+                                                                ),
+                                                                child: Text(
+                                                                    closeLabel),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                    const SizedBox(width: 4),
+                                  ]);
+                            },
+                          ),
                   );
-                  if (_searchStats.value != stats) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) _searchStats.value = stats;
-                    });
+                  if (isDesktop)
+                    return SizedBox(
+                      width: 162,
+                      child: Align(
+                          alignment: Alignment.centerRight, child: switcher),
+                    );
+                  return AnimatedSize(
+                    duration: const Duration(milliseconds: 280),
+                    curve: Curves.easeInOutCubic,
+                    alignment: Alignment.centerRight,
+                    child: switcher,
+                  );
+                },
+              ),
+            ],
+          ),
+          body: Stack(
+            children: [
+              const ChatBackgroundLayer(),
+              ValueListenableBuilder<int>(
+                valueListenable: getChatMessageVersion(chatId),
+                builder: (_, __, ___) {
+                  final rootState = rootScreenKey.currentState;
+                  if (rootState == null) return const SizedBox();
+                  final mainMsgs = (rootState.chats[chatId] ?? [])
+                      .where((m) => m.deliveryMode != DeliveryMode.bleMesh)
+                      .toList();
+                  final msgs = [...mainMsgs, ..._olderMessages];
+                  if (msgs.isEmpty) {
+                    return EmptyChatPlaceholder(
+                        label: AppLocalizations.of(context).noMessagesYet);
                   }
-                } else {
-                  _cachedSearchMatches = [];
-                  if (_searchStats.value.total != 0) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) _searchStats.value = (current: 0, total: 0);
-                    });
+                  // Gate new-message entry animations: must be true when the
+                  // bubble widget first mounts (AnimatedMessageBubble starts
+                  // its controller in initState — didUpdateWidget is a no-op,
+                  // so a post-frame flip would be one frame too late).
+                  if (!_hasBuiltMessageListOnce) {
+                    if (_alreadyRenderedMessageIds.isEmpty) {
+                      // No pre-seeded history → brand-new empty chat receiving
+                      // its first message. Open the gate immediately so the
+                      // widget mounts with animate:true on this very frame.
+                      _hasBuiltMessageListOnce = true;
+                    } else {
+                      // History is pre-seeded. Keep the gate closed this frame
+                      // and open it after paint so async-arrivals (WardLink,
+                      // disk cache) don't animate in as if they were new.
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        _hasBuiltMessageListOnce = true;
+                      });
+                    }
                   }
-                }
 
-                if (_cachedDragHash != _cachedMessagesHash) {
-                  _cachedDragHash = _cachedMessagesHash;
-                  final dragMessages = items
-                      .whereType<_MessageItem>()
-                      .map((item) => item.message)
-                      .toList(growable: false);
-                  _dragSelectionOrder = dragMessages
-                      .map(_selectionKeyForMessage)
-                      .toList(growable: false);
-                  _dragSelectionLookup = {
-                    for (final msg in dragMessages) _selectionKeyForMessage(msg): msg,
-                  };
-                  _dragSelectionIndices = {
-                    for (int idx = 0; idx < _dragSelectionOrder.length; idx++)
-                      _dragSelectionOrder[idx]: idx,
-                  };
-                }
-                if (_cachedAllImages == null || _cachedAllImagesHash != _cachedMessagesHash) {
-                  _cachedAllImages = ChatImagesScope.computeFromChatMessages(msgs);
-                  _cachedAllImagesHash = _cachedMessagesHash;
-                }
-                return ChatImagesScope(
-                  allImages: _cachedAllImages!,
-                  child: ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.showAvatarInChats,
-                  builder: (_, showAvatar, __) {
-                    return ValueListenableBuilder<bool>(
-                      valueListenable: SettingsManager.swapMessageAlignment,
-                      builder: (_, swapped, __) {
+                  final items = _buildMessagesWithDaySeparators(msgs);
+
+                  // Preload images for all current messages so initState finds
+                  // files in imageFileCache before widgets scroll into view.
+                  // Guarded by a list fingerprint so we don't re-walk the whole
+                  // list on every unrelated rebuild.
+                  final stampLast = msgs.isEmpty ? '' : msgs.last.id;
+                  if (msgs.length != _preloadStampCount ||
+                      stampLast != _preloadStampLast) {
+                    _preloadStampCount = msgs.length;
+                    _preloadStampLast = stampLast;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      ChatImagePreloader.preload(msgs,
+                          peerUsername: widget.otherUsername);
+                    });
+                  }
+
+                  // Update search matches (side-effect during build is safe here
+                  // because we only assign fields, no setState).
+                  if (_showSearch && _searchQuery.isNotEmpty) {
+                    _cachedSearchMatches = items
+                        .asMap()
+                        .entries
+                        .where((e) =>
+                            e.value is _MessageItem &&
+                            (e.value as _MessageItem)
+                                .message
+                                .content
+                                .toLowerCase()
+                                .contains(_searchQuery))
+                        .map((e) => e.key)
+                        .toList();
+                    final clampedIdx = _cachedSearchMatches.isEmpty
+                        ? 0
+                        : _currentMatchIdx.clamp(
+                            0, _cachedSearchMatches.length - 1);
+                    final stats = (
+                      current:
+                          _cachedSearchMatches.isEmpty ? 0 : clampedIdx + 1,
+                      total: _cachedSearchMatches.length,
+                    );
+                    if (_searchStats.value != stats) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) _searchStats.value = stats;
+                      });
+                    }
+                  } else {
+                    _cachedSearchMatches = [];
+                    if (_searchStats.value.total != 0) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted)
+                          _searchStats.value = (current: 0, total: 0);
+                      });
+                    }
+                  }
+
+                  // Both of these caches go stale on *every* send (the hash is
+                  // derived from msgs.length), and in a chat with a lot of
+                  // image/video history the full-list recompute (esp.
+                  // ChatImagesScope.computeFromChatMessages, which jsonDecodes
+                  // every image/album message) is expensive enough to block
+                  // the very frame the new message's entrance animation starts
+                  // on — that's what made the send animation look like it was
+                  // skipping/cutting short in heavy chats. Neither cache is
+                  // needed synchronously for this frame (drag-select isn't
+                  // active mid-send, and the gallery viewer only reads
+                  // _cachedAllImages when an image is actually tapped), so
+                  // defer the rebuild to a post-frame callback instead.
+                  // Combine drag and images cache updates into a single deferred
+                  // setState so only one rebuild fires instead of two separate
+                  // ones — previously each triggered its own full-screen rebuild
+                  // in the same post-frame batch, competing with the bubble's
+                  // measurement callback and doubling layout work on send.
+                  final needsDragUpdate =
+                      _cachedDragHash != _cachedMessagesHash;
+                  final needsImagesUpdate = _cachedAllImages == null
+                      ? false
+                      : _cachedAllImagesHash != _cachedMessagesHash;
+                  if (_cachedAllImages == null) {
+                    // First build needs this synchronously — nothing to show
+                    // the gallery viewer otherwise.
+                    _cachedAllImages =
+                        ChatImagesScope.computeFromChatMessages(msgs);
+                    _cachedAllImagesHash = _cachedMessagesHash;
+                  }
+                  if (needsDragUpdate || needsImagesUpdate) {
+                    final targetHash = _cachedMessagesHash;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (!mounted) return;
+                      final stillNeedsDrag = _cachedDragHash != targetHash;
+                      final stillNeedsImages =
+                          _cachedAllImagesHash != targetHash;
+                      if (!stillNeedsDrag && !stillNeedsImages) return;
+                      final recomputedImages = stillNeedsImages
+                          ? ChatImagesScope.computeFromChatMessages(msgs)
+                          : null;
+                      if (!mounted) return;
+                      setState(() {
+                        if (stillNeedsDrag) {
+                          final dragMessages = items
+                              .whereType<_MessageItem>()
+                              .map((item) => item.message)
+                              .toList(growable: false);
+                          _cachedDragHash = targetHash;
+                          _dragSelectionOrder = dragMessages
+                              .map(_selectionKeyForMessage)
+                              .toList(growable: false);
+                          _dragSelectionLookup = {
+                            for (final msg in dragMessages)
+                              _selectionKeyForMessage(msg): msg,
+                          };
+                          _dragSelectionIndices = {
+                            for (int idx = 0;
+                                idx < _dragSelectionOrder.length;
+                                idx++)
+                              _dragSelectionOrder[idx]: idx,
+                          };
+                        }
+                        if (stillNeedsImages && recomputedImages != null) {
+                          _cachedAllImages = recomputedImages;
+                          _cachedAllImagesHash = targetHash;
+                        }
+                      });
+                    });
+                  }
+                  // Maps each item's stable String key to its ListView index for
+                  // O(1) findChildIndexCallback lookups. Rebuilt only when the
+                  // message list actually changes (hash check), so deferred
+                  // setState calls (drag/image caches) don't trigger O(n) work.
+                  if (_cachedItemKeyHash != _cachedMessagesHash ||
+                      _cachedItemKeyToFlatIndex == null) {
+                    final map = <String, int>{};
+                    for (int idx = 0; idx < items.length; idx++) {
+                      final item = items[idx];
+                      if (item is _DaySeparatorItem) {
+                        map['day_${item.date.toIso8601String()}'] = idx;
+                      } else if (item is _UnreadMarkerItem) {
+                        map['unread_marker'] = idx;
+                      } else if (item is _MessageItem) {
+                        map['msg_${item.message.id}'] = idx;
+                      }
+                    }
+                    _cachedItemKeyToFlatIndex = map;
+                    _cachedItemKeyHash = _cachedMessagesHash;
+                  }
+                  final itemKeyToFlatIndex = _cachedItemKeyToFlatIndex!;
+                  if (_isLoadingMore || _hasMoreMessages) {
+                    itemKeyToFlatIndex['footer'] = items.length;
+                  }
+
+                  return ChatImagesScope(
+                    allImages: _cachedAllImages!,
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: SettingsManager.showAvatarInChats,
+                      builder: (_, showAvatar, __) {
                         return ValueListenableBuilder<bool>(
-                          valueListenable:
-                              SettingsManager.alignAllMessagesRight,
-                          builder: (_, alignRight, __) {
-                            return Listener(
-                              key: _messageListViewportKey,
-                              onPointerDown: (_) {
-                                if (!isDesktop) return;
-                                _suppressAutoRefocus = true;
-                                _focusNode.unfocus();
-                              },
-                              onPointerUp: (_) {
-                                if (_isDragSelectingMessages) _endMessageDragSelection();
-                              },
-                              onPointerCancel: (_) {
-                                if (_isDragSelectingMessages) _endMessageDragSelection();
-                              },
-                              child: ListView.builder(
-                                controller: _scroll,
-                                reverse: true,
-                                cacheExtent: SettingsManager.chatCacheExtent.value,
-                                addRepaintBoundaries: true,
-                                addAutomaticKeepAlives: false,
-                                padding: EdgeInsets.only(
-                                    top: MediaQuery.of(context).padding.top +
-                                        kToolbarHeight +
-                                        (_showSearch ? 64 : 12),
-                                    bottom: 72 +
-                                        MediaQuery.of(context).padding.bottom),
-                                itemCount: _pendingUploads.length +
-                                    items.length +
-                                    (_isLoadingMore || _hasMoreMessages
-                                        ? 1
-                                        : 0),
-                                itemBuilder: (context, i) {
-                                  // Pending uploads sit at the bottom (index 0 in reversed list)
-                                  if (i < _pendingUploads.length) {
-                                    final task = _pendingUploads[
-                                        _pendingUploads.length - 1 - i];
-                                    return _buildPendingUploadWidget(task);
-                                  }
-                                  final adjustedI = i - _pendingUploads.length;
-                                  if (adjustedI == items.length) {
-                                    return Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 12),
-                                      child: _isLoadingMore
-                                          ? const Center(
-                                              child: SizedBox(
-                                                  width: 24,
-                                                  height: 24,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                          strokeWidth: 2)))
-                                          : const SizedBox.shrink(),
-                                    );
-                                  }
-                                  final item = items[adjustedI];
+                          valueListenable: SettingsManager.swapMessageAlignment,
+                          builder: (_, swapped, __) {
+                            return ValueListenableBuilder<bool>(
+                              valueListenable:
+                                  SettingsManager.alignAllMessagesRight,
+                              builder: (_, alignRight, __) {
+                                return Listener(
+                                  key: _messageListViewportKey,
+                                  onPointerDown: (_) {
+                                    if (!isDesktop) return;
+                                    _suppressAutoRefocus = true;
+                                    _focusNode.unfocus();
+                                  },
+                                  onPointerUp: (_) {
+                                    if (_isDragSelectingMessages)
+                                      _endMessageDragSelection();
+                                  },
+                                  onPointerCancel: (_) {
+                                    if (_isDragSelectingMessages)
+                                      _endMessageDragSelection();
+                                  },
+                                  child: ListView.builder(
+                                    controller: _scroll,
+                                    reverse: true,
+                                    cacheExtent:
+                                        SettingsManager.chatCacheExtent.value,
+                                    addRepaintBoundaries: true,
+                                    addAutomaticKeepAlives: false,
+                                    padding: EdgeInsets.only(
+                                        top:
+                                            MediaQuery.of(context).padding.top +
+                                                kToolbarHeight +
+                                                (_showSearch ? 64 : 12),
+                                        bottom: 72 +
+                                            MediaQuery.of(context)
+                                                .padding
+                                                .bottom),
+                                    itemCount: items.length +
+                                        (_isLoadingMore || _hasMoreMessages
+                                            ? 1
+                                            : 0),
+                                    // Every item below carries a stable key (by
+                                    // message id / upload id / day / etc., never
+                                    // by list position) and this callback tells
+                                    // the list how to find an item's *current*
+                                    // index from that key.
+                                    //
+                                    // Without it, ListView.builder only matches
+                                    // children by index: prepending one new
+                                    // message shifts every other message's index
+                                    // by one, so — since each bubble subtree IS
+                                    // keyed by message id one level down — the
+                                    // framework saw a key mismatch at every
+                                    // shifted index and tore down + rebuilt every
+                                    // visible bubble's whole widget tree (image
+                                    // file checks, video player re-init, etc.) on
+                                    // every single send. That was both the
+                                    // "send animation snaps under load" jank AND
+                                    // the "all the messages fly past" look —
+                                    // every visible image/video widget briefly
+                                    // flashing through its loading state as it
+                                    // got rebuilt from scratch, all at once.
+                                    findChildIndexCallback: (Key key) {
+                                      if (key is! ValueKey<String>) return null;
+                                      return itemKeyToFlatIndex[key.value];
+                                    },
+                                    itemBuilder: (context, i) {
+                                      final adjustedI = i;
+                                      if (adjustedI == items.length) {
+                                        return Padding(
+                                          key: const ValueKey<String>('footer'),
+                                          padding: const EdgeInsets.symmetric(
+                                              vertical: 12),
+                                          child: _isLoadingMore
+                                              ? const Center(
+                                                  child: SizedBox(
+                                                      width: 24,
+                                                      height: 24,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                              strokeWidth: 2)))
+                                              : const SizedBox.shrink(),
+                                        );
+                                      }
+                                      final item = items[adjustedI];
 
-                                  if (item is _DaySeparatorItem) {
-                                    return _buildDaySeparator(
-                                        context, item.date);
-                                  } else if (item is _UnreadMarkerItem) {
-                                    return _buildUnreadMarker(context);
-                                  } else if (item is _MessageItem) {
-                                    final msg = item.message;
-                                    final String uniqueKey =
-                                        '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
-                                    // Use stable local id for animation tracking so that
-                                    // when serverMessageId arrives the key doesn't change
-                                    // and trigger a second animation on the same bubble.
-                                    final String animKey = msg.id;
+                                      if (item is _DaySeparatorItem) {
+                                        return KeyedSubtree(
+                                          key: ValueKey<String>(
+                                              'day_${item.date.toIso8601String()}'),
+                                          child: _buildDaySeparator(
+                                              context, item.date),
+                                        );
+                                      } else if (item is _UnreadMarkerItem) {
+                                        return KeyedSubtree(
+                                          key: const ValueKey<String>(
+                                              'unread_marker'),
+                                          child: _buildUnreadMarker(context),
+                                        );
+                                      } else if (item is _MessageItem) {
+                                        final msg = item.message;
+                                        final String uniqueKey =
+                                            '${msg.id}_${msg.serverMessageId ?? 'local'}_${msg.time.millisecondsSinceEpoch}';
+                                        // Use stable local id for animation tracking so that
+                                        // when serverMessageId arrives the key doesn't change
+                                        // and trigger a second animation on the same bubble.
+                                        final String animKey = msg.id;
 
-                                    final bool isFirstAppearance =
-                                        !_alreadyRenderedMessageIds
-                                            .contains(animKey);
-                                    if (isFirstAppearance) {
-                                      _alreadyRenderedMessageIds.add(animKey);
-                                    }
+                                        final bool isFirstAppearance =
+                                            !_alreadyRenderedMessageIds
+                                                .contains(animKey);
+                                        if (isFirstAppearance) {
+                                          _alreadyRenderedMessageIds
+                                              .add(animKey);
+                                        }
+                                        final isIncoming = !msg.outgoing;
+                                        final isSearchMatch =
+                                            _searchQuery.isNotEmpty &&
+                                                msg.content
+                                                    .toLowerCase()
+                                                    .contains(_searchQuery);
+                                        final isCurrentSearchMatch =
+                                            isSearchMatch &&
+                                                _cachedSearchMatches
+                                                    .isNotEmpty &&
+                                                _cachedSearchMatches[
+                                                        _currentMatchIdx] ==
+                                                    adjustedI;
 
-                                    final isIncoming = !msg.outgoing;
-                                    final isSearchMatch =
-                                        _searchQuery.isNotEmpty &&
-                                            msg.content
-                                                .toLowerCase()
-                                                .contains(_searchQuery);
-                                    final isCurrentSearchMatch =
-                                        isSearchMatch &&
-                                            _cachedSearchMatches.isNotEmpty &&
-                                            _cachedSearchMatches[
-                                                    _currentMatchIdx] ==
-                                                adjustedI;
+                                        final shouldShowRight = alignRight
+                                            ? !swapped
+                                            : (swapped
+                                                ? isIncoming
+                                                : msg.outgoing);
 
-                                    final shouldShowRight = alignRight
-                                        ? !swapped
-                                        : (swapped ? isIncoming : msg.outgoing);
+                                        final cs =
+                                            Theme.of(context).colorScheme;
 
-                                    final cs = Theme.of(context).colorScheme;
-
-                                    final msgBubble = MessageBubble(
-                                      key: ValueKey<String>(
-                                          'mb_inner_$uniqueKey'),
-                                      text: msg.content,
-                                      outgoing: msg.outgoing,
-                                      rawPreview: msg.rawEnvelopePreview,
-                                      serverMessageId: msg.serverMessageId,
-                                      time: msg.time,
-                                      onRequestResend: (id) =>
-                                          widget.onRequestResend(id),
-                                      desktopMenuItems:
-                                          _buildDesktopMenuItems(msg),
-                                      peerUsername: widget.otherUsername,
-                                      chatMessage: msg,
-                                      replyToId: msg.replyToId,
-                                      replyToUsername: msg.replyToSender,
-                                      replyToContent: msg.replyToContent,
-                                      onReplyTap: msg.replyToId != null
-                                          ? () => _scrollToMessageById(
-                                              msg.replyToId)
-                                          : null,
-                                      highlighted:
-                                          (msg.serverMessageId != null &&
+                                        final msgBubble = MessageBubble(
+                                          key: ValueKey<String>(
+                                              'mb_inner_$uniqueKey'),
+                                          text: msg.content,
+                                          outgoing: msg.outgoing,
+                                          rawPreview: msg.rawEnvelopePreview,
+                                          serverMessageId: msg.serverMessageId,
+                                          time: msg.time,
+                                          onRequestResend: (id) =>
+                                              widget.onRequestResend(id),
+                                          desktopMenuItems:
+                                              _buildDesktopMenuItems(msg),
+                                          peerUsername: widget.otherUsername,
+                                          chatMessage: msg,
+                                          replyToId: msg.replyToId,
+                                          replyToUsername: msg.replyToSender,
+                                          replyToContent: msg.replyToContent,
+                                          onReplyTap: msg.replyToId != null
+                                              ? () => _scrollToMessageById(
+                                                  msg.replyToId)
+                                              : null,
+                                          highlighted: (msg.serverMessageId !=
+                                                      null &&
                                                   _replyingToMessage != null &&
                                                   _replyingToMessage!['id']
                                                           ?.toString() ==
@@ -3615,270 +4196,311 @@ class ChatScreenState extends State<ChatScreen>
                                                   _replyingToMessage!['localId']
                                                           ?.toString() ==
                                                       msg.id.toString()),
-                                      onRightClick: isDesktop
-                                          ? (offset) {
-                                              debugPrint('[RightClickMenu] chat_screen onRightClick invoked, msgId=${msg.id}');
-                                              final items =
-                                                  _buildDesktopMenuItems(msg);
-                                              debugPrint('[RightClickMenu] chat_screen items=${items?.length}');
-                                              if (items != null &&
-                                                  items.isNotEmpty) {
-                                                showMessageDesktopMenu(
-                                                    context, offset, items);
-                                              }
-                                            }
-                                          : null,
-                                    );
-
-                                    final expensiveChild =
-                                        AnimatedMessageBubble(
-                                      key: ValueKey<String>(animKey),
-                                      outgoing: msg.outgoing,
-                                      animate: _hasBuiltMessageListOnce &&
-                                          isFirstAppearance &&
-                                          SettingsManager
-                                              .messageAnimationsEnabled.value,
-                                      child: RepaintBoundary(child: msgBubble),
-                                    );
-
-                                    return ValueListenableBuilder<
-                                        ({
-                                          bool active,
-                                          Map<String, ChatMessage> selected
-                                        })>(
-                                      valueListenable: _selectionNotifier,
-                                      child: expensiveChild,
-                                      builder: (_, sel, bubbleChild) {
-                                        final isSelected =
-                                            sel.selected.containsKey(uniqueKey);
-                                        final checkmark = AnimatedContainer(
-                                          duration:
-                                              const Duration(milliseconds: 150),
-                                          margin: const EdgeInsets.only(
-                                              right: 8),
-                                          width: 22,
-                                          height: 22,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: isSelected
-                                                ? cs.primary
-                                                : Colors.transparent,
-                                            border: Border.all(
-                                              color: isSelected
-                                                  ? cs.primary
-                                                  : cs.onSurface
-                                                      .withValues(alpha: 0.35),
-                                              width: 2,
-                                            ),
-                                          ),
-                                          child: isSelected
-                                              ? Icon(Icons.check,
-                                                  size: 14, color: cs.onPrimary)
+                                          onRightClick: isDesktop
+                                              ? (offset) {
+                                                  debugPrint(
+                                                      '[RightClickMenu] chat_screen onRightClick invoked, msgId=${msg.id}');
+                                                  final items =
+                                                      _buildDesktopMenuItems(
+                                                          msg);
+                                                  debugPrint(
+                                                      '[RightClickMenu] chat_screen items=${items?.length}');
+                                                  if (items != null &&
+                                                      items.isNotEmpty) {
+                                                    showMessageDesktopMenu(
+                                                        context, offset, items);
+                                                  }
+                                                }
                                               : null,
                                         );
-                                        return KeyedSubtree(
-                                          key: _messageItemKey(uniqueKey),
-                                          child: RawGestureDetector(
-                                          behavior: HitTestBehavior.translucent,
-                                          gestures: {
-                                            LongPressGestureRecognizer:
-                                                GestureRecognizerFactoryWithHandlers<
-                                                    LongPressGestureRecognizer>(
-                                              () => LongPressGestureRecognizer(
-                                                  duration:
-                                                      _messageLongPressDuration),
-                                              (instance) {
-                                                instance.onLongPressStart = (_) =>
-                                                    _startMessageDragSelection(
-                                                        msg, uniqueKey);
-                                                instance.onLongPressMoveUpdate =
-                                                    (details) =>
-                                                        _updateMessageDragSelection(
-                                                            details.globalPosition);
-                                                instance.onLongPressEnd = (_) =>
-                                                    _endMessageDragSelection();
-                                              },
-                                            ),
-                                          },
-                                          child: GestureDetector(
-                                            behavior:
-                                                HitTestBehavior.translucent,
-                                            onTap: sel.active
-                                                ? () => _toggleMessageSelection(
-                                                    msg, uniqueKey)
-                                                : null,
-                                            onDoubleTap: sel.active
-                                                ? null
-                                                : () => _enterSelectionMode(
-                                                    msg, uniqueKey),
-                                            child: AnimatedContainer(
-                                              key: (_scrollTargetId != null &&
-                                                      (_scrollTargetId ==
-                                                              msg.serverMessageId
-                                                                  ?.toString() ||
-                                                          _scrollTargetId ==
-                                                              msg.id))
-                                                  ? _scrollTargetKey
-                                                  : null,
+
+                                        final expensiveChild =
+                                            AnimatedMessageBubble(
+                                          key: ValueKey<String>(animKey),
+                                          outgoing: msg.outgoing,
+                                          // Outgoing bubbles fly in from the
+                                          // input bar's on-screen position;
+                                          // incoming bubbles fly in from their
+                                          // own screen edge (see flightFromEdge).
+                                          // _hasBuiltMessageListOnce gates out the
+                                          // very first list build (chat open) —
+                                          // no entrance animation plays for
+                                          // history already on screen, only for
+                                          // messages that arrive afterward.
+                                          animate: _hasBuiltMessageListOnce &&
+                                              isFirstAppearance &&
+                                              SettingsManager
+                                                  .messageAnimationsEnabled
+                                                  .value,
+                                          flightOriginKey: msg.outgoing
+                                              ? _inputAreaKey
+                                              : null,
+                                          flightFromEdge: !msg.outgoing,
+                                          alignRight: shouldShowRight,
+                                          child:
+                                              RepaintBoundary(child: msgBubble),
+                                        );
+
+                                        return ValueListenableBuilder<
+                                            ({
+                                              bool active,
+                                              Map<String, ChatMessage> selected
+                                            })>(
+                                          key:
+                                              ValueKey<String>('msg_${msg.id}'),
+                                          valueListenable: _selectionNotifier,
+                                          child: expensiveChild,
+                                          builder: (_, sel, bubbleChild) {
+                                            final isSelected = sel.selected
+                                                .containsKey(uniqueKey);
+                                            final checkmark = AnimatedContainer(
                                               duration: const Duration(
                                                   milliseconds: 150),
-                                              curve: Curves.easeOut,
-                                              color: isCurrentSearchMatch
-                                                  ? cs.primary
-                                                      .withValues(alpha: 0.28)
-                                                  : isSearchMatch
-                                                      ? cs.primary.withValues(
-                                                          alpha: 0.12)
-                                                      : isSelected
-                                                          ? cs.primaryContainer
-                                                              .withValues(
-                                                                  alpha: 0.45)
-                                                          : (_scrollHighlightId !=
-                                                                      null &&
-                                                                  (_scrollHighlightId ==
-                                                                          msg.serverMessageId
-                                                                              ?.toString() ||
-                                                                      _scrollHighlightId ==
-                                                                          msg
-                                                                              .id))
-                                                              ? cs.primary
-                                                                  .withValues(
-                                                                      alpha:
-                                                                          0.18)
-                                                              : Colors
-                                                                  .transparent,
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      vertical: 6,
-                                                      horizontal: 12),
-                                              child: Row(
-                                                mainAxisAlignment:
-                                                    shouldShowRight
-                                                        ? MainAxisAlignment.end
-                                                        : MainAxisAlignment
-                                                            .start,
-                                                children: [
-                                                  if (sel.active) checkmark,
-                                                  Flexible(
-                                                    child: SwipeableMessageWrapper(
-                                                      disabled: sel.active,
-                                                      onSwipeRight: () =>
-                                                          _showMessageMenu(msg),
-                                                      onSwipeLeft: () {
-                                                        final preview = {
-                                                          'id': msg
-                                                              .serverMessageId,
-                                                          'localId': msg.id,
-                                                          'sender': msg.from,
-                                                          'senderDisplayName':
-                                                              msg.from,
-                                                          'content':
-                                                              getPreviewText(
-                                                                  msg.content),
-                                                        };
-                                                        _startReplyingToMessage(
-                                                            preview);
-                                                      },
-                                                      child: GestureDetector(
-                                                      // Desktop right-click is handled by MessageBubble's
-                                                      // own onRightClick (floating menu). An onSecondaryTap
-                                                      // here too would also pop the mobile bottom-sheet menu
-                                                      // for the same click.
-                                                      child: Column(
-                                                        crossAxisAlignment:
-                                                            shouldShowRight
-                                                                ? CrossAxisAlignment
-                                                                    .end
-                                                                : CrossAxisAlignment
-                                                                    .start,
-                                                        mainAxisSize:
-                                                            MainAxisSize.min,
-                                                        children: [
-                                                          AbsorbPointer(
-                                                            absorbing: sel.active,
-                                                            child: bubbleChild!,
-                                                          ),
-                                                          MessageReactionBar(
-                                                            reactions:
-                                                                reactionsFor(
-                                                                    uniqueKey),
-                                                            myUsername: widget
-                                                                .myUsername,
-                                                            outgoing:
-                                                                msg.outgoing,
-                                                            onToggle: (emoji) {
-                                                              final wasReacted =
-                                                                  hasReaction(
-                                                                      uniqueKey,
-                                                                      emoji,
-                                                                      widget
-                                                                          .myUsername);
-                                                              toggleReaction(
-                                                                  uniqueKey,
-                                                                  emoji,
-                                                                  widget
-                                                                      .myUsername);
-                                                              if (msg.serverMessageId !=
-                                                                  null)
-                                                                _serverTogglePrivateReaction(
-                                                                    uniqueKey,
-                                                                    msg.serverMessageId!,
-                                                                    emoji,
-                                                                    wasReacted);
+                                              margin: const EdgeInsets.only(
+                                                  right: 8),
+                                              width: 22,
+                                              height: 22,
+                                              decoration: BoxDecoration(
+                                                shape: BoxShape.circle,
+                                                color: isSelected
+                                                    ? cs.primary
+                                                    : Colors.transparent,
+                                                border: Border.all(
+                                                  color: isSelected
+                                                      ? cs.primary
+                                                      : cs.onSurface.withValues(
+                                                          alpha: 0.35),
+                                                  width: 2,
+                                                ),
+                                              ),
+                                              child: isSelected
+                                                  ? Icon(Icons.check,
+                                                      size: 14,
+                                                      color: cs.onPrimary)
+                                                  : null,
+                                            );
+                                            return KeyedSubtree(
+                                              key: _messageItemKey(msg.id),
+                                              child: RawGestureDetector(
+                                                behavior:
+                                                    HitTestBehavior.translucent,
+                                                gestures: {
+                                                  LongPressGestureRecognizer:
+                                                      GestureRecognizerFactoryWithHandlers<
+                                                          LongPressGestureRecognizer>(
+                                                    () => LongPressGestureRecognizer(
+                                                        duration:
+                                                            _messageLongPressDuration),
+                                                    (instance) {
+                                                      instance.onLongPressStart =
+                                                          (_) =>
+                                                              _startMessageDragSelection(
+                                                                  msg,
+                                                                  uniqueKey);
+                                                      instance.onLongPressMoveUpdate =
+                                                          (details) =>
+                                                              _updateMessageDragSelection(
+                                                                  details
+                                                                      .globalPosition);
+                                                      instance.onLongPressEnd =
+                                                          (_) =>
+                                                              _endMessageDragSelection();
+                                                    },
+                                                  ),
+                                                },
+                                                child: GestureDetector(
+                                                  behavior: HitTestBehavior
+                                                      .translucent,
+                                                  onTap: sel.active
+                                                      ? () =>
+                                                          _toggleMessageSelection(
+                                                              msg, uniqueKey)
+                                                      : null,
+                                                  onDoubleTap: sel.active
+                                                      ? null
+                                                      : () =>
+                                                          _enterSelectionMode(
+                                                              msg, uniqueKey),
+                                                  child: AnimatedContainer(
+                                                    key: (_scrollTargetId !=
+                                                                null &&
+                                                            (_scrollTargetId ==
+                                                                    msg.serverMessageId
+                                                                        ?.toString() ||
+                                                                _scrollTargetId ==
+                                                                    msg.id))
+                                                        ? _scrollTargetKey
+                                                        : null,
+                                                    duration: const Duration(
+                                                        milliseconds: 150),
+                                                    curve: Curves.easeOut,
+                                                    color: isCurrentSearchMatch
+                                                        ? cs.primary.withValues(
+                                                            alpha: 0.28)
+                                                        : isSearchMatch
+                                                            ? cs.primary
+                                                                .withValues(
+                                                                    alpha: 0.12)
+                                                            : isSelected
+                                                                ? cs.primaryContainer
+                                                                    .withValues(
+                                                                        alpha:
+                                                                            0.45)
+                                                                : (_scrollHighlightId !=
+                                                                            null &&
+                                                                        (_scrollHighlightId == msg.serverMessageId?.toString() ||
+                                                                            _scrollHighlightId ==
+                                                                                msg
+                                                                                    .id))
+                                                                    ? cs.primary
+                                                                        .withValues(
+                                                                            alpha:
+                                                                                0.18)
+                                                                    : Colors
+                                                                        .transparent,
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                        vertical: 6,
+                                                        horizontal: 12),
+                                                    child: Row(
+                                                      mainAxisAlignment:
+                                                          shouldShowRight
+                                                              ? MainAxisAlignment
+                                                                  .end
+                                                              : MainAxisAlignment
+                                                                  .start,
+                                                      children: [
+                                                        if (sel.active)
+                                                          checkmark,
+                                                        Flexible(
+                                                          child:
+                                                              SwipeableMessageWrapper(
+                                                            disabled:
+                                                                sel.active,
+                                                            onSwipeRight: () =>
+                                                                _showMessageMenu(
+                                                                    msg),
+                                                            onSwipeLeft: () {
+                                                              final preview = {
+                                                                'id': msg
+                                                                    .serverMessageId,
+                                                                'localId':
+                                                                    msg.id,
+                                                                'sender':
+                                                                    msg.from,
+                                                                'senderDisplayName':
+                                                                    msg.from,
+                                                                'content':
+                                                                    getPreviewText(
+                                                                        msg.content),
+                                                              };
+                                                              _startReplyingToMessage(
+                                                                  preview);
                                                             },
-                                                            onAddReaction: (ctx) =>
-                                                                openEmojiPicker(
-                                                                    ctx,
-                                                                    uniqueKey,
-                                                                    widget
-                                                                        .myUsername,
-                                                                    onAfterToggle:
-                                                                        (emoji,
-                                                                            wasReacted) {
-                                                              if (msg.serverMessageId !=
-                                                                  null)
-                                                                _serverTogglePrivateReaction(
-                                                                    uniqueKey,
-                                                                    msg.serverMessageId!,
-                                                                    emoji,
-                                                                    wasReacted);
-                                                            }),
+                                                            child:
+                                                                GestureDetector(
+                                                              // Desktop right-click is handled by MessageBubble's
+                                                              // own onRightClick (floating menu). An onSecondaryTap
+                                                              // here too would also pop the mobile bottom-sheet menu
+                                                              // for the same click.
+                                                              child: Column(
+                                                                crossAxisAlignment:
+                                                                    shouldShowRight
+                                                                        ? CrossAxisAlignment
+                                                                            .end
+                                                                        : CrossAxisAlignment
+                                                                            .start,
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  AbsorbPointer(
+                                                                    absorbing: sel
+                                                                        .active,
+                                                                    child:
+                                                                        bubbleChild!,
+                                                                  ),
+                                                                  MessageReactionBar(
+                                                                    reactions:
+                                                                        reactionsFor(
+                                                                            uniqueKey),
+                                                                    myUsername:
+                                                                        widget
+                                                                            .myUsername,
+                                                                    outgoing: msg
+                                                                        .outgoing,
+                                                                    onToggle:
+                                                                        (emoji) {
+                                                                      final wasReacted = hasReaction(
+                                                                          uniqueKey,
+                                                                          emoji,
+                                                                          widget
+                                                                              .myUsername);
+                                                                      toggleReaction(
+                                                                          uniqueKey,
+                                                                          emoji,
+                                                                          widget
+                                                                              .myUsername);
+                                                                      if (msg.serverMessageId !=
+                                                                          null)
+                                                                        _serverTogglePrivateReaction(
+                                                                            uniqueKey,
+                                                                            msg.serverMessageId!,
+                                                                            emoji,
+                                                                            wasReacted);
+                                                                    },
+                                                                    onAddReaction: (ctx) => openEmojiPicker(
+                                                                        ctx,
+                                                                        uniqueKey,
+                                                                        widget
+                                                                            .myUsername,
+                                                                        onAfterToggle:
+                                                                            (emoji,
+                                                                                wasReacted) {
+                                                                      if (msg.serverMessageId !=
+                                                                          null)
+                                                                        _serverTogglePrivateReaction(
+                                                                            uniqueKey,
+                                                                            msg.serverMessageId!,
+                                                                            emoji,
+                                                                            wasReacted);
+                                                                    }),
+                                                                  ),
+                                                                ],
+                                                              ),
+                                                            ),
                                                           ),
-                                                        ],
-                                                      ),
-                                                    ),
+                                                        ),
+                                                      ],
                                                     ),
                                                   ),
-                                                ],
+                                                ),
                                               ),
-                                            ),
-                                          ),
-                                        ),
+                                            );
+                                          },
                                         );
-                                      },
-                                    );
-                                  }
+                                      }
 
-                                  return const SizedBox.shrink();
-                                },
-                              ),
+                                      return const SizedBox.shrink();
+                                    },
+                                  ),
+                                );
+                              },
                             );
                           },
                         );
                       },
-                    );
-                  },
-                ),
-                );
-              },
-            ),
-            if (_pinnedMessage != null)
-              Positioned(
-                top: MediaQuery.of(context).padding.top + kToolbarHeight + 8,
-                left: 16,
-                right: 16,
-                child: _buildPinnedBanner(context),
+                    ),
+                  );
+                },
               ),
+              if (_pinnedMessage != null)
+                Positioned(
+                  top: MediaQuery.of(context).padding.top + kToolbarHeight + 8,
+                  left: 16,
+                  right: 16,
+                  child: _buildPinnedBanner(context),
+                ),
               Positioned(
                 top: MediaQuery.of(context).padding.top +
                     kToolbarHeight +
@@ -3914,272 +4536,76 @@ class ChatScreenState extends State<ChatScreen>
                       : const SizedBox.shrink(),
                 ),
               ),
-            ValueListenableBuilder<bool>(
-              valueListenable: _scrollDownVisible,
-              builder: (_, visible, child) => AnimatedOpacity(
-                opacity: visible ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 200),
-                child: IgnorePointer(
-                  ignoring: !visible,
-                  child: child,
-                ),
-              ),
-              child: ValueListenableBuilder<double>(
-                valueListenable: _bottomBarHeight,
-                builder: (_, barHeight, __) => ValueListenableBuilder<ScrollDownButtonPosition>(
-                  valueListenable: SettingsManager.scrollDownButtonPosition,
-                  builder: (_, position, __) => ValueListenableBuilder<double>(
-                    valueListenable: SettingsManager.scrollDownButtonSize,
-                    builder: (_, btnSize, __) {
-                      final alignment = switch (position) {
-                        ScrollDownButtonPosition.left => Alignment.bottomLeft,
-                        ScrollDownButtonPosition.center => Alignment.bottomCenter,
-                        ScrollDownButtonPosition.right => Alignment.bottomRight,
-                      };
-                      return Align(
-                        alignment: alignment,
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            bottom: barHeight + 12.0 + MediaQuery.of(context).padding.bottom + 16,
-                            left: position == ScrollDownButtonPosition.left ? 16 : 0,
-                            right: position == ScrollDownButtonPosition.right ? 16 : 0,
-                          ),
-                          child: Material(
-                            color: Colors.transparent,
-                            child: Stack(
-                              children: [
-                                ValueListenableBuilder<double>(
-                                  valueListenable: SettingsManager.elementBrightness,
-                                  builder: (_, brightness, ___) {
-                                    final baseColor = SettingsManager.getElementColor(
-                                      Theme.of(context)
-                                          .colorScheme
-                                          .surfaceContainerHighest,
-                                      brightness,
-                                    );
-                                    return IconButton(
-                                      splashRadius: btnSize / 2 + 4,
-                                      padding: EdgeInsets.zero,
-                                      icon: Container(
-                                        width: btnSize,
-                                        height: btnSize,
-                                        decoration: BoxDecoration(
-                                          color: baseColor.withValues(alpha: 0.5),
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .outlineVariant
-                                                .withValues(alpha: 0.15),
-                                            width: 1,
-                                          ),
-                                        ),
-                                        child: Icon(
-                                          Icons.arrow_downward,
-                                          size: btnSize * 0.56,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface
-                                              .withValues(alpha: 0.7),
-                                        ),
-                                      ),
-                                      onPressed: _scrollToBottom,
-                                    );
-                                  },
-                                ),
-                                ListenableBuilder(
-                                  listenable: unreadManager,
-                                  builder: (context, _) {
-                                    final me =
-                                        rootScreenKey.currentState?.currentUsername ??
-                                            widget.myUsername;
-                                    final List<String> ids = [me, widget.otherUsername]
-                                      ..sort();
-                                    final String chatId = ids.join(':');
-                                    final unreadCount =
-                                        unreadManager.getUnreadCount(chatId);
-                                    if (unreadCount == 0) {
-                                      return const SizedBox.shrink();
-                                    }
-                                    return Positioned(
-                                      top: -4,
-                                      right: -4,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 5, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: Theme.of(context).colorScheme.primary,
-                                          borderRadius: BorderRadius.circular(10),
-                                        ),
-                                        child: Text(
-                                          unreadCount.toString(),
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold,
-                                            color:
-                                                Theme.of(context).colorScheme.onPrimary,
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
+              ValueListenableBuilder<bool>(
+                valueListenable: _scrollDownVisible,
+                builder: (_, visible, child) => AnimatedOpacity(
+                  opacity: visible ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: IgnorePointer(
+                    ignoring: !visible,
+                    child: child,
                   ),
                 ),
-              ),
-            ),
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: Padding(
-                padding: EdgeInsets.only(
-                    bottom: 12.0 + MediaQuery.of(context).padding.bottom,
-                    left: 16,
-                    right: 16),
                 child: ValueListenableBuilder<double>(
-                  valueListenable: SettingsManager.elementOpacity,
-                  builder: (_, opacity, __) {
-                    return ValueListenableBuilder<double>(
-                      valueListenable: SettingsManager.inputBarMaxWidth,
-                      builder: (_, width, __) {
-                        return MeasureSize(
-                          onChange: (size) {
-                            if ((_bottomBarHeight.value - size.height).abs() > 0.5) {
-                              _bottomBarHeight.value = size.height;
-                            }
-                          },
-                          child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            AnimatedSize(
-                              duration: const Duration(milliseconds: 220),
-                              curve: Curves.easeOut,
-                              child: _editingMessage != null
-                                  ? ValueListenableBuilder<double>(
-                                      valueListenable:
-                                          SettingsManager.elementBrightness,
-                                      builder: (_, brightness, ___) {
-                                        final baseColor =
-                                            SettingsManager.getElementColor(
-                                          Theme.of(context)
-                                              .colorScheme
-                                              .surfaceContainerHighest,
-                                          brightness,
-                                        );
-                                        final colorScheme =
-                                            Theme.of(context).colorScheme;
-                                        return Container(
-                                          constraints:
-                                              BoxConstraints(maxWidth: width),
-                                          margin:
-                                              const EdgeInsets.only(bottom: 8),
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 12, vertical: 10),
-                                          decoration: BoxDecoration(
-                                            color: baseColor.withValues(
-                                                alpha: opacity),
-                                            borderRadius:
-                                                BorderRadius.circular(16),
-                                            border: Border.all(
-                                              color: colorScheme.primary
-                                                  .withValues(alpha: 0.25),
-                                              width: 1,
-                                            ),
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              Icon(Icons.edit_rounded,
-                                                  size: 16,
-                                                  color: colorScheme.primary),
-                                              const SizedBox(width: 8),
-                                              Expanded(
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  children: [
-                                                    Text(
-                                                      'Editing',
-                                                      style: TextStyle(
-                                                        fontSize: 13,
-                                                        fontWeight:
-                                                            FontWeight.w600,
-                                                        color:
-                                                            colorScheme.primary,
-                                                      ),
-                                                    ),
-                                                    const SizedBox(height: 2),
-                                                    Text(
-                                                      getPreviewText(
-                                                          _editingMessage!
-                                                              .content),
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: TextStyle(
-                                                        fontSize: 12,
-                                                        color: colorScheme
-                                                            .onSurface
-                                                            .withValues(
-                                                                alpha: 0.6),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                              IconButton(
-                                                icon: const Icon(Icons.close,
-                                                    size: 18),
-                                                onPressed: _cancelEditing,
-                                                visualDensity:
-                                                    VisualDensity.compact,
-                                                splashRadius: 18,
-                                                padding: EdgeInsets.zero,
-                                                constraints:
-                                                    const BoxConstraints(
-                                                        minWidth: 32,
-                                                        minHeight: 32),
-                                              ),
-                                            ],
-                                          ),
-                                        );
-                                      },
-                                    )
-                                  : const SizedBox.shrink(),
+                  valueListenable: _bottomBarHeight,
+                  builder: (_, barHeight, __) =>
+                      ValueListenableBuilder<ScrollDownButtonPosition>(
+                    valueListenable: SettingsManager.scrollDownButtonPosition,
+                    builder: (_, position, __) =>
+                        ValueListenableBuilder<double>(
+                      valueListenable: SettingsManager.scrollDownButtonSize,
+                      builder: (_, btnSize, __) {
+                        final alignment = switch (position) {
+                          ScrollDownButtonPosition.left => Alignment.bottomLeft,
+                          ScrollDownButtonPosition.center =>
+                            Alignment.bottomCenter,
+                          ScrollDownButtonPosition.right =>
+                            Alignment.bottomRight,
+                        };
+                        return Align(
+                          alignment: alignment,
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                              bottom: barHeight +
+                                  12.0 +
+                                  MediaQuery.of(context).padding.bottom +
+                                  16,
+                              left: position == ScrollDownButtonPosition.left
+                                  ? 16
+                                  : 0,
+                              right: position == ScrollDownButtonPosition.right
+                                  ? 16
+                                  : 0,
                             ),
-                            AnimatedSize(
-                              duration: const Duration(milliseconds: 220),
-                              curve: Curves.easeOut,
-                              child: _replyingToMessage != null
-                                  ? ValueListenableBuilder<double>(
-                                      valueListenable:
-                                          SettingsManager.elementBrightness,
-                                      builder: (_, brightness, ___) {
-                                        final baseColor =
-                                            SettingsManager.getElementColor(
-                                          Theme.of(context)
-                                              .colorScheme
-                                              .surfaceContainerHighest,
-                                          brightness,
-                                        );
-                                        return Container(
-                                          constraints:
-                                              BoxConstraints(maxWidth: width),
-                                          margin:
-                                              const EdgeInsets.only(bottom: 8),
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 12, vertical: 10),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: Stack(
+                                children: [
+                                  AnimatedBuilder(
+                                    animation: Listenable.merge([
+                                      SettingsManager.elementBrightness,
+                                      SettingsManager.elementOpacity,
+                                    ]),
+                                    builder: (_, ___) {
+                                      final baseColor =
+                                          SettingsManager.getElementColor(
+                                        Theme.of(context)
+                                            .colorScheme
+                                            .surfaceContainerHighest,
+                                        SettingsManager
+                                            .elementBrightness.value,
+                                      );
+                                      return IconButton(
+                                        splashRadius: btnSize / 2 + 4,
+                                        padding: EdgeInsets.zero,
+                                        icon: Container(
+                                          width: btnSize,
+                                          height: btnSize,
                                           decoration: BoxDecoration(
                                             color: baseColor.withValues(
-                                                alpha: opacity),
-                                            borderRadius:
-                                                BorderRadius.circular(16),
+                                                alpha: SettingsManager
+                                                    .elementOpacity.value),
+                                            shape: BoxShape.circle,
                                             border: Border.all(
                                               color: Theme.of(context)
                                                   .colorScheme
@@ -4188,282 +4614,572 @@ class ChatScreenState extends State<ChatScreen>
                                               width: 1,
                                             ),
                                           ),
-                                          child: Row(
-                                            children: [
-                                              Expanded(
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  children: [
-                                                    Text(
-                                                      _replyingToMessage![
-                                                                  'senderDisplayName']
-                                                              ?.toString() ??
-                                                          _replyingToMessage![
-                                                                  'sender']
-                                                              ?.toString() ??
-                                                          'Unknown',
-                                                      style: TextStyle(
-                                                        fontSize: 13,
-                                                        fontWeight:
-                                                            FontWeight.w600,
-                                                        color: Theme.of(context)
-                                                            .colorScheme
-                                                            .primary,
-                                                      ),
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                    ),
-                                                    const SizedBox(height: 4),
-                                                    Text(
-                                                      getPreviewText(
-                                                        (_replyingToMessage![
-                                                                    'content'] ??
-                                                                '')
-                                                            .toString(),
-                                                      ),
-                                                      maxLines: 2,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: TextStyle(
-                                                        fontSize: 12,
-                                                        color: Theme.of(context)
-                                                            .colorScheme
-                                                            .onSurface
-                                                            .withOpacity(0.7),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                              IconButton(
-                                                icon: const Icon(Icons.close,
-                                                    size: 18),
-                                                onPressed: _cancelReplying,
-                                                visualDensity:
-                                                    VisualDensity.compact,
-                                                splashRadius: 18,
-                                                padding: EdgeInsets.zero,
-                                                constraints:
-                                                    const BoxConstraints(
-                                                        minWidth: 32,
-                                                        minHeight: 32),
-                                              ),
-                                            ],
+                                          child: Icon(
+                                            Icons.arrow_downward,
+                                            size: btnSize * 0.56,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurface
+                                                .withValues(alpha: 0.7),
                                           ),
-                                        );
-                                      },
-                                    )
-                                  : const SizedBox.shrink(),
-                            ),
-                            AnimatedBuilder(
-                              animation: _inputEntryController,
-                              builder: (context, child) {
-                                return Transform.scale(
-                                  scaleX: _inputEntryScaleX.value,
-                                  alignment: Alignment.center,
-                                  child: Opacity(
-                                    opacity: _inputEntryOpacity.value,
-                                    child: child,
+                                        ),
+                                        onPressed: _scrollToBottom,
+                                      );
+                                    },
                                   ),
-                                );
-                              },
-                              child: ListenableBuilder(
-                                listenable: Listenable.merge([
-                                  SettingsManager.elementBrightness,
-                                  SettingsManager.liquidGlassOnInput,
-                                  SettingsManager.liquidGlassInputQuality,
-                                  SettingsManager.liquidGlassInputBlur,
-                                  SettingsManager.liquidGlassInputTint,
-                                  SettingsManager.liquidGlassInputSaturation,
-                                  SettingsManager.liquidGlassInputChromatic,
-                                  SettingsManager.liquidGlassInputRefractive,
-                                  SettingsManager.liquidGlassInputLightIntensity,
-                                  SettingsManager.liquidGlassInputThickness,
-                                ]),
-                                builder: (_, __) {
-                                  final brightness = SettingsManager.elementBrightness.value;
-                                  final baseColor =
-                                      SettingsManager.getElementColor(
-                                    Theme.of(context)
-                                        .colorScheme
-                                        .surfaceContainerHighest,
-                                    brightness,
-                                  );
-                                  final borderColor = Theme.of(context)
-                                      .colorScheme
-                                      .outlineVariant
-                                      .withValues(alpha: 0.15);
-                                  // Liquid glass на Android, iOS и macOS; на Windows/Linux — стандартный рендер.
-                                  final glassAllowed =
-                                      !Platform.isWindows && !Platform.isLinux;
-                                  final useGlass = glassAllowed &&
-                                      SettingsManager.liquidGlassOnInput.value;
-                                  final bar = ConstrainedBox(
-                                    constraints: BoxConstraints(maxWidth: width),
-                                    child: ChatInputBar(
-                                      controller: _textCtrl,
-                                      textFocusNode: _focusNode,
-                                      recordingListenable: recordingNotifier,
-                                      onCancelRecording: () {
-                                        rootScreenKey.currentState
-                                            ?.cancelRecording();
-                                      },
-                                      onMicPressed: (isRecording) {
-                                        if (isRecording) {
-                                          rootScreenKey.currentState
-                                              ?.stopRecordingAndUpload(
-                                            widget.otherUsername,
-                                            _replyingToMessage,
-                                            (task) {
-                                              task.onComplete = (_) async {
-                                                if (mounted) {
-                                                  setState(() =>
-                                                      _pendingUploads.remove(task));
-                                                }
-                                              };
-                                              if (mounted) {
-                                                setState(() =>
-                                                    _pendingUploads.add(task));
-                                              }
-                                            },
-                                          );
-                                          setState(() {
-                                            _replyingToMessage = null;
-                                          });
-                                        } else {
-                                          rootScreenKey.currentState
-                                              ?.startRecording();
-                                        }
-                                      },
-                                      onAttachPressed: _openAttachmentPicker,
-                                      onSendPressed: () =>
-                                          _submitMessage(_textCtrl.text),
-                                      onSendLongPress: _showDeliveryModeDialog,
-                                      onPaste: _handlePasteFromClipboard,
-                                      onChanged: (_) => _onUserTyping(),
-                                      hintText: AppLocalizations.of(context)
-                                          .localizeHint(_inputHint),
-                                      backgroundColor: useGlass ? Colors.white : baseColor,
-                                      opacity: useGlass ? 0.0 : opacity,
-                                      borderColor: useGlass ? Colors.transparent : borderColor,
-                                      glassMode: useGlass,
-                                      sendIcon: _isLANMode
-                                          ? Icons.router
-                                          : Icons.send,
-                                      sendColor: _isLANMode
-                                          ? Colors.green
-                                          : Theme.of(context)
-                                              .colorScheme
-                                              .primary,
-                                      contentInsertionConfiguration:
-                                          ContentInsertionConfiguration(
-                                        allowedMimeTypes: const [
-                                          'image/png',
-                                          'image/jpeg',
-                                          'image/gif',
-                                          'image/webp',
-                                        ],
-                                        onContentInserted: (data) async {
-                                          try {
-                                            Uint8List? bytes = data.data;
-                                            if (bytes == null &&
-                                                data.uri.isNotEmpty) {
-                                              try {
-                                                bytes = await _clipboardChannel
-                                                    .invokeMethod<Uint8List>(
-                                                  'readContentUri',
-                                                  {'uri': data.uri},
-                                                );
-                                              } catch (_) {}
-                                            }
-                                            if (bytes != null &&
-                                                bytes.isNotEmpty &&
-                                                mounted) {
-                                              final ext = data.mimeType
-                                                      .contains('/')
-                                                  ? data.mimeType
-                                                      .split('/')
-                                                      .last
-                                                  : 'png';
-                                              final tempDir =
-                                                  await getTemporaryDirectory();
-                                              final tempFile = File(
-                                                '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext',
-                                              );
-                                              await tempFile.writeAsBytes(bytes);
-                                              _handleDroppedFiles(
-                                                  [tempFile.path]);
-                                            }
-                                          } catch (e) {
-                                            debugPrint(
-                                              '[ContentInsert] Error: $e',
-                                            );
-                                          }
-                                        },
-                                      ),
-                                    ),
-                                  );
-                                  if (!useGlass) return bar;
-                                  final quality = SettingsManager.liquidGlassInputQuality.value;
-                                  final blur           = SettingsManager.liquidGlassInputBlur.value;
-                                  final tint           = SettingsManager.liquidGlassInputTint.value;
-                                  final saturation     = SettingsManager.liquidGlassInputSaturation.value;
-                                  final chromatic      = SettingsManager.liquidGlassInputChromatic.value;
-                                  final refractive     = SettingsManager.liquidGlassInputRefractive.value;
-                                  final lightIntensity = SettingsManager.liquidGlassInputLightIntensity.value;
-                                  final thickness      = SettingsManager.liquidGlassInputThickness.value;
-                                  final glassQuality = switch (quality) {
-                                    LiquidGlassQuality.fast    => GlassQuality.standard,
-                                    LiquidGlassQuality.medium  => GlassQuality.minimal,
-                                    LiquidGlassQuality.quality => GlassQuality.premium,
-                                  };
-                                  final isDark = Theme.of(context).brightness == Brightness.dark;
-                                  final tintColor = isDark
-                                      ? Colors.white.withValues(alpha: tint)
-                                      : Colors.black.withValues(alpha: tint);
-                                  final settings = LiquidGlassSettings(
-                                    thickness: thickness,
-                                    blur: blur,
-                                    chromaticAberration: chromatic,
-                                    lightIntensity: lightIntensity,
-                                    refractiveIndex: refractive,
-                                    saturation: saturation,
-                                    ambientStrength: 0.8,
-                                    lightAngle: 0.75 * math.pi,
-                                    glassColor: tintColor,
-                                  );
-                                  return GlassCard(
-                                    useOwnLayer: true,
-                                    settings: settings,
-                                    quality: glassQuality,
-                                    padding: EdgeInsets.zero,
-                                    shape: LiquidRoundedRectangle(borderRadius: 24),
-                                    clipBehavior: Clip.antiAlias,
-                                    child: bar,
-                                  );
-                                },
+                                  ListenableBuilder(
+                                    listenable: unreadManager,
+                                    builder: (context, _) {
+                                      final me = rootScreenKey
+                                              .currentState?.currentUsername ??
+                                          widget.myUsername;
+                                      final List<String> ids = [
+                                        me,
+                                        widget.otherUsername
+                                      ]..sort();
+                                      final String chatId = ids.join(':');
+                                      final unreadCount =
+                                          unreadManager.getUnreadCount(chatId);
+                                      if (unreadCount == 0) {
+                                        return const SizedBox.shrink();
+                                      }
+                                      return Positioned(
+                                        top: -4,
+                                        right: -4,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 5, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .primary,
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                          ),
+                                          child: Text(
+                                            unreadCount.toString(),
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onPrimary,
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ],
                               ),
                             ),
-                          ],
                           ),
                         );
                       },
-                    );
-                  },
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ],
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                      bottom: 12.0 + MediaQuery.of(context).padding.bottom,
+                      left: 16,
+                      right: 16),
+                  child: ValueListenableBuilder<double>(
+                    valueListenable: SettingsManager.elementOpacity,
+                    builder: (_, opacity, __) {
+                      return ValueListenableBuilder<double>(
+                        valueListenable: SettingsManager.inputBarMaxWidth,
+                        builder: (_, width, __) {
+                          return MeasureSize(
+                            onChange: (size) {
+                              if ((_bottomBarHeight.value - size.height).abs() >
+                                  0.5) {
+                                _bottomBarHeight.value = size.height;
+                              }
+                            },
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                AnimatedSize(
+                                  duration: const Duration(milliseconds: 220),
+                                  curve: Curves.easeOut,
+                                  child: _editingMessage != null
+                                      ? ValueListenableBuilder<double>(
+                                          valueListenable:
+                                              SettingsManager.elementBrightness,
+                                          builder: (_, brightness, ___) {
+                                            final baseColor =
+                                                SettingsManager.getElementColor(
+                                              Theme.of(context)
+                                                  .colorScheme
+                                                  .surfaceContainerHighest,
+                                              brightness,
+                                            );
+                                            final colorScheme =
+                                                Theme.of(context).colorScheme;
+                                            return Container(
+                                              constraints: BoxConstraints(
+                                                  maxWidth: width),
+                                              margin: const EdgeInsets.only(
+                                                  bottom: 8),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 12,
+                                                      vertical: 10),
+                                              decoration: BoxDecoration(
+                                                color: baseColor.withValues(
+                                                    alpha: opacity),
+                                                borderRadius:
+                                                    BorderRadius.circular(16),
+                                                border: Border.all(
+                                                  color: colorScheme.primary
+                                                      .withValues(alpha: 0.25),
+                                                  width: 1,
+                                                ),
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  Icon(Icons.edit_rounded,
+                                                      size: 16,
+                                                      color:
+                                                          colorScheme.primary),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                    child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      mainAxisSize:
+                                                          MainAxisSize.min,
+                                                      children: [
+                                                        Text(
+                                                          'Editing',
+                                                          style: TextStyle(
+                                                            fontSize: 13,
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                            color: colorScheme
+                                                                .primary,
+                                                          ),
+                                                        ),
+                                                        const SizedBox(
+                                                            height: 2),
+                                                        Text(
+                                                          getPreviewText(
+                                                              _editingMessage!
+                                                                  .content),
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: TextStyle(
+                                                            fontSize: 12,
+                                                            color: colorScheme
+                                                                .onSurface
+                                                                .withValues(
+                                                                    alpha: 0.6),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                  IconButton(
+                                                    icon: const Icon(
+                                                        Icons.close,
+                                                        size: 18),
+                                                    onPressed: _cancelEditing,
+                                                    visualDensity:
+                                                        VisualDensity.compact,
+                                                    splashRadius: 18,
+                                                    padding: EdgeInsets.zero,
+                                                    constraints:
+                                                        const BoxConstraints(
+                                                            minWidth: 32,
+                                                            minHeight: 32),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          },
+                                        )
+                                      : const SizedBox.shrink(),
+                                ),
+                                AnimatedSize(
+                                  duration: const Duration(milliseconds: 220),
+                                  curve: Curves.easeOut,
+                                  child: _replyingToMessage != null
+                                      ? ValueListenableBuilder<double>(
+                                          valueListenable:
+                                              SettingsManager.elementBrightness,
+                                          builder: (_, brightness, ___) {
+                                            final baseColor =
+                                                SettingsManager.getElementColor(
+                                              Theme.of(context)
+                                                  .colorScheme
+                                                  .surfaceContainerHighest,
+                                              brightness,
+                                            );
+                                            return Container(
+                                              constraints: BoxConstraints(
+                                                  maxWidth: width),
+                                              margin: const EdgeInsets.only(
+                                                  bottom: 8),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 12,
+                                                      vertical: 10),
+                                              decoration: BoxDecoration(
+                                                color: baseColor.withValues(
+                                                    alpha: opacity),
+                                                borderRadius:
+                                                    BorderRadius.circular(16),
+                                                border: Border.all(
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .outlineVariant
+                                                      .withValues(alpha: 0.15),
+                                                  width: 1,
+                                                ),
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      mainAxisSize:
+                                                          MainAxisSize.min,
+                                                      children: [
+                                                        Text(
+                                                          _replyingToMessage![
+                                                                      'senderDisplayName']
+                                                                  ?.toString() ??
+                                                              _replyingToMessage![
+                                                                      'sender']
+                                                                  ?.toString() ??
+                                                              'Unknown',
+                                                          style: TextStyle(
+                                                            fontSize: 13,
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                            color: Theme.of(
+                                                                    context)
+                                                                .colorScheme
+                                                                .primary,
+                                                          ),
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                        ),
+                                                        const SizedBox(
+                                                            height: 4),
+                                                        Text(
+                                                          getPreviewText(
+                                                            (_replyingToMessage![
+                                                                        'content'] ??
+                                                                    '')
+                                                                .toString(),
+                                                          ),
+                                                          maxLines: 2,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: TextStyle(
+                                                            fontSize: 12,
+                                                            color: Theme.of(
+                                                                    context)
+                                                                .colorScheme
+                                                                .onSurface
+                                                                .withOpacity(
+                                                                    0.7),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                  IconButton(
+                                                    icon: const Icon(
+                                                        Icons.close,
+                                                        size: 18),
+                                                    onPressed: _cancelReplying,
+                                                    visualDensity:
+                                                        VisualDensity.compact,
+                                                    splashRadius: 18,
+                                                    padding: EdgeInsets.zero,
+                                                    constraints:
+                                                        const BoxConstraints(
+                                                            minWidth: 32,
+                                                            minHeight: 32),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          },
+                                        )
+                                      : const SizedBox.shrink(),
+                                ),
+                                // Sits below the reply/edit preview (never
+                                // overlapping it — both are plain Column
+                                // children, so they just stack) and above the
+                                // input bar. AnimatedSize collapses it to zero
+                                // height once _pendingUploads empties out.
+                                AnimatedSize(
+                                  duration: const Duration(milliseconds: 220),
+                                  curve: Curves.easeOut,
+                                  child: _pendingUploads.isNotEmpty
+                                      ? UploadProgressBar(
+                                          tasks: _pendingUploads,
+                                          maxWidth: width,
+                                          onCancelAll: _cancelAllUploads,
+                                        )
+                                      : const SizedBox.shrink(),
+                                ),
+                                AnimatedBuilder(
+                                  animation: _inputEntryController,
+                                  builder: (context, child) {
+                                    return Transform.translate(
+                                      offset: Offset(
+                                          0, _inputEntryTranslateY.value),
+                                      child: Opacity(
+                                        opacity: _inputEntryOpacity.value,
+                                        child: child,
+                                      ),
+                                    );
+                                  },
+                                  child: ListenableBuilder(
+                                    listenable: Listenable.merge([
+                                      SettingsManager.elementBrightness,
+                                      SettingsManager.liquidGlassOnInput,
+                                      SettingsManager.liquidGlassInputQuality,
+                                      SettingsManager.liquidGlassInputBlur,
+                                      SettingsManager.liquidGlassInputTint,
+                                      SettingsManager
+                                          .liquidGlassInputSaturation,
+                                      SettingsManager.liquidGlassInputChromatic,
+                                      SettingsManager
+                                          .liquidGlassInputRefractive,
+                                      SettingsManager
+                                          .liquidGlassInputLightIntensity,
+                                      SettingsManager.liquidGlassInputThickness,
+                                    ]),
+                                    builder: (_, __) {
+                                      final brightness = SettingsManager
+                                          .elementBrightness.value;
+                                      final baseColor =
+                                          SettingsManager.getElementColor(
+                                        Theme.of(context)
+                                            .colorScheme
+                                            .surfaceContainerHighest,
+                                        brightness,
+                                      );
+                                      final borderColor = Theme.of(context)
+                                          .colorScheme
+                                          .outlineVariant
+                                          .withValues(alpha: 0.15);
+                                      // Liquid glass на Android, iOS и macOS; на Windows/Linux — стандартный рендер.
+                                      final glassAllowed =
+                                          !Platform.isWindows &&
+                                              !Platform.isLinux;
+                                      final useGlass = glassAllowed &&
+                                          SettingsManager
+                                              .liquidGlassOnInput.value;
+                                      final bar = ConstrainedBox(
+                                        constraints:
+                                            BoxConstraints(maxWidth: width),
+                                        child: ChatInputBar(
+                                          inputAreaKey: _inputAreaKey,
+                                          controller: _textCtrl,
+                                          textFocusNode: _focusNode,
+                                          recordingListenable:
+                                              recordingNotifier,
+                                          recordingLevelListenable:
+                                              recordingLevelNotifier,
+                                          onCancelRecording: () {
+                                            rootScreenKey.currentState
+                                                ?.cancelRecording();
+                                          },
+                                          onMicPressed: (isRecording) {
+                                            if (isRecording) {
+                                              rootScreenKey.currentState
+                                                  ?.stopRecordingAndUpload(
+                                                widget.otherUsername,
+                                                _replyingToMessage,
+                                                (task) {
+                                                  task.onComplete = (_) async {
+                                                    if (mounted) {
+                                                      setState(() =>
+                                                          _pendingUploads
+                                                              .remove(task));
+                                                    }
+                                                  };
+                                                  if (mounted) {
+                                                    setState(() =>
+                                                        _pendingUploads
+                                                            .add(task));
+                                                  }
+                                                },
+                                              );
+                                              setState(() {
+                                                _replyingToMessage = null;
+                                              });
+                                            } else {
+                                              rootScreenKey.currentState
+                                                  ?.startRecording();
+                                            }
+                                          },
+                                          onAttachPressed:
+                                              _openAttachmentPicker,
+                                          onSendPressed: () =>
+                                              _submitMessage(_textCtrl.text),
+                                          onSendLongPress: null,
+                                          onPaste: _handlePasteFromClipboard,
+                                          onChanged: (_) => _onUserTyping(),
+                                          hintText: AppLocalizations.of(context)
+                                              .localizeHint(_inputHint),
+                                          backgroundColor: useGlass
+                                              ? Colors.white
+                                              : baseColor,
+                                          opacity: useGlass ? 0.0 : opacity,
+                                          borderColor: useGlass
+                                              ? Colors.transparent
+                                              : borderColor,
+                                          glassMode: useGlass,
+                                          meshMode: false,
+                                          sendIcon: _isLANMode
+                                              ? Icons.router
+                                              : Icons.send,
+                                          sendColor: _isLANMode
+                                              ? Colors.green
+                                              : Theme.of(context)
+                                                  .colorScheme
+                                                  .primary,
+                                          contentInsertionConfiguration:
+                                              ContentInsertionConfiguration(
+                                            allowedMimeTypes: const [
+                                              'image/png',
+                                              'image/jpeg',
+                                              'image/gif',
+                                              'image/webp',
+                                            ],
+                                            onContentInserted: (data) async {
+                                              try {
+                                                Uint8List? bytes = data.data;
+                                                if (bytes == null &&
+                                                    data.uri.isNotEmpty) {
+                                                  try {
+                                                    bytes =
+                                                        await _clipboardChannel
+                                                            .invokeMethod<
+                                                                Uint8List>(
+                                                      'readContentUri',
+                                                      {'uri': data.uri},
+                                                    );
+                                                  } catch (_) {}
+                                                }
+                                                if (bytes != null &&
+                                                    bytes.isNotEmpty &&
+                                                    mounted) {
+                                                  final ext = data.mimeType
+                                                          .contains('/')
+                                                      ? data.mimeType
+                                                          .split('/')
+                                                          .last
+                                                      : 'png';
+                                                  final tempDir =
+                                                      await getTemporaryDirectory();
+                                                  final tempFile = File(
+                                                    '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.$ext',
+                                                  );
+                                                  await tempFile
+                                                      .writeAsBytes(bytes);
+                                                  _handleDroppedFiles(
+                                                      [tempFile.path]);
+                                                }
+                                              } catch (e) {
+                                                debugPrint(
+                                                  '[ContentInsert] Error: $e',
+                                                );
+                                              }
+                                            },
+                                          ),
+                                        ),
+                                      );
+                                      if (!useGlass) return bar;
+                                      final quality = SettingsManager
+                                          .liquidGlassInputQuality.value;
+                                      final blur = SettingsManager
+                                          .liquidGlassInputBlur.value;
+                                      final tint = SettingsManager
+                                          .liquidGlassInputTint.value;
+                                      final saturation = SettingsManager
+                                          .liquidGlassInputSaturation.value;
+                                      final chromatic = SettingsManager
+                                          .liquidGlassInputChromatic.value;
+                                      final refractive = SettingsManager
+                                          .liquidGlassInputRefractive.value;
+                                      final lightIntensity = SettingsManager
+                                          .liquidGlassInputLightIntensity.value;
+                                      final thickness = SettingsManager
+                                          .liquidGlassInputThickness.value;
+                                      final glassQuality = switch (quality) {
+                                        LiquidGlassQuality.fast =>
+                                          GlassQuality.standard,
+                                        LiquidGlassQuality.medium =>
+                                          GlassQuality.minimal,
+                                        LiquidGlassQuality.quality =>
+                                          GlassQuality.premium,
+                                      };
+                                      final isDark =
+                                          Theme.of(context).brightness ==
+                                              Brightness.dark;
+                                      final tintColor = isDark
+                                          ? Colors.white.withValues(alpha: tint)
+                                          : Colors.black
+                                              .withValues(alpha: tint);
+                                      final settings = LiquidGlassSettings(
+                                        thickness: thickness,
+                                        blur: blur,
+                                        chromaticAberration: chromatic,
+                                        lightIntensity: lightIntensity,
+                                        refractiveIndex: refractive,
+                                        saturation: saturation,
+                                        ambientStrength: 0.8,
+                                        lightAngle: 0.75 * math.pi,
+                                        glassColor: tintColor,
+                                      );
+                                      return GlassCard(
+                                        useOwnLayer: true,
+                                        settings: settings,
+                                        quality: glassQuality,
+                                        padding: EdgeInsets.zero,
+                                        shape: LiquidRoundedRectangle(
+                                            borderRadius: 24),
+                                        clipBehavior: Clip.antiAlias,
+                                        child: bar,
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Future<void> _handleDroppedFiles(List<String> filePaths) async {
+  Future<void> _handleDroppedFiles(List<String> filePaths,
+      {bool skipBulkConfirm = false}) async {
     if (filePaths.isEmpty) return;
 
     // Single file — preserve dialog/confirm behavior
@@ -4507,8 +5223,10 @@ class ChatScreenState extends State<ChatScreen>
     }
     if (existing.isEmpty) return;
 
-    // Batch consecutive images (≤10 per album message), send all others individually.
-    // Each album batch shows its own confirmation dialog (one dialog per 10 images).
+    // Batch consecutive images (≤10 per album message); non-image files are
+    // sent individually. Split into ordered segments first so we know up
+    // front how many albums this drop will produce.
+    final segments = <Object>[]; // List<String> album batch, or String path
     int i = 0;
     while (i < existing.length) {
       final fp = existing[i];
@@ -4520,9 +5238,50 @@ class ChatScreenState extends State<ChatScreen>
           batch.add(existing[i]);
           i++;
         }
-        await _sendAlbum(batch); // shows album dialog per batch if setting enabled
+        segments.add(batch);
       } else {
-        if (!mounted) return;
+        segments.add(fp);
+        i++;
+      }
+    }
+
+    final albumBatches = segments.whereType<List<String>>().toList();
+    // For a drop that produces multiple albums, ask once up front instead
+    // of showing one dialog per album — hundreds of dialog transitions and
+    // full-res thumbnail decodes were the source of heavy lag on large
+    // (e.g. 3000-image) sends.
+    // skipBulkConfirm = true when caller (e.g. _openAttachmentPicker) already
+    // showed the confirmation dialog and user accepted.
+    final useBulkConfirm = albumBatches.length > 1 && !skipBulkConfirm;
+    var albumsAllowed = true;
+    if (useBulkConfirm) {
+      if (!mounted) return;
+      final totalImages = albumBatches.fold<int>(0, (sum, b) => sum + b.length);
+      var proceed = false;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => BulkAlbumConfirmDialog(
+          imageCount: totalImages,
+          albumCount: albumBatches.length,
+          onSend: () => proceed = true,
+          onCancel: () {},
+        ),
+      );
+      albumsAllowed = proceed;
+    }
+
+    for (final segment in segments) {
+      if (segment is List<String>) {
+        if (useBulkConfirm || skipBulkConfirm) {
+          if (!albumsAllowed) continue;
+          await _sendAlbum(segment, skipConfirm: true);
+        } else {
+          await _sendAlbum(segment); // shows its own dialog if setting enabled
+        }
+      } else {
+        final fp = segment as String;
+        if (!mounted)
+          continue; // skip per-file dialog; don't stop remaining sends
         final basename = p.basename(fp);
         final ext = p.extension(basename).toLowerCase();
         final fileType = FileTypeDetector.isVideo(fp)
@@ -4536,19 +5295,25 @@ class ChatScreenState extends State<ChatScreen>
                         : FileTypeDetector.isData(fp)
                             ? 'DATA'
                             : 'FILE';
-        var proceed = false;
-        await showDialog<void>(
-          context: context,
-          builder: (_) => FilePreviewDialog(
-            filePath: fp,
-            onSend: () => proceed = true,
-            onCancel: () {},
-            onPasteExtra: null,
-            onSendAlbum: null,
-          ),
-        );
-        if (proceed) await _sendFile(fp, basename, ext, fileType);
-        i++;
+        if (!SettingsManager.confirmFileUpload.value) {
+          // Matches _showFilePreviewAndSend's single-file behavior: skip the
+          // dialog entirely when the user has turned confirmation off,
+          // instead of always asking regardless of the setting.
+          await _sendFile(fp, basename, ext, fileType);
+        } else {
+          var proceed = false;
+          await showDialog<void>(
+            context: context,
+            builder: (_) => FilePreviewDialog(
+              filePath: fp,
+              onSend: () => proceed = true,
+              onCancel: () {},
+              onPasteExtra: null,
+              onSendAlbum: null,
+            ),
+          );
+          if (proceed) await _sendFile(fp, basename, ext, fileType);
+        }
       }
     }
   }
@@ -4921,12 +5686,10 @@ class ChatScreenState extends State<ChatScreen>
       });
   }
 
-  Widget _buildPendingUploadWidget(UploadTask task) {
-    return PendingUploadCard(
-      task: task,
-      showProgress: true, // presign S3 upload — real byte-level progress
-      onCancel: () => _cancelUpload(task),
-    );
+  void _cancelAllUploads() {
+    for (final task in List<UploadTask>.from(_pendingUploads)) {
+      _cancelUpload(task);
+    }
   }
 
   Future<void> _sendFile(
@@ -4973,7 +5736,7 @@ class ChatScreenState extends State<ChatScreen>
           return;
         }
 
-        final uploadType = (fileType == 'AUDIO') ? 'voice' : 'file';
+        final uploadType = (fileType == 'AUDIO') ? 'audio' : 'file';
         final fileExt = p.extension(basename).toLowerCase();
 
         // Show pending upload card immediately
@@ -5070,7 +5833,17 @@ class ChatScreenState extends State<ChatScreen>
         debugPrint('[LAN SEND] Created lan_media directory');
       }
 
-      final localLanFile = File('${lanMediaDir.path}/$basename');
+      // Stage under a unique wire filename — not the raw basename. Two
+      // dropped/picked files sharing a basename (common for exported/ripped
+      // audio) would otherwise collide on disk AND end up with the literal
+      // same `lan://<basename>` content string in both chat messages, so the
+      // second overwrites the first both locally and for whoever receives
+      // it. Mirrors the uniqueness scheme _performVoiceUploadLAN already
+      // uses for recorded voice messages (root_screen.dart).
+      final uniqueBasename =
+          '${DateTime.now().microsecondsSinceEpoch}_$basename';
+
+      final localLanFile = File('${lanMediaDir.path}/$uniqueBasename');
       await localLanFile.writeAsBytes(fileBytes, flush: true);
       debugPrint(
           '[LAN SEND] Saved locally to: ${localLanFile.path} (exists: ${await localLanFile.exists()})');
@@ -5091,7 +5864,7 @@ class ChatScreenState extends State<ChatScreen>
         to: widget.otherUsername,
         mediaType: mediaType,
         mediaData: Uint8List.fromList(fileBytes),
-        filename: basename,
+        filename: uniqueBasename,
         replyTo: _replyingToMessage,
       );
 
@@ -5101,21 +5874,34 @@ class ChatScreenState extends State<ChatScreen>
         return;
       }
 
+      // 'orig' carries the human-readable original filename for display —
+      // every reader of these message types (see the VOICEv1/VIDEOv1/FILEv1
+      // parsing above) already falls back to it, so this is a pure addition.
       String content;
       if (mediaType == 'image') {
-        content = 'IMAGEv1:${jsonEncode({'url': 'lan://$basename'})}';
+        content = 'IMAGEv1:${jsonEncode({
+              'url': 'lan://$uniqueBasename',
+              'orig': basename,
+            })}';
       } else if (mediaType == 'video') {
-        content = 'VIDEOv1:${jsonEncode({'url': 'lan://$basename'})}';
+        content = 'VIDEOv1:${jsonEncode({
+              'url': 'lan://$uniqueBasename',
+              'orig': basename,
+            })}';
       } else if (mediaType == 'voice') {
         final duration = fileBytes.length ~/ (16000 * 2);
         final format = basename.split('.').last;
         content = 'VOICEv1:${jsonEncode({
-              'url': 'lan://$basename',
+              'url': 'lan://$uniqueBasename',
               'duration': duration,
-              'format': format
+              'format': format,
+              'orig': basename,
             })}';
       } else {
-        content = 'FILEv1:${jsonEncode({'filename': 'lan://$basename'})}';
+        content = 'FILEv1:${jsonEncode({
+              'filename': 'lan://$uniqueBasename',
+              'orig': basename,
+            })}';
       }
 
       await widget.onSend(content, {
@@ -5341,6 +6127,12 @@ class ChatScreenState extends State<ChatScreen>
       {bool skipConfirm = false}) async {
     if (filePaths.isEmpty) return;
 
+    // Capture widget-bound values before any async gap so that if the parent
+    // reconfigures this widget for a different conversation mid-upload, the
+    // album is still delivered to the original chat.
+    final sendFn = widget.onSend;
+    final myUsername = widget.myUsername;
+
     if (!skipConfirm) {
       if (!mounted) return;
       var proceed = false;
@@ -5355,6 +6147,7 @@ class ChatScreenState extends State<ChatScreen>
       if (!proceed) return;
     }
 
+    UploadTask? albumTask;
     try {
       final token = await AccountManager.getToken(
           rootScreenKey.currentState?.currentUsername ?? '');
@@ -5371,19 +6164,29 @@ class ChatScreenState extends State<ChatScreen>
           Future.value(true));
       if (!ok) return;
 
-      rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value)
-              .uploadingImages(filePaths.length));
+      albumTask = UploadTask(
+        id: 'album_${DateTime.now().millisecondsSinceEpoch}',
+        type: 'album',
+        localPath: '',
+        basename: '',
+      );
+      albumTask.albumTotal = filePaths.length;
+      albumTask.status = UploadStatus.uploading;
+      if (mounted) setState(() => _pendingUploads.add(albumTask!));
 
       final appSupport = await getOnyxSupportDirectory();
       final cacheDir = Directory('${appSupport.path}/image_cache');
       await cacheDir.create(recursive: true);
 
-      final albumItems = <Map<String, dynamic>>[];
+      final root = rootScreenKey.currentState;
+      if (root == null) return;
 
-      for (final filePath in filePaths) {
+      // Process every image in the batch concurrently (read/encrypt/upload)
+      // instead of one-by-one — sequential network round-trips per image were
+      // the source of multi-second delays between albums on large sends.
+      final results = await Future.wait(filePaths.map((filePath) async {
         final localFile = File(filePath);
-        if (!await localFile.exists()) continue;
+        if (!await localFile.exists()) return null;
 
         final basename = p.basename(filePath);
         final ext = p.extension(basename).toLowerCase();
@@ -5400,9 +6203,6 @@ class ChatScreenState extends State<ChatScreen>
         }
 
         final plainBytes = await localFile.readAsBytes();
-        final root = rootScreenKey.currentState;
-        if (root == null) return;
-
         final blur = await computeBlurHash(plainBytes);
 
         final (encryptedBytes, albumItemKeyB64) =
@@ -5417,22 +6217,27 @@ class ChatScreenState extends State<ChatScreen>
         );
         if (filename == null) {
           debugPrint('[album] presign upload failed for $basename');
-          continue;
+          return null;
         }
+
+        albumTask!.albumDone++;
+        albumTask.progress = albumTask.albumDone / albumTask.albumTotal;
 
         try {
           await localFile.copy('${cacheDir.path}/$filename');
         } catch (_) {}
 
-        albumItems.add({
+        return {
           'filename': filename,
-          'owner': widget.myUsername,
+          'owner': myUsername,
           'orig': basename,
           'key': albumItemKeyB64,
           if (blur != null) 'blur': blur.hash,
           if (blur != null) 'ar': blur.aspectRatio,
-        });
-      }
+        };
+      }));
+
+      final albumItems = results.whereType<Map<String, dynamic>>().toList();
 
       if (albumItems.isEmpty) {
         rootScreenKey.currentState?.showSnack(
@@ -5449,7 +6254,7 @@ class ChatScreenState extends State<ChatScreen>
           _replyingToMessage = null;
         });
 
-      await widget.onSend(content, replyTo);
+      await sendFn(content, replyTo);
 
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
@@ -5458,6 +6263,10 @@ class ChatScreenState extends State<ChatScreen>
       }
     } catch (e) {
       if (mounted) rootScreenKey.currentState?.showSnack('Error: $e');
+    } finally {
+      if (albumTask != null && mounted) {
+        setState(() => _pendingUploads.remove(albumTask!));
+      }
     }
   }
 
@@ -5657,6 +6466,10 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
     }
 
     String deleteLabel() {
+      // The edit/delete countdown only applies to our own outgoing
+      // messages — deleting an incoming message just hides it locally, so
+      // it's never on a timer.
+      if (!widget.msg.outgoing) return l.delete;
       if (widget.canAlwaysDelete) return l.delete;
       if (!canAct) return l.delete;
       if (_secondsLeft > 0) return l.deleteTimerLabel(_secondsLeft);
@@ -5731,11 +6544,16 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
                   ),
                 if (!widget.isMedia)
                   actionTile(Icons.copy_rounded, l.copy, widget.onCopy),
-                if (widget.msg.outgoing && widget.onDelete != null)
+                if (widget.onDelete != null)
                   actionTile(
                     Icons.delete_outline_rounded,
                     deleteLabel(),
-                    (canAct || widget.canAlwaysDelete) ? widget.onDelete : null,
+                    // Incoming messages are always deletable (it's a local
+                    // "delete for me", not gated by the edit-window timer
+                    // that only makes sense for our own outgoing messages).
+                    (!widget.msg.outgoing || canAct || widget.canAlwaysDelete)
+                        ? widget.onDelete
+                        : null,
                     color: Colors.red.shade400,
                   ),
                 const SizedBox(height: 4),

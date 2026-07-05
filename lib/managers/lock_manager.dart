@@ -75,6 +75,12 @@ class LockManager {
 
   static void clearSession() => _sessionUnlocked.clear();
 
+  // Re-locks a single id (e.g. a favorites folder) without touching every
+  // other session-unlocked chat — used when the user leaves a locked folder,
+  // so its PIN is required again next time instead of staying open for the
+  // rest of the app session like a regular locked chat does.
+  static void relock(String chatId) => _sessionUnlocked.remove(chatId);
+
   // ── PIN ────────────────────────────────────────────────────────────────────
 
   static bool hasPin(String chatId) =>

@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_linux
+  audiotags
   desktop_drop
   desktop_multi_window
   file_selector_linux

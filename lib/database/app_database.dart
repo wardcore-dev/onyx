@@ -32,10 +32,17 @@ class AppDatabase extends _$AppDatabase {
       : super(_openConnection(dbDirectory));
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            await customStatement(
+              'ALTER TABLE messages ADD COLUMN mesh_meta_json TEXT',
+            );
+          }
+        },
         onCreate: (m) async {
           await m.createAll();
           // Indexes for fast chat-list and pagination queries.

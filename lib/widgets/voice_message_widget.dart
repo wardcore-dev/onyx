@@ -19,6 +19,7 @@ import 'package:audio_session/audio_session.dart';
 import '../globals.dart';
 import '../utils/media_cache.dart';
 import '../utils/global_audio_controller.dart';
+import '../utils/audio_art_extractor.dart';
 
 class VoiceMessagePlayer extends StatefulWidget {
   final String filename;
@@ -60,6 +61,11 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
   bool _playerReady = false; // true = source loaded, player can resume without reload
   String? _lastEnsureError;
   int? _activeSessionId;
+  // While the user is dragging the seek slider, the thumb tracks this local
+  // value instead of _position — otherwise every position-stream tick during
+  // a drag (several per second) fights the drag gesture and the thumb jitters.
+  bool _isDraggingSeek = false;
+  double _dragSeekValue = 0;
   final List<StreamSubscription> _subs = [];
 
   static bool _bgConfigured = false;
@@ -338,15 +344,20 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
       chatId: widget.peerUsername,
       filename: widget.filename,
     );
+    // activate() already applied the persisted playback speed via
+    // onSetSpeed above (before play() below), so the track starts at the
+    // right speed immediately instead of playing at 1x and then jumping.
+
+    // Off the playback critical path, and started before play()/await so it
+    // runs concurrently with playback startup instead of being queued behind
+    // it — cover art (if any) still shows up asynchronously, just sooner.
+    final sid = _activeSessionId;
+    unawaited(extractArt(filePath).then((artPath) {
+      if (sid != null) globalAudioController.setArt(sid, artPath);
+    }));
+    if (sid != null) globalAudioController.loadEnvelope(sid, filePath);
 
     await p.play();
-    final speed = globalAudioController.playbackSpeed;
-    if (speed != 1.0) {
-      try {
-        await p.setSpeed(speed);
-        await p.setPitch(speed);
-      } catch (_) {}
-    }
   }
 
   Future<void> _loadAndPlay() async {
@@ -927,6 +938,10 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
   }
 
   Widget _buildSlider() {
+    final maxMs = _duration.inMilliseconds.toDouble();
+    final displayValue = _isDraggingSeek
+        ? _dragSeekValue
+        : (maxMs > 0 ? _position.inMilliseconds.toDouble() : 0);
     final slider = SliderTheme(
       data: SliderTheme.of(context).copyWith(
         trackHeight: 2,
@@ -935,13 +950,21 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
         ),
       ),
       child: Slider(
-        value: _duration.inMilliseconds > 0
-            ? _position.inMilliseconds.toDouble()
-            : 0,
-        max: _duration.inMilliseconds.toDouble(),
-        onChanged: (value) async {
-          final newPosition = Duration(milliseconds: value.toInt());
+        value: displayValue.clamp(0, maxMs > 0 ? maxMs : 1).toDouble(),
+        max: maxMs > 0 ? maxMs : 1,
+        onChangeStart: (value) {
+          setState(() {
+            _isDraggingSeek = true;
+            _dragSeekValue = value;
+          });
+        },
+        // Only tracks the thumb locally while dragging — no seek() per pixel,
+        // which was causing the decoder to stutter/jitter during scrubbing.
+        onChanged: (value) => setState(() => _dragSeekValue = value),
+        onChangeEnd: (value) async {
+          _isDraggingSeek = false;
           if (_duration == Duration.zero || _player == null) return;
+          final newPosition = Duration(milliseconds: value.toInt());
           await _player!.seek(newPosition);
           if (!_isPlaying) {
             await Future.delayed(const Duration(milliseconds: 10));

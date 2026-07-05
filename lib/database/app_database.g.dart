@@ -147,6 +147,12 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
   late final GeneratedColumn<String> reactionsJson = GeneratedColumn<String>(
       'reactions_json', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _meshMetaJsonMeta =
+      const VerificationMeta('meshMetaJson');
+  @override
+  late final GeneratedColumn<String> meshMetaJson = GeneratedColumn<String>(
+      'mesh_meta_json', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         messageId,
@@ -169,7 +175,8 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         replyToContent,
         deliveryMode,
         deliveredAtMs,
-        reactionsJson
+        reactionsJson,
+        meshMetaJson
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -305,6 +312,12 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
           reactionsJson.isAcceptableOrUnknown(
               data['reactions_json']!, _reactionsJsonMeta));
     }
+    if (data.containsKey('mesh_meta_json')) {
+      context.handle(
+          _meshMetaJsonMeta,
+          meshMetaJson.isAcceptableOrUnknown(
+              data['mesh_meta_json']!, _meshMetaJsonMeta));
+    }
     return context;
   }
 
@@ -356,6 +369,8 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
           .read(DriftSqlType.int, data['${effectivePrefix}delivered_at_ms']),
       reactionsJson: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}reactions_json']),
+      meshMetaJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}mesh_meta_json']),
     );
   }
 
@@ -387,6 +402,7 @@ class Message extends DataClass implements Insertable<Message> {
   final String deliveryMode;
   final int? deliveredAtMs;
   final String? reactionsJson;
+  final String? meshMetaJson;
   const Message(
       {required this.messageId,
       required this.chatId,
@@ -408,7 +424,8 @@ class Message extends DataClass implements Insertable<Message> {
       this.replyToContent,
       required this.deliveryMode,
       this.deliveredAtMs,
-      this.reactionsJson});
+      this.reactionsJson,
+      this.meshMetaJson});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -448,6 +465,9 @@ class Message extends DataClass implements Insertable<Message> {
     }
     if (!nullToAbsent || reactionsJson != null) {
       map['reactions_json'] = Variable<String>(reactionsJson);
+    }
+    if (!nullToAbsent || meshMetaJson != null) {
+      map['mesh_meta_json'] = Variable<String>(meshMetaJson);
     }
     return map;
   }
@@ -491,6 +511,9 @@ class Message extends DataClass implements Insertable<Message> {
       reactionsJson: reactionsJson == null && nullToAbsent
           ? const Value.absent()
           : Value(reactionsJson),
+      meshMetaJson: meshMetaJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(meshMetaJson),
     );
   }
 
@@ -521,6 +544,7 @@ class Message extends DataClass implements Insertable<Message> {
       deliveryMode: serializer.fromJson<String>(json['deliveryMode']),
       deliveredAtMs: serializer.fromJson<int?>(json['deliveredAtMs']),
       reactionsJson: serializer.fromJson<String?>(json['reactionsJson']),
+      meshMetaJson: serializer.fromJson<String?>(json['meshMetaJson']),
     );
   }
   @override
@@ -548,6 +572,7 @@ class Message extends DataClass implements Insertable<Message> {
       'deliveryMode': serializer.toJson<String>(deliveryMode),
       'deliveredAtMs': serializer.toJson<int?>(deliveredAtMs),
       'reactionsJson': serializer.toJson<String?>(reactionsJson),
+      'meshMetaJson': serializer.toJson<String?>(meshMetaJson),
     };
   }
 
@@ -572,7 +597,8 @@ class Message extends DataClass implements Insertable<Message> {
           Value<String?> replyToContent = const Value.absent(),
           String? deliveryMode,
           Value<int?> deliveredAtMs = const Value.absent(),
-          Value<String?> reactionsJson = const Value.absent()}) =>
+          Value<String?> reactionsJson = const Value.absent(),
+          Value<String?> meshMetaJson = const Value.absent()}) =>
       Message(
         messageId: messageId ?? this.messageId,
         chatId: chatId ?? this.chatId,
@@ -605,6 +631,8 @@ class Message extends DataClass implements Insertable<Message> {
             deliveredAtMs.present ? deliveredAtMs.value : this.deliveredAtMs,
         reactionsJson:
             reactionsJson.present ? reactionsJson.value : this.reactionsJson,
+        meshMetaJson:
+            meshMetaJson.present ? meshMetaJson.value : this.meshMetaJson,
       );
   Message copyWithCompanion(MessagesCompanion data) {
     return Message(
@@ -647,6 +675,9 @@ class Message extends DataClass implements Insertable<Message> {
       reactionsJson: data.reactionsJson.present
           ? data.reactionsJson.value
           : this.reactionsJson,
+      meshMetaJson: data.meshMetaJson.present
+          ? data.meshMetaJson.value
+          : this.meshMetaJson,
     );
   }
 
@@ -673,7 +704,8 @@ class Message extends DataClass implements Insertable<Message> {
           ..write('replyToContent: $replyToContent, ')
           ..write('deliveryMode: $deliveryMode, ')
           ..write('deliveredAtMs: $deliveredAtMs, ')
-          ..write('reactionsJson: $reactionsJson')
+          ..write('reactionsJson: $reactionsJson, ')
+          ..write('meshMetaJson: $meshMetaJson')
           ..write(')'))
         .toString();
   }
@@ -700,7 +732,8 @@ class Message extends DataClass implements Insertable<Message> {
         replyToContent,
         deliveryMode,
         deliveredAtMs,
-        reactionsJson
+        reactionsJson,
+        meshMetaJson
       ]);
   @override
   bool operator ==(Object other) =>
@@ -726,7 +759,8 @@ class Message extends DataClass implements Insertable<Message> {
           other.replyToContent == this.replyToContent &&
           other.deliveryMode == this.deliveryMode &&
           other.deliveredAtMs == this.deliveredAtMs &&
-          other.reactionsJson == this.reactionsJson);
+          other.reactionsJson == this.reactionsJson &&
+          other.meshMetaJson == this.meshMetaJson);
 }
 
 class MessagesCompanion extends UpdateCompanion<Message> {
@@ -751,6 +785,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
   final Value<String> deliveryMode;
   final Value<int?> deliveredAtMs;
   final Value<String?> reactionsJson;
+  final Value<String?> meshMetaJson;
   final Value<int> rowid;
   const MessagesCompanion({
     this.messageId = const Value.absent(),
@@ -774,6 +809,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.deliveryMode = const Value.absent(),
     this.deliveredAtMs = const Value.absent(),
     this.reactionsJson = const Value.absent(),
+    this.meshMetaJson = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MessagesCompanion.insert({
@@ -798,6 +834,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.deliveryMode = const Value.absent(),
     this.deliveredAtMs = const Value.absent(),
     this.reactionsJson = const Value.absent(),
+    this.meshMetaJson = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : messageId = Value(messageId),
         chatId = Value(chatId),
@@ -830,6 +867,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     Expression<String>? deliveryMode,
     Expression<int>? deliveredAtMs,
     Expression<String>? reactionsJson,
+    Expression<String>? meshMetaJson,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -856,6 +894,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       if (deliveryMode != null) 'delivery_mode': deliveryMode,
       if (deliveredAtMs != null) 'delivered_at_ms': deliveredAtMs,
       if (reactionsJson != null) 'reactions_json': reactionsJson,
+      if (meshMetaJson != null) 'mesh_meta_json': meshMetaJson,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -882,6 +921,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       Value<String>? deliveryMode,
       Value<int?>? deliveredAtMs,
       Value<String?>? reactionsJson,
+      Value<String?>? meshMetaJson,
       Value<int>? rowid}) {
     return MessagesCompanion(
       messageId: messageId ?? this.messageId,
@@ -905,6 +945,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       deliveryMode: deliveryMode ?? this.deliveryMode,
       deliveredAtMs: deliveredAtMs ?? this.deliveredAtMs,
       reactionsJson: reactionsJson ?? this.reactionsJson,
+      meshMetaJson: meshMetaJson ?? this.meshMetaJson,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -975,6 +1016,9 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     if (reactionsJson.present) {
       map['reactions_json'] = Variable<String>(reactionsJson.value);
     }
+    if (meshMetaJson.present) {
+      map['mesh_meta_json'] = Variable<String>(meshMetaJson.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1005,6 +1049,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
           ..write('deliveryMode: $deliveryMode, ')
           ..write('deliveredAtMs: $deliveredAtMs, ')
           ..write('reactionsJson: $reactionsJson, ')
+          ..write('meshMetaJson: $meshMetaJson, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -2312,6 +2357,7 @@ typedef $$MessagesTableCreateCompanionBuilder = MessagesCompanion Function({
   Value<String> deliveryMode,
   Value<int?> deliveredAtMs,
   Value<String?> reactionsJson,
+  Value<String?> meshMetaJson,
   Value<int> rowid,
 });
 typedef $$MessagesTableUpdateCompanionBuilder = MessagesCompanion Function({
@@ -2336,6 +2382,7 @@ typedef $$MessagesTableUpdateCompanionBuilder = MessagesCompanion Function({
   Value<String> deliveryMode,
   Value<int?> deliveredAtMs,
   Value<String?> reactionsJson,
+  Value<String?> meshMetaJson,
   Value<int> rowid,
 });
 
@@ -2414,6 +2461,9 @@ class $$MessagesTableFilterComposer
 
   ColumnFilters<String> get reactionsJson => $composableBuilder(
       column: $table.reactionsJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get meshMetaJson => $composableBuilder(
+      column: $table.meshMetaJson, builder: (column) => ColumnFilters(column));
 }
 
 class $$MessagesTableOrderingComposer
@@ -2495,6 +2545,10 @@ class $$MessagesTableOrderingComposer
   ColumnOrderings<String> get reactionsJson => $composableBuilder(
       column: $table.reactionsJson,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get meshMetaJson => $composableBuilder(
+      column: $table.meshMetaJson,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$MessagesTableAnnotationComposer
@@ -2568,6 +2622,9 @@ class $$MessagesTableAnnotationComposer
 
   GeneratedColumn<String> get reactionsJson => $composableBuilder(
       column: $table.reactionsJson, builder: (column) => column);
+
+  GeneratedColumn<String> get meshMetaJson => $composableBuilder(
+      column: $table.meshMetaJson, builder: (column) => column);
 }
 
 class $$MessagesTableTableManager extends RootTableManager<
@@ -2614,6 +2671,7 @@ class $$MessagesTableTableManager extends RootTableManager<
             Value<String> deliveryMode = const Value.absent(),
             Value<int?> deliveredAtMs = const Value.absent(),
             Value<String?> reactionsJson = const Value.absent(),
+            Value<String?> meshMetaJson = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               MessagesCompanion(
@@ -2638,6 +2696,7 @@ class $$MessagesTableTableManager extends RootTableManager<
             deliveryMode: deliveryMode,
             deliveredAtMs: deliveredAtMs,
             reactionsJson: reactionsJson,
+            meshMetaJson: meshMetaJson,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -2662,6 +2721,7 @@ class $$MessagesTableTableManager extends RootTableManager<
             Value<String> deliveryMode = const Value.absent(),
             Value<int?> deliveredAtMs = const Value.absent(),
             Value<String?> reactionsJson = const Value.absent(),
+            Value<String?> meshMetaJson = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               MessagesCompanion.insert(
@@ -2686,6 +2746,7 @@ class $$MessagesTableTableManager extends RootTableManager<
             deliveryMode: deliveryMode,
             deliveredAtMs: deliveredAtMs,
             reactionsJson: reactionsJson,
+            meshMetaJson: meshMetaJson,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

@@ -1,6 +1,8 @@
 // lib/widgets/full_player_sheet.dart
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../utils/global_audio_controller.dart';
+import 'scrub_slider.dart';
 
 class FullPlayerSheet extends StatelessWidget {
   const FullPlayerSheet({super.key});
@@ -139,45 +141,66 @@ class FullPlayerSheet extends StatelessWidget {
             // an empty stretch below the controls whenever content was shorter.
             Flexible(
               child: SingleChildScrollView(
+                // Clamping instead of the platform default (bouncing on
+                // iOS/some Android builds) — dragging the seek/speed sliders
+                // with any slight vertical component was getting picked up
+                // as a scroll of this view, which then elastically
+                // rubber-banded back, feeling like the whole sheet jittered
+                // or "teleported" back up mid-drag.
+                physics: const ClampingScrollPhysics(),
                 padding: const EdgeInsets.symmetric(horizontal: 32),
                 child: Column(
                   children: [
                     const SizedBox(height: 14),
 
                     // ── Large art / icon ───────────────────────────────────────
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 300),
-                      child: Container(
-                        key: ValueKey(ctrl.isPlaying),
-                        width: 196,
-                        height: 196,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              cs.primary.withValues(alpha: 0.9),
-                              cs.primary.withValues(alpha: 0.55),
+                    ValueListenableBuilder<double>(
+                      valueListenable: ctrl.glowEnergy,
+                      builder: (context, energy, child) {
+                        return Container(
+                          width: 196,
+                          height: 196,
+                          decoration: BoxDecoration(
+                            gradient: ctrl.artPath == null
+                                ? LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      cs.primary.withValues(alpha: 0.9),
+                                      cs.primary.withValues(alpha: 0.55),
+                                    ],
+                                  )
+                                : null,
+                            borderRadius: BorderRadius.circular(32),
+                            boxShadow: [
+                              BoxShadow(
+                                color: glowColor.withValues(
+                                    alpha: 0.2 + energy * 0.25),
+                                blurRadius: 28 + energy * 28,
+                                offset: const Offset(0, 16),
+                              ),
                             ],
                           ),
-                          borderRadius: BorderRadius.circular(32),
-                          boxShadow: [
-                            BoxShadow(
-                              color: glowColor.withValues(
-                                  alpha: ctrl.isPlaying ? 0.45 : 0.2),
-                              blurRadius: ctrl.isPlaying ? 56 : 28,
-                              offset: const Offset(0, 16),
-                            ),
-                          ],
-                        ),
-                        child: Icon(
-                                ctrl.isFile
-                                    ? Icons.music_note_rounded
-                                    : Icons.mic_rounded,
-                                size: 80,
-                                color: cs.onPrimary.withValues(alpha: 0.95),
+                          child: child,
+                        );
+                      },
+                      child: ctrl.artPath != null
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(32),
+                              child: Image.file(
+                                File(ctrl.artPath!),
+                                width: 196,
+                                height: 196,
+                                fit: BoxFit.cover,
                               ),
-                      ),
+                            )
+                          : Icon(
+                              ctrl.isFile
+                                  ? Icons.music_note_rounded
+                                  : Icons.mic_rounded,
+                              size: 80,
+                              color: cs.onPrimary.withValues(alpha: 0.95),
+                            ),
                     ),
 
                     const SizedBox(height: 20),
@@ -210,8 +233,9 @@ class FullPlayerSheet extends StatelessWidget {
                     const SizedBox(height: 20),
 
                 // ── Progress slider ────────────────────────────────────────
-                SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
+                ScrubSlider(
+                  progress: progress,
+                  sliderTheme: SliderTheme.of(context).copyWith(
                     trackHeight: 4.5,
                     thumbShape:
                         const RoundSliderThumbShape(enabledThumbRadius: 7),
@@ -222,16 +246,12 @@ class FullPlayerSheet extends StatelessWidget {
                     thumbColor: cs.primary,
                     overlayColor: cs.primary.withValues(alpha: 0.12),
                   ),
-                  child: Slider(
-                    value: progress,
-                    onChanged: (v) {
-                      if (ctrl.duration == Duration.zero) return;
-                      ctrl.seek(Duration(
-                        milliseconds:
-                            (v * ctrl.duration.inMilliseconds).round(),
-                      ));
-                    },
-                  ),
+                  onSeekEnd: (v) {
+                    if (ctrl.duration == Duration.zero) return;
+                    ctrl.seek(Duration(
+                      milliseconds: (v * ctrl.duration.inMilliseconds).round(),
+                    ));
+                  },
                 ),
 
                 // ── Time row ───────────────────────────────────────────────
@@ -381,6 +401,32 @@ class FullPlayerSheet extends StatelessWidget {
                             fontFeatures: const [FontFeature.tabularFigures()],
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        // Lock/unlock toggle — locked (default) snaps the
+                        // slider to 0.25 steps; unlocked allows free drag.
+                        GestureDetector(
+                          onTap: () => globalAudioController
+                              .setSpeedUnlocked(!ctrl.speedUnlocked),
+                          child: Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              color: ctrl.speedUnlocked
+                                  ? cs.primary.withValues(alpha: 0.14)
+                                  : cs.onSurface.withValues(alpha: 0.06),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              ctrl.speedUnlocked
+                                  ? Icons.lock_open_rounded
+                                  : Icons.lock_rounded,
+                              size: 15,
+                              color: ctrl.speedUnlocked
+                                  ? cs.primary
+                                  : cs.onSurface.withValues(alpha: 0.45),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -401,11 +447,16 @@ class FullPlayerSheet extends StatelessWidget {
                         value: ctrl.playbackSpeed.clamp(0.25, 4.0),
                         min: 0.25,
                         max: 4.0,
-                        divisions: 15, // steps of 0.25
+                        divisions: ctrl.speedUnlocked ? null : 15, // steps of 0.25 when locked
                         onChanged: (v) {
-                          final snapped =
-                              ((v * 4).round() / 4.0).clamp(0.25, 4.0);
-                          globalAudioController.setPlaybackSpeed(snapped);
+                          if (ctrl.speedUnlocked) {
+                            globalAudioController
+                                .setPlaybackSpeed(v.clamp(0.25, 4.0));
+                          } else {
+                            final snapped =
+                                ((v * 4).round() / 4.0).clamp(0.25, 4.0);
+                            globalAudioController.setPlaybackSpeed(snapped);
+                          }
                         },
                       ),
                     ),

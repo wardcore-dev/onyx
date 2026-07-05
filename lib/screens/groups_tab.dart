@@ -216,13 +216,15 @@ class _GroupsTabState extends State<GroupsTab>
     }).toList();
 
     if (mounted) {
+      // Store cached groups as fallback but keep the loading spinner active —
+      // the network fetch is the source of truth and will clear _loading once
+      // it completes. Showing stale cache before the network confirms would
+      // flash groups the user has already left (or recently joined on another
+      // device) for ~1 second before the network corrects them.
       setState(() {
         _groups = fixedGroups;
-        _loading = _groups.isEmpty;
+        // _loading stays true; network success/failure clears it.
       });
-      if (_groups.isNotEmpty) {
-        _listAnimController.forward();
-      }
     }
   }
 
@@ -385,6 +387,7 @@ class _GroupsTabState extends State<GroupsTab>
         }
 
         await AccountManager.saveGroupsCache(username, groups);
+        groupsCacheVersion.value++;
 
         if (mounted) {
           setState(() {
@@ -406,6 +409,8 @@ class _GroupsTabState extends State<GroupsTab>
           _loading = false;
           _hasInternet = false;
         });
+        // Network failed — fall back to whatever the cache loaded.
+        if (_groups.isNotEmpty) _listAnimController.forward();
       }
     }
   }
@@ -432,6 +437,13 @@ class _GroupsTabState extends State<GroupsTab>
         if (mounted) {
           final l = AppLocalizations(SettingsManager.appLocale.value);
           rootScreenKey.currentState?.showSnack(l.leftGroup);
+          setState(() {
+            _groups.removeWhere((g) => g.id == group.id);
+          });
+          if (isDesktop &&
+              rootScreenKey.currentState?.selectedGroup?.id == group.id) {
+            rootScreenKey.currentState?.hideDetailPanel();
+          }
           _loadGroupsFromNetwork();
         }
       } else {
@@ -483,7 +495,7 @@ class _GroupsTabState extends State<GroupsTab>
       _loadDecoyGroups();
       return;
     }
-    _loadGroupsFromCache();
+    _loadGroupsFromCache().then((_) => _loadGroupsFromNetwork());
   }
 
   void _onExternalGroupsChanged() {

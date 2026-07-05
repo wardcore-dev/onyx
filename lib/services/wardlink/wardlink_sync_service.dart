@@ -20,7 +20,6 @@
 // therefore "passive while the app is active" on mobile, continuous on desktop.
 
 import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -1551,7 +1550,7 @@ class WardLinkSyncService {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 8);
     IOSink? sink;
-    _FrameReader? reader;
+    WardLinkFrameReader? reader;
     try {
       final enc = await WardLinkCrypto.encryptJson(payload, key);
       final req = await client.postUrl(Uri.parse('$base$path'));
@@ -1568,7 +1567,7 @@ class WardLinkSyncService {
       final total =
           int.tryParse(resp.headers.value('x-wardlink-size') ?? '') ?? 0;
       sink = File(destPath).openWrite();
-      reader = _FrameReader(resp);
+      reader = WardLinkFrameReader(resp);
       int written = 0;
 
       while (true) {
@@ -1609,81 +1608,3 @@ class WardLinkSyncService {
   }
 }
 
-/// Reads a byte stream as exact-length pieces for the framed file protocol.
-/// Applies backpressure: pauses the source when its buffer grows past the
-/// high-water mark and resumes once drained, so a fast network can't flood
-/// memory. Uses a chunk queue with a head offset — no O(n²) buffer shifting.
-class _FrameReader {
-  static const int _highWater = 4 * 1024 * 1024;
-  static const int _lowWater = 1 * 1024 * 1024;
-
-  late final StreamSubscription<List<int>> _sub;
-  final Queue<Uint8List> _chunks = Queue<Uint8List>();
-  int _buffered = 0;
-  int _headOffset = 0;
-  bool _done = false;
-  Object? _error;
-  Completer<void>? _waiter;
-  bool _paused = false;
-
-  _FrameReader(Stream<List<int>> stream) {
-    _sub = stream.listen(_onData, onError: _onError, onDone: _onDone);
-  }
-
-  void _onData(List<int> chunk) {
-    _chunks.add(chunk is Uint8List ? chunk : Uint8List.fromList(chunk));
-    _buffered += chunk.length;
-    if (_buffered >= _highWater && !_paused) {
-      _paused = true;
-      _sub.pause();
-    }
-    _wake();
-  }
-
-  void _onError(Object e) {
-    _error = e;
-    _wake();
-  }
-
-  void _onDone() {
-    _done = true;
-    _wake();
-  }
-
-  void _wake() {
-    final w = _waiter;
-    _waiter = null;
-    w?.complete();
-  }
-
-  Future<Uint8List?> readExact(int n) async {
-    while (_buffered < n) {
-      if (_error != null) throw _error!;
-      if (_done) return null;
-      _waiter = Completer<void>();
-      await _waiter!.future;
-    }
-    final out = Uint8List(n);
-    int got = 0;
-    while (got < n) {
-      final head = _chunks.first;
-      final avail = head.length - _headOffset;
-      final take = (n - got) < avail ? (n - got) : avail;
-      out.setRange(got, got + take, head, _headOffset);
-      got += take;
-      _headOffset += take;
-      _buffered -= take;
-      if (_headOffset >= head.length) {
-        _chunks.removeFirst();
-        _headOffset = 0;
-      }
-    }
-    if (_paused && _buffered <= _lowWater) {
-      _paused = false;
-      _sub.resume();
-    }
-    return out;
-  }
-
-  Future<void> cancel() => _sub.cancel();
-}

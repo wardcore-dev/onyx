@@ -6,9 +6,10 @@ import 'dart:io' show Platform;
 import 'package:flutter/widgets.dart';
 import 'models/chat_message.dart';
 import 'managers/account_manager.dart';
-import 'screens/root_screen.dart'; 
+import 'screens/root_screen.dart';
 
-final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<void>>();
+final RouteObserver<ModalRoute<void>> routeObserver =
+    RouteObserver<ModalRoute<void>>();
 
 /// Root navigator key — used by widgets that live above the Navigator in the
 /// widget tree (e.g. VinylPlayerButton in MaterialApp.builder) to open modals.
@@ -22,9 +23,16 @@ final ValueNotifier<int> chatsVersion = ValueNotifier<int>(0);
 Map<int, List<Map<String, dynamic>>> _groupChats = {};
 Map<int, List<Map<String, dynamic>>> get groupChats => _groupChats;
 
-final ValueNotifier<Map<int, int>> groupChatsVersion = ValueNotifier<Map<int, int>>({});
+final ValueNotifier<Map<int, int>> groupChatsVersion =
+    ValueNotifier<Map<int, int>>({});
 
 final ValueNotifier<bool> recordingNotifier = ValueNotifier<bool>(false);
+
+/// Normalized (0..1) live mic input level while `recordingNotifier` is true —
+/// polled from the active AudioRecorder in RootScreenState.startRecording()
+/// so voice UI (e.g. the recording glow/waveform on ChatInputBar) can react
+/// to actual loudness instead of a fixed timer. Always 0 while not recording.
+final ValueNotifier<double> recordingLevelNotifier = ValueNotifier<double>(0.0);
 final ValueNotifier<bool> wsConnectedNotifier = ValueNotifier<bool>(false);
 final ValueNotifier<bool> sessionExpiredNotifier = ValueNotifier<bool>(false);
 
@@ -45,7 +53,8 @@ final ValueNotifier<Map<String, String>> userStatusNotifier = ValueNotifier(
   <String, String>{},
 );
 
-final ValueNotifier<Map<String, String>> userStatusVisibilityNotifier = ValueNotifier(
+final ValueNotifier<Map<String, String>> userStatusVisibilityNotifier =
+    ValueNotifier(
   <String, String>{},
 );
 
@@ -57,9 +66,14 @@ final ValueNotifier<int> favoritesVersion = ValueNotifier<int>(0);
 
 final ValueNotifier<int> groupsVersion = ValueNotifier<int>(0);
 
+// Incremented by groups_tab after a successful network sync (cache updated).
+// The graph listens to this; groups_tab does NOT — avoids infinite reload loop.
+final ValueNotifier<int> groupsCacheVersion = ValueNotifier<int>(0);
+
 final ValueNotifier<int> accountSwitchVersion = ValueNotifier<int>(0);
 
-final ValueNotifier<Map<String, bool>> lanModePerChat = ValueNotifier<Map<String, bool>>({});
+final ValueNotifier<Map<String, bool>> lanModePerChat =
+    ValueNotifier<Map<String, bool>>({});
 
 /// Chat key + message id that the next opened chat screen should scroll to
 /// and highlight — set right before navigating from a content-match search
@@ -125,8 +139,7 @@ const String serverBase = 'https://api-onyx.wardcore.com';
 const String wsUrl = 'wss://api-onyx.wardcore.com/ws';
 const String publicIpApi = 'https://api.ipify.org';
 
-
-const String kAppVersion = 'v1.7-beta';
+const String kAppVersion = 'v1.8-beta';
 
 bool get isDesktop {
   if (kIsWeb) return false;
@@ -145,6 +158,5 @@ double get chatsPanelWidth => _chatsPanelWidth;
 set chatsPanelWidth(double value) => _chatsPanelWidth = value;
 
 void unawaited(Future<dynamic> future) {
-  
   future.catchError((_) {});
 }

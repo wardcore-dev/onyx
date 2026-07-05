@@ -39,6 +39,8 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
   String _statusText = 'Waiting for sender to scan QR code…';
   int _current = 0;
   int _total = 0;
+  int _bytesTransferred = 0;
+  int _fileBytes = 0;
   bool _done = false;
 
   // Per-file results: filename → (success, errorMsg)
@@ -92,6 +94,8 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
     _current = wardLinkBubbleController.current;
     _total = wardLinkBubbleController.total;
     _statusText = wardLinkBubbleController.statusText;
+    _bytesTransferred = wardLinkBubbleController.bytesTransferred;
+    _fileBytes = wardLinkBubbleController.fileBytes;
     _done = wardLinkBubbleController.phase == WardLinkBubblePhase.done;
     wardLinkBubbleController.addListener(_onControllerUpdate);
   }
@@ -102,6 +106,8 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
       _current = wardLinkBubbleController.current;
       _total = wardLinkBubbleController.total;
       _statusText = wardLinkBubbleController.statusText;
+      _bytesTransferred = wardLinkBubbleController.bytesTransferred;
+      _fileBytes = wardLinkBubbleController.fileBytes;
       _done = wardLinkBubbleController.phase == WardLinkBubblePhase.done;
     });
   }
@@ -160,6 +166,8 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
         _statusText = event.message;
         _current = event.current;
         _total = event.total;
+        _bytesTransferred = event.bytesTransferred;
+        _fileBytes = event.fileBytes;
       } else if (event is LanFavSyncFileResult) {
         _fileResults.add((
           filename: event.filename,
@@ -578,6 +586,12 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
         ],
       );
 
+  String _fmtBytes(int bytes) {
+    if (bytes < 1024) return '${bytes}B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)}KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)}MB';
+  }
+
   Widget _buildStatusCard(ColorScheme cs) => ValueListenableBuilder<double>(
         valueListenable: SettingsManager.elementBrightness,
         builder: (_, brightness, __) => AdaptiveGlassCard(
@@ -620,9 +634,32 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
                     '$_current / $_total files',
                     style: TextStyle(
                       fontSize: 11,
-                      color: cs.onSurface.withValues(alpha:0.5),
+                      color: cs.onSurface.withValues(alpha: 0.5),
                     ),
                   ),
+                  // Per-file byte progress bar — shown only during active streaming.
+                  if (_fileBytes > 0) ...[
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: _bytesTransferred / _fileBytes,
+                        minHeight: 4,
+                        color: cs.secondary,
+                        backgroundColor:
+                            cs.secondaryContainer.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_bytesTransferred * 100 ~/ _fileBytes}%  ·  '
+                      '${_fmtBytes(_bytesTransferred)} / ${_fmtBytes(_fileBytes)}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: cs.onSurface.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ],
                 ],
               ],
             ),

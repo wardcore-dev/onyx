@@ -32,6 +32,7 @@ class SettingsManager {
   static const _inputBarMaxWidthKey = 'input_bar_max_width';
   static const _swapMessageAlignmentKey = 'swap_message_alignment';
   static const _alignAllMessagesRightKey = 'align_all_messages_right';
+  static const _meshTransportModeKey = 'mesh_transport_mode';
   static const _showAvatarInChatsKey = 'show_avatar_in_chats';
   static const _graphHandlePositionKey = 'graph_handle_position_fraction';
   static const _showAccountIndicatorKey = 'show_account_indicator';
@@ -63,6 +64,10 @@ class SettingsManager {
   static const _liquidGlassSearchBlurKey       = 'liquid_glass_search_blur';
   static const _liquidGlassSearchTintKey       = 'liquid_glass_search_tint';
   static const _liquidGlassSearchSaturationKey = 'liquid_glass_search_saturation';
+  static const _liquidGlassOnAppBarKey         = 'liquid_glass_on_appbar';
+  static const _liquidGlassAppBarBlurKey       = 'liquid_glass_appbar_blur';
+  static const _liquidGlassAppBarTintKey       = 'liquid_glass_appbar_tint';
+  static const _liquidGlassAppBarSaturationKey = 'liquid_glass_appbar_saturation';
   // Advanced per-element settings
   static const _liquidGlassChromaticKey        = 'liquid_glass_chromatic';
   static const _liquidGlassRefractiveKey       = 'liquid_glass_refractive';
@@ -80,11 +85,16 @@ class SettingsManager {
   static const _liquidGlassSearchRefractiveKey      = 'liquid_glass_search_refractive';
   static const _liquidGlassSearchLightIntensityKey  = 'liquid_glass_search_light_intensity';
   static const _liquidGlassSearchThicknessKey       = 'liquid_glass_search_thickness';
+  static const _liquidGlassAppBarChromaticKey       = 'liquid_glass_appbar_chromatic';
+  static const _liquidGlassAppBarRefractiveKey      = 'liquid_glass_appbar_refractive';
+  static const _liquidGlassAppBarLightIntensityKey  = 'liquid_glass_appbar_light_intensity';
+  static const _liquidGlassAppBarThicknessKey       = 'liquid_glass_appbar_thickness';
   static const _liquidGlassOnNavBarKey      = 'liquid_glass_on_navbar';
   static const _liquidGlassNavBarQualityKey = 'liquid_glass_navbar_quality';
   static const _liquidGlassCardsQualityKey  = 'liquid_glass_cards_quality';
   static const _liquidGlassInputQualityKey  = 'liquid_glass_input_quality';
   static const _liquidGlassSearchQualityKey = 'liquid_glass_search_quality';
+  static const _liquidGlassAppBarQualityKey = 'liquid_glass_appbar_quality';
   static const _messagePaginationKey = 'message_pagination_enabled';
   static const _minimizeBottomNavKey = 'minimize_bottom_nav';
   static const _swipeTabsKey = 'swipe_tabs_enabled';
@@ -135,6 +145,9 @@ class SettingsManager {
   static const _graphOrbitSpeedKey        = 'graph_orbit_speed';
   static const _graphAnimationKey         = 'graph_animation_enabled';
   static const _graphPreservePositionKey  = 'graph_preserve_position';
+  // Mesh Mode — offline BLE mesh transport.
+  static const _meshModeEnabledKey = 'mesh_mode_enabled';
+
   // WardLink — passive local-network sync of Favorites between trusted devices.
   static const _wardLinkEnabledKey          = 'wardlink_enabled';
   static const _wardLinkMaxFileSizeMbKey    = 'wardlink_max_file_size_mb';
@@ -196,6 +209,13 @@ class SettingsManager {
   static final ValueNotifier<bool> alignAllMessagesRight =
       ValueNotifier<bool>(false);
 
+  /// Mesh transport preference: 'auto' (prefer Wi-Fi, fall back to
+  /// Bluetooth), 'wifi' (Wi-Fi only), or 'ble' (Bluetooth only). Chosen
+  /// manually so a send never splits across both transports at once for the
+  /// same recipient — that mix is what made delivery feel inconsistent.
+  static final ValueNotifier<String> meshTransportMode =
+      ValueNotifier<String>('auto');
+
   static final ValueNotifier<bool> showAvatarInChats =
       ValueNotifier<bool>(true);
 
@@ -249,6 +269,10 @@ class SettingsManager {
   static final ValueNotifier<double> liquidGlassSearchBlur        = ValueNotifier<double>(7.0);
   static final ValueNotifier<double> liquidGlassSearchTint        = ValueNotifier<double>(0.10);
   static final ValueNotifier<double> liquidGlassSearchSaturation  = ValueNotifier<double>(1.0);
+  static final ValueNotifier<bool>   liquidGlassOnAppBar          = ValueNotifier<bool>(false);
+  static final ValueNotifier<double> liquidGlassAppBarBlur        = ValueNotifier<double>(7.0);
+  static final ValueNotifier<double> liquidGlassAppBarTint        = ValueNotifier<double>(0.10);
+  static final ValueNotifier<double> liquidGlassAppBarSaturation  = ValueNotifier<double>(1.0);
   // Advanced per-element: Nav Bar
   static final ValueNotifier<double> liquidGlassChromatic       = ValueNotifier<double>(0.30);
   static final ValueNotifier<double> liquidGlassRefractive      = ValueNotifier<double>(1.59);
@@ -269,12 +293,18 @@ class SettingsManager {
   static final ValueNotifier<double> liquidGlassSearchRefractive      = ValueNotifier<double>(1.40);
   static final ValueNotifier<double> liquidGlassSearchLightIntensity  = ValueNotifier<double>(0.50);
   static final ValueNotifier<double> liquidGlassSearchThickness       = ValueNotifier<double>(24.0);
+  // Advanced per-element: AppBar buttons
+  static final ValueNotifier<double> liquidGlassAppBarChromatic       = ValueNotifier<double>(0.15);
+  static final ValueNotifier<double> liquidGlassAppBarRefractive      = ValueNotifier<double>(1.40);
+  static final ValueNotifier<double> liquidGlassAppBarLightIntensity  = ValueNotifier<double>(0.50);
+  static final ValueNotifier<double> liquidGlassAppBarThickness       = ValueNotifier<double>(20.0);
   // Per-element on/off and quality
   static final ValueNotifier<bool>               liquidGlassOnNavBar       = ValueNotifier<bool>(true);
   static final ValueNotifier<LiquidGlassQuality> liquidGlassNavBarQuality  = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
   static final ValueNotifier<LiquidGlassQuality> liquidGlassCardsQuality   = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
   static final ValueNotifier<LiquidGlassQuality> liquidGlassInputQuality   = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
   static final ValueNotifier<LiquidGlassQuality> liquidGlassSearchQuality  = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
+  static final ValueNotifier<LiquidGlassQuality> liquidGlassAppBarQuality  = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
   static final ValueNotifier<bool> messagePaginationEnabled = ValueNotifier<bool>(true);
   static final ValueNotifier<bool> snackbarEnabled = ValueNotifier<bool>(true);
 
@@ -344,6 +374,9 @@ class SettingsManager {
   static final ValueNotifier<bool>   graphAnimation         = ValueNotifier<bool>(true);
   static final ValueNotifier<bool>   graphPreservePosition  = ValueNotifier<bool>(true);
 
+  // Mesh Mode — BLE offline mesh transport. Disconnects from server when active.
+  static final ValueNotifier<bool> meshModeEnabled = ValueNotifier<bool>(false);
+
   // WardLink — passive local-network sync of Favorites. Master toggle is off by
   // default; sync only ever happens between manually-paired (QR-confirmed) devices.
   static final ValueNotifier<bool> wardLinkEnabled          = ValueNotifier<bool>(false);
@@ -380,6 +413,8 @@ class SettingsManager {
         prefs.getDouble(_graphHandlePositionKey) ?? 0.85;
     final swapAlign = prefs.getBool(_swapMessageAlignmentKey) ?? false;
     final alignAllRight = prefs.getBool(_alignAllMessagesRightKey) ?? false;
+    final meshTransportModeVal =
+        prefs.getString(_meshTransportModeKey) ?? 'auto';
     final showAvatar = prefs.getBool(_showAvatarInChatsKey) ?? true;
     final showAccountInd = prefs.getBool(_showAccountIndicatorKey) ?? true;
     final smoothScroll = prefs.getBool(_smoothScrollKey) ?? false;
@@ -425,6 +460,10 @@ class SettingsManager {
     final liquidSearchBlur       = prefs.getDouble(_liquidGlassSearchBlurKey)        ?? 7.0;
     final liquidSearchTint       = prefs.getDouble(_liquidGlassSearchTintKey)        ?? 0.10;
     final liquidSearchSaturation = prefs.getDouble(_liquidGlassSearchSaturationKey)  ?? 1.0;
+    final liquidOnAppBar         = prefs.getBool(_liquidGlassOnAppBarKey)            ?? false;
+    final liquidAppBarBlur       = prefs.getDouble(_liquidGlassAppBarBlurKey)        ?? 7.0;
+    final liquidAppBarTint       = prefs.getDouble(_liquidGlassAppBarTintKey)        ?? 0.10;
+    final liquidAppBarSaturation = prefs.getDouble(_liquidGlassAppBarSaturationKey)  ?? 1.0;
     // Advanced
     final liquidChromatic       = prefs.getDouble(_liquidGlassChromaticKey)       ?? 0.30;
     final liquidRefractive      = prefs.getDouble(_liquidGlassRefractiveKey)      ?? 1.59;
@@ -442,6 +481,10 @@ class SettingsManager {
     final liquidSearchRefractive      = prefs.getDouble(_liquidGlassSearchRefractiveKey)      ?? 1.40;
     final liquidSearchLightIntensity  = prefs.getDouble(_liquidGlassSearchLightIntensityKey)  ?? 0.50;
     final liquidSearchThickness       = prefs.getDouble(_liquidGlassSearchThicknessKey)       ?? 24.0;
+    final liquidAppBarChromatic       = prefs.getDouble(_liquidGlassAppBarChromaticKey)       ?? 0.15;
+    final liquidAppBarRefractive      = prefs.getDouble(_liquidGlassAppBarRefractiveKey)      ?? 1.40;
+    final liquidAppBarLightIntensity  = prefs.getDouble(_liquidGlassAppBarLightIntensityKey)  ?? 0.50;
+    final liquidAppBarThickness       = prefs.getDouble(_liquidGlassAppBarThicknessKey)       ?? 20.0;
     final liquidOnNavBar          = prefs.getBool(_liquidGlassOnNavBarKey) ?? false;
     final liquidNavBarQualityStr  = prefs.getString(_liquidGlassNavBarQualityKey) ?? 'quality';
     final liquidNavBarQualityVal  = LiquidGlassQuality.values.firstWhere((e) => e.name == liquidNavBarQualityStr, orElse: () => LiquidGlassQuality.quality);
@@ -451,6 +494,8 @@ class SettingsManager {
     final liquidInputQualityVal   = LiquidGlassQuality.values.firstWhere((e) => e.name == liquidInputQualityStr,  orElse: () => LiquidGlassQuality.quality);
     final liquidSearchQualityStr  = prefs.getString(_liquidGlassSearchQualityKey) ?? 'quality';
     final liquidSearchQualityVal  = LiquidGlassQuality.values.firstWhere((e) => e.name == liquidSearchQualityStr, orElse: () => LiquidGlassQuality.quality);
+    final liquidAppBarQualityStr  = prefs.getString(_liquidGlassAppBarQualityKey) ?? 'quality';
+    final liquidAppBarQualityVal  = LiquidGlassQuality.values.firstWhere((e) => e.name == liquidAppBarQualityStr, orElse: () => LiquidGlassQuality.quality);
     final messagePagination = prefs.getBool(_messagePaginationKey) ?? true;
     final snackbarEnabledVal = prefs.getBool(_snackbarEnabledKey) ?? true;
     final minimizeNav = prefs.getBool(_minimizeBottomNavKey) ?? false;
@@ -530,6 +575,7 @@ class SettingsManager {
     graphHandlePositionFraction.value = graphHandlePosition;
     swapMessageAlignment.value = swapAlign;
     alignAllMessagesRight.value = alignAllRight;
+    meshTransportMode.value = meshTransportModeVal;
     showAvatarInChats.value = showAvatar;
     showAccountIndicator.value = showAccountInd;
     smoothScrollEnabled.value = smoothScroll;
@@ -557,6 +603,10 @@ class SettingsManager {
     SettingsManager.liquidGlassSearchBlur.value          = liquidSearchBlur;
     SettingsManager.liquidGlassSearchTint.value          = liquidSearchTint;
     SettingsManager.liquidGlassSearchSaturation.value    = liquidSearchSaturation;
+    SettingsManager.liquidGlassOnAppBar.value            = liquidOnAppBar;
+    SettingsManager.liquidGlassAppBarBlur.value          = liquidAppBarBlur;
+    SettingsManager.liquidGlassAppBarTint.value          = liquidAppBarTint;
+    SettingsManager.liquidGlassAppBarSaturation.value    = liquidAppBarSaturation;
     SettingsManager.liquidGlassChromatic.value           = liquidChromatic;
     SettingsManager.liquidGlassRefractive.value          = liquidRefractive;
     SettingsManager.liquidGlassLightIntensity.value      = liquidLightIntensity;
@@ -573,12 +623,17 @@ class SettingsManager {
     SettingsManager.liquidGlassSearchRefractive.value     = liquidSearchRefractive;
     SettingsManager.liquidGlassSearchLightIntensity.value = liquidSearchLightIntensity;
     SettingsManager.liquidGlassSearchThickness.value      = liquidSearchThickness;
+    SettingsManager.liquidGlassAppBarChromatic.value      = liquidAppBarChromatic;
+    SettingsManager.liquidGlassAppBarRefractive.value     = liquidAppBarRefractive;
+    SettingsManager.liquidGlassAppBarLightIntensity.value = liquidAppBarLightIntensity;
+    SettingsManager.liquidGlassAppBarThickness.value      = liquidAppBarThickness;
     SettingsManager.navBarStyle.value                  = NavBarStyle.liquid;
     SettingsManager.liquidGlassOnNavBar.value          = liquidOnNavBar;
     SettingsManager.liquidGlassNavBarQuality.value     = liquidNavBarQualityVal;
     SettingsManager.liquidGlassCardsQuality.value      = liquidCardsQualityVal;
     SettingsManager.liquidGlassInputQuality.value      = liquidInputQualityVal;
     SettingsManager.liquidGlassSearchQuality.value     = liquidSearchQualityVal;
+    SettingsManager.liquidGlassAppBarQuality.value     = liquidAppBarQualityVal;
     SettingsManager.messagePaginationEnabled.value = messagePagination;
     SettingsManager.snackbarEnabled.value = snackbarEnabledVal;
     SettingsManager.minimizeBottomNav.value = minimizeNav;
@@ -624,6 +679,7 @@ class SettingsManager {
     SettingsManager.graphAnimation.value        = prefs.getBool(_graphAnimationKey) ?? true;
     SettingsManager.graphPreservePosition.value = prefs.getBool(_graphPreservePositionKey) ?? true;
 
+    SettingsManager.meshModeEnabled.value          = prefs.getBool(_meshModeEnabledKey) ?? false;
     SettingsManager.wardLinkEnabled.value          = prefs.getBool(_wardLinkEnabledKey) ?? false;
     SettingsManager.wardLinkMaxFileSizeMb.value    = prefs.getInt(_wardLinkMaxFileSizeMbKey) ?? 2048;
     SettingsManager.wardLinkBubbleOnlyErrors.value = prefs.getBool(_wardLinkBubbleOnlyErrorsKey) ?? false;
@@ -779,6 +835,13 @@ class SettingsManager {
     alignAllMessagesRight.value = val;
   }
 
+  /// val must be 'auto', 'wifi' or 'ble'.
+  static Future<void> setMeshTransportMode(String val) async {
+    final prefs = await _getPrefs();
+    await prefs.setString(_meshTransportModeKey, val);
+    meshTransportMode.value = val;
+  }
+
   static Future<void> setShowAvatarInChats(bool val) async {
     final prefs = await _getPrefs();
     await prefs.setBool(_showAvatarInChatsKey, val);
@@ -919,6 +982,12 @@ class SettingsManager {
     liquidGlassSearchQuality.value = val;
   }
 
+  static Future<void> setLiquidGlassAppBarQuality(LiquidGlassQuality val) async {
+    final prefs = await _getPrefs();
+    await prefs.setString(_liquidGlassAppBarQualityKey, val.name);
+    liquidGlassAppBarQuality.value = val;
+  }
+
   static Future<void> setLiquidGlassExpansion(double val) async {
     final prefs = await _getPrefs();
     await prefs.setDouble(_liquidGlassExpansionKey, val);
@@ -1021,6 +1090,30 @@ class SettingsManager {
     liquidGlassSearchSaturation.value = val;
   }
 
+  static Future<void> setLiquidGlassOnAppBar(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_liquidGlassOnAppBarKey, val);
+    liquidGlassOnAppBar.value = val;
+  }
+
+  static Future<void> setLiquidGlassAppBarBlur(double val) async {
+    final prefs = await _getPrefs();
+    await prefs.setDouble(_liquidGlassAppBarBlurKey, val);
+    liquidGlassAppBarBlur.value = val;
+  }
+
+  static Future<void> setLiquidGlassAppBarTint(double val) async {
+    final prefs = await _getPrefs();
+    await prefs.setDouble(_liquidGlassAppBarTintKey, val);
+    liquidGlassAppBarTint.value = val;
+  }
+
+  static Future<void> setLiquidGlassAppBarSaturation(double val) async {
+    final prefs = await _getPrefs();
+    await prefs.setDouble(_liquidGlassAppBarSaturationKey, val);
+    liquidGlassAppBarSaturation.value = val;
+  }
+
   static Future<void> setLiquidGlassChromatic(double val) async {
     final prefs = await _getPrefs();
     await prefs.setDouble(_liquidGlassChromaticKey, val);
@@ -1115,6 +1208,30 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setDouble(_liquidGlassSearchThicknessKey, val);
     liquidGlassSearchThickness.value = val;
+  }
+
+  static Future<void> setLiquidGlassAppBarChromatic(double val) async {
+    final prefs = await _getPrefs();
+    await prefs.setDouble(_liquidGlassAppBarChromaticKey, val);
+    liquidGlassAppBarChromatic.value = val;
+  }
+
+  static Future<void> setLiquidGlassAppBarRefractive(double val) async {
+    final prefs = await _getPrefs();
+    await prefs.setDouble(_liquidGlassAppBarRefractiveKey, val);
+    liquidGlassAppBarRefractive.value = val;
+  }
+
+  static Future<void> setLiquidGlassAppBarLightIntensity(double val) async {
+    final prefs = await _getPrefs();
+    await prefs.setDouble(_liquidGlassAppBarLightIntensityKey, val);
+    liquidGlassAppBarLightIntensity.value = val;
+  }
+
+  static Future<void> setLiquidGlassAppBarThickness(double val) async {
+    final prefs = await _getPrefs();
+    await prefs.setDouble(_liquidGlassAppBarThicknessKey, val);
+    liquidGlassAppBarThickness.value = val;
   }
 
   static Future<void> setMessagePaginationEnabled(bool val) async {
@@ -1440,6 +1557,14 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setBool(_hideFromSearchKey, val);
     hideFromSearch.value = val;
+  }
+
+  // ── Mesh Mode ───────────────────────────────────────────────────────────────
+
+  static Future<void> setMeshModeEnabled(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_meshModeEnabledKey, val);
+    meshModeEnabled.value = val;
   }
 
   // ── WardLink ────────────────────────────────────────────────────────────────

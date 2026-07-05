@@ -1,9 +1,8 @@
 // lib/enums/delivery_mode.dart
 enum DeliveryMode {
-  
   internet,
-
   lan,
+  bleMesh,
 }
 
 extension DeliveryModeExtension on DeliveryMode {
@@ -13,9 +12,12 @@ extension DeliveryModeExtension on DeliveryMode {
         return 'Internet';
       case DeliveryMode.lan:
         return 'LAN';
+      case DeliveryMode.bleMesh:
+        return 'Mesh';
     }
   }
 
   bool get isLAN => this == DeliveryMode.lan;
   bool get isInternet => this == DeliveryMode.internet;
+  bool get isMesh => this == DeliveryMode.bleMesh;
 }

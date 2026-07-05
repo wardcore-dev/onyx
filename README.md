@@ -1,16 +1,17 @@
 # ONYX Messenger
 
-Private and anonymous self-hosted messenger.
+Encrypted, anonymous, self-hosted messenger with offline mesh and cross-device sync.
 
-![ONYX Messenger](screenshots/screenshot2.png)
+![ONYX Messenger](screenshots/screenshot6.png)
 
 ## Features
 
-- End-to-end encrypted messaging
-- Self-hosted — you control the server
-- Group chats, favorites and direct messages
-- LAN messaging
+- End-to-end encrypted messaging — Ed25519 identities, no phone number or email
+- Self-hosted — you can run and control the server of your group or channel
+- Mesh mode — message contacts directly over Wi-Fi or Bluetooth; uses Wi-Fi when the contact is reachable on the local network, falls back to Bluetooth when it isn't, or pick the transport yourself
+- WardLink — passively sync your Favorites across your own devices, and share data with other users over the local network via QR code
 - Proxy support
+- Group chats, favorites and direct messages
 - Platforms: Windows, Linux, macOS, Android
 - Anonymous accounts — no phone number or email required
 

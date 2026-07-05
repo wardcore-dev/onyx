@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:drift/drift.dart';
 import '../../enums/delivery_mode.dart';
+import '../../enums/mesh_delivery_status.dart';
 import '../../models/chat_message.dart';
 import '../app_database.dart';
 
@@ -233,7 +234,29 @@ class MessageDao extends DatabaseAccessor<AppDatabase> with _$MessageDaoMixin {
       reactionsJson: msg.reactions.isEmpty
           ? const Value(null)
           : Value(jsonEncode(msg.reactions)),
+      meshMetaJson: _encodeMeshMeta(msg),
     );
+  }
+
+  static Value<String?> _encodeMeshMeta(ChatMessage msg) {
+    if (msg.meshFileId == null &&
+        msg.meshFileName == null &&
+        msg.meshFileMimeType == null &&
+        msg.meshFileSize == null &&
+        msg.meshFileLocalPath == null &&
+        msg.meshTransportUsed == null &&
+        msg.meshDeliveryStatus == null) {
+      return const Value(null);
+    }
+    return Value(jsonEncode({
+      if (msg.meshFileId != null) 'fileId': msg.meshFileId,
+      if (msg.meshFileName != null) 'fileName': msg.meshFileName,
+      if (msg.meshFileMimeType != null) 'mimeType': msg.meshFileMimeType,
+      if (msg.meshFileSize != null) 'fileSize': msg.meshFileSize,
+      if (msg.meshFileLocalPath != null) 'localPath': msg.meshFileLocalPath,
+      if (msg.meshTransportUsed != null) 'transport': msg.meshTransportUsed,
+      if (msg.meshDeliveryStatus != null) 'deliveryStatus': msg.meshDeliveryStatus!.name,
+    }));
   }
 
   static ChatMessage toChatMessage(Message row) {
@@ -246,6 +269,20 @@ class MessageDao extends DatabaseAccessor<AppDatabase> with _$MessageDaoMixin {
               (v as List).map((e) => e.toString()).toList(),
             ));
       } catch (_) {}
+    }
+    Map<String, dynamic> meshMeta = {};
+    if (row.meshMetaJson != null) {
+      try {
+        meshMeta = jsonDecode(row.meshMetaJson!) as Map<String, dynamic>;
+      } catch (_) {}
+    }
+    MeshDeliveryStatus? meshDeliveryStatus;
+    final statusStr = meshMeta['deliveryStatus'] as String?;
+    if (statusStr != null) {
+      meshDeliveryStatus = MeshDeliveryStatus.values.firstWhere(
+        (e) => e.name == statusStr,
+        orElse: () => MeshDeliveryStatus.delivered,
+      );
     }
     return ChatMessage(
       id: row.messageId,
@@ -264,11 +301,20 @@ class MessageDao extends DatabaseAccessor<AppDatabase> with _$MessageDaoMixin {
       replyToContent: row.replyToContent,
       deliveryMode: row.deliveryMode == 'lan'
           ? DeliveryMode.lan
-          : DeliveryMode.internet,
+          : row.deliveryMode == 'bleMesh'
+              ? DeliveryMode.bleMesh
+              : DeliveryMode.internet,
       deliveredAt: row.deliveredAtMs != null
           ? DateTime.fromMillisecondsSinceEpoch(row.deliveredAtMs!)
           : null,
       reactions: reactions,
+      meshFileId: meshMeta['fileId'] as String?,
+      meshFileName: meshMeta['fileName'] as String?,
+      meshFileMimeType: meshMeta['mimeType'] as String?,
+      meshFileSize: meshMeta['fileSize'] as int?,
+      meshFileLocalPath: meshMeta['localPath'] as String?,
+      meshTransportUsed: meshMeta['transport'] as String?,
+      meshDeliveryStatus: meshDeliveryStatus,
     )..pendingSend = row.pendingSend;
   }
 }

@@ -17,6 +17,7 @@ import '../models/chat_message.dart';
 import '../globals.dart';
 import '../models/font_family.dart';
 import '../enums/delivery_mode.dart';
+import '../services/mesh/mesh_file_transfer.dart';
 
 /// A menu item for the desktop right-click context menu, with optional icon.
 class DesktopMenuItem {
@@ -150,6 +151,73 @@ void showMessageDesktopMenu(
   );
 }
 
+enum _MdTokenType { plain, bold, underline, strike, italic, code, url }
+
+class _MdToken {
+  final _MdTokenType type;
+  final String text;
+  final String raw;
+  const _MdToken(this.type, this.text, [this.raw = '']);
+}
+
+final RegExp _mdTokenRx = RegExp(
+  r'\*\*(.+?)\*\*'           // **bold**
+  r'|__(.+?)__'              // __underline__
+  r'|~~(.+?)~~'              // ~~strikethrough~~
+  r'|\*(.+?)\*'              // *italic*
+  r'|`([^`]+)`'              // `inline code`
+  r'|\bhttps?://[^\s<>"{}|\\^`\[\]]+'  // URL
+  r'|\bwww\.[^\s<>"{}|\\^`\[\]]+',     // www URL
+  caseSensitive: false,
+  dotAll: false,
+);
+
+// Bounded cache of regex tokenization results, keyed by raw message text.
+// Capped so a very long chat session doesn't grow this unboundedly.
+final Map<String, List<_MdToken>> _mdTokenCache = <String, List<_MdToken>>{};
+const int _mdTokenCacheLimit = 300;
+
+// Hoisted so the pattern isn't recompiled on every bubble rebuild (it's
+// used in two places that both ran on every rebuild of a text message).
+final RegExp _codeBlockRegex = RegExp(r'```([\w+-]*)\s*([\s\S]*?)```', multiLine: true);
+
+List<_MdToken> _tokenizeMarkdown(String input) {
+  final cached = _mdTokenCache[input];
+  if (cached != null) return cached;
+
+  final tokens = <_MdToken>[];
+  int lastEnd = 0;
+  for (final m in _mdTokenRx.allMatches(input)) {
+    if (m.start > lastEnd) {
+      tokens.add(_MdToken(_MdTokenType.plain, input.substring(lastEnd, m.start)));
+    }
+    final raw = m.group(0)!;
+    if (m.group(1) != null) {
+      tokens.add(_MdToken(_MdTokenType.bold, m.group(1)!));
+    } else if (m.group(2) != null) {
+      tokens.add(_MdToken(_MdTokenType.underline, m.group(2)!));
+    } else if (m.group(3) != null) {
+      tokens.add(_MdToken(_MdTokenType.strike, m.group(3)!));
+    } else if (m.group(4) != null) {
+      tokens.add(_MdToken(_MdTokenType.italic, m.group(4)!));
+    } else if (m.group(5) != null) {
+      tokens.add(_MdToken(_MdTokenType.code, m.group(5)!));
+    } else {
+      tokens.add(_MdToken(_MdTokenType.url, raw, raw));
+    }
+    lastEnd = m.end;
+  }
+  if (lastEnd < input.length) {
+    tokens.add(_MdToken(_MdTokenType.plain, input.substring(lastEnd)));
+  }
+
+  if (_mdTokenCache.length >= _mdTokenCacheLimit) {
+    _mdTokenCache.remove(_mdTokenCache.keys.first);
+  }
+  _mdTokenCache[input] = tokens;
+  return tokens;
+}
+
 class MessageBubble extends StatelessWidget {
   final String text;
   final bool outgoing;
@@ -171,6 +239,10 @@ class MessageBubble extends StatelessWidget {
   /// this callback is responsible for showing its own menu.
   final void Function(Offset)? onRightClick;
 
+  /// When provided, SelectionArea is replaced with a plain GestureDetector so
+  /// the long-press can be handled by the caller (e.g. message selection mode).
+  final VoidCallback? onLongPress;
+
   const MessageBubble({
     Key? key,
     required this.text,
@@ -188,19 +260,26 @@ class MessageBubble extends StatelessWidget {
     this.onReplyTap,
     this.desktopMenuItems,
     this.onRightClick,
+    this.onLongPress,
   }) : super(key: key);
 
   bool get isDiagnostic => text.startsWith('[cannot-decrypt');
 
+  // Hoisted to a static field: the 4 underlying notifiers never change, so
+  // building a fresh Listenable.merge() (and re-subscribing to all 4) on
+  // every single bubble's every rebuild was pure churn across the whole
+  // visible list each time a new message arrived.
+  static final Listenable _appearanceListenable = Listenable.merge([
+    SettingsManager.fontFamily,
+    SettingsManager.fontSizeMultiplier,
+    SettingsManager.elementBrightness,
+    SettingsManager.elementOpacity,
+  ]);
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([
-        SettingsManager.fontFamily,
-        SettingsManager.fontSizeMultiplier,
-        SettingsManager.elementBrightness,
-        SettingsManager.elementOpacity,
-      ]),
+      listenable: _appearanceListenable,
       builder: (context, _) {
         return _buildMessageBubble(
           context,
@@ -265,7 +344,55 @@ class MessageBubble extends StatelessWidget {
             : colorScheme.outline.withOpacity(msgOpacity * incomingBorderAlpha);
         final Color textColorFinal = textRaw.withOpacity(msgOpacity);
 
-        if (text.startsWith('VOICEv1:')) {
+        if (text.startsWith('MESH_FILE:')) {
+          final mimeType = chatMessage?.meshFileMimeType ?? '';
+          final localPath = chatMessage?.meshFileLocalPath;
+          final meshFileName = chatMessage?.meshFileName
+              ?? text.substring('MESH_FILE:'.length);
+          final fileSize  = chatMessage?.meshFileSize ?? 0;
+          final meshFileId = chatMessage?.meshFileId;
+
+          if (mimeType.startsWith('image/') && localPath != null) {
+            primaryContent = ImageMessageWidget(
+              filename: 'file://$localPath',
+              peerUsername: peerUsername,
+              isOutgoing: outgoing,
+            );
+          } else if (mimeType.startsWith('audio/') && localPath != null) {
+            mediaFilePathRegistry[meshFileName] = localPath;
+            primaryContent = IntrinsicWidth(
+              child: VoiceMessagePlayer(
+                filename: meshFileName,
+                label: '',
+                peerUsername: peerUsername,
+              ),
+            );
+          } else if (mimeType.startsWith('video/') && localPath != null) {
+            primaryContent = VideoMessageWidget(
+              filename: 'file://$localPath',
+              peerUsername: peerUsername,
+            );
+          } else {
+            // File not yet received — show progress or placeholder
+            final IconData fileIcon;
+            if (mimeType.startsWith('image/'))      fileIcon = Icons.image_rounded;
+            else if (mimeType.startsWith('video/')) fileIcon = Icons.videocam_rounded;
+            else if (mimeType.startsWith('audio/')) fileIcon = Icons.audiotrack_rounded;
+            else                                    fileIcon = Icons.insert_drive_file_rounded;
+
+            primaryContent = ValueListenableBuilder<Map<String, double>>(
+              valueListenable: MeshFileTransferService.instance.progress,
+              builder: (_, progressMap, __) {
+                final progress = meshFileId != null
+                    ? (progressMap[meshFileId] ?? 0.0)
+                    : 0.0;
+                return _meshFilePlaceholder(
+                    meshFileName, fileSize, fileIcon, colorScheme,
+                    progress: progress);
+              },
+            );
+          }
+        } else if (text.startsWith('VOICEv1:')) {
           final meta =
               jsonDecode(text.substring('VOICEv1:'.length)) as Map<String, dynamic>;
           
@@ -601,8 +728,7 @@ class MessageBubble extends StatelessWidget {
       primaryContent = Builder(
         builder: (context) {
           
-          final codeBlockRegex = RegExp(r'```([\w+-]*)\s*([\s\S]*?)```', multiLine: true);
-          final codeMatches = codeBlockRegex.allMatches(text).toList();
+          final codeMatches = _codeBlockRegex.allMatches(text).toList();
           
           bool looksLikeCode = _isLikelyCode(text);
           
@@ -774,6 +900,18 @@ class MessageBubble extends StatelessWidget {
                     ),
                     const SizedBox(width: 4),
                   ],
+                  if (chatMessage?.deliveryMode.isMesh == true) ...[
+                    Icon(
+                      chatMessage?.meshTransportUsed == 'wifi'
+                          ? Icons.wifi
+                          : Icons.bluetooth,
+                      size: 10 * fontSizeMultiplier,
+                      color: chatMessage?.meshTransportUsed == 'wifi'
+                          ? Colors.green.withValues(alpha: 0.85)
+                          : Colors.blueAccent.withValues(alpha: 0.85),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
                   SelectionContainer.disabled(
                     child: Text(
                       _formatMessageTime(time),
@@ -841,6 +979,12 @@ class MessageBubble extends StatelessWidget {
             ],
           ),        
         );          
+        // When onLongPress is provided the parent handles all gestures via its
+        // own RawGestureDetector. Skip SelectionArea so it doesn't compete.
+        if (onLongPress != null) {
+          return innerBubble;
+        }
+
         if (isDesktop) {
           // When onRightClick is supplied, the caller handles the context menu.
           // We suppress SelectionArea's own context menu (returning an invisible
@@ -982,14 +1126,30 @@ class MessageBubble extends StatelessWidget {
         }
       }
     }
-    for (final prefix in ['IMAGEv1:', 'IMAGE:', 'ALBUM:']) {
+    for (final prefix in ['IMAGEv1:', 'IMAGE:', 'ALBUM:', 'ALBUMv1:']) {
       if (c.startsWith(prefix)) return (icon: Icons.image_outlined, label: 'Photo');
     }
     for (final prefix in ['VIDEOv1:', 'VIDEO:']) {
       if (c.startsWith(prefix)) return (icon: Icons.videocam_outlined, label: 'Video');
     }
-    for (final prefix in ['VOICE:', 'AUDIO:']) {
+    for (final prefix in ['VOICE:', 'AUDIO:', 'VOICEv1:', 'AUDIOv1:']) {
       if (c.startsWith(prefix)) return (icon: Icons.mic_outlined, label: 'Voice message');
+    }
+    if (c.startsWith('MESH_FILE:')) {
+      final filename = c.substring('MESH_FILE:'.length).trim();
+      final dot = filename.lastIndexOf('.');
+      final ext = dot >= 0 ? filename.substring(dot).toLowerCase() : '';
+      const audioExts = {'.mp3', '.wav', '.aac', '.m4a', '.flac', '.ogg', '.wma', '.opus', '.aiff', '.aif'};
+      const imageExts = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', '.bmp'};
+      const videoExts = {'.mp4', '.mov', '.mkv', '.avi', '.webm', '.3gp'};
+      if (audioExts.contains(ext) || filename.startsWith('voice_')) {
+        return (icon: Icons.mic_outlined, label: 'Voice message');
+      } else if (imageExts.contains(ext)) {
+        return (icon: Icons.image_outlined, label: 'Photo');
+      } else if (videoExts.contains(ext)) {
+        return (icon: Icons.videocam_outlined, label: 'Video');
+      }
+      return (icon: Icons.attach_file, label: filename.isNotEmpty ? filename : 'File');
     }
     return null;
   }
@@ -1003,84 +1163,64 @@ class MessageBubble extends StatelessWidget {
 
   // Парсит inline-markdown + ссылки и возвращает список InlineSpan.
   // Поддерживает: **bold**, *italic*, __underline__, ~~strike~~, `code`, URLs.
+  //
+  // The regex tokenization itself is cached per raw message text (see
+  // _tokenizeMarkdown below): message text never changes after a bubble is
+  // created, but this widget rebuilds (theme/font/brightness changes, list
+  // version bumps) far more often than that. Re-running multiple regexes
+  // over every visible bubble's text on every such rebuild was a measurable
+  // chunk of the per-frame cost on phones when a new message animates in.
   List<InlineSpan> _markdownSpans(String input, ColorScheme colorScheme, Color textColor, {TextStyle? baseStyle}) {
-    final parts = <InlineSpan>[];
-    // Порядок важен: более длинные токены идут раньше.
-    final tokenRx = RegExp(
-      r'\*\*(.+?)\*\*'           // **bold**
-      r'|__(.+?)__'              // __underline__
-      r'|~~(.+?)~~'              // ~~strikethrough~~
-      r'|\*(.+?)\*'              // *italic*
-      r'|`([^`]+)`'              // `inline code`
-      r'|\bhttps?://[^\s<>"{}|\\^`\[\]]+'  // URL
-      r'|\bwww\.[^\s<>"{}|\\^`\[\]]+',     // www URL
-      caseSensitive: false,
-      dotAll: false,
-    );
-    int lastEnd = 0;
     final base = baseStyle ?? TextStyle(color: textColor);
-    for (final m in tokenRx.allMatches(input)) {
-      if (m.start > lastEnd) {
-        parts.add(TextSpan(text: input.substring(lastEnd, m.start), style: base));
+    final tokens = _tokenizeMarkdown(input);
+    final parts = <InlineSpan>[];
+    for (final t in tokens) {
+      switch (t.type) {
+        case _MdTokenType.plain:
+          parts.add(TextSpan(text: t.text, style: base));
+          break;
+        case _MdTokenType.bold:
+          parts.add(TextSpan(text: t.text, style: base.copyWith(fontWeight: FontWeight.bold)));
+          break;
+        case _MdTokenType.underline:
+          parts.add(TextSpan(text: t.text, style: base.copyWith(decoration: TextDecoration.underline)));
+          break;
+        case _MdTokenType.strike:
+          parts.add(TextSpan(text: t.text, style: base.copyWith(decoration: TextDecoration.lineThrough)));
+          break;
+        case _MdTokenType.italic:
+          parts.add(TextSpan(text: t.text, style: base.copyWith(fontStyle: FontStyle.italic)));
+          break;
+        case _MdTokenType.code:
+          parts.add(TextSpan(
+            text: t.text,
+            style: base.copyWith(
+              fontFamily: 'monospace',
+              backgroundColor: colorScheme.onSurface.withValues(alpha: 0.08),
+              fontSize: (base.fontSize ?? 14) * 0.92,
+            ),
+          ));
+          break;
+        case _MdTokenType.url:
+          final raw = t.raw;
+          final fullUrl = raw.startsWith('http') ? raw : 'https://$raw';
+          parts.add(TextSpan(
+            text: raw,
+            style: base.copyWith(
+              color: colorScheme.primary,
+              decoration: TextDecoration.underline,
+            ),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () {
+                launchUrl(Uri.parse(fullUrl), mode: LaunchMode.externalApplication)
+                    .catchError((_) {
+                  rootScreenKey.currentState?.showSnack('Cannot open link');
+                  return false;
+                });
+              },
+          ));
+          break;
       }
-      final raw = m.group(0)!;
-      if (m.group(1) != null) {
-        // **bold**
-        parts.add(TextSpan(
-          text: m.group(1),
-          style: base.copyWith(fontWeight: FontWeight.bold),
-        ));
-      } else if (m.group(2) != null) {
-        // __underline__
-        parts.add(TextSpan(
-          text: m.group(2),
-          style: base.copyWith(decoration: TextDecoration.underline),
-        ));
-      } else if (m.group(3) != null) {
-        // ~~strikethrough~~
-        parts.add(TextSpan(
-          text: m.group(3),
-          style: base.copyWith(decoration: TextDecoration.lineThrough),
-        ));
-      } else if (m.group(4) != null) {
-        // *italic*
-        parts.add(TextSpan(
-          text: m.group(4),
-          style: base.copyWith(fontStyle: FontStyle.italic),
-        ));
-      } else if (m.group(5) != null) {
-        // `inline code`
-        parts.add(TextSpan(
-          text: m.group(5),
-          style: base.copyWith(
-            fontFamily: 'monospace',
-            backgroundColor: colorScheme.onSurface.withValues(alpha: 0.08),
-            fontSize: (base.fontSize ?? 14) * 0.92,
-          ),
-        ));
-      } else {
-        // URL
-        final fullUrl = raw.startsWith('http') ? raw : 'https://$raw';
-        parts.add(TextSpan(
-          text: raw,
-          style: base.copyWith(
-            color: colorScheme.primary,
-            decoration: TextDecoration.underline,
-          ),
-          recognizer: TapGestureRecognizer()
-            ..onTap = () {
-              launchUrl(Uri.parse(fullUrl), mode: LaunchMode.externalApplication)
-                  .catchError((_) {
-                rootScreenKey.currentState?.showSnack('Cannot open link');
-                return false;
-              });
-            },
-        ));
-      }
-      lastEnd = m.end;
-    }
-    if (lastEnd < input.length) {
-      parts.add(TextSpan(text: input.substring(lastEnd), style: base));
     }
     return parts;
   }
@@ -1236,8 +1376,7 @@ class MessageBubble extends StatelessWidget {
       }
     }
     
-    final codeBlockRegex = RegExp(r'```([\w+-]*)\s*([\s\S]*?)```', multiLine: true);
-    final hasCodeBlock = codeBlockRegex.hasMatch(text);
+    final hasCodeBlock = _codeBlockRegex.hasMatch(text);
     
     if (hasCodeBlock) {
       
@@ -1248,4 +1387,61 @@ class MessageBubble extends StatelessWidget {
       return 350;
     }
   }
+}
+
+Widget _meshFilePlaceholder(
+    String filename, int fileSize, IconData icon, ColorScheme colorScheme,
+    {double progress = 0.0}) {
+  final sizeStr = fileSize > 0
+      ? fileSize < 1024 * 1024
+          ? '${(fileSize / 1024).toStringAsFixed(1)} KB'
+          : '${(fileSize / 1024 / 1024).toStringAsFixed(1)} MB'
+      : '';
+  final isTransferring = progress > 0.0 && progress < 1.0;
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    decoration: BoxDecoration(
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 28, color: colorScheme.onSurfaceVariant),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(filename,
+                    style: const TextStyle(fontSize: 13),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
+                if (sizeStr.isNotEmpty)
+                  Text(sizeStr,
+                      style: TextStyle(
+                          fontSize: 11, color: colorScheme.onSurfaceVariant)),
+              ],
+            ),
+          ],
+        ),
+        if (isTransferring) ...[
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: progress,
+              backgroundColor: colorScheme.outlineVariant.withValues(alpha: 0.3),
+              valueColor: AlwaysStoppedAnimation<Color>(colorScheme.primary),
+              minHeight: 3,
+            ),
+          ),
+        ],
+      ],
+    ),
+  );
 }

@@ -128,24 +128,30 @@ class _VinylDisc extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 58,
-      height: 58,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.55),
-            blurRadius: 16,
-            offset: const Offset(0, 5),
+    return ValueListenableBuilder<double>(
+      valueListenable: globalAudioController.glowEnergy,
+      builder: (context, energy, child) {
+        return Container(
+          width: 58,
+          height: 58,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.55),
+                blurRadius: 16,
+                offset: const Offset(0, 5),
+              ),
+              BoxShadow(
+                color: primaryColor.withValues(alpha: energy * 0.45),
+                blurRadius: 18 + energy * 10,
+                spreadRadius: 2 + energy * 4,
+              ),
+            ],
           ),
-          BoxShadow(
-            color: primaryColor.withValues(alpha: isPlaying ? 0.45 : 0.0),
-            blurRadius: 24,
-            spreadRadius: 4,
-          ),
-        ],
-      ),
+          child: child,
+        );
+      },
       child: CustomPaint(
         painter: _VinylPainter(primaryColor: primaryColor),
         child: Center(

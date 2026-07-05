@@ -11,9 +11,10 @@
 
 import 'dart:convert';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HardwareKeyboard, KeyEvent;
 
-import '../globals.dart' show isDesktop;
 import '../l10n/app_localizations.dart';
 import '../utils/gallery_extractor.dart';
 import '../widgets/adaptive_glass_card.dart';
@@ -34,10 +35,15 @@ String _fmtDateTime(DateTime dt) =>
     '${_fmtDate(dt)}  ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 
 /// Opens the gallery as a large dialog (not a separate screen/route).
+///
+/// [onJumpToMessage], when provided, adds a "Show in chat" affordance to every
+/// item so the dialog can be closed straight into that message's position in
+/// the underlying chat screen (which stays mounted behind this dialog).
 Future<void> showMediaGalleryDialog(
   BuildContext context, {
   required List<GalleryItem> items,
   required String peerUsername,
+  void Function(String messageId)? onJumpToMessage,
 }) {
   return showGeneralDialog(
     context: context,
@@ -55,16 +61,24 @@ Future<void> showMediaGalleryDialog(
         ),
       );
     },
-    pageBuilder: (_, __, ___) =>
-        _MediaGalleryDialog(items: items, peerUsername: peerUsername),
+    pageBuilder: (_, __, ___) => _MediaGalleryDialog(
+      items: items,
+      peerUsername: peerUsername,
+      onJumpToMessage: onJumpToMessage,
+    ),
   );
 }
 
 class _MediaGalleryDialog extends StatefulWidget {
   final List<GalleryItem> items;
   final String peerUsername;
+  final void Function(String messageId)? onJumpToMessage;
 
-  const _MediaGalleryDialog({required this.items, required this.peerUsername});
+  const _MediaGalleryDialog({
+    required this.items,
+    required this.peerUsername,
+    this.onJumpToMessage,
+  });
 
   @override
   State<_MediaGalleryDialog> createState() => _MediaGalleryDialogState();
@@ -76,6 +90,13 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
 
   _SortOrder _sort = _SortOrder.newest;
   int _columns = 3;
+  bool _showPhotos = true;
+  bool _showVideos = true;
+
+  // Tracks Ctrl (Windows/Linux) / Cmd (macOS) so the grid's own scrolling can
+  // be suspended while the modifier is held — otherwise Ctrl+wheel would
+  // both zoom (via _onPointerSignal) and scroll the list at the same time.
+  bool _zoomModifierPressed = false;
 
   late final List<GalleryItem> _allMedia = widget.items
       .where((i) => i.kind == GalleryKind.photo || i.kind == GalleryKind.video)
@@ -85,33 +106,77 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
   late final List<GalleryItem> _allFiles =
       widget.items.where((i) => i.kind == GalleryKind.file).toList();
 
-  List<GalleryItem> get _media =>
-      _sort == _SortOrder.newest ? _allMedia : _allMedia.reversed.toList();
+  List<GalleryItem> get _media {
+    final base = _sort == _SortOrder.newest ? _allMedia : _allMedia.reversed.toList();
+    if (_showPhotos && _showVideos) return base;
+    return base.where((i) {
+      if (i.kind == GalleryKind.photo) return _showPhotos;
+      if (i.kind == GalleryKind.video) return _showVideos;
+      return true;
+    }).toList();
+  }
+
   List<GalleryItem> get _voice =>
       _sort == _SortOrder.newest ? _allVoice : _allVoice.reversed.toList();
   List<GalleryItem> get _files =>
       _sort == _SortOrder.newest ? _allFiles : _allFiles.reversed.toList();
 
   @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_handleKeyEvent);
+  }
+
+  @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
     _tab.dispose();
     super.dispose();
   }
 
+  bool _handleKeyEvent(KeyEvent event) {
+    final pressed = HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+    if (pressed != _zoomModifierPressed) {
+      setState(() => _zoomModifierPressed = pressed);
+    }
+    return false; // never consume — just observe the modifier state
+  }
+
+  // Upper bound raised from 6 to 12 so Ctrl/Cmd+wheel (which, unlike a
+  // physical pinch, has no natural limit) can keep shrinking thumbnails as
+  // far as mobile's pinch-to-zoom can.
+  static const int _minColumns = 2;
+  static const int _maxColumns = 12;
+
+  // Album items are extracted with a synthetic `<messageId>#<index>` id (see
+  // gallery_extractor.dart) since one album message yields several gallery
+  // entries — strip that suffix to land on the actual chat message.
+  void _jumpTo(String rawId) {
+    final callback = widget.onJumpToMessage;
+    if (callback == null) return;
+    Navigator.of(context).pop();
+    callback(rawId.split('#').first);
+  }
+
   void _toggleSort() =>
       setState(() => _sort = _sort == _SortOrder.newest ? _SortOrder.oldest : _SortOrder.newest);
-  void _zoomOut() => setState(() => _columns = (_columns + 1).clamp(2, 6));
-  void _zoomIn() => setState(() => _columns = (_columns - 1).clamp(2, 6));
+  void _zoomOut() =>
+      setState(() => _columns = (_columns + 1).clamp(_minColumns, _maxColumns));
+  void _zoomIn() =>
+      setState(() => _columns = (_columns - 1).clamp(_minColumns, _maxColumns));
 
-  // Pinch-to-zoom (mobile only — desktop keeps the +/- buttons instead).
+  // Zoom the grid via: touchscreen pinch (raw multi-touch pointers),
+  // trackpad pinch (synthesized PointerPanZoom* events on desktop), and
+  // Ctrl/Cmd + mouse wheel. All three funnel into the same _columns state.
   //
-  // Deliberately uses raw Listener pointer events instead of a GestureDetector
-  // with onScale: a GestureDetector's ScaleGestureRecognizer competes with the
-  // GridView's own vertical-drag scroll recognizer in the gesture arena, and
-  // the scroll recognizer reliably wins — so the pinch never fired at all.
-  // Listener doesn't enter the gesture arena, so it sees every pointer
-  // (including the second finger of a pinch) regardless of what the
-  // GridView's scrolling does with them.
+  // Touch pinch deliberately uses raw Listener pointer events instead of a
+  // GestureDetector with onScale: a GestureDetector's ScaleGestureRecognizer
+  // competes with the GridView's own vertical-drag scroll recognizer in the
+  // gesture arena, and the scroll recognizer reliably wins — so the pinch
+  // never fired at all. Listener doesn't enter the gesture arena, so it sees
+  // every pointer (including the second finger of a pinch) regardless of
+  // what the GridView's scrolling does with them.
   final Map<int, Offset> _activePointers = {};
   double? _pinchStartDistance;
   int _pinchBaseColumns = 3;
@@ -136,7 +201,7 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
     final start = _pinchStartDistance;
     if (_activePointers.length == 2 && start != null && start > 10) {
       final scale = _currentPointerSpan() / start;
-      final target = (_pinchBaseColumns / scale).round().clamp(2, 6);
+      final target = (_pinchBaseColumns / scale).round().clamp(_minColumns, _maxColumns);
       if (target != _columns) setState(() => _columns = target);
     }
   }
@@ -144,6 +209,42 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
   void _onPointerEnd(PointerEvent event) {
     _activePointers.remove(event.pointer);
     if (_activePointers.length < 2) _pinchStartDistance = null;
+  }
+
+  // Trackpad pinch (macOS/Windows/Linux precision trackpads) arrives as
+  // PointerPanZoom* events, separate from raw touch pointers.
+  double? _trackpadStartScale;
+  int _trackpadBaseColumns = 3;
+
+  void _onPanZoomStart(PointerPanZoomStartEvent event) {
+    _trackpadStartScale = 1.0;
+    _trackpadBaseColumns = _columns;
+  }
+
+  void _onPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    if (_trackpadStartScale == null) return;
+    final scale = event.scale;
+    if (scale == 1.0) return; // pure two-finger pan/scroll, not a pinch
+    final target = (_trackpadBaseColumns / scale).round().clamp(_minColumns, _maxColumns);
+    if (target != _columns) setState(() => _columns = target);
+  }
+
+  void _onPanZoomEnd(PointerPanZoomEndEvent event) {
+    _trackpadStartScale = null;
+  }
+
+  // Ctrl (Cmd on macOS) + mouse wheel zoom.
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    if (!(HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed)) {
+      return;
+    }
+    if (event.scrollDelta.dy < 0) {
+      _zoomIn();
+    } else if (event.scrollDelta.dy > 0) {
+      _zoomOut();
+    }
   }
 
   @override
@@ -244,7 +345,7 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
     );
   }
 
-  Widget _buildToolbar(ColorScheme cs, int count, {bool showZoom = false}) {
+  Widget _buildToolbar(ColorScheme cs, int count, {bool showMediaFilters = false}) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 12, 8),
       child: Row(
@@ -255,19 +356,23 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
               style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
             ),
           ),
-          if (showZoom) ...[
-            IconButton(
-              tooltip: 'Zoom out',
-              icon: const Icon(Icons.zoom_out_rounded, size: 19),
-              visualDensity: VisualDensity.compact,
-              onPressed: _columns < 6 ? _zoomOut : null,
+          if (showMediaFilters) ...[
+            _buildFilterChip(
+              cs,
+              icon: Icons.photo_outlined,
+              label: 'Photo',
+              selected: _showPhotos,
+              onChanged: (v) => setState(() => _showPhotos = v),
             ),
-            IconButton(
-              tooltip: 'Zoom in',
-              icon: const Icon(Icons.zoom_in_rounded, size: 19),
-              visualDensity: VisualDensity.compact,
-              onPressed: _columns > 2 ? _zoomIn : null,
+            const SizedBox(width: 6),
+            _buildFilterChip(
+              cs,
+              icon: Icons.videocam_outlined,
+              label: 'Video',
+              selected: _showVideos,
+              onChanged: (v) => setState(() => _showVideos = v),
             ),
+            const SizedBox(width: 6),
           ],
           IconButton(
             tooltip: _sort == _SortOrder.newest ? 'Newest first' : 'Oldest first',
@@ -280,6 +385,38 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFilterChip(
+    ColorScheme cs, {
+    required IconData icon,
+    required String label,
+    required bool selected,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return FilterChip(
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      // The app's default ChipTheme uses a rounded-rectangle shape — force a
+      // pill shape here regardless of theme.
+      shape: const StadiumBorder(),
+      avatar: Icon(icon, size: 16),
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      selected: selected,
+      onSelected: onChanged,
+      showCheckmark: false,
+    );
+  }
+
+  Widget _buildJumpButton(ColorScheme cs, AppLocalizations l, String rawId) {
+    return IconButton(
+      tooltip: l.galleryShowInChat,
+      icon: Icon(Icons.forum_outlined, size: 16, color: cs.primary.withValues(alpha: 0.8)),
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      padding: EdgeInsets.zero,
+      onPressed: () => _jumpTo(rawId),
     );
   }
 
@@ -302,10 +439,12 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
   // ── Media tab ────────────────────────────────────────────────────────────
 
   Widget _buildMediaTab(AppLocalizations l, ColorScheme cs) {
-    final media = _media;
-    if (media.isEmpty) {
+    // Truly nothing in this chat — no point showing the Photo/Video filters.
+    if (_allMedia.isEmpty) {
       return _buildEmptyState(Icons.photo_library_outlined, l.galleryEmptyMedia);
     }
+
+    final media = _media;
     final photoAlbumItems = media
         .where((i) => i.kind == GalleryKind.photo)
         .map((i) {
@@ -332,6 +471,11 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
         // is what made fast scrolling through a big album feel laggy.
         addAutomaticKeepAlives: false,
         cacheExtent: 600,
+        // Suspended while Ctrl/Cmd is held so the wheel only zooms (via
+        // _onPointerSignal below) instead of also scrolling the grid.
+        physics: _zoomModifierPressed
+            ? const NeverScrollableScrollPhysics()
+            : const AlwaysScrollableScrollPhysics(),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: _columns,
           crossAxisSpacing: 6,
@@ -345,15 +489,23 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildToolbar(cs, media.length, showZoom: isDesktop),
+        _buildToolbar(cs, media.length, showMediaFilters: true),
         Expanded(
-          child: isDesktop
-              ? grid
+          // Filters narrowed the list to nothing — keep the toolbar (and its
+          // Photo/Video chips) visible so the user can turn a filter back on
+          // instead of the whole tab going blank with no way back.
+          child: media.isEmpty
+              ? _buildEmptyState(
+                  Icons.filter_alt_off_outlined, 'No items match the selected filters')
               : Listener(
                   onPointerDown: _onPointerDown,
                   onPointerMove: _onPointerMove,
                   onPointerUp: _onPointerEnd,
                   onPointerCancel: _onPointerEnd,
+                  onPointerSignal: _onPointerSignal,
+                  onPointerPanZoomStart: _onPanZoomStart,
+                  onPointerPanZoomUpdate: _onPanZoomUpdate,
+                  onPointerPanZoomEnd: _onPanZoomEnd,
                   child: grid,
                 ),
         ),
@@ -385,6 +537,12 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
                 child: IgnorePointer(
                   child: Icon(Icons.play_circle_fill_rounded, size: 20, color: Colors.white),
                 ),
+              ),
+            if (widget.onJumpToMessage != null)
+              Positioned(
+                left: 6,
+                top: 6,
+                child: _JumpToChatBadge(onTap: () => _jumpTo(item.id)),
               ),
             Positioned(
               left: 0,
@@ -487,10 +645,18 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      _fmtDateTime(item.time),
-                      style: TextStyle(
-                          fontSize: 11, color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _fmtDateTime(item.time),
+                            style: TextStyle(
+                                fontSize: 11, color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
+                          ),
+                        ),
+                        if (widget.onJumpToMessage != null)
+                          _buildJumpButton(cs, l, item.id),
+                      ],
                     ),
                     const SizedBox(height: 4),
                     VoiceMessagePlayer(
@@ -541,10 +707,18 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
                   children: [
                     Padding(
                       padding: const EdgeInsets.only(left: 2, bottom: 2),
-                      child: Text(
-                        _fmtDateTime(item.time),
-                        style: TextStyle(
-                            fontSize: 11, color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _fmtDateTime(item.time),
+                              style: TextStyle(
+                                  fontSize: 11, color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
+                            ),
+                          ),
+                          if (widget.onJumpToMessage != null)
+                            _buildJumpButton(cs, l, item.id),
+                        ],
                       ),
                     ),
                     FileMessageWidget(
@@ -562,6 +736,33 @@ class _MediaGalleryDialogState extends State<_MediaGalleryDialog>
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Small "show in chat" affordance overlaid on a media grid tile — kept out
+/// of the tile's own tap target (which still opens the fullscreen viewer) so
+/// both actions stay reachable without a gesture conflict.
+class _JumpToChatBadge extends StatelessWidget {
+  final VoidCallback onTap;
+  const _JumpToChatBadge({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    return Tooltip(
+      message: l.galleryShowInChat,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.45),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.forum_outlined, size: 14, color: Colors.white),
+        ),
+      ),
     );
   }
 }
