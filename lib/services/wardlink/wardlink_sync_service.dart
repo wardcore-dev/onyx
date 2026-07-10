@@ -766,6 +766,18 @@ class WardLinkSyncService {
     if (_activeSyncs.contains(peerPubB64)) return;
     final paired = WardLinkPairedDevices.byPub(peerPubB64);
     if (paired == null) return;
+    // The account this sync belongs to. stop() doesn't cancel an in-flight
+    // _syncWithPeer (it's fire-and-forget via unawaited()) — only the account
+    // switch's synchronous state reset (root_screen._switchToAccount) happens
+    // before start() re-runs for the new account. Without this guard, a sync
+    // still awaiting a network round trip from the OLD account can land after
+    // the switch and write the old account's favourites (as empty chat
+    // entries, since the new account never had their messages) into the new
+    // account's now-current root state. Re-checked at every point below that
+    // follows an await, so a mid-flight switch aborts the write instead of
+    // applying it to the wrong account.
+    final syncUsername = _username;
+    bool staleAccount() => _username != syncUsername;
     _activeSyncs.add(peerPubB64);
     _resetFileLog();
     _log(WardLinkLogLevel.info, 'Sync started with ${paired.name}');
@@ -796,6 +808,16 @@ class WardLinkSyncService {
       }
       final chatsManifest =
           (manifestResp['chats'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
+      // The manifest fetch above awaited a network round trip — bail if the
+      // local account changed while we were waiting, so this peer's data
+      // (paired under the OLD account) never gets written into the NEW
+      // account's state. See syncUsername/staleAccount() above.
+      if (staleAccount()) {
+        _log(WardLinkLogLevel.info,
+            'Aborting sync with ${paired.name}: account switched mid-sync');
+        return;
+      }
 
       final root = rootScreenKey.currentState;
       if (root == null) return;
@@ -1027,6 +1049,15 @@ class WardLinkSyncService {
               importedFiles++;
             }
           }
+        }
+
+        // The message/file fetches above awaited network round trips — bail
+        // out of the whole loop if the account changed mid-sync, same reason
+        // as the manifest-fetch check above.
+        if (staleAccount()) {
+          _log(WardLinkLogLevel.info,
+              'Aborting sync with ${paired.name}: account switched mid-sync');
+          return;
         }
 
         // 5. Always import the FavoriteChat entry so the chat is visible in

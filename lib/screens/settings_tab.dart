@@ -30,6 +30,7 @@ import '../utils/proxy_manager.dart';
 import 'pin_code_screen.dart';
 import 'decoy_setup_screen.dart';
 import 'cache_manager_screen.dart';
+import 'active_sessions_screen.dart' show ActiveDevicesPanel;
 import 'package:local_auth/local_auth.dart';
 import '../globals.dart';
 import '../widgets/adaptive_blur.dart';
@@ -307,9 +308,10 @@ class SettingsTab extends StatefulWidget {
   final List<String> logs;
   
   final bool isPrimaryDevice;
-  final VoidCallback onShowPassphrase;
+  // Server now allows any trusted device (not just primary) to manage keys —
+  // see requireTrustedDevice on the backend. Client gating follows that.
+  final bool isE2eTrustedDevice;
   final Future<void> Function(String passphrase, String oldPassword, String newPassword) onChangePassword;
-  final VoidCallback onOpenSessions;
   final void Function(String username) onOpenChat;
   // Whether this tab is the one currently shown to the user. The PageView
   // hosting all bottom-nav tabs keeps every page mounted even when off-screen
@@ -333,9 +335,8 @@ class SettingsTab extends StatefulWidget {
     required this.onLogout,
     required this.logs,
     required this.isPrimaryDevice,
-    required this.onShowPassphrase,
+    this.isE2eTrustedDevice = false,
     required this.onChangePassword,
-    required this.onOpenSessions,
     required this.onOpenChat,
     this.isActive = true,
   }) : super(key: key);
@@ -1216,185 +1217,6 @@ class _SettingsTabState extends State<SettingsTab>
     _showStyledSnack(context, text, duration: const Duration(seconds: 3));
   }
 
-  Future<void> _showChangePasswordDialog(BuildContext context) async {
-    final l = AppLocalizations.of(context);
-    final passphraseCtrl = TextEditingController();
-    final oldPassCtrl = TextEditingController();
-    final newPassCtrl = TextEditingController();
-    bool obscureOld = true;
-    bool obscureNew = true;
-
-    InputDecoration glassDec(BuildContext ctx, {
-      required String label,
-      required IconData prefixIconData,
-      Widget? suffixIcon,
-    }) {
-      final cs = Theme.of(ctx).colorScheme;
-      final brightness = SettingsManager.elementBrightness.value;
-      final fillColor = SettingsManager.getElementColor(
-        cs.surfaceContainerHighest, brightness,
-      );
-      return InputDecoration(
-        labelText: label,
-        labelStyle: TextStyle(color: cs.onSurface.withValues(alpha: 0.7)),
-        prefixIcon: Icon(prefixIconData, color: cs.onSurface.withValues(alpha: 0.6)),
-        suffixIcon: suffixIcon,
-        filled: true,
-        fillColor: fillColor.withValues(alpha: 0.5),
-        contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(
-            color: cs.outlineVariant.withValues(alpha: 0.15),
-            width: 1.0,
-          ),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(
-            color: cs.outlineVariant.withValues(alpha: 0.15),
-            width: 1.0,
-          ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: cs.primary, width: 1.4),
-        ),
-      );
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) {
-          final cs = Theme.of(ctx).colorScheme;
-          return AlertDialog(
-            title: Row(
-              children: [
-                Icon(Icons.password_rounded, color: cs.primary, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(l.changePassword, style: const TextStyle(fontSize: 16)),
-                ),
-              ],
-            ),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: cs.primaryContainer.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(Icons.info_outline, size: 16, color: cs.primary),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            l.changePasswordInfo,
-                            style: TextStyle(fontSize: 13, color: cs.onPrimaryContainer),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: passphraseCtrl,
-                    style: TextStyle(color: cs.onSurface),
-                    decoration: glassDec(
-                      ctx,
-                      label: l.changePasswordPassphraseLabel,
-                      prefixIconData: Icons.key_rounded,
-                    ),
-                    maxLines: 2,
-                    minLines: 1,
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: oldPassCtrl,
-                    obscureText: obscureOld,
-                    style: TextStyle(color: cs.onSurface),
-                    decoration: glassDec(
-                      ctx,
-                      label: l.changePasswordCurrentLabel,
-                      prefixIconData: Icons.lock_outline,
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          obscureOld ? Icons.visibility_off : Icons.visibility,
-                          size: 18,
-                          color: cs.onSurface.withValues(alpha: 0.6),
-                        ),
-                        onPressed: () => setDialogState(() => obscureOld = !obscureOld),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: newPassCtrl,
-                    obscureText: obscureNew,
-                    style: TextStyle(color: cs.onSurface),
-                    decoration: glassDec(
-                      ctx,
-                      label: l.changePasswordNewLabel,
-                      prefixIconData: Icons.lock_reset,
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          obscureNew ? Icons.visibility_off : Icons.visibility,
-                          size: 18,
-                          color: cs.onSurface.withValues(alpha: 0.6),
-                        ),
-                        onPressed: () => setDialogState(() => obscureNew = !obscureNew),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: Text(l.cancel),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: Text(l.changePasswordChange),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    final passphrase = passphraseCtrl.text.trim();
-    final oldPass = oldPassCtrl.text;
-    final newPass = newPassCtrl.text;
-
-    if (passphrase.isEmpty || oldPass.isEmpty || newPass.isEmpty) {
-      _showSnack(l.changePasswordFieldsRequired);
-      return;
-    }
-    if (newPass.length < 16) {
-      _showSnack(l.changePasswordTooShort);
-      return;
-    }
-
-    _showSnack(l.changePasswordChanging);
-    try {
-      await widget.onChangePassword(passphrase, oldPass, newPass);
-      _showSnack(l.changePasswordSuccess);
-    } catch (e) {
-      _showSnack(' $e');
-    }
-  }
-
   Future<void> _pickChatBackground() async {
     try {
       final String? pickedPath;
@@ -1603,7 +1425,7 @@ class _SettingsTabState extends State<SettingsTab>
           const SizedBox(height: 16),
 
           if (_sectionVisible(l.securityTitle, l.securitySubtitle,
-              [l.statusSettings, l.showDisplayNameInGroups, l.showDisplayNameSubtitle, l.pinLock, l.enablePinLock, l.enablePinSubtitle, l.useBiometrics, l.useBiometricsSubtitle, l.lockOnResume, l.lockOnResumeSubtitle, l.hideFromSearch, l.hideFromSearchSubtitle, l.statusVisibility, l.statusShowStatus, l.statusHideStatus, l.statusCustomText, l.statusWhenOnline, l.statusWhenOffline, l.fakePinTitle, l.fakePinSubtitle, l.fakePinDescription, l.decoyAccountSection, l.decoyAccountSubtitle, l.decoyContactsSection, l.decoyContactsSubtitle, 'Privacy', 'Visibility and search settings', 'PIN, biometrics and lock behavior'])) ...[
+              [l.statusSettings, l.showDisplayNameInGroups, l.showDisplayNameSubtitle, l.pinLock, l.enablePinLock, l.enablePinSubtitle, l.useBiometrics, l.useBiometricsSubtitle, l.lockOnResume, l.lockOnResumeSubtitle, l.hideFromSearch, l.hideFromSearchSubtitle, l.statusVisibility, l.statusShowStatus, l.statusHideStatus, l.statusCustomText, l.statusWhenOnline, l.statusWhenOffline, l.fakePinTitle, l.fakePinSubtitle, l.fakePinDescription, l.decoyAccountSection, l.decoyAccountSubtitle, l.decoyContactsSection, l.decoyContactsSubtitle, l.activeDevices, l.changePassword, l.keyMgmtDescription, 'Privacy', 'Visibility and search settings', 'PIN, biometrics and lock behavior'])) ...[
           _buildLiquidGlassSection(
             icon: Icons.security_rounded,
             iconHue: 1,
@@ -1611,18 +1433,6 @@ class _SettingsTabState extends State<SettingsTab>
             subtitle: AppLocalizations.of(context).securitySubtitle,
             section: SectionType.security,
             expandedContentBuilder: _buildSecurityContent,
-          ),
-          const SizedBox(height: 16),
-          ],
-          if (_sectionVisible(l.keyMgmtTitle, l.keyMgmtSubtitle,
-              [l.keyMgmtDescription, l.rotateE2eeKey, l.activeDevices, l.showPassphrase, l.changePassword])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.key_rounded,
-            iconHue: 1,
-            title: AppLocalizations.of(context).keyMgmtTitle,
-            subtitle: AppLocalizations.of(context).keyMgmtSubtitle,
-            section: SectionType.keyManagement,
-            expandedContentBuilder: _buildKeyManagementContent,
           ),
           const SizedBox(height: 16),
           ],
@@ -3444,46 +3254,51 @@ class _SettingsTabState extends State<SettingsTab>
             ],
           ),
         ),
-      ],
-    );
-  }
-
-  Widget _buildKeyManagementContent() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(AppLocalizations.of(context).keyMgmtDescription, style: const TextStyle(fontSize: 13, color: Colors.grey)),
-        const SizedBox(height: 16),
-        Opacity(
-          opacity: widget.isPrimaryDevice ? 1.0 : 0.4,
-          child: _buildLiquidGlassButton(
-            icon: Icons.devices_rounded,
-            label: widget.isPrimaryDevice ? AppLocalizations.of(context).activeDevices : AppLocalizations.of(context).activeDevicesPrimaryOnly,
-            fontSize: 14,
-            onPressed: widget.isPrimaryDevice ? widget.onOpenSessions : null,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Opacity(
-          opacity: widget.isPrimaryDevice ? 1.0 : 0.4,
-          child: _buildLiquidGlassButton(
-            icon: Icons.visibility_rounded,
-            label: widget.isPrimaryDevice ? AppLocalizations.of(context).showPassphrase : AppLocalizations.of(context).showPassphrasePrimaryOnly,
-            fontSize: 14,
-            onPressed: widget.isPrimaryDevice ? widget.onShowPassphrase : null,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Opacity(
-          opacity: widget.isPrimaryDevice ? 1.0 : 0.4,
-          child: _buildLiquidGlassButton(
-            icon: Icons.password_rounded,
-            label: widget.isPrimaryDevice ? AppLocalizations.of(context).changePassword : AppLocalizations.of(context).changePasswordPrimaryOnly,
-            fontSize: 14,
-            color: widget.isPrimaryDevice ? null : Colors.grey,
-            onPressed: widget.isPrimaryDevice ? () => _showChangePasswordDialog(context) : null,
-          ),
-        ),
+        const SizedBox(height: 8),
+        Builder(builder: (_) {
+          final canManage = widget.isPrimaryDevice || widget.isE2eTrustedDevice;
+          final username = rootScreenKey.currentState?.currentUsername;
+          return Opacity(
+            opacity: canManage ? 1.0 : 0.4,
+            child: IgnorePointer(
+              ignoring: !canManage,
+              child: _buildSubSection(
+                key: 'security_active_devices',
+                title: canManage ? l.activeDevices : l.activeDevicesPrimaryOnly,
+                subtitle: l.activeDevicesSubtitle,
+                icon: Icons.devices_rounded,
+                searchShowAll: showAll,
+                keywords: [l.activeDevices, l.keyMgmtDescription, 'sessions', 'devices'],
+                expandedContent: ActiveDevicesPanel(
+                  serverBase: serverBase,
+                  username: username,
+                ),
+              ),
+            ),
+          );
+        }),
+        const SizedBox(height: 8),
+        Builder(builder: (_) {
+          final canManage = widget.isPrimaryDevice || widget.isE2eTrustedDevice;
+          return Opacity(
+            opacity: canManage ? 1.0 : 0.4,
+            child: IgnorePointer(
+              ignoring: !canManage,
+              child: _buildSubSection(
+                key: 'security_change_password',
+                title: canManage ? l.changePassword : l.changePasswordPrimaryOnly,
+                subtitle: l.changePasswordInfo,
+                icon: Icons.password_rounded,
+                searchShowAll: showAll,
+                keywords: [l.changePassword, l.changePasswordCurrentLabel, l.changePasswordNewLabel],
+                expandedContent: _ChangePasswordForm(
+                  onSubmit: widget.onChangePassword,
+                  onSnack: _showSnack,
+                ),
+              ),
+            ),
+          );
+        }),
       ],
     );
   }
@@ -5568,7 +5383,174 @@ class _SettingsTabState extends State<SettingsTab>
   }
 }
 
-enum SectionType { security, keyManagement, notifications, appearance, language, cache, connection, interact, contact, audio, wardLink, mesh, backup, recycleBin }
+enum SectionType { security, notifications, appearance, language, cache, connection, interact, contact, audio, wardLink, mesh, backup, recycleBin }
+
+// ── Inline change-password form, embedded as a Security sub-section instead
+// of a modal dialog so it matches the WardLink-style nested-accordion look.
+class _ChangePasswordForm extends StatefulWidget {
+  final Future<void> Function(String passphrase, String oldPassword, String newPassword) onSubmit;
+  final void Function(String) onSnack;
+
+  const _ChangePasswordForm({required this.onSubmit, required this.onSnack});
+
+  @override
+  State<_ChangePasswordForm> createState() => _ChangePasswordFormState();
+}
+
+class _ChangePasswordFormState extends State<_ChangePasswordForm> {
+  final _passphraseCtrl = TextEditingController();
+  final _oldPassCtrl = TextEditingController();
+  final _newPassCtrl = TextEditingController();
+  bool _obscureOld = true;
+  bool _obscureNew = true;
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _passphraseCtrl.dispose();
+    _oldPassCtrl.dispose();
+    _newPassCtrl.dispose();
+    super.dispose();
+  }
+
+  InputDecoration _dec(BuildContext ctx, {
+    required String label,
+    required IconData prefixIconData,
+    Widget? suffixIcon,
+  }) {
+    final cs = Theme.of(ctx).colorScheme;
+    final brightness = SettingsManager.elementBrightness.value;
+    final fillColor = SettingsManager.getElementColor(cs.surfaceContainerHighest, brightness);
+    return InputDecoration(
+      labelText: label,
+      labelStyle: TextStyle(color: cs.onSurface.withValues(alpha: 0.7)),
+      prefixIcon: Icon(prefixIconData, color: cs.onSurface.withValues(alpha: 0.6)),
+      suffixIcon: suffixIcon,
+      filled: true,
+      fillColor: fillColor.withValues(alpha: 0.5),
+      contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.15), width: 1.0),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.15), width: 1.0),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: cs.primary, width: 1.4),
+      ),
+    );
+  }
+
+  Future<void> _submit() async {
+    final l = AppLocalizations.of(context);
+    final passphrase = _passphraseCtrl.text.trim();
+    final oldPass = _oldPassCtrl.text;
+    final newPass = _newPassCtrl.text;
+
+    if (passphrase.isEmpty || oldPass.isEmpty || newPass.isEmpty) {
+      widget.onSnack(l.changePasswordFieldsRequired);
+      return;
+    }
+    if (newPass.length < 16) {
+      widget.onSnack(l.changePasswordTooShort);
+      return;
+    }
+
+    setState(() => _submitting = true);
+    widget.onSnack(l.changePasswordChanging);
+    try {
+      await widget.onSubmit(passphrase, oldPass, newPass);
+      widget.onSnack(l.changePasswordSuccess);
+      _passphraseCtrl.clear();
+      _oldPassCtrl.clear();
+      _newPassCtrl.clear();
+    } catch (e) {
+      widget.onSnack(' $e');
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: cs.primaryContainer.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, size: 16, color: cs.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(l.changePasswordInfo, style: TextStyle(fontSize: 13, color: cs.onPrimaryContainer)),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _passphraseCtrl,
+          style: TextStyle(color: cs.onSurface),
+          decoration: _dec(context, label: l.changePasswordPassphraseLabel, prefixIconData: Icons.key_rounded),
+          maxLines: 2,
+          minLines: 1,
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _oldPassCtrl,
+          obscureText: _obscureOld,
+          style: TextStyle(color: cs.onSurface),
+          decoration: _dec(
+            context,
+            label: l.changePasswordCurrentLabel,
+            prefixIconData: Icons.lock_outline,
+            suffixIcon: IconButton(
+              icon: Icon(_obscureOld ? Icons.visibility_off : Icons.visibility, size: 18, color: cs.onSurface.withValues(alpha: 0.6)),
+              onPressed: () => setState(() => _obscureOld = !_obscureOld),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _newPassCtrl,
+          obscureText: _obscureNew,
+          style: TextStyle(color: cs.onSurface),
+          decoration: _dec(
+            context,
+            label: l.changePasswordNewLabel,
+            prefixIconData: Icons.lock_reset,
+            suffixIcon: IconButton(
+              icon: Icon(_obscureNew ? Icons.visibility_off : Icons.visibility, size: 18, color: cs.onSurface.withValues(alpha: 0.6)),
+              onPressed: () => setState(() => _obscureNew = !_obscureNew),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _submitting ? null : _submit,
+            icon: _submitting
+                ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: cs.onPrimary))
+                : const Icon(Icons.check_rounded, size: 18),
+            label: Text(l.changePasswordChange),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 // ── WardLink QR pairing dialog ────────────────────────────────────────────────
 

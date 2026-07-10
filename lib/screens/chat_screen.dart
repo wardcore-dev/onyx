@@ -1954,7 +1954,7 @@ class ChatScreenState extends State<ChatScreen>
     }
 
     if (_isLANMode) {
-      final localId = DateTime.now().microsecondsSinceEpoch.toString();
+      final localId = generateLocalMessageId();
       final int? replyId =
           _replyingToMessage != null && _replyingToMessage!['id'] != null
               ? int.tryParse(_replyingToMessage!['id'].toString())

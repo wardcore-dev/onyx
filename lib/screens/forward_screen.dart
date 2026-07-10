@@ -160,19 +160,29 @@ class _ForwardScreenState extends State<ForwardScreen> {
         if (mounted) setState(() => _sending = false);
         return;
       }
+      var failures = 0;
       for (final content in widget.contents) {
-        await http.post(
-          Uri.parse('$serverBase/group/${group.id}/send'),
-          headers: {
-            'authorization': 'Bearer $token',
-            'content-type': 'application/json',
-          },
-          body: jsonEncode({'content': content}),
-        );
+        try {
+          final resp = await http.post(
+            Uri.parse('$serverBase/group/${group.id}/send'),
+            headers: {
+              'authorization': 'Bearer $token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode({'content': content}),
+          ).timeout(const Duration(seconds: 10));
+          if (resp.statusCode != 200) failures++;
+        } catch (_) {
+          failures++;
+        }
       }
       if (mounted) {
         Navigator.of(context).pop();
-        rootScreenKey.currentState?.showSnack('Message forwarded');
+        rootScreenKey.currentState?.showSnack(failures == 0
+            ? 'Message forwarded'
+            : failures == widget.contents.length
+                ? 'Failed to forward message'
+                : '$failures of ${widget.contents.length} messages failed to forward');
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -190,27 +200,41 @@ class _ForwardScreenState extends State<ForwardScreen> {
     if (serverId == null) return;
     setState(() => _sending = true);
     try {
+      var failures = 0;
       for (final content in widget.contents) {
-        await ExternalServerManager.sendMessage(serverId, group.id, content);
+        final result =
+            await ExternalServerManager.sendMessage(serverId, group.id, content);
+        if (result == null) failures++;
       }
       if (mounted) {
         Navigator.of(context).pop();
-        rootScreenKey.currentState?.showSnack('Message forwarded');
+        rootScreenKey.currentState?.showSnack(failures == 0
+            ? 'Message forwarded'
+            : failures == widget.contents.length
+                ? 'Failed to forward message'
+                : '$failures of ${widget.contents.length} messages failed to forward');
       }
     } finally {
       if (mounted) setState(() => _sending = false);
     }
   }
 
-  void _sendToFavorite(FavoriteChat fav) {
+  Future<void> _sendToFavorite(FavoriteChat fav) async {
     if (_sending) return;
     final root = rootScreenKey.currentState;
     if (root == null) return;
-    for (final content in widget.contents) {
-      root.sendMessageToFavorite(fav.id, content);
+    setState(() => _sending = true);
+    try {
+      for (final content in widget.contents) {
+        root.sendMessageToFavorite(fav.id, content);
+      }
+      if (mounted) {
+        Navigator.of(context).pop();
+        root.showSnack('Message forwarded');
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
-    Navigator.of(context).pop();
-    root.showSnack('Message forwarded');
   }
 
   // ── favorite avatar (local file or bookmark fallback) ───────────────────────

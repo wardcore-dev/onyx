@@ -114,9 +114,10 @@ class AppLocalizations {
   String get keyRotated => _ru ? ' E2EE-ключ ротирован и загружен' : ' E2EE key rotated and uploaded';
   String get keyRotationFailed => _ru ? ' Ошибка ротации ключа' : ' Key rotation failed';
   String get activeDevices => _ru ? 'Активные устройства' : 'Active Devices';
+  String get activeDevicesSubtitle => _ru
+      ? 'Устройства, пароль и ключ шифрования'
+      : 'Devices, password and encryption key';
   String get activeDevicesPrimaryOnly => _ru ? 'Активные устройства (только основное)' : 'Active Devices (primary device only)';
-  String get showPassphrase => _ru ? 'Показать секретную фразу' : 'Show Passphrase';
-  String get showPassphrasePrimaryOnly => _ru ? 'Показать секретную фразу (только основное устройство)' : 'Show Passphrase (primary device only)';
   String get changePassword => _ru ? 'Изменить пароль' : 'Change Password';
   String get changePasswordPrimaryOnly => _ru ? 'Изменить пароль (только основное устройство)' : 'Change Password (primary device only)';
 
@@ -391,11 +392,11 @@ class AppLocalizations {
       : 'Make sure to save your password in a safe place — write it down. Recovery without a password is impossible.';
 
   String get passphraseWriteDown => _ru
-      ? 'Запишите эти 12 слов и храните их в надёжном месте. Они нужны для смены пароля.'
-      : 'Write down these 12 words and store them somewhere safe. They are needed to change your password.';
+      ? 'Эта фраза больше никогда не будет показана. Запишите эти 12 слов от руки и храните их в надёжном месте — они нужны для восстановления аккаунта, если вы забудете пароль.'
+      : 'This passphrase will never be shown again. Write down these 12 words by hand and keep them somewhere safe — you\'ll need them to recover your account if you forget your password.';
   String get passphraseWriteOnPaper => _ru
-      ? 'Запишите секретную фразу на бумаге и положите в надёжное место!'
-      : 'Write your passphrase on paper and keep it in a safe place!';
+      ? 'Запишите секретную фразу на бумаге прямо сейчас — второго шанса не будет!'
+      : 'Write your passphrase on paper right now — there will be no second chance!';
   String get copyToClipboard => _ru ? 'Копировать в буфер' : 'Copy to clipboard';
   String get copiedToClipboard => _ru ? 'Скопировано!' : 'Copied!';
   String passphraseCountdown(int s) => _ru ? 'Прочитайте внимательно — доступно через $s с...' : 'Please read carefully — available in $s s...';
@@ -913,11 +914,7 @@ class AppLocalizations {
   String get notReceiveContacts => _ru ? 'Ваши контакты и личные чаты' : 'Your contacts and private chats';
   String get notReceiveKeys => _ru ? 'Ваши ключи шифрования' : 'Your encryption keys';
 
-  String get passphraseNotFound => _ru ? 'Секретная фраза не найдена на этом устройстве' : 'Passphrase not found on this device';
   String get yourPassphraseTitle => _ru ? 'Ваша секретная фраза' : 'Your Recovery Passphrase';
-  String get passphraseWarning => _ru ? 'Храните эти слова в тайне. Любой, кто знает вашу секретную фразу, может сменить ваш пароль.' : 'Keep these words secret. Anyone with your passphrase can change your password.';
-  String get copyLabel => _ru ? 'Копировать' : 'Copy';
-  String get done => _ru ? 'Готово' : 'Done';
 
   String localizeFontDescription(String s) {
     if (!_ru) return s;
@@ -1535,6 +1532,78 @@ class AppLocalizations {
   String get e2eeWarnExtOnyxUnrelated => _ru
       ? 'ONYX не имеет ни малейшего отношения к этой группе и не может модерировать или защищать её содержимое.'
       : 'ONYX has nothing to do with this group and cannot moderate or protect its content.';
+
+  // --- Device-trust security level & session TTL (Active Devices screen) ---
+  String get securityLevelTitle => _ru ? 'Уровень защиты' : 'Device trust level';
+  String get securityLevelEasy => _ru ? 'Просто' : 'Easy';
+  String get securityLevelEasyDesc => _ru
+      ? 'Новое устройство доверяется сразу после входа. Минимум трения, но пароль — единственная защита.'
+      : 'A new device is trusted immediately after login. Least friction, but the password is your only line of defense.';
+  String get securityLevelBalanced => _ru ? 'Сбалансировано' : 'Balanced';
+  String get securityLevelBalancedDesc => _ru
+      ? 'Новое устройство одобряет любое уже доверенное устройство. Рекомендуется большинству.'
+      : 'Any already-trusted device can approve a new one. Recommended for most people.';
+  String get securityLevelStrict => _ru ? 'Строго' : 'Strict';
+  String get securityLevelStrictDesc => _ru
+      ? 'Новое устройство требует одобрения от двух разных доверенных устройств.'
+      : 'A new device needs approval from two separate trusted devices.';
+  String get securityLevelLowerRequiresTrusted => _ru
+      ? 'Понизить уровень защиты можно только с доверенного устройства.'
+      : 'Lowering the security level requires a trusted device.';
+  String get securityLevelUpdated => _ru ? 'Уровень защиты обновлён' : 'Security level updated';
+
+  String get sessionTtlTitle => _ru ? 'Срок жизни сессии' : 'Session lifetime';
+  String get sessionTtlSubtitle => _ru
+      ? 'Через сколько потребуется снова ввести пароль на этом устройстве'
+      : 'How long before this device asks for your password again';
+  String get sessionTtlRecommended => _ru ? 'рекомендовано' : 'recommended';
+  String sessionTtlDays(int days) => _ru ? '$days дней' : '$days days';
+  String get sessionTtlNever => _ru ? 'Никогда' : 'Never';
+  String get sessionTtlUpdated => _ru ? 'Срок жизни сессии обновлён' : 'Session lifetime updated';
+
+  String get approvalsProgress => _ru ? 'Одобрено' : 'Approved';
+
+  // --- Pending device approval dialog / floating reminder ---
+  String get pendingDeviceTitleSingle => _ru ? 'Новое устройство хочет доступ' : 'New device wants access';
+  String pendingDeviceTitleMulti(int count) => _ru ? 'Новые устройства ($count)' : 'New devices ($count)';
+  String get pendingDeviceApprove => _ru ? 'Одобрить' : 'Approve';
+  String get pendingDeviceDeny => _ru ? 'Отклонить' : 'Deny';
+
+  // --- Account recovery ---
+  String get recoveryTitle => _ru ? 'Восстановление доступа' : 'Account recovery';
+  String get recoveryBannerText => _ru
+      ? 'Это устройство ещё не одобрено. Если ни одно доверенное устройство недоступно — можно восстановить доступ паролем и фразой восстановления.'
+      : "This device isn't approved yet. If no trusted device is reachable, you can recover access with your password and recovery phrase.";
+  String get recoveryBannerButton => _ru ? 'Восстановить доступ' : 'Recover access';
+  String get recoveryIntro => _ru
+      ? 'Введите пароль и 12-словную фразу восстановления, которую вам показали при регистрации. Запрос вступит в силу не сразу — у ваших доверенных устройств будет время его отменить, если это не вы.'
+      : 'Enter your password and the 12-word recovery phrase shown to you at registration. The request won\'t take effect immediately — your trusted devices get a window to cancel it if this isn\'t you.';
+  String get recoveryPasswordLabel => _ru ? 'Пароль' : 'Password';
+  String get recoveryPassphraseLabel => _ru ? 'Фраза восстановления (12 слов)' : 'Recovery phrase (12 words)';
+  String get recoverySubmit => _ru ? 'Отправить запрос' : 'Submit request';
+  String get recoveryInvalid => _ru ? 'Неверный пароль или фраза восстановления' : 'Invalid password or recovery phrase';
+  String get recoveryAlreadyPending => _ru ? 'Запрос уже отправлен и ожидает исполнения' : 'A request is already pending';
+  String get recoveryPendingTitle => _ru ? 'Запрос отправлен' : 'Request submitted';
+  String recoveryPendingBody(String when) => _ru
+      ? 'Доступ будет восстановлен $when, если запрос не отменят с одного из доверенных устройств.'
+      : 'Access will be restored $when unless a trusted device cancels the request.';
+  String get recoveryCancelled => _ru ? 'Запрос восстановления отменён' : 'Recovery request cancelled';
+  String get recoveryExecuted => _ru ? 'Доступ восстановлен. Перезайдите, чтобы применить изменения.' : 'Access restored. Please re-login to apply the change.';
+
+  String get recoveryAlertRequestedTitle => _ru ? 'Кто-то запросил восстановление доступа' : 'Someone requested account recovery';
+  String recoveryAlertRequestedBody(String deviceName, String when) => _ru
+      ? 'Устройство "$deviceName" запросило восстановление доступа. Если это не вы — отмените запрос сейчас. Иначе он вступит в силу $when.'
+      : 'Device "$deviceName" requested account recovery. If this wasn\'t you, cancel it now. Otherwise it takes effect $when.';
+  String get recoveryAlertCancelButton => _ru ? 'Отменить запрос' : 'Cancel request';
+  String get recoveryAlertIgnoreButton => _ru ? 'Это я, игнорировать' : "It's me, ignore";
+  String get recoveryAlertFailedTitle => _ru ? 'Неудачная попытка восстановления' : 'Failed recovery attempt';
+  String get recoveryAlertFailedBody => _ru
+      ? 'Кто-то пытался восстановить доступ к вашему аккаунту, но ввёл неверный пароль или фразу восстановления.'
+      : 'Someone tried to recover access to your account but entered the wrong password or recovery phrase.';
+  String get recoveryAlertExecutedTitle => _ru ? 'Восстановление выполнено' : 'Recovery completed';
+  String get recoveryAlertExecutedBody => _ru
+      ? 'Запрос на восстановление доступа вступил в силу — у аккаунта новое основное устройство. Если это были не вы, немедленно отзовите незнакомую сессию в Активных устройствах.'
+      : "The recovery request has taken effect — the account has a new primary device. If this wasn't you, revoke the unfamiliar session in Active Devices immediately.";
 }
 
 class _AppLocalizationsDelegate

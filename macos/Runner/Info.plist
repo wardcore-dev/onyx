@@ -34,6 +34,10 @@
     <string>Video calls and camera access</string>
     <key>NSFaceIDUsageDescription</key>
     <string>Unlock ONYX with Touch ID / Face ID</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>ONYX uses Bluetooth to connect to nearby devices</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>ONYX uses Bluetooth to connect to nearby devices</string>
     <key>FLTEnableImpeller</key>
     <true/>
 </dict>

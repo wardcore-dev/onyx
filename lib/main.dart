@@ -41,6 +41,7 @@ import 'models/app_themes.dart';
 import 'widgets/debug_overlay_v2.dart';
 import 'widgets/wardlink_bubble.dart';
 import 'widgets/wardlink_sync_bubble.dart';
+import 'widgets/pending_device_bubble.dart';
 import 'widgets/vinyl_player_button.dart';
 import 'utils/global_audio_controller.dart';
 import 'widgets/voice_channel_bar.dart';
@@ -750,6 +751,7 @@ class _ElegantMessengerState extends State<ElegantMessenger> with WindowListener
                   const VinylPlayerButton(),
                   const WardLinkBubble(),
                   const WardLinkSyncBubble(),
+                  const PendingDeviceBubble(),
                   const _GlobalVoiceBar(),
                 ],
               ),

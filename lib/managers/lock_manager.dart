@@ -1,14 +1,12 @@
 import 'dart:convert';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LockManager {
   static const _chatsKey = 'locked_chats';
   static const _pinKeyPrefix = 'lock_pin_';
-  static const _secureStorage = FlutterSecureStorage();
   static final _localAuth = LocalAuthentication();
 
   static final ValueNotifier<Set<String>> lockedChats =
@@ -22,15 +20,16 @@ class LockManager {
     final list = prefs.getStringList(_chatsKey) ?? [];
     lockedChats.value = Set<String>.from(list);
 
-    final all = await _secureStorage.readAll();
-    for (final entry in all.entries) {
-      if (entry.key.startsWith(_pinKeyPrefix) && entry.value.isNotEmpty) {
-        final chatId = entry.key.substring(_pinKeyPrefix.length);
-        _cachedPinHashes[chatId] = entry.value;
+    for (final key in prefs.getKeys()) {
+      if (key.startsWith(_pinKeyPrefix)) {
+        final value = prefs.getString(key);
+        if (value != null && value.isNotEmpty) {
+          _cachedPinHashes[key.substring(_pinKeyPrefix.length)] = value;
+        }
       }
     }
 
-    // If a chat is marked locked but its PIN was lost (e.g. SecureStorage cleared),
+    // If a chat is marked locked but its PIN was lost (e.g. prefs cleared),
     // remove the stale lock so the user isn't permanently locked out.
     final orphaned = lockedChats.value
         .where((id) => !_cachedPinHashes.containsKey(id))
@@ -62,7 +61,8 @@ class LockManager {
     lockedChats.value = updated;
     _sessionUnlocked.remove(chatId);
     _cachedPinHashes.remove(chatId);
-    await _secureStorage.delete(key: '$_pinKeyPrefix$chatId');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_pinKeyPrefix$chatId');
     await _save();
   }
 
@@ -95,7 +95,8 @@ class LockManager {
   static Future<void> setPin(String chatId, String pin) async {
     final h = _hash(pin);
     _cachedPinHashes[chatId] = h;
-    await _secureStorage.write(key: '$_pinKeyPrefix$chatId', value: h);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('$_pinKeyPrefix$chatId', h);
   }
 
   static bool verifyPin(String chatId, String pin) {

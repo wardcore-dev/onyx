@@ -38,6 +38,10 @@ class AccountsTab extends StatefulWidget {
   final Future<void> Function(String) onDeleteAccount;
   final List<String> logs;
   final AppTheme currentTheme;
+  // Re-fetches display_name/uin from the server for the current account.
+  // Called on tab open so a numeric id changed directly in the DB doesn't
+  // stay stuck at a stale cached value.
+  final VoidCallback? onRefreshProfile;
 
   const AccountsTab({
     Key? key,
@@ -51,6 +55,7 @@ class AccountsTab extends StatefulWidget {
     required this.onDeleteAccount,
     required this.logs,
     required this.currentTheme,
+    this.onRefreshProfile,
   }) : super(key: key);
 
   @override
@@ -129,6 +134,7 @@ class _AccountsTabState extends State<AccountsTab>
     }
     _updatePubFingerprintsFor(_accounts);
     _refreshMetaAndSort();
+    widget.onRefreshProfile?.call();
 
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 300),
@@ -780,6 +786,7 @@ class _AccountsTabState extends State<AccountsTab>
             AdaptiveGlassCard(
               borderRadius: 20,
               padding: const EdgeInsets.all(12),
+              onTap: _showEditProfileDialog,
               child: Row(
                 children: [
                   if (DecoyManager.isActive.value)
@@ -923,60 +930,6 @@ class _AccountsTabState extends State<AccountsTab>
               },
             ),
           ],
-
-          if (widget.currentUsername != null)
-            ValueListenableBuilder<double>(
-              valueListenable: SettingsManager.elementBrightness,
-              builder: (_, brightness, __) {
-                final baseColor = SettingsManager.getElementColor(
-                  Theme.of(context).colorScheme.surfaceContainerHighest,
-                  brightness,
-                );
-                return ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: baseColor.withValues(alpha: 0.6),
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(
-                        color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
-                        width: 0.8,
-                      ),
-                    ),
-                    child: FilledButton.icon(
-                      onPressed: _showEditProfileDialog,
-                      icon: Icon(
-                        Icons.edit,
-                        size: 18,
-                        color: (widget.currentTheme == AppTheme.grey &&
-                                Theme.of(context).colorScheme.brightness == Brightness.dark)
-                            ? const Color(0xFFA0A0A0)
-                            : Theme.of(context).colorScheme.secondary,
-                      ),
-                      label: Text(
-                        AppLocalizations.of(context).editProfile,
-                        style: TextStyle(
-                          fontSize: 15,
-                          color: (widget.currentTheme == AppTheme.grey &&
-                                  Theme.of(context).colorScheme.brightness == Brightness.dark)
-                              ? const Color(0xFFA0A0A0)
-                              : Theme.of(context).colorScheme.secondary,
-                        ),
-                      ),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: widget.currentTheme == AppTheme.grey
-                            ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.06)
-                            : Theme.of(context).colorScheme.secondary.withValues(alpha: 0.12),
-                        foregroundColor: Theme.of(context).colorScheme.secondary,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                        elevation: 0,
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
 
           const SizedBox(height: 16),
 

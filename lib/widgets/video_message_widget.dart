@@ -1049,9 +1049,8 @@ class _VideoFullscreenMenuButtonState
   Widget build(BuildContext context) {
     return CompositedTransformTarget(
       link: _layerLink,
-      child: OverlayPortal(
+      child: OverlayPortal.targetsRootOverlay(
         controller: _controller,
-        overlayLocation: OverlayChildLocation.rootOverlay,
         overlayChildBuilder: (context) => Stack(
           children: [
             // Invisible full-screen barrier — tap outside the panel to close

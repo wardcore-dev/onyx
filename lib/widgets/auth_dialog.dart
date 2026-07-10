@@ -468,6 +468,11 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
     setState(() => _copied = true);
   }
 
+  static const _btnShape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.all(Radius.circular(50)),
+  );
+  static const _btnPadding = EdgeInsets.symmetric(vertical: 13);
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -476,91 +481,177 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
     final l = AppLocalizations(SettingsManager.appLocale.value);
     return PopScope(
       canPop: false,
-      child: AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.key, color: colorScheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(l.yourPassphraseTitle, style: const TextStyle(fontSize: 16)),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                l.passphraseWriteDown,
-                style: const TextStyle(fontSize: 13, color: Colors.grey),
-              ),
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.edit_note_rounded, color: Colors.orange, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
+      child: Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Material(
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // ── Header ────────────────────────────────────────
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 16, 16),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primary.withValues(alpha: 0.06),
+                      border: Border(
+                        bottom: BorderSide(
+                          color: colorScheme.primary.withValues(alpha: 0.10),
+                          width: 0.8,
+                        ),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: colorScheme.primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Icon(Icons.key_rounded, color: colorScheme.primary, size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            l.yourPassphraseTitle,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // ── Instructions ─────────────────────────────────
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                    child: Text(
+                      l.passphraseWriteDown,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colorScheme.onSurface.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.orange.withValues(alpha: 0.35), width: 0.8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.edit_note_rounded, color: Colors.orange, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              l.passphraseWriteOnPaper,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.orange,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // ── Word grid ─────────────────────────────────────
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                          width: 0.8,
+                        ),
+                      ),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: words.asMap().entries.map((e) {
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '${e.key + 1}. ${e.value}',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        onPressed: _copy,
+                        style: OutlinedButton.styleFrom(
+                          shape: const RoundedRectangleBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(50)),
+                          ),
+                        ),
+                        icon: Icon(_copied ? Icons.check : Icons.copy_rounded, size: 16),
+                        label: Text(_copied ? l.copiedToClipboard : l.copyToClipboard),
+                      ),
+                    ),
+                  ),
+
+                  if (_countdown > 0)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
                       child: Text(
-                        l.passphraseWriteOnPaper,
+                        l.passphraseCountdown(_countdown),
+                        textAlign: TextAlign.center,
                         style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
                           color: Colors.orange,
                         ),
                       ),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: words.asMap().entries.map((e) {
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: colorScheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '${e.key + 1}. ${e.value}',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: colorScheme.onPrimaryContainer,
+
+                  // ── Confirm button ────────────────────────────────
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                    child: FilledButton.icon(
+                      onPressed: _countdown > 0 ? null : widget.onConfirmed,
+                      style: FilledButton.styleFrom(
+                        padding: _btnPadding,
+                        shape: _btnShape,
                       ),
+                      icon: const Icon(Icons.check_circle_outline, size: 18),
+                      label: Text(l.iSavedIt),
                     ),
-                  );
-                }).toList(),
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
-                onPressed: _copy,
-                icon: Icon(_copied ? Icons.check : Icons.copy, size: 16),
-                label: Text(_copied ? l.copiedToClipboard : l.copyToClipboard),
-              ),
-              const SizedBox(height: 12),
-              if (_countdown > 0)
-                Text(
-                  l.passphraseCountdown(_countdown),
-                  style: const TextStyle(fontSize: 12, color: Colors.orange),
-                )
-              else
-                FilledButton.icon(
-                  onPressed: widget.onConfirmed,
-                  icon: const Icon(Icons.check_circle_outline, size: 18),
-                  label: Text(l.iSavedIt),
-                ),
-            ],
+            ),
           ),
         ),
       ),

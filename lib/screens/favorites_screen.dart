@@ -985,7 +985,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
       return;
     }
 
-    final localId = DateTime.now().microsecondsSinceEpoch.toString();
+    final localId = generateLocalMessageId();
     final int? replyId =
         _replyingToMessage != null && _replyingToMessage!['id'] != null
             ? int.tryParse(_replyingToMessage!['id'].toString())
@@ -1327,7 +1327,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   Future<void> _sendFile(
       String filePath, String basename, String ext, String type) async {
     final task = UploadTask(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: generateLocalMessageId(),
       type: type == 'IMAGE'
           ? 'image'
           : type == 'VIDEO'
@@ -1503,7 +1503,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
       if (albumItems.isEmpty) return;
 
       final content = 'ALBUMv1:${jsonEncode(albumItems)}';
-      final localId = DateTime.now().microsecondsSinceEpoch.toString();
+      final localId = generateLocalMessageId();
       final msg = ChatMessage(
         id: localId,
         from: 'me',

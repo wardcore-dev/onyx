@@ -57,7 +57,6 @@ import '../screens/chats_tab.dart';
 import '../managers/blocklist_manager.dart';
 import '../managers/mute_manager.dart';
 import '../screens/accounts_tab.dart';
-import '../screens/active_sessions_screen.dart';
 import '../utils/optimized_state_manager.dart';
 import '../screens/settings_tab.dart';
 import '../screens/chat_screen.dart';
@@ -89,6 +88,8 @@ import '../utils/image_file_cache.dart';
 import '../utils/image_loader.dart';
 import '../managers/windows_notification_popup.dart';
 import '../l10n/app_localizations.dart';
+import '../services/pending_device_approvals.dart';
+import '../widgets/pending_device_dialog.dart';
 import '../utils/update_checker.dart';
 import '../widgets/update_banner.dart';
 import '../widgets/about_onyx_dialog.dart';
@@ -267,6 +268,7 @@ class RootScreenState extends State<RootScreen>
   String? currentDisplayName;
   String? currentUin;
   bool _isPrimaryDevice = false;
+  bool _isE2eTrustedDevice = false;
 
   bool get _mobileGraphEnabled =>
       !isDesktop && SettingsManager.showAccountGraph.value;
@@ -290,6 +292,15 @@ class RootScreenState extends State<RootScreen>
 
   // Messages queued when WS was offline — drained on reconnect
   final List<Map<String, dynamic>> _pendingMsgQueue = [];
+
+  // Chains background sends (encrypt + ws dispatch) per chat so that when
+  // several messages are enqueued back-to-back (e.g. batch-forwarding), the
+  // one enqueued first is always fully handed to the websocket before the
+  // next one starts — otherwise message 2 can race ahead of message 1 (e.g.
+  // message 1 hits a pubkey-cache-miss retry while message 2 doesn't) and
+  // arrive out of order for the recipient even though it appears in the
+  // correct order locally.
+  final Map<String, Future<void>> _chatSendChains = {};
   StreamSubscription<String>? _notificationSubscription;
 
   final Set<int> _activeGroupChatIds = {};
@@ -399,14 +410,6 @@ class RootScreenState extends State<RootScreen>
   void _handlePageChanged(int newIndex) {
     if (mounted)
       FocusScope.of(context).unfocus(disposition: UnfocusDisposition.scope);
-    if (newIndex == 5 + _graphTabOffset && !_isPrimaryDevice) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _pageController.hasClients) {
-          _pageController.jumpToPage(4 + _graphTabOffset);
-        }
-      });
-      return;
-    }
 
     final tabIndex = newIndex;
 
@@ -478,7 +481,7 @@ class RootScreenState extends State<RootScreen>
   void sendMessageToFavorite(String favId, String text) {
     final chatId = 'fav:$favId';
     final msg = ChatMessage(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: generateLocalMessageId(),
       from: 'me',
       to: chatId,
       content: text,
@@ -488,7 +491,9 @@ class RootScreenState extends State<RootScreen>
     );
     chats.putIfAbsent(chatId, () => []).add(msg);
     schedulePersistChats(chatId: chatId);
+    bumpChatMessageVersion(chatId);
     chatsVersion.value++;
+    bumpFavToTop(favId);
   }
 
   Future<void> cancelRecording() async {
@@ -1604,7 +1609,7 @@ class RootScreenState extends State<RootScreen>
       if (isPersonalChat) {
         await _sendChatMessage(to, content, replyTo);
       } else {
-        final localId = DateTime.now().microsecondsSinceEpoch.toString();
+        final localId = generateLocalMessageId();
         final msg = ChatMessage(
           id: localId,
           from: currentUsername ?? 'me',
@@ -1702,7 +1707,7 @@ class RootScreenState extends State<RootScreen>
         'format': format,
       });
 
-      final localId = DateTime.now().microsecondsSinceEpoch.toString();
+      final localId = generateLocalMessageId();
       final chatId = chatIdForUser(to);
 
       final int? replyId = replyTo != null && replyTo['id'] != null
@@ -1768,7 +1773,7 @@ class RootScreenState extends State<RootScreen>
       final basename = filename;
 
       voiceTask = UploadTask(
-        id: '${DateTime.now().microsecondsSinceEpoch}',
+        id: generateLocalMessageId(),
         type: 'voice',
         localPath: path,
         basename: basename,
@@ -2744,7 +2749,7 @@ class RootScreenState extends State<RootScreen>
     final deletedMessages = List<ChatMessage>.from(chats[chatId] ?? []);
 
     TrashManager.instance.addDeletedChat(TrashedChat(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: generateLocalMessageId(),
       chatId: chatId,
       displayName: favTitle,
       type: TrashedChatType.favorite,
@@ -3431,6 +3436,15 @@ class RootScreenState extends State<RootScreen>
           _sendPresence('online');
         }
         ExternalServerManager.reconnectIfNeeded();
+
+        // Re-check for devices waiting on approval every time the app comes
+        // back to the foreground, not just when a WS event happens to land
+        // while we're already open.
+        if (_isPrimaryDevice || _isE2eTrustedDevice) {
+          PendingDeviceApprovals.refresh().then((_) {
+            if (mounted) _maybeShowPendingDeviceDialog();
+          });
+        }
       });
 
       // Restart Mesh scan + UDP broadcast after wakeup so the first BLE
@@ -3674,6 +3688,39 @@ class RootScreenState extends State<RootScreen>
     setState(() {});
   }
 
+  // Pulls display_name + uin fresh from the server and updates the local
+  // cache. Called on every account load, and again whenever the Accounts
+  // tab becomes visible — a numeric id changed directly in the DB (e.g. by
+  // an admin) would otherwise stay stuck at whatever was cached locally
+  // until the next full app restart.
+  Future<void> _refreshProfileFromServer(String username) async {
+    try {
+      final token = await AccountManager.getToken(username);
+      if (token == null || !mounted) return;
+      final res = await http.get(
+        Uri.parse('$serverBase/profile/$username'),
+        headers: {'authorization': 'Bearer $token'},
+      ).timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200 && mounted) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        final dn = (data['display_name'] as String?) ?? username;
+        currentDisplayName = dn;
+        if (data['uin'] != null) {
+          final uinStr = data['uin'].toString();
+          currentUin = uinStr;
+
+          final prefs = await SharedPreferences.getInstance();
+          unawaited(prefs.setString('uin_$username', uinStr));
+        }
+        setState(() {});
+
+        unawaited(AccountManager.cacheDisplayName(username, dn));
+      }
+    } catch (e) {
+      _appendLog('[profile] failed to load display_name: $e');
+    }
+  }
+
   Future<void> _loadAccountData(String username) async {
     _identityKeyPair = null;
     _identityPublicKey = null;
@@ -3690,6 +3737,9 @@ class RootScreenState extends State<RootScreen>
     final cachedIsPrimary =
         await SecureStore.read('is_primary_device_$username');
     if (mounted) setState(() => _isPrimaryDevice = cachedIsPrimary == 'true');
+    final cachedIsTrusted =
+        await SecureStore.read('is_e2e_trusted_device_$username');
+    if (mounted) setState(() => _isE2eTrustedDevice = cachedIsTrusted == 'true');
 
     Future(() async {
       try {
@@ -3702,11 +3752,26 @@ class RootScreenState extends State<RootScreen>
         if (isPrimaryRes.statusCode == 200 && mounted) {
           final data = jsonDecode(isPrimaryRes.body);
           final serverIsPrimary = data['is_primary'] == true;
+          final serverIsTrusted = data['e2e_trusted'] == true;
           await SecureStore.write(
             'is_primary_device_$username',
             serverIsPrimary ? 'true' : 'false',
           );
-          if (mounted) setState(() => _isPrimaryDevice = serverIsPrimary);
+          await SecureStore.write(
+            'is_e2e_trusted_device_$username',
+            serverIsTrusted ? 'true' : 'false',
+          );
+          if (mounted) {
+            setState(() {
+              _isPrimaryDevice = serverIsPrimary;
+              _isE2eTrustedDevice = serverIsTrusted;
+            });
+          }
+          if (serverIsPrimary || serverIsTrusted) {
+            PendingDeviceApprovals.refresh().then((_) {
+              if (mounted) _maybeShowPendingDeviceDialog();
+            });
+          }
         }
       } catch (_) {}
     });
@@ -3714,33 +3779,7 @@ class RootScreenState extends State<RootScreen>
     _normalizeChatsForCurrentUser();
 
     currentDisplayName = username;
-    Future(() async {
-      try {
-        final token = await AccountManager.getToken(username);
-        if (token == null || !mounted) return;
-        final res = await http.get(
-          Uri.parse('$serverBase/profile/$username'),
-          headers: {'authorization': 'Bearer $token'},
-        ).timeout(const Duration(seconds: 5));
-        if (res.statusCode == 200 && mounted) {
-          final data = jsonDecode(res.body) as Map<String, dynamic>;
-          final dn = (data['display_name'] as String?) ?? username;
-          currentDisplayName = dn;
-          if (data['uin'] != null) {
-            final uinStr = data['uin'].toString();
-            currentUin = uinStr;
-
-            final prefs = await SharedPreferences.getInstance();
-            unawaited(prefs.setString('uin_$username', uinStr));
-          }
-          setState(() {});
-
-          unawaited(AccountManager.cacheDisplayName(username, dn));
-        }
-      } catch (e) {
-        _appendLog('[profile] failed to load display_name: $e');
-      }
-    });
+    unawaited(_refreshProfileFromServer(username));
 
     final identity = await AccountManager.getIdentity(username);
     if (identity != null) {
@@ -4516,10 +4555,16 @@ class RootScreenState extends State<RootScreen>
         }
 
         final serverIsPrimary = obj['is_primary'] == true;
+        final serverIsTrusted = obj['e2e_trusted'] == true;
         await SecureStore.write(
           'is_primary_device_$username',
           serverIsPrimary ? 'true' : 'false',
         );
+        await SecureStore.write(
+          'is_e2e_trusted_device_$username',
+          serverIsTrusted ? 'true' : 'false',
+        );
+        _isE2eTrustedDevice = serverIsTrusted;
 
         ExternalServerManager.disconnectAll();
         setState(() {
@@ -4575,84 +4620,6 @@ class RootScreenState extends State<RootScreen>
     return false;
   }
 
-  void _showPassphrase() async {
-    final username = currentUsername;
-    if (username == null) return;
-    final passphrase = await SecureStore.read('passphrase_$username');
-    if (!mounted) return;
-    if (passphrase == null) {
-      showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).passphraseNotFound);
-      return;
-    }
-    final words = passphrase.split(' ');
-    final colorScheme = Theme.of(context).colorScheme;
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.key, color: colorScheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(AppLocalizations.of(ctx).yourPassphraseTitle,
-                  style: const TextStyle(fontSize: 16)),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                AppLocalizations.of(ctx).passphraseWarning,
-                style: const TextStyle(fontSize: 13, color: Colors.orange),
-              ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: words.asMap().entries.map((e) {
-                  return Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: colorScheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '${e.key + 1}. ${e.value}',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: colorScheme.onPrimaryContainer,
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: passphrase));
-                },
-                icon: const Icon(Icons.copy, size: 16),
-                label: Text(AppLocalizations.of(ctx).copyLabel),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(AppLocalizations.of(ctx).done),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _changePassword(
     String passphrase,
     String oldPassword,
@@ -4678,9 +4645,129 @@ class RootScreenState extends State<RootScreen>
     }
   }
 
-  void _openSessions() {
-    if (!_isPrimaryDevice) return;
-    _onTabSelected(5);
+  // Re-pulls is_primary/e2e_trusted from the server — used after an approval
+  // or a recovery execution that may have changed THIS device's own status.
+  Future<void> _refreshTrustStatus() async {
+    final username = currentUsername;
+    if (username == null) return;
+    try {
+      final tok = await AccountManager.getToken(username);
+      if (tok == null) return;
+      final res = await http.get(
+        Uri.parse('$serverBase/me/is-primary'),
+        headers: {'authorization': 'Bearer $tok'},
+      ).timeout(const Duration(seconds: 5));
+      if (res.statusCode != 200) return;
+      final data = jsonDecode(res.body);
+      final serverIsPrimary = data['is_primary'] == true;
+      final serverIsTrusted = data['e2e_trusted'] == true;
+      await SecureStore.write('is_primary_device_$username', serverIsPrimary ? 'true' : 'false');
+      await SecureStore.write('is_e2e_trusted_device_$username', serverIsTrusted ? 'true' : 'false');
+      if (mounted) {
+        setState(() {
+          _isPrimaryDevice = serverIsPrimary;
+          _isE2eTrustedDevice = serverIsTrusted;
+        });
+      }
+      if (serverIsPrimary || serverIsTrusted) {
+        unawaited(PendingDeviceApprovals.refresh());
+      } else {
+        PendingDeviceApprovals.clear();
+      }
+    } catch (_) {}
+  }
+
+  bool _pendingDeviceDialogShowing = false;
+
+  // Opens the "devices waiting for approval" dialog if there's anything to
+  // show and it isn't already open. Content is reactive (ValueListenableBuilder
+  // on PendingDeviceApprovals.list), so a second event while it's open just
+  // updates the existing dialog instead of stacking a duplicate.
+  void _maybeShowPendingDeviceDialog() {
+    if (!mounted || _pendingDeviceDialogShowing) return;
+    if (PendingDeviceApprovals.list.value.isEmpty) return;
+    _pendingDeviceDialogShowing = true;
+    showPendingDeviceApprovalsDialog(context).then((_) {
+      _pendingDeviceDialogShowing = false;
+    });
+  }
+
+  // Modal shown on a trusted device when ANOTHER device requests account
+  // recovery (password+passphrase) — lets the real owner cancel it if it
+  // wasn't them. Deliberately blocking (no barrier dismiss) per the design:
+  // this is a security-relevant prompt, not a passive notice.
+  void _showRecoveryRequestedDialog(Map<String, dynamic> obj) {
+    final l10n = AppLocalizations.of(context);
+    final deviceName = (obj['from_device_name'] as String?) ?? 'Unknown device';
+    final executesAtStr = obj['executes_at'] as String?;
+    String when = '';
+    if (executesAtStr != null) {
+      try {
+        final dt = DateTime.parse(executesAtStr).toLocal();
+        when = '${dt.day}.${dt.month}.${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+      } catch (_) {
+        when = executesAtStr;
+      }
+    }
+    final cs = Theme.of(context).colorScheme;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: SettingsManager.glassSurfaceColor(cs.surfaceContainerHigh, alphaOverride: 0.96),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(l10n.recoveryAlertRequestedTitle),
+        content: Text(l10n.recoveryAlertRequestedBody(deviceName, when)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(l10n.recoveryAlertIgnoreButton),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _cancelPendingRecovery();
+            },
+            child: Text(l10n.recoveryAlertCancelButton, style: const TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRecoveryAlertDialog(String title, String body) {
+    final cs = Theme.of(context).colorScheme;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: SettingsManager.glassSurfaceColor(cs.surfaceContainerHigh, alphaOverride: 0.96),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(AppLocalizations.of(context).ok),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _cancelPendingRecovery() async {
+    final username = currentUsername;
+    if (username == null) return;
+    try {
+      final tok = await AccountManager.getToken(username);
+      if (tok == null) return;
+      await http.post(
+        Uri.parse('$serverBase/auth/recover-primary/cancel'),
+        headers: {'authorization': 'Bearer $tok'},
+      ).timeout(const Duration(seconds: 8));
+    } catch (e) {
+      _appendLog('[recovery] cancel failed: $e');
+    }
   }
 
   void _openGraphOverlay() {
@@ -4888,6 +4975,7 @@ class RootScreenState extends State<RootScreen>
     _disconnectWs();
     ExternalServerManager.disconnectAll();
     unawaited(WardLinkSyncService.instance.stop());
+    PendingDeviceApprovals.clear();
 
     currentUsername = null;
     currentDisplayName = null;
@@ -5303,42 +5391,20 @@ class RootScreenState extends State<RootScreen>
                     deviceOs != null ? '$deviceName ($deviceOs)' : deviceName;
                 _appendLog('[ws] device_approval_needed: $label');
                 if (!mounted) return;
-                if (_isPrimaryDevice) {
-                  final colorScheme = Theme.of(context).colorScheme;
-                  final brightness = SettingsManager.elementBrightness.value;
-                  final opacity = SettingsManager.elementOpacity.value;
-                  final backgroundColor = SettingsManager.getElementColor(
-                    colorScheme.surfaceContainerHighest,
-                    brightness,
-                  ).withValues(alpha: opacity);
-                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'New device wants encryption access: $label',
-                        style: TextStyle(
-                          color: colorScheme.onSurfaceVariant,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      backgroundColor: backgroundColor,
-                      behavior: SnackBarBehavior.floating,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 10),
-                      margin: const EdgeInsets.only(
-                          bottom: 16, left: 16, right: 16),
-                      elevation: 4,
-                      duration: const Duration(seconds: 8),
-                      action: SnackBarAction(
-                        label: 'Review',
-                        textColor: colorScheme.primary,
-                        onPressed: _openSessions,
-                      ),
-                    ),
-                  );
+                if (_isPrimaryDevice || _isE2eTrustedDevice) {
+                  final tokenId = obj['token_id'];
+                  if (tokenId is int) {
+                    PendingDeviceApprovals.addOrUpdate(PendingDeviceApproval(
+                      id: tokenId,
+                      deviceName: deviceName,
+                      deviceOs: deviceOs,
+                      requestedAt: DateTime.tryParse(obj['timestamp'] as String? ?? '') ?? DateTime.now(),
+                    ));
+                  }
+                  // Also pull the authoritative list (picks up approvals/quorum
+                  // state and anything missed while this device was offline).
+                  unawaited(PendingDeviceApprovals.refresh());
+                  _maybeShowPendingDeviceDialog();
                 } else {
                   showSnack('A new device is requesting encryption access.');
                 }
@@ -5352,8 +5418,46 @@ class RootScreenState extends State<RootScreen>
 
                 _devicePubkeysCache.clear();
                 _devicePubkeysCacheAge.clear();
+                // Might be THIS device getting approved — re-check trust status
+                // so the recovery banner / Active Devices gate updates live.
+                unawaited(_refreshTrustStatus());
                 if (!mounted) return;
                 showSnack('Device "$deviceName" approved for encryption');
+                return;
+              }
+
+              if (typ == 'recovery_requested') {
+                _appendLog('[ws] recovery_requested from device_id=${obj['from_device_id']}');
+                if (!mounted) return;
+                _showRecoveryRequestedDialog(obj);
+                return;
+              }
+
+              if (typ == 'recovery_attempt_failed') {
+                _appendLog('[ws] recovery_attempt_failed');
+                if (!mounted) return;
+                _showRecoveryAlertDialog(
+                  AppLocalizations.of(context).recoveryAlertFailedTitle,
+                  AppLocalizations.of(context).recoveryAlertFailedBody,
+                );
+                return;
+              }
+
+              if (typ == 'recovery_cancelled') {
+                _appendLog('[ws] recovery_cancelled');
+                if (!mounted) return;
+                showSnack(AppLocalizations.of(context).recoveryCancelled);
+                return;
+              }
+
+              if (typ == 'recovery_executed') {
+                _appendLog('[ws] recovery_executed new_primary_device_id=${obj['new_primary_device_id']}');
+                unawaited(_refreshTrustStatus());
+                if (!mounted) return;
+                _showRecoveryAlertDialog(
+                  AppLocalizations.of(context).recoveryAlertExecutedTitle,
+                  AppLocalizations.of(context).recoveryAlertExecutedBody,
+                );
                 return;
               }
 
@@ -6750,7 +6854,7 @@ class RootScreenState extends State<RootScreen>
 
     if (DecoyManager.isActive.value) {
       final chatId = chatIdForUser(to);
-      final localId = DateTime.now().microsecondsSinceEpoch.toString();
+      final localId = generateLocalMessageId();
       final msg = ChatMessage(
         id: localId,
         from: currentUsername!,
@@ -6786,7 +6890,7 @@ class RootScreenState extends State<RootScreen>
       _appendLog('[send] failed to update recipient status: $e');
     }
 
-    final localId = DateTime.now().microsecondsSinceEpoch.toString();
+    final localId = generateLocalMessageId();
     final chatId = chatIdForUser(to);
 
     final isLANMode = replyTo != null && replyTo['_deliveryMode'] == 'lan';
@@ -7014,7 +7118,7 @@ class RootScreenState extends State<RootScreen>
         content = 'Unknown media type: $mediaType';
       }
 
-      final localId = DateTime.now().microsecondsSinceEpoch.toString();
+      final localId = generateLocalMessageId();
       final int? replyId = replyTo != null && replyTo['id'] != null
           ? int.tryParse(replyTo['id'].toString())
           : null;
@@ -7117,62 +7221,73 @@ class RootScreenState extends State<RootScreen>
 
   void _sendChatMessageInBackground(
       String to, String text, String localId, Map<String, dynamic>? replyTo) {
-    unawaited(Future.microtask(() async {
-      Map<String, String>? payloads;
-      String? fallbackEnvelope;
+    final chatId = chatIdForUser(to);
+    final previous = _chatSendChains[chatId] ?? Future<void>.value();
+    final chained = previous.then((_) =>
+        _sendChatMessageBackgroundTask(to, text, localId, replyTo));
+    // Swallow errors here so one failed send doesn't permanently wedge the
+    // chain for every later message to this chat — the task itself already
+    // handles/logs its own failures.
+    _chatSendChains[chatId] = chained.catchError((_) {});
+    unawaited(chained);
+  }
 
-      const retryDelays = [1, 2, 4, 8, 15];
-      for (int attempt = 0; attempt <= retryDelays.length; attempt++) {
-        if (attempt > 0) {
-          _devicePubkeysCache.remove(to);
-          _devicePubkeysCacheAge.remove(to);
-          _pubkeyCache.remove(to);
-          await Future.delayed(Duration(seconds: retryDelays[attempt - 1]));
-        }
-        try {
-          payloads = await _encryptForAllDevices(to, text);
-          if (payloads == null) {
-            fallbackEnvelope = await _encryptForRecipientEnvelope(to, text);
-          }
-          break;
-        } catch (e) {
-          _appendLog('[send] encrypt attempt ${attempt + 1} failed: $e');
-          if (attempt == retryDelays.length) {
-            _appendLog('[send] encrypt failed after all retries — giving up');
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Cannot send: recipient has no public key'),
-                  backgroundColor: Colors.red,
-                  duration: Duration(seconds: 4),
-                ),
-              );
-            }
-            return;
-          }
-        }
+  Future<void> _sendChatMessageBackgroundTask(
+      String to, String text, String localId, Map<String, dynamic>? replyTo) async {
+    Map<String, String>? payloads;
+    String? fallbackEnvelope;
+
+    const retryDelays = [1, 2, 4, 8, 15];
+    for (int attempt = 0; attempt <= retryDelays.length; attempt++) {
+      if (attempt > 0) {
+        _devicePubkeysCache.remove(to);
+        _devicePubkeysCacheAge.remove(to);
+        _pubkeyCache.remove(to);
+        await Future.delayed(Duration(seconds: retryDelays[attempt - 1]));
       }
-
-      if (_ws != null) {
-        _sendViaWsNow(to, text, payloads, fallbackEnvelope, localId, replyTo);
-      } else {
-        final wsReady = await _ensurePubkeyAndWsReady();
-        if (!wsReady || _ws == null) {
-          _appendLog('[send] ws not ready — adding to pending queue');
-          _pendingMsgQueue.add({
-            'to': to,
-            'text': text,
-            'localId': localId,
-            'replyTo': replyTo,
-            'payloads': payloads,
-            'fallbackEnvelope': fallbackEnvelope,
-          });
-          _markMessagePending(to, localId, pending: true);
+      try {
+        payloads = await _encryptForAllDevices(to, text);
+        if (payloads == null) {
+          fallbackEnvelope = await _encryptForRecipientEnvelope(to, text);
+        }
+        break;
+      } catch (e) {
+        _appendLog('[send] encrypt attempt ${attempt + 1} failed: $e');
+        if (attempt == retryDelays.length) {
+          _appendLog('[send] encrypt failed after all retries — giving up');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Cannot send: recipient has no public key'),
+                backgroundColor: Colors.red,
+                duration: Duration(seconds: 4),
+              ),
+            );
+          }
           return;
         }
-        _sendViaWsNow(to, text, payloads, fallbackEnvelope, localId, replyTo);
       }
-    }));
+    }
+
+    if (_ws != null) {
+      _sendViaWsNow(to, text, payloads, fallbackEnvelope, localId, replyTo);
+    } else {
+      final wsReady = await _ensurePubkeyAndWsReady();
+      if (!wsReady || _ws == null) {
+        _appendLog('[send] ws not ready — adding to pending queue');
+        _pendingMsgQueue.add({
+          'to': to,
+          'text': text,
+          'localId': localId,
+          'replyTo': replyTo,
+          'payloads': payloads,
+          'fallbackEnvelope': fallbackEnvelope,
+        });
+        _markMessagePending(to, localId, pending: true);
+        return;
+      }
+      _sendViaWsNow(to, text, payloads, fallbackEnvelope, localId, replyTo);
+    }
   }
 
   void _sendViaWsNow(
@@ -7321,7 +7436,7 @@ class RootScreenState extends State<RootScreen>
                       orElse: () => removedChatId)
                   : removedChatId;
               TrashManager.instance.addDeletedMessage(TrashedMessage(
-                id: DateTime.now().microsecondsSinceEpoch.toString(),
+                id: generateLocalMessageId(),
                 chatId: removedChatId,
                 chatDisplayName: other,
                 message: toTrash,
@@ -7352,7 +7467,7 @@ class RootScreenState extends State<RootScreen>
                   ? parts.firstWhere((p) => p != me, orElse: () => entry.key)
                   : entry.key;
               TrashManager.instance.addDeletedMessage(TrashedMessage(
-                id: DateTime.now().microsecondsSinceEpoch.toString(),
+                id: generateLocalMessageId(),
                 chatId: entry.key,
                 chatDisplayName: other,
                 message: toTrash,
@@ -7611,7 +7726,7 @@ class RootScreenState extends State<RootScreen>
   void _deleteChat(String chatId, String displayName) {
     final messages = List<ChatMessage>.from(chats[chatId] ?? []);
     TrashManager.instance.addDeletedChat(TrashedChat(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: generateLocalMessageId(),
       chatId: chatId,
       displayName: displayName,
       type: TrashedChatType.dm,
@@ -8317,6 +8432,12 @@ class RootScreenState extends State<RootScreen>
                                       AccountsTab(
                                         currentUsername: currentUsername,
                                         currentUin: currentUin,
+                                        onRefreshProfile: currentUsername ==
+                                                null
+                                            ? null
+                                            : () => unawaited(
+                                                _refreshProfileFromServer(
+                                                    currentUsername!)),
                                         identityPubFp:
                                             _identityPublicKey != null
                                                 ? _computePubkeyFpHex(
@@ -8344,9 +8465,8 @@ class RootScreenState extends State<RootScreen>
                                         onLogout: _logout,
                                         logs: _log,
                                         isPrimaryDevice: _isPrimaryDevice,
-                                        onShowPassphrase: _showPassphrase,
+                                        isE2eTrustedDevice: _isE2eTrustedDevice,
                                         onChangePassword: _changePassword,
-                                        onOpenSessions: _openSessions,
                                         isActive: _index == 4,
                                         onOpenChat: (username) {
                                           _onTabSelected(0);
@@ -8362,12 +8482,6 @@ class RootScreenState extends State<RootScreen>
                                           });
                                         },
                                       ),
-                                      if (_isPrimaryDevice)
-                                        ActiveSessionsTab(
-                                          serverBase: serverBase,
-                                          username: currentUsername,
-                                          onBack: () => _onTabSelected(4),
-                                        ),
                                     ][_index];
 
                                     if (navPos != 'bottom') return tabChild;
@@ -8860,6 +8974,9 @@ class RootScreenState extends State<RootScreen>
       AccountsTab(
         currentUsername: currentUsername,
         currentUin: currentUin,
+        onRefreshProfile: currentUsername == null
+            ? null
+            : () => unawaited(_refreshProfileFromServer(currentUsername!)),
         identityPubFp: _identityPublicKey != null
             ? _computePubkeyFpHex(_identityPublicKey!.bytes)
             : null,
@@ -8884,9 +9001,8 @@ class RootScreenState extends State<RootScreen>
         onLogout: _logout,
         logs: _log,
         isPrimaryDevice: _isPrimaryDevice,
-        onShowPassphrase: _showPassphrase,
+        isE2eTrustedDevice: _isE2eTrustedDevice,
         onChangePassword: _changePassword,
-        onOpenSessions: _openSessions,
         isActive: _index == 4,
         onOpenChat: (username) {
           _onTabSelected(0);
@@ -8901,12 +9017,6 @@ class RootScreenState extends State<RootScreen>
           });
         },
       ),
-      if (_isPrimaryDevice)
-        ActiveSessionsTab(
-          serverBase: serverBase,
-          username: currentUsername,
-          onBack: () => _onTabSelected(4),
-        ),
     ];
 
     final Widget mainContent = isDesktop

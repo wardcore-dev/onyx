@@ -1305,7 +1305,11 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
   }
 
   Future<void> _loadHistoryFromNetwork() async {
-    if (mounted && !_isDisposed) {
+    // Only show the blocking loading spinner on the very first load — once we
+    // already have messages on screen, a background refresh (e.g. triggered
+    // by a websocket reconnect during a burst of forwards) must not blank out
+    // the already-rendered chat while it re-fetches.
+    if (mounted && !_isDisposed && _messages.isEmpty) {
       setState(() => _isLoadingHistory = true);
     }
 
@@ -1345,9 +1349,16 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         }
       }
 
-      final pendingMessages = _messages.where((msg) {
+      // `newMessages` only ever contains the latest `limit` messages from the
+      // server. A plain replace would silently drop any already-confirmed
+      // message that fell outside that window (e.g. an older message, or a
+      // just-forwarded one pushed out by other group traffic) every time this
+      // refresh fires — which happens on every websocket reconnect. Keep
+      // everything we already had locally (pending AND already-confirmed)
+      // and only let the fresh fetch add/update, never silently remove.
+      final previouslyKnown = _messages.where((msg) {
         final id = msg['id']?.toString() ?? '';
-        return id.startsWith('temp_') || msg['isPending'] == true;
+        return id.isNotEmpty;
       }).toList();
 
       final mergedMessages = <Map<String, dynamic>>[];
@@ -1361,7 +1372,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         }
       }
 
-      for (final m in pendingMessages) {
+      for (final m in previouslyKnown) {
         final id = m['id']?.toString() ?? '';
         if (id.isNotEmpty && !seenIds.contains(id)) {
           mergedMessages.add(m);
@@ -1397,8 +1408,14 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         }
         _allMessageIds.clear();
         _allMessageIds.addAll(newAllMessageIds);
+        // Never shrink how much of the chat is already revealed — this used
+        // to unconditionally reset back to the initial page size on every
+        // background refresh, which hid messages the user had already
+        // scrolled up to load.
         _displayedMessageCount =
-            _initialMessageLoadCount.clamp(0, _messages.length);
+            _displayedMessageCount < _initialMessageLoadCount
+                ? _initialMessageLoadCount.clamp(0, _messages.length)
+                : _displayedMessageCount.clamp(0, _messages.length);
         _isLoadingHistory = false;
       });
 

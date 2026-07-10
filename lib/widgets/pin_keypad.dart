@@ -114,10 +114,14 @@ class PinRevealSlot extends StatefulWidget {
 
 class _PinRevealSlotState extends State<PinRevealSlot>
     with TickerProviderStateMixin {
+  // Starts already-completed (value: 1.0) instead of forward()-ing from 0 —
+  // the entrance "pop in" cascade is disabled, but the controller is kept so
+  // the exit (fly-up on success) animation below still works unchanged.
   late final AnimationController _enter = AnimationController(
     vsync: this,
+    value: 1.0,
     duration: const Duration(milliseconds: 650),
-  )..forward();
+  );
   late final AnimationController _exit = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 380),

@@ -18,6 +18,23 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 /// Maps message filename/key → local cached file path for video/voice/file messages.
 final Map<String, String> mediaFilePathRegistry = {};
 
+// Monotonic counter appended to locally-generated message ids. On some
+// platforms `DateTime.now().microsecondsSinceEpoch` doesn't actually have
+// microsecond resolution (it can repeat within the same millisecond), so a
+// tight loop — e.g. forwarding several messages back-to-back — could hand out
+// the same id to more than one message. Duplicate ids become duplicate
+// ValueKeys in the message ListView, which crashes the Sliver rendering code
+// and makes every message but one disappear from the list. Appending a
+// process-local counter guarantees every call returns a unique id.
+int _localMessageIdCounter = 0;
+
+/// Generates a locally-unique message id, safe to call any number of times
+/// in the same event-loop tick (e.g. a batch-forward loop) without collision.
+String generateLocalMessageId() {
+  _localMessageIdCounter = (_localMessageIdCounter + 1) & 0x7fffffff;
+  return '${DateTime.now().microsecondsSinceEpoch}_$_localMessageIdCounter';
+}
+
 final GlobalKey<RootScreenState> rootScreenKey = GlobalKey<RootScreenState>();
 final ValueNotifier<int> chatsVersion = ValueNotifier<int>(0);
 Map<int, List<Map<String, dynamic>>> _groupChats = {};

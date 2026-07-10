@@ -1617,4 +1617,14 @@ class SettingsManager {
 
     return hslColor.withLightness(newLightness).toColor();
   }
+
+  // Wallpaper-aware "glass" surface color — applies the user's current
+  // brightness/opacity settings to a base Material color. Use this (instead
+  // of a flat theme color) for any card/dialog surface that should match the
+  // rest of the app's translucent look rather than the Material defaults.
+  static Color glassSurfaceColor(Color baseColor, {double? alphaOverride}) {
+    final brightness = elementBrightness.value;
+    final opacity = alphaOverride ?? elementOpacity.value;
+    return getElementColor(baseColor, brightness).withValues(alpha: opacity);
+  }
 }

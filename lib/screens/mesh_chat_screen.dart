@@ -997,7 +997,7 @@ class _MeshChatScreenState extends State<MeshChatScreen>
         neighbor == null ? null : (neighbor.hasUdpAddress ? 'wifi' : 'ble');
 
     final msg = ChatMessage(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: generateLocalMessageId(),
       from: widget.myUsername,
       to: widget.otherUsername,
       content: text,
