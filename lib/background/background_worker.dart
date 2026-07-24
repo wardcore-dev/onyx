@@ -1,9 +1,9 @@
 // lib/background/background_worker.dart
-import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:workmanager/workmanager.dart';
+import '../database/db_provider.dart';
 import '../services/message_sync_service.dart';
+import '../services/reminder_service.dart';
 import '../managers/mute_manager.dart';
 import 'notification_service.dart';
 
@@ -15,6 +15,13 @@ Future<void> syncMessagesTask() async {
 
   await NotificationService.init();
   await MuteManager.init();
+  if (!DbProvider.isInitialized) {
+    try {
+      await DbProvider.init();
+    } catch (e) {
+      debugPrint('[background] DbProvider.init failed: $e');
+    }
+  }
 
   final result = await MessageSyncService.checkForNewMessages();
 
@@ -25,6 +32,15 @@ Future<void> syncMessagesTask() async {
       body: result.preview ?? '',
       conversationTitle: result.sender!,
     );
+  }
+
+  // Same background task, same plain-notification mechanism — a due
+  // reminder just fires "a message from yourself to yourself" here instead
+  // of needing separate OS-level exact-alarm scheduling.
+  try {
+    await ReminderService.checkDueReminders();
+  } catch (e) {
+    debugPrint('[background] reminder check failed: $e');
   }
 }
 

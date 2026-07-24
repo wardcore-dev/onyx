@@ -1,0 +1,1543 @@
+{
+  "@@locale": "pt",
+  "navChats": "Conversas",
+  "navGroups": "Grupos",
+  "navFavorites": "Favoritos",
+  "navAccounts": "Contas",
+  "navSettings": "Configurações",
+  "cancel": "Cancelar",
+  "save": "Salvar",
+  "ok": "OK",
+  "yes": "Sim",
+  "no": "Não",
+  "close": "Fechar",
+  "confirm": "Confirmar",
+  "delete": "Excluir",
+  "clear": "Limpar",
+  "loading": "Carregando...",
+  "error": "Erro",
+  "success": "Sucesso",
+  "copy": "Copiar",
+  "copied": "Copiado",
+  "test": "Testar",
+  "connect": "Conectar",
+  "disconnect": "Desconectar",
+  "enabled": "Ativado",
+  "disabled": "Desativado",
+  "on": "Ligado",
+  "off": "Desligado",
+  "settingsTitle": "Configurações",
+  "supportOnyx": "Apoiar o ONYX",
+  "securityTitle": "Segurança e Privacidade",
+  "securitySubtitle": "Toque para ver dicas e detalhes de criptografia",
+  "tipOfTheDay": "Dica do dia",
+  "statusSettings": "Configurações de Status",
+  "showDisplayNameInGroups": "Mostrar meu nome de exibição nos grupos",
+  "showDisplayNameSubtitle": "Quando desativado, suas mensagens aparecem como \"Anônimo\"",
+  "pinLock": "Bloqueio por PIN",
+  "enablePinLock": "Ativar Bloqueio por PIN",
+  "enablePinSubtitle": "Exigir um PIN de 4 dígitos para desbloquear o app ao abrir",
+  "pinLockEnabled": " Bloqueio por PIN ativado",
+  "pinLockDisabled": "Bloqueio por PIN desativado",
+  "useBiometrics": "Usar Biometria",
+  "useBiometricsSubtitle": "Desbloquear com impressão digital ou reconhecimento facial",
+  "biometricsUnavailable": "Biometria não disponível neste dispositivo",
+  "lockOnResume": "Bloquear ao minimizar",
+  "lockOnResumeSubtitle": "Exigir PIN toda vez que o app voltar ao primeiro plano",
+  "pinScreenSetTitle": "Definir PIN",
+  "pinScreenConfirmTitle": "Confirmar PIN",
+  "pinScreenEnterTitle": "Digite o PIN",
+  "pinScreenChooseSubtitle": "Escolha um PIN de 4 dígitos",
+  "pinScreenChooseChatSubtitle": "Escolha um PIN de 4 dígitos para esta conversa",
+  "pinScreenReenterSubtitle": "Digite o PIN novamente para confirmar",
+  "pinScreenUnlockSubtitle": "Digite seu PIN de 4 dígitos para desbloquear",
+  "pinScreenGenericSubtitle": "Digite seu PIN de 4 dígitos",
+  "pinScreenDisableHeader": "Digite o PIN atual para desativar",
+  "pinScreenMismatchError": "Os PINs não coincidem. Tente novamente.",
+  "pinScreenIncorrectError": "PIN incorreto",
+  "searchChatsHint": "Buscar conversas e mensagens…",
+  "searchGroupsHint": "Buscar grupos e mensagens…",
+  "searchFavoritesHint": "Buscar favoritos…",
+  "searchSettingsHint": "Buscar configurações…",
+  "keyMgmtTitle": "Gerenciamento de Chaves",
+  "keyMgmtSubtitle": "Renove ou redefina sua identidade de criptografia",
+  "keyMgmtDescription": "Renove sua chave de identidade E2EE se suspeitar que ela foi comprometida. Os contatos recebem a nova chave automaticamente.",
+  "rotateE2eeKey": "Renovar Chave E2EE",
+  "rotateE2eeKeyPrimaryOnly": "Renovar Chave E2EE (somente no dispositivo principal)",
+  "rotateKeyDialogTitle": "Renovar chave de criptografia?",
+  "rotateKeyDialogContent": "Um novo par de chaves X25519 será gerado e enviado ao servidor.nnSua sessão e o histórico de mensagens NÃO são afetados. Os contatos usarão a nova chave automaticamente na próxima mensagem.",
+  "rotateKeyBtn": "Renovar",
+  "rotatingKey": " Renovando chave…",
+  "keyRotated": " Chave E2EE renovada e enviada",
+  "keyRotationFailed": " Falha ao renovar a chave",
+  "activeDevices": "Dispositivos Ativos",
+  "activeDevicesSubtitle": "Dispositivos, senha e chave de criptografia",
+  "activeDevicesPrimaryOnly": "Dispositivos Ativos (somente no dispositivo principal)",
+  "changePassword": "Alterar Senha",
+  "changePasswordPrimaryOnly": "Alterar Senha (somente no dispositivo principal)",
+  "notificationsTitle": "Notificações",
+  "notificationsSubtitle": "Gerencie alertas e opções de entrega",
+  "notificationsEnabled": "Ativar Notificações",
+  "notificationsEnabledSubtitle": "Mostrar notificações do sistema para novas mensagens",
+  "notificationPosition": "Posição da Notificação",
+  "notifPosTopLeft": "Superior Esquerda",
+  "notifPosTopRight": "Superior Direita",
+  "notifPosBottomLeft": "Inferior Esquerda",
+  "notifPosBottomRight": "Inferior Direita",
+  "appearanceTitle": "Aparência",
+  "appearanceSubtitle": "Escolha o tema e o modo escuro",
+  "selectTheme": "Selecionar Tema",
+  "darkMode": "Modo Escuro",
+  "fontAndTextSize": "Fonte e Tamanho do Texto",
+  "fontFamily": "Família da Fonte",
+  "messageSize": "Tamanho da Mensagem",
+  "fontPreviewMessage": "Exemplo",
+  "ownMessagesRight": "Minhas mensagens: Direita",
+  "ownMessagesLeft": "Minhas mensagens: Esquerda",
+  "alignAllRight": "Alinhar todas as mensagens à direita",
+  "alignAllRightSubtitle": "Todas as mensagens alinhadas à direita, como um espelho",
+  "showAvatarInChats": "Mostrar avatar na lista de conversas",
+  "showAccountIndicator": "Mostrar conta atual",
+  "showAccountIndicatorSubtitle": "Exibir nome e nome de usuário no canto do app",
+  "showAvatarSubtitle": "Mostrar avatar do contato na lista de conversas",
+  "chatBackground": "Plano de Fundo da Conversa",
+  "chatBgSubtitle": "Definir uma imagem como plano de fundo da conversa",
+  "chooseImage": "Escolher Imagem",
+  "clearBackground": "Remover Plano de Fundo",
+  "applyGlobally": "Aplicar globalmente",
+  "applyGloballySubtitle": "Usar este plano de fundo em todas as conversas",
+  "blurBackground": "Desfocar plano de fundo",
+  "elementOpacity": "Opacidade dos Elementos",
+  "elementBrightness": "Brilho dos Elementos",
+  "uiLayout": "Layout da Interface",
+  "navBarPosition": "Posição da Barra de Navegação",
+  "navLeft": "Esquerda",
+  "navBottom": "Inferior",
+  "inputBarMaxWidth": "Largura da Barra de Entrada",
+  "minimizeBottomNav": "Minimizar Navegação Inferior",
+  "minimizeBottomNavSubtitle": "Ocultar rótulos na barra de navegação inferior",
+  "swipeTabs": "Deslizar entre as abas",
+  "swipeTabsSubtitle": "Trocar de aba com gesto de deslize horizontal",
+  "smoothScroll": "Rolagem Suave",
+  "performanceOptimizations": "Otimizações de Desempenho",
+  "macOsWindowStyle": "Estilo da Janela",
+  "macOsWindowStyleSubtitle": "Estilo dos controles da janela",
+  "macOsNativeTitleBar": "Nativo do macOS (semáforo)",
+  "macOsCustomTitleBar": "Estilo Windows (lado direito)",
+  "updateAvailableLabel": "Atualização disponível",
+  "updateDownload": "Baixar",
+  "cacheTitle": "Cache",
+  "cacheSubtitle": "Gerenciar cache de mídia local e do servidor",
+  "mediaCacheSize": "Cache de mensagens de mídia: ",
+  "clearLocalCache": "Limpar Cache Local",
+  "clearLocalCacheTitle": "Limpar cache local",
+  "clearLocalCacheContent": "Tem certeza de que deseja excluir toda a mídia em cache (voz, imagens, vídeos)?nIsso NÃO afeta os uploads no servidor nem o histórico de conversas.",
+  "clearAll": "Limpar Tudo",
+  "serverMediaCache": "Cache de Mídia do Servidor",
+  "serverMediaCacheSubtitle": "Armazenado no servidor: imagens, voz, vídeo.",
+  "clearServerCache": "Limpar Cache do Servidor",
+  "dangerZone": "Zona de Perigo",
+  "dangerZoneSubtitle": "Excluir a conta do servidor e/ou apagar os dados locais.",
+  "factoryReset": "Restauração de Fábrica",
+  "factoryResetHint": "Selecione o que deseja redefinir. Pelo menos uma opção deve ser escolhida.",
+  "resetDeleteAccount": "Excluir conta do servidor",
+  "resetDeleteAccountSubtitle": "Exclui permanentemente @{username} — todas as mensagens, mídias e chaves do servidor.",
+  "@resetDeleteAccountSubtitle": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "resetNoAccount": "Nenhuma conta está conectada.",
+  "resetDeleteLocal": "Excluir dados locais do app",
+  "resetDeleteLocalSubtitle": "Apaga todas as conversas, chaves, configurações, cache e mídias locais.",
+  "reset": "Redefinir",
+  "resetFailed": "Falha na redefinição",
+  "connectionTitle": "Conexão",
+  "connectionSubtitle": "Status e controles do WebSocket",
+  "proxyTitle": "Proxy",
+  "proxySubtitle": "Roteie o tráfego por um proxy HTTP ou SOCKS5",
+  "enableProxy": "Ativar Proxy",
+  "proxyType": "Tipo de Proxy",
+  "proxyHost": "Host",
+  "proxyPort": "Porta",
+  "proxyUsername": "Usuário",
+  "proxyPassword": "Senha",
+  "testProxy": "Testar Proxy",
+  "proxyTesting": "Testando...",
+  "proxyOk": " Proxy OK",
+  "proxyFailed": " Proxy inacessível",
+  "useProxy": "Usar proxy",
+  "proxyDirectConnection": "Conexão direta",
+  "proxyRouted": "Tráfego roteado pelo proxy",
+  "proxyConnectedStatus": "Conectado",
+  "proxyNotConnectedStatus": "Não conectado",
+  "proxyLoginOptional": "Usuário (opcional)",
+  "proxyPasswordOptional": "Senha (opcional)",
+  "proxyApplyReconnect": "Aplicar e Reconectar",
+  "appDataTitle": "Pasta de dados do ONYX",
+  "appDataSubtitle": "Mover a pasta de dados do app para outra unidade",
+  "appDataCurrentPath": "Pasta atual",
+  "appDataDefault": "Padrão (pasta do sistema)",
+  "appDataMove": "Mover…",
+  "appDataReset": "Redefinir",
+  "appDataMigrating": "Movendo dados…",
+  "appDataMigrateError": "Erro durante a movimentação",
+  "appDataRestartRequired": "Pasta alterada. Reinicie o ONYX para aplicar a alteração.",
+  "appDataRestart": "Reiniciar ONYX",
+  "appDataOpenFolder": "Abrir pasta",
+  "appDataDeleteOldFolder": "Excluir pasta anterior",
+  "appDataDeleteOldFolderSubtitle": "Excluir a pasta de dados original do sistema deixada após a migração",
+  "appDataDeleteOldFolderConfirm": "Excluir a pasta de dados original do ONYX?nnIsso não pode ser desfeito. Certifique-se de que os dados foram migrados com sucesso.",
+  "appDataDeleteOldFolderSuccess": "Pasta anterior excluída",
+  "appDataDeleteOldFolderError": "Erro ao excluir: ",
+  "interactTitle": "Interação",
+  "interactSubtitle": "Confirmações de envio de arquivos",
+  "confirmFileUpload": "Confirmar Envio de Arquivo",
+  "confirmFileUploadSubtitle": "Mostrar diálogo de confirmação antes de enviar arquivos",
+  "confirmVoiceMessage": "Confirmar Mensagem de Voz",
+  "confirmVoiceSubtitle": "Mostrar diálogo de confirmação antes de enviar áudio",
+  "downloadFolder": "Pasta de downloads",
+  "downloadFolderSubtitle": "Onde salvar os arquivos recebidos (padrão: Downloads/ONYX)",
+  "downloadFolderDefault": "Padrão (Downloads/ONYX)",
+  "downloadFolderChange": "Escolher pasta",
+  "downloadFolderReset": "Redefinir",
+  "contactTitle": "Contato",
+  "contactSubtitle": "Site, repositório e feedback",
+  "contactWebsite": "Site oficial",
+  "contactRepository": "Código-fonte (cliente)",
+  "contactRepositoryServer": "Código-fonte (servidor auto-hospedado)",
+  "contactEmail": "Fale conosco",
+  "debugTitle": "Depuração/Logs",
+  "debugSubtitle": "Desempenho e registro em tempo real",
+  "debugMode": "Modo de Depuração",
+  "debugModeSubtitle": "Ativar monitoramento de desempenho e logs",
+  "enableFileLogging": "Ativar Registro em Arquivo",
+  "enableFileLoggingSubtitle": "Gravar logs do app em disco (desative por privacidade)",
+  "deleteAllLogs": "Excluir Todos os Logs",
+  "languageTitle": "Idioma",
+  "languageSubtitle": "Idioma da interface do app",
+  "languageChanged": "Idioma alterado",
+  "noChatsYet": "Nenhuma conversa ainda",
+  "deleteChatTitle": "Excluir conversa?",
+  "blockUserLabel": "Bloquear usuário",
+  "unblockUserLabel": "Desbloquear",
+  "muteUserLabel": "Silenciar notificações",
+  "unmuteUserLabel": "Reativar notificações",
+  "blockedByUserMessage": "Este usuário restringiu o recebimento de mensagens de você.",
+  "unblockUserConfirmContent": "Desbloquear {name}?",
+  "@unblockUserConfirmContent": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "blockUserConfirmContent": "Bloquear {name}? Essa pessoa não poderá mais enviar mensagens para você.",
+  "@blockUserConfirmContent": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "deleteChatContent": "Tem certeza de que deseja excluir a conversa com \"{name}\"? Essa ação não pode ser desfeita.",
+  "@deleteChatContent": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "editProfile": "Editar Perfil",
+  "displayName": "Nome de Exibição",
+  "addAccount": "Adicionar Conta",
+  "welcomeTitle": "Bem-vindo",
+  "welcomeTagline": "Mensageiro seguro com criptografia de ponta a ponta",
+  "otherAccounts": "Outras Contas",
+  "tapToSwitch": "Toque para trocar",
+  "deleteFromRecentTitle": "Excluir conta dos recentes?",
+  "authUsernameLabel": "Nome de usuário (3-16 caracteres)",
+  "authPasswordLabel": "Senha (mín. 16 caracteres)",
+  "loginBtn": "Entrar",
+  "registerBtn": "Cadastrar",
+  "deviceAuthTitle": "Vincular Dispositivo",
+  "deviceAuthTabScan": "Escanear",
+  "deviceAuthLanNote": "Os dois dispositivos devem estar na mesma rede local",
+  "loginWithQr": "Entrar via QR",
+  "qrAuthWaitingTitle": "Aguardando o celular",
+  "qrAuthWaitingSubtitle": "Escaneie este código em um dispositivo autorizado para transferir a sessão para cá",
+  "qrAuthSuccess": "Dispositivo autorizado",
+  "qrAuthFailed": "Falha na autenticação por QR",
+  "qrAuthCancelled": "Autenticação por QR cancelada",
+  "authorizeDevice": "Autorizar dispositivo",
+  "authorizeDeviceSubtitle": "Permitir que outro dispositivo entre escaneando um código QR",
+  "authorizeDeviceScanHint": "Aponte a câmera para o código QR exibido no outro dispositivo",
+  "authorizeDeviceSuccess": "Dispositivo autorizado com sucesso",
+  "authorizeDeviceFailed": "Falha ao autorizar o dispositivo",
+  "authorizeDeviceSending": "Enviando credenciais…",
+  "qrAuthEncryptedNote": "A transferência é criptografada (X25519 + AES-256-GCM)",
+  "scanFromPc": "Receber do PC",
+  "scanFromPcHint": "Aponte a câmera para o código QR exibido no outro dispositivo para entrar aqui",
+  "grantDeviceTitle": "Autorizar celular",
+  "grantDeviceSubtitle": "Escaneie este código em outro dispositivo para entrar lá com esta conta",
+  "grantDeviceSuccess": "Celular autorizado com sucesso",
+  "grantDeviceFailed": "Falha ao autorizar o celular",
+  "enterUsernameMsg": "Digite seu nome de usuário",
+  "loginSuccess": "Login realizado com sucesso",
+  "loginFailed": "Falha no login",
+  "registeringMsg": "Cadastrando...",
+  "registrationFailed": " Falha no cadastro",
+  "usernameInvalidMsg": "Nome de usuário: 3-16 caracteres, apenas letras, números, _ . -",
+  "passwordTooShortMsg": "Senha muito curta (mín. 16)",
+  "generatePasswordTooltip": "Gerar senha forte",
+  "savePasswordWarning": "Certifique-se de guardar sua senha em um local seguro — anote-a. A recuperação sem a senha é impossível.",
+  "passphraseWriteDown": "Esta frase de recuperação nunca mais será exibida. Anote essas 12 palavras à mão e guarde-as em um local seguro — você precisará delas para recuperar sua conta caso esqueça a senha.",
+  "passphraseWriteOnPaper": "Anote sua frase de recuperação no papel agora mesmo — não haverá uma segunda chance!",
+  "copyToClipboard": "Copiar para a área de transferência",
+  "copiedToClipboard": "Copiado!",
+  "passphraseCountdown": "Leia com atenção — disponível em {s} s...",
+  "@passphraseCountdown": {
+    "placeholders": {
+      "s": {
+        "type": "int"
+      }
+    }
+  },
+  "iSavedIt": "Eu salvei",
+  "deleteFromRecentContent": "Tem certeza de que deseja remover \"{acc}\" da lista de recentes?nIsso não exclui a conta do servidor.",
+  "@deleteFromRecentContent": {
+    "placeholders": {
+      "acc": {
+        "type": "String"
+      }
+    }
+  },
+  "createGroupChannel": "Criar Grupo/Canal",
+  "channelAdminOnly": "Canal (somente admin publica)",
+  "viewByToken": "Ver por token",
+  "viewByIp": "Ver por IP (servidor externo)",
+  "createGroupOrChannel": "Criar grupo ou canal",
+  "removeExternalServerTitle": "Remover servidor externo?",
+  "removeExternalServerContent": "Remover \"{name}\" e todos os seus grupos da sua lista? Você pode entrar novamente depois inserindo o endereço do servidor.",
+  "@removeExternalServerContent": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "noGroupsYet": "Nenhum grupo ainda",
+  "groupNameLabel": "Nome do grupo:",
+  "groupNameHint": "Digite o nome",
+  "pasteToken": "Colar token:",
+  "create": "Criar",
+  "view": "Ver",
+  "leave": "Sair",
+  "remove": "Remover",
+  "leaveGroupAction": "Sair",
+  "leaveGroupContent": "Tem certeza de que deseja sair de \"{name}\"? Você não receberá mais mensagens dele.",
+  "@leaveGroupContent": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chooseCrypto": "Escolha uma criptomoeda para doar",
+  "addressCopied": "endereço copiado",
+  "hideFromSearch": "Ocultar-me da busca",
+  "hideFromSearchSubtitle": "Outras pessoas não vão te encontrar pela busca de usuário",
+  "hideFromSearchSavedOk": " Configurações de privacidade salvas",
+  "hideFromSearchSavedFail": " Salvo localmente, falha ao sincronizar",
+  "statusVisibility": "Visibilidade",
+  "statusShowStatus": "Mostrar Status",
+  "statusHideStatus": "Ocultar Status",
+  "statusCustomText": "Texto de Status Personalizado",
+  "statusWhenOnline": "Quando Online",
+  "statusWhenOffline": "Quando Offline",
+  "statusSavedOk": " Configurações de status salvas e sincronizadas",
+  "statusSavedFail": " Salvo localmente, falha ao sincronizar com o servidor",
+  "clearServerCacheTitle": "Limpar mídia do servidor?",
+  "clearServerCacheContent": "Isso excluirá TODA a sua mídia enviada ao servidor, incluindo:n'\n        '• Mensagens de vozn'\n        '• Imagensn'\n        '• Vídeosn'\n        '• Arquivosn'\n        '• Avatarnn'\n        'O cache local permanecerá. Essa ação não pode ser desfeita.",
+  "serverMediaCleared": " Toda a mídia do servidor foi limpa",
+  "notLoggedIn": "Não conectado",
+  "serverMediaManagerTitle": "Mídia do Servidor",
+  "cacheTabImages": "Imagens",
+  "cacheTabVoice": "Voz",
+  "cacheTabAudio": "Áudio",
+  "cacheTabVideo": "Vídeo",
+  "cacheTabFiles": "Arquivos",
+  "cacheTabDocuments": "Documentos",
+  "cacheTabArchives": "Arquivos compactados",
+  "cacheTabData": "Dados",
+  "cacheTabAvatars": "Avatares",
+  "cacheNoFiles": "Nenhum arquivo nesta categoria",
+  "cacheClearTabTitle": "Limpar categoria?",
+  "cacheClearTabContent": "Excluir todos os arquivos em \"{typeName}\"? Isso não pode ser desfeito.",
+  "@cacheClearTabContent": {
+    "placeholders": {
+      "typeName": {
+        "type": "String"
+      }
+    }
+  },
+  "cacheFileDeleteFailed": "Falha ao excluir arquivo",
+  "cacheClearAll": "Limpar Tudo",
+  "cacheClearTab": "Limpar aba",
+  "cleanUnusedFiles": "Limpar arquivos não usados",
+  "cleaningUnusedFiles": "Limpando...",
+  "orphanedCleanupAppNotReady": "App não está pronto",
+  "orphanedCleanupNoFiles": "Nenhum arquivo não usado encontrado",
+  "manageCacheTitle": "Gerenciar Cache",
+  "manageCacheButton": "Gerenciar Cache de Mídia",
+  "localCacheTab": "Local",
+  "serverCacheTab": "Servidor",
+  "cacheSelectAll": "Selecionar tudo",
+  "cacheDeselectAll": "Desmarcar tudo",
+  "cacheSelected": "selecionado(s)",
+  "clearLocalCacheDialogTitle": "Limpar cache local",
+  "clearLocalCacheDialogContent": "Tem certeza de que deseja excluir toda a mídia em cache (voz, imagens, vídeos)?nIsso NÃO afeta os uploads no servidor nem o histórico de conversas.",
+  "deleteAllLogsTitle": "Excluir todos os logs?",
+  "deleteAllLogsContent": "Isso excluirá permanentemente todos os arquivos de log do app no disco.\nEssa ação não pode ser desfeita.",
+  "noLogsFound": "Nenhum arquivo de log encontrado.",
+  "changePasswordInfo": "Digite sua frase de recuperação e a senha atual para definir uma nova senha.",
+  "changePasswordPassphraseLabel": "Frase de recuperação (12 palavras)",
+  "changePasswordCurrentLabel": "Senha atual",
+  "changePasswordNewLabel": "Nova senha (mín. 16 caracteres)",
+  "changePasswordChange": "Alterar",
+  "changePasswordFieldsRequired": "Todos os campos são obrigatórios",
+  "changePasswordTooShort": "A nova senha deve ter pelo menos 16 caracteres",
+  "changePasswordChanging": "Alterando senha...",
+  "changePasswordSuccess": " Senha alterada com sucesso",
+  "clearBgTitle": "Remover plano de fundo?",
+  "clearBgContent": "Remover o plano de fundo personalizado da conversa e restaurar o padrão.",
+  "chatBgSet": " Plano de fundo da conversa definido",
+  "chatBgCleared": "Plano de fundo removido",
+  "allMessagesLeft": "Todas as mensagens: Esquerda",
+  "allMessagesRight2": "Todas as mensagens: Direita",
+  "allMessagesMixed": "Todas as mensagens: Misto",
+  "applyBackgroundToApp": "Aplicar plano de fundo a todo o app",
+  "uiElementsOpacityLabel": "Opacidade dos Elementos da Interface",
+  "uiElementsBrightnessLabel": "Brilho dos Elementos da Interface",
+  "navPanelPosition": "Posição do Painel de Navegação",
+  "navPosBottom": "Inferior (abaixo da lista de conversas)",
+  "navPosLeft": "Esquerda (barra lateral)",
+  "tabSwiping": "Deslize entre Abas",
+  "tabSwipingSubtitle": "Deslize entre as abas com efeito de retorno",
+  "showAvatarsInChats": "Mostrar avatares nas conversas",
+  "smoothScrollDown": "Rolagem suave para baixo",
+  "messageAnimations": "Animações de mensagens",
+  "chatListMoveAnimations": "Animações de movimento na lista de conversas",
+  "scrollDownButtonPosition": "Posição do botão de rolar para baixo",
+  "scrollDownButtonPositionLeft": "Esquerda",
+  "scrollDownButtonPositionCenter": "Centro",
+  "scrollDownButtonPositionRight": "Direita",
+  "scrollDownButtonSize": "Tamanho do botão de rolar para baixo",
+  "loadOlderMessagesOnScroll": "Carregar mensagens antigas ao rolar",
+  "showSnackbars": "Mostrar avisos rápidos",
+  "autoLoadVideos": "Carregar vídeos automaticamente",
+  "autoLoadVideosSubtitle": "Quando desativado, os vídeos só carregam ao tocar — rolagem mais suave",
+  "tapToLoadVideo": "Toque para carregar o vídeo",
+  "chooseBackground": "Escolher",
+  "presetsBackground": "Predefinições",
+  "clearBackground2": "Limpar",
+  "liquidGlassSubtitle": "Configure os efeitos de vidro e a qualidade por elemento",
+  "liquidGlassNavBarLabel": "Barra de Navegação",
+  "liquidGlassNavBarDesc": "Efeito de vidro na barra de navegação inferior",
+  "liquidGlassCardsLabel": "Cartões e Itens de Lista",
+  "liquidGlassCardsDesc": "Efeito de vidro na lista de conversas e cartões de configurações",
+  "liquidGlassInputLabel": "Barra de Entrada",
+  "liquidGlassInputDesc": "Efeito de vidro na barra de composição de mensagens",
+  "liquidGlassSearchLabel": "Busca",
+  "liquidGlassSearchDesc": "Painel de vidro estilo spotlight para busca de usuários",
+  "liquidGlassAppBarLabel": "Botões da Barra do App",
+  "liquidGlassAppBarDesc": "Efeito de vidro nos botões de ícone da barra do app da conversa",
+  "sendFavoritesScanHint": "Aponte a câmera para o código QR exibido no dispositivo receptor",
+  "mediaPickerGallery": "Galeria",
+  "mediaPickerCamera": "Câmera",
+  "mediaPickerFile": "Arquivo",
+  "mediaPickerSend": "Enviar {n}",
+  "@mediaPickerSend": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "mediaPickerChooseWallpaper": "Escolher papel de parede",
+  "mediaPickerFiles": "Arquivos",
+  "mediaPickerDeniedTitle": "Acesso à galeria negado",
+  "mediaPickerDeniedBody": "Permita o acesso nas configurações ou escolha um arquivo diretamente.",
+  "mediaPickerPickFile": "Escolher Arquivo",
+  "mediaPickerOpenSettings": "Abrir Configurações",
+  "notifWarning": "As notificações só são entregues enquanto o app está em execução. Para nunca perder uma mensagem, mantenha o ONYX minimizado na bandeja do sistema em vez de fechá-lo.",
+  "backgroundServiceTitle": "Serviço em segundo plano",
+  "backgroundServiceSubtitle": "Manter o ONYX conectado ao minimizar",
+  "backgroundServiceEnableLabel": "Continuar em segundo plano",
+  "backgroundServiceEnableSubtitle": "Mostra uma notificação persistente para que o sistema não impeça o ONYX de receber mensagens enquanto minimizado",
+  "backgroundServiceTextLabel": "Texto da notificação",
+  "backgroundServiceDefaultText": "Aguardando mensagens",
+  "notifPopupPosition": "Posição do pop-up",
+  "notifPopupPositionSubtitle": "Escolha onde o pop-up de notificação aparece na tela",
+  "notifEnableLabel": "Ativar notificações",
+  "notifHideContentLabel": "Ocultar conteúdo da mensagem",
+  "notifSoundEnableLabel": "Som de notificação",
+  "notifSoundChooseLabel": "Escolher som",
+  "notifSoundCustom": "Enviar som personalizado...",
+  "notifSoundCustomLoaded": "Som personalizado definido",
+  "notifSoundCustomError": "Falha ao carregar som",
+  "notifSoundCustomInvalidFormat": "Suportados: WAV, MP3, M4A, OGG, AAC",
+  "resetting": "Redefinindo...",
+  "launchAtStartupLabel": "Iniciar automaticamente",
+  "launchAtStartupSubtitle": "Iniciar o ONYX automaticamente ao entrar no sistema",
+  "launchAtStartupEnabled": "Início automático ativado",
+  "launchAtStartupDisabled": "Início automático desativado",
+  "launchAtStartupFailed": "Falha ao alterar a configuração de início automático",
+  "avatarUpdated": "Avatar atualizado",
+  "fileNotFound": "Arquivo não encontrado",
+  "fileSent": "Arquivo enviado",
+  "imageSent": "Imagem enviada",
+  "videoSent": "Vídeo enviado",
+  "uploadingFile": "Enviando {name}...",
+  "@uploadingFile": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "albumSent": "Álbum enviado ({n} imagens)",
+  "@albumSent": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "fileEmpty": "O arquivo está vazio",
+  "networkError": "Erro de rede",
+  "avatarRemoved": "Avatar removido",
+  "uinCopied": "UIN copiado",
+  "displayNameLength": "O nome de exibição deve ter entre 1 e 16 caracteres",
+  "failedSendLan": "Falha ao enviar pela rede local",
+  "fileCancelled": "Arquivo cancelado",
+  "doneRestarting": "Concluído! Reiniciando...",
+  "deleteMessageTitle": "Excluir mensagem?",
+  "deleteMessageContent": "Esta mensagem será excluída para ambos os lados.",
+  "cannotDeleteMsg": "Não é possível excluir: mensagem ainda não salva no servidor",
+  "deleteForMeTitle": "Excluir para mim?",
+  "deleteForMeContent": "Isso removerá a mensagem apenas do seu dispositivo. A outra pessoa ainda poderá vê-la.",
+  "deleteFavMessageContent": "Esta mensagem será removida dos favoritos.",
+  "pinnedMessage": "Mensagem Fixada",
+  "setReminder": "Set Reminder",
+  "cancelReminder": "Cancel Reminder",
+  "reminderSet": "Reminder set",
+  "reminderCancelled": "Reminder cancelled",
+  "reminderNotificationPrefix": "Reminder",
+  "reminderGenericBody": "You have a reminder",
+  "reminderHourLabel": "Hour",
+  "reminderMinuteLabel": "Minute",
+  "reminderPickDate": "Choose date",
+  "reminderDateToday": "Today",
+  "reminderDateTomorrow": "Tomorrow",
+  "reminderInvalidTime": "Enter a valid time",
+  "reminderPastTime": "This time has already passed",
+  "msgCopied": "Copiado",
+  "copiedUsername": "@{name} copiado",
+  "@copiedUsername": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "deliveryModeTitle": "Escolha o modo de envio",
+  "deliveryInternet": "Internet",
+  "deliveryInternetSubtitle": "Enviar via servidor (criptografado)",
+  "deliveryLanSubtitle": "Enviar via rede local (direto)",
+  "deliveryUserNotInLan": "Usuário não encontrado na rede local",
+  "fastChange": "Troca rápida",
+  "fastChangeSubtitle": "Alternar modo com toque longo",
+  "lanModeEnabled": "Modo rede local ativado",
+  "internetModeEnabled": "Modo internet ativado",
+  "previewMessageTitle": "Pré-visualizar Mensagem",
+  "previewYourMessage": "Sua mensagem:",
+  "replyingTo": "Respondendo a: {name}",
+  "@replyingTo": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "send": "Enviar",
+  "fileSentLan": "Arquivo enviado pela rede local",
+  "uploadingImages": "Enviando {n} imagens...",
+  "@uploadingImages": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "albumUploadFailed": "Falha ao enviar o álbum",
+  "message": "Mensagem",
+  "noMessagesYet": "Nenhuma mensagem ainda",
+  "voiceCallsTitle": "Chamadas de Voz",
+  "voiceCallsContent": "As chamadas de voz atualmente funcionam apenas em rede local (LAN).\n\nEstamos arrecadando fundos para a manutenção do servidor central e desenvolvimento de uma alternativa.",
+  "supportOnyxBtn": "Apoiar o ONYX",
+  "call": "Ligar",
+  "securityCheckTitle": "Verificação de segurança",
+  "securityCheckContent": "Compare estes emojis com {name}.\nSe forem iguais — sua conversa está segura.",
+  "@securityCheckContent": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "failedToFetchPubkey": "Falha ao obter a chave pública",
+  "userHasNoPubkey": "O usuário não tem chave pública",
+  "galleryMenuLabel": "Galeria",
+  "galleryTitle": "Galeria",
+  "galleryTabMedia": "Mídia",
+  "galleryTabVoice": "Voz",
+  "galleryTabFiles": "Arquivos",
+  "galleryEmptyMedia": "Nenhuma foto ou vídeo ainda",
+  "galleryEmptyVoice": "Nenhuma mensagem de voz ainda",
+  "galleryEmptyFiles": "Nenhum arquivo ainda",
+  "galleryShowInChat": "Mostrar na conversa",
+  "failedDelete": "Falha ao excluir",
+  "failedEdit": "Falha ao editar mensagem",
+  "noInternetCached": "Sem internet — mostrando mensagens em cache",
+  "sendFailed": "Falha ao enviar",
+  "mediaUploadNotSupportedWeb": "Envio de mídia não suportado na web",
+  "localFileRequired": "É necessário um arquivo local",
+  "uploadFailed": "Falha no envio",
+  "voiceUploadFailed": "Falha ao enviar a mensagem de voz",
+  "voiceCancelled": "Mensagem de voz cancelada",
+  "uploadingVoice": "Enviando voz...",
+  "uploadingAlbumProgress": "Enviando álbum: {done}/{total} fotos",
+  "@uploadingAlbumProgress": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "uploadingImageLabel": "Enviando imagem...",
+  "uploadingVideoLabel": "Enviando vídeo...",
+  "uploadingAudioLabel": "Enviando áudio...",
+  "uploadingFileLabel": "Enviando arquivo...",
+  "leftGroup": "Você saiu do grupo",
+  "failedLeaveGroup": "Falha ao sair do grupo",
+  "avatarOnlyOwnerMod": "Somente donos e moderadores podem alterar o avatar",
+  "failedReadFile": "Falha ao ler o arquivo",
+  "uploadingAvatar": "Enviando avatar...",
+  "avatarUpdatedGroup": "Avatar do grupo atualizado",
+  "avatarDeleted": "Avatar excluído",
+  "failedDeleteAvatar": "Falha ao excluir o avatar",
+  "copyLink": "Copiar link",
+  "tokenCopied": "Token copiado",
+  "groupNameLength": "O nome do grupo deve ter entre 1 e 50 caracteres",
+  "groupUpdated": "Grupo atualizado",
+  "failedUpdateGroup": "Falha ao atualizar o grupo",
+  "deleteAvatarTitle": "Excluir avatar?",
+  "deleteAvatarContent": "Isso removerá o avatar do grupo para todos.",
+  "deleteGroupMsgContent": "Esta mensagem será excluída para todos.",
+  "reply": "Responder",
+  "edit": "Editar",
+  "editGroupTitle": "Editar grupo",
+  "editChannelTitle": "Editar canal",
+  "channelNameLabel": "Nome do canal",
+  "channelNameHint": "Digite o nome do canal",
+  "unsupportedFileType": "Tipo de arquivo não suportado: {ext}",
+  "@unsupportedFileType": {
+    "placeholders": {
+      "ext": {
+        "type": "String"
+      }
+    }
+  },
+  "failedToConnect": "Falha ao conectar: {e}",
+  "@failedToConnect": {
+    "placeholders": {
+      "e": {
+        "type": "String"
+      }
+    }
+  },
+  "roleChanged": "Sua função foi alterada para {role}",
+  "@roleChanged": {
+    "placeholders": {
+      "role": {
+        "type": "String"
+      }
+    }
+  },
+  "unbannedReconnecting": "Você foi desbanido! Reconectando...",
+  "onlyModsCanPost": "Somente o dono e os moderadores podem publicar nos canais",
+  "failedSendMessage": "Falha ao enviar mensagem",
+  "uploadFailedConnectionAborted": "Falha no envio: conexão interrompida. Tente um arquivo menor ou verifique as configurações do servidor.",
+  "failedSendMedia": "Falha ao enviar mídia",
+  "joinedGroup": "Você entrou no grupo!",
+  "failedJoinGroup": "Falha ao entrar no grupo",
+  "cancelled": "Cancelado",
+  "avatarWillBeDeleted": "O avatar será excluído",
+  "ipCopied": "IP copiado",
+  "nameCannotBeEmpty": "O nome não pode estar vazio",
+  "groupRenamed": "Grupo renomeado com sucesso",
+  "errorMsg": "Erro: {e}",
+  "@errorMsg": {
+    "placeholders": {
+      "e": {
+        "type": "String"
+      }
+    }
+  },
+  "failedRename": "Falha ao renomear",
+  "imageTooLarge": "Imagem muito grande (máx. 5 MB)",
+  "avatarUpdatedSuccessfully": "Avatar atualizado com sucesso",
+  "failedUploadAvatar": "Falha ao enviar o avatar",
+  "deletingAvatar": "Excluindo avatar...",
+  "avatarDeletedSuccessfully": "Avatar excluído com sucesso",
+  "userBanned": "{name} banido",
+  "@userBanned": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "failedBan": "Falha ao banir",
+  "roleUpdated": "Função atualizada para {role}",
+  "@roleUpdated": {
+    "placeholders": {
+      "role": {
+        "type": "String"
+      }
+    }
+  },
+  "failedChangeRole": "Falha ao alterar a função",
+  "userUnbanned": "{name} desbanido",
+  "@userUnbanned": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "failedUnban": "Falha ao desbanir",
+  "youHaveBeenBanned": "Você foi banido",
+  "renameGroupTitle": "Renomear Grupo",
+  "rename": "Renomear",
+  "join": "Entrar",
+  "manageMembers": "Gerenciar membros",
+  "banMemberTitle": "Banir Membro",
+  "ban": "Banir",
+  "selectNewRole": "Selecione a nova função:",
+  "moderator": "Moderador",
+  "memberRole": "Membro",
+  "manageMembersTitle": "Gerenciar Membros",
+  "viewBans": "Ver Banimentos",
+  "unbanUserTitle": "Desbanir Usuário",
+  "unban": "Desbanir",
+  "bannedUsersTitle": "Usuários Banidos",
+  "bannedFromGroup": "Você foi banido deste grupo.",
+  "bannedReason": "Motivo: {reason}",
+  "@bannedReason": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "noBannedUsers": "Nenhum usuário banido",
+  "bannedBy": "Banido por: {name}",
+  "@bannedBy": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bannedDate": "Data: {date}",
+  "@bannedDate": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "banConfirm": "Banir {name} do grupo?",
+  "@banConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "banReason": "Motivo (opcional)",
+  "changeRoleTitle": "Alterar função de {name}",
+  "@changeRoleTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "currentRoleLabel": "Função atual: {role}",
+  "@currentRoleLabel": {
+    "placeholders": {
+      "role": {
+        "type": "String"
+      }
+    }
+  },
+  "ownerCount": "Donos: {n}/3",
+  "@ownerCount": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "ownerCurrent": "Dono (atual)",
+  "ownerLimitReached": "Dono (limite atingido)",
+  "owner": "Dono",
+  "cannotDemoteLastOwner": "Não é possível rebaixar o último dono",
+  "noMembersYet": "Nenhum membro",
+  "changeRole": "Alterar função",
+  "unbanConfirm": "Desbanir {name}?",
+  "@unbanConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "today": "Hoje",
+  "yesterday": "Ontem",
+  "failedCreateGroup": "Falha ao criar o grupo",
+  "invalidInviteLinkFormat": "Formato de link de convite inválido",
+  "invalidInviteLink": "Link de convite inválido",
+  "groupAddedForViewing": "Grupo adicionado para visualização!",
+  "failedAddGroup": "Falha ao adicionar o grupo",
+  "serverRemoved": "Servidor \"{name}\" removido",
+  "@serverRemoved": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "channelAdminOnlySubtitle": "Canal (somente admin)",
+  "groupSubtitle": "Grupo",
+  "newGroup": "Novo grupo",
+  "externalGroup": "Grupo Externo",
+  "externalChannel": "Canal Externo",
+  "joinExternalServer": "Entrar em Servidor Externo",
+  "enterServerAddress": "Digite o endereço do servidor",
+  "enterValidIp": "Digite um endereço IP ou host válido",
+  "couldNotConnect": "Não foi possível conectar a {host}",
+  "@couldNotConnect": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "usernameRequiredMsg": "O nome de usuário é obrigatório. Certifique-se de ter criado uma conta no app.",
+  "passwordRequiredForGroups": "A senha é obrigatória para grupos",
+  "connectionFailed": "Falha na conexão: {e}",
+  "@connectionFailed": {
+    "placeholders": {
+      "e": {
+        "type": "String"
+      }
+    }
+  },
+  "connectedToServer": "Conectado ao {type} \"{name}\"",
+  "@connectedToServer": {
+    "placeholders": {
+      "type": {
+        "type": "String"
+      },
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "externalGroupType": "grupo externo",
+  "externalChannelType": "canal externo",
+  "identityVisible": "Sua identidade ficará visível para o servidor",
+  "usernameLabel": "Nome de usuário",
+  "passwordLabel": "Senha",
+  "noPasswordForChannels": "Nenhuma senha necessária para canais",
+  "noRegistrationRequired": "Não é necessário cadastro.",
+  "back": "Voltar",
+  "connecting": "Conectando...",
+  "connectBtn": "Conectar",
+  "serverInfoGroups": "Grupos",
+  "serverInfoMembers": "Membros",
+  "serverInfoMedia": "Mídia",
+  "serverInfoMaxFile": "Tamanho máximo do arquivo",
+  "thirdPartyServer": "SERVIDOR DE TERCEIROS",
+  "thirdPartyWarning": "Este servidor não é operado pelo ONYX. Conecte-se apenas se confiar no responsável.",
+  "serverWillKnow": "O servidor vai saber:",
+  "serverWillNotReceive": "O servidor NÃO vai receber:",
+  "knowIpAddress": "Seu endereço IP",
+  "knowUsername": "O nome de usuário que você escolheu",
+  "knowMessages": "O conteúdo das suas mensagens neste servidor",
+  "notReceiveAccount": "Sua conta ONYX ou senha",
+  "notReceiveContacts": "Seus contatos e conversas privadas",
+  "notReceiveKeys": "Suas chaves de criptografia",
+  "yourPassphraseTitle": "Sua Frase de Recuperação",
+  "sessionExpiredBanner": "Sessão expirada — faça login novamente",
+  "sessionExpiredTitle": "Sessão expirada",
+  "sessionExpiredSubtitle": "Faça login novamente",
+  "sessionSignIn": "Entrar",
+  "sessionRenewSoon": "Será necessário fazer login novamente em breve",
+  "sessionStillValid": "O token de autorização é válido",
+  "blockedUsersTitle": "Usuários Bloqueados",
+  "blockedUsersSubtitle": "Gerenciar usuários bloqueados",
+  "blockedUsersEmpty": "Nenhum usuário bloqueado",
+  "unblockAction": "Desbloquear",
+  "writeMessage": "Escrever",
+  "fakePinTitle": "PIN Falso",
+  "fakePinSubtitle": "Abrir uma conta-isca sob coação",
+  "fakePinSheetTitle": "Configuração do PIN Falso",
+  "fakePinStatusActive": "Ativo",
+  "fakePinStatusOff": "Desativado",
+  "fakePinDescription": "Quando este PIN é digitado na tela de bloqueio, o app abre mostrando sua conta-isca em vez da conta real.",
+  "setFakePin": "Definir PIN Falso",
+  "disableFakePin": "Desativar PIN Falso",
+  "changeFakePin": "Alterar PIN Falso",
+  "disableFakePinTitle": "Desativar PIN Falso?",
+  "disableFakePinContent": "O PIN falso será removido. As configurações da conta-isca serão mantidas.",
+  "fakePinEnabledSnack": "PIN falso ativado",
+  "fakePinDisabledSnack": "PIN falso desativado",
+  "fakePinCannotMatchReal": "O PIN falso não pode ser igual ao seu PIN real",
+  "decoyAccountSection": "Conta-Isca",
+  "decoyAccountSubtitle": "Esta conta será exibida quando o PIN falso for usado",
+  "decoyDisplayNameLabel": "Nome de exibição",
+  "decoyUsernameLabel": "Nome de usuário",
+  "decoyDisplayNameHint": "Digite o nome de exibição",
+  "decoyUsernameHint": "Digite o nome de usuário",
+  "saveDecoyAccount": "Salvar conta-isca",
+  "decoyAccountSaved": "Conta-isca salva",
+  "decoyFieldsRequired": "O nome de usuário e o nome de exibição não podem estar vazios",
+  "removeAvatar": "Remover avatar",
+  "fakePinSecurityNote": "O PIN falso deve ser diferente do seu PIN real. A conta-isca não tem conexão com o servidor — ela apenas mostra o perfil que você configurou aqui.",
+  "decoyNoChats": "Nenhuma conversa ainda",
+  "decoyNoGroups": "Nenhum grupo ainda",
+  "decoyNoFavorites": "Nenhum favorito ainda",
+  "decoyOtherAccounts": "Outras contas",
+  "decoyNoOtherAccounts": "Nenhuma outra conta",
+  "lock": "Bloquear",
+  "decoyAppearance": "Aparência",
+  "decoyNotifications": "Notificações",
+  "decoyStorage": "Armazenamento",
+  "decoyAppearanceSubtitle": "Tema e opções de exibição",
+  "decoyNotificationsSubtitle": "Configurações de som e alertas",
+  "decoyStorageSubtitle": "Gerenciar arquivos em cache",
+  "decoyContactsSection": "Conversas Falsas",
+  "decoyContactsSubtitle": "Adicione contatos com mensagens — eles aparecem quando a conta-isca é aberta",
+  "generateContacts": "Gerar Contatos",
+  "addDecoyContact": "Adicionar Contato",
+  "decoyNoContacts": "Nenhuma conversa falsa ainda",
+  "decoyContactUsername": "Nome de usuário do contato",
+  "decoyContactDisplayName": "Nome de exibição do contato",
+  "contactsGenerated": "{n} contatos adicionados",
+  "@contactsGenerated": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "contactAdded": "Contato adicionado",
+  "contactRemoved": "Contato removido",
+  "decoyContactExists": "O contato já existe",
+  "decoyContactsCleared": "Todas as conversas foram limpas",
+  "clearDecoyChats": "Limpar Todas as Conversas",
+  "messagesCount": "mensagens",
+  "add": "Adicionar",
+  "decoyChatsSubtitle": "Contatos com histórico de mensagens",
+  "decoyGroupsSection": "Grupos e Canais",
+  "decoyGroupsSubtitle": "Grupos e canais falsos",
+  "decoyFavoritesSection": "Favoritos",
+  "decoyFavoritesSubtitle": "Conversas favoritas fixadas",
+  "noFakeGroups": "Nenhum grupo ainda",
+  "noFakeFavorites": "Nenhum favorito ainda",
+  "addFakeGroup": "Grupo",
+  "addFakeChannel": "Canal",
+  "addFakeFavorite": "Adicionar Favorito",
+  "groupType": "Grupo",
+  "channelType": "Canal",
+  "favTitleHint": "Título",
+  "generateAll": "Gerar Tudo",
+  "generateAllConfirm": "Conteúdo aleatório será gerado, substituindo os dados existentes.",
+  "sendFavoritesTitle": "Enviar Favoritos",
+  "sendFavoritesShowQrToReceiver": "Mostrar QR para o Receptor",
+  "sendFavoritesScanReceiver": "Escanear QR do Receptor",
+  "sendFavoritesSending": "Enviando Favoritos",
+  "sendFavoritesSelectTitle": "Selecione as conversas para enviar",
+  "sendFavoritesHintDesktop": "O receptor deve tocar em \"Receber\" primeiro. Depois, escaneie o código QR exibido aqui.",
+  "sendFavoritesHintMobile": "O receptor deve tocar em \"Receber\" primeiro e mostrar o código QR.",
+  "allChatsCount": "Todas as conversas ({n})",
+  "@allChatsCount": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "sendFavoritesNoFavs": "Nenhuma conversa favorita ainda.",
+  "sendFavoritesSelectAtLeastOne": "Selecione pelo menos uma conversa",
+  "sendFavoritesShowQrBtn": "Mostrar QR",
+  "sendFavoritesScanQrBtn": "Escanear QR",
+  "receiveFavoritesTitle": "Receber Favoritos",
+  "receiveFavoritesScanSender": "Escanear QR do Remetente",
+  "receiveFavoritesScanOnSender": "Escanear no dispositivo do remetente",
+  "receiveFavoritesInstruction": "Abra Favoritos no remetente, toque em Sincronizar → Enviar e depois escaneie este código",
+  "receiveFavoritesE2E": "Criptografado de ponta a ponta · somente rede local",
+  "receiveFavoritesScanHint": "Aponte a câmera para o código QR exibido no dispositivo do remetente",
+  "receiveFavoritesScanEncrypted": "A transferência é criptografada · somente rede local",
+  "receiveFavoritesWaiting": "Aguardando o remetente escanear o código QR…",
+  "receiveFavoritesComplete": "Transferência concluída.",
+  "receiveFavoritesConnecting": "Conectando ao remetente…",
+  "receiveFavoritesConnected": "Conectado! Aguardando arquivos…",
+  "cancelTransfer": "Cancelar transferência",
+  "wardLinkTitle": "WardLink",
+  "wardLinkSubtitle": "Sincronização passiva entre seus dispositivos na rede local",
+  "wardLinkEnable": "Sincronização passiva",
+  "wardLinkEnableDesc": "Sincronize automaticamente com dispositivos confiáveis na mesma rede. Em celulares isso funciona com o app aberto; no desktop, funciona continuamente.",
+  "wardLinkPairedDevices": "Dispositivos confiáveis",
+  "wardLinkNoPairedDevices": "Nenhum dispositivo pareado ainda",
+  "wardLinkAddDevice": "Adicionar",
+  "wardLinkRemoveDevice": "Remover",
+  "wardLinkRemoveConfirm": "Parar de sincronizar com este dispositivo?",
+  "wardLinkFavoritesOnlyNote": "Sincroniza seus Favoritos — mensagens e mídias",
+  "wardLinkMaxFileSize": "Tamanho máximo do arquivo",
+  "wardLinkPairTitle": "Parear dispositivo",
+  "wardLinkShowCode": "Mostrar código",
+  "wardLinkScanCode": "Escanear código",
+  "wardLinkShowInstruction": "Abra o WardLink no outro dispositivo e escaneie este código",
+  "wardLinkScanInstruction": "Aponte a câmera para o código WardLink no outro dispositivo",
+  "wardLinkPairedOk": "Dispositivo pareado",
+  "wardLinkPairFailed": "Falha no pareamento",
+  "wardLinkE2E": "Criptografado de ponta a ponta · somente rede local",
+  "wardLinkSyncingNow": "Sincronizando…",
+  "wardLinkDone": "Sincronizado",
+  "wardLinkCurrentFile": "Arquivo atual",
+  "wardLinkLog": "Registro de sincronização",
+  "wardLinkLogEmpty": "Nenhum evento ainda",
+  "wardLinkHoldForLog": "Segure a bolha para ver o registro",
+  "wardLinkUpToDate": "Atualizado",
+  "wardLinkFilesDone": "Arquivos transferidos: {n}",
+  "@wardLinkFilesDone": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "wardLinkNoFilesYet": "Nenhum arquivo transferido",
+  "wardLinkSyncedAgo": "Sincronizado {when}",
+  "@wardLinkSyncedAgo": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "wardLinkNeverSynced": "Ainda não sincronizado",
+  "wardLinkFirewallHintWindows": "Se o celular não conseguir alcançar este PC, permita o ONYX no Firewall do Windows (porta TCP 47832). O ONYX tenta adicionar a regra automaticamente; se falhar: Firewall do Windows → Avançado → Regras de Entrada → Nova Regra → Porta → TCP → 47832.",
+  "wardLinkFirewallHintMac": "Se o celular não conseguir alcançar este Mac, verifique se o firewall do macOS não está bloqueando o ONYX: Ajustes do Sistema → Rede → Firewall → Opções → adicionar ONYX.",
+  "wardLinkFirewallHintLinux": "Se o celular não conseguir se conectar, abra a porta TCP 47832 no seu firewall. Exemplo: sudo ufw allow 47832/tcp  ou  sudo firewall-cmd --add-port=47832/tcp --permanent",
+  "wardLinkSyncFromBeginning": "Sincronizar desde o início",
+  "wardLinkSyncFromBeginningDesc": "Baixar todo o histórico ainda não presente neste dispositivo",
+  "wardLinkSyncPending": "Sincronização pendente…",
+  "wardLinkBubbleVisibility": "Bolha de sincronização",
+  "wardLinkBubbleShowAlways": "Mostrar sempre",
+  "wardLinkBubbleShowOnErrors": "Mostrar apenas em erros",
+  "wardLinkBubbleSize": "Tamanho da bolha",
+  "meshSubtitle": "Rede mesh offline",
+  "meshEnable": "Ativar rede Mesh",
+  "meshEnableDesc": "Mensagens diretas sem internet via Wi-Fi ou Bluetooth.\nFunciona apenas em mensagens diretas.",
+  "meshUnavailable": "A rede Mesh não está disponível nesta plataforma.",
+  "meshOpenRadar": "Abrir Radar",
+  "meshNearbyCount": "Por perto: {n} dispositivos",
+  "@meshNearbyCount": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "meshRadarTitle": "Radar Mesh",
+  "meshRadarScanning": "Escaneando…",
+  "meshRadarSearchHint": "Buscar por nome...",
+  "meshRadarSearchEmpty": "Nenhum resultado para \"{q}\"",
+  "@meshRadarSearchEmpty": {
+    "placeholders": {
+      "q": {
+        "type": "String"
+      }
+    }
+  },
+  "meshRadarNoDevices": "Nenhum dispositivo por perto.\nO Mesh escaneia a cada 20 s.",
+  "meshRadarDisabled": "O modo Mesh está desativado.\nAtive-o em Configurações → Mesh.",
+  "meshRadarStarting": "Iniciando escaneamento BLE…",
+  "meshMenuRadar": "Radar",
+  "meshMenuDiagnostics": "Diagnóstico",
+  "meshMenuModeAuto": "Automático",
+  "meshBluetoothOffTitle": "O Bluetooth está desligado",
+  "meshBluetoothOffContent": "O chat Mesh foi alterado para o modo somente Bluetooth, mas o Bluetooth está desligado. Ative-o nas configurações do sistema para alcançar dispositivos próximos.",
+  "meshOpenSystemSettings": "Abrir Configurações",
+  "meshModeLabel": "MODO",
+  "meshModeActive": "Modo Mesh ativo",
+  "meshChatLabel": "Chat Mesh",
+  "meshLocationRequired": "Ative os serviços de localização para escaneamento BLE (Android ≤11)",
+  "meshChatEmpty": "Nenhuma mensagem ainda.\nEnvie a primeira mensagem mesh.",
+  "meshChatInputHint": "Mensagem…",
+  "meshChatSend": "Enviar",
+  "meshChatOutOfRange": "Fora de alcance",
+  "meshStatusSending": "Enviando…",
+  "meshStatusSendingWifi": "Enviando via Wi-Fi…",
+  "meshStatusSendingBle": "Enviando via Bluetooth…",
+  "meshStatusRelayed": "Em trânsito pela mesh",
+  "meshStatusDelivered": "Entregue",
+  "meshStatusFailed": "Não entregue",
+  "meshStatusRetry": "Tentar novamente",
+  "meshStatusFailedHint": "A mensagem não chegou ao destinatário",
+  "meshErrorVideoWifiOnly": "Vídeos só podem ser enviados via Wi-Fi. Conecte-se à mesma rede Wi-Fi do destinatário.",
+  "meshErrorFileTooLargeForBle": "O arquivo é muito grande para Bluetooth (máx. 10 MB). Conecte-se a uma rede Wi-Fi compartilhada.",
+  "meshErrorFileTooLarge": "O arquivo é muito grande (máx. 200 MB).",
+  "meshErrorAttachmentsUnsupported": "Anexos são suportados apenas no celular/desktop",
+  "meshErrorPickFileFailed": "Falha ao escolher o arquivo",
+  "meshErrorSendFileFailed": "Falha ao enviar o arquivo",
+  "meshErrorSendVoiceFailed": "Falha ao enviar a mensagem de voz",
+  "meshErrorOutOfRange": "{username} está fora de alcance",
+  "@meshErrorOutOfRange": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "backupTitle": "Backup",
+  "backupSubtitle": "Backup e restauração local dos seus dados",
+  "backupExport": "Salvar todos os dados",
+  "backupRestore": "Restaurar do backup",
+  "backupScope": "O que fazer backup",
+  "backupFavorites": "Conversas favoritas",
+  "backupPersonal": "Conversas pessoais",
+  "backupIncludeMedia": "Incluir mídia",
+  "backupMediaImages": "Imagens",
+  "backupMediaVideos": "Vídeos",
+  "backupMediaVoice": "Voz e áudio",
+  "backupMediaOther": "Outros arquivos",
+  "backupSchedule": "Backup agendado",
+  "backupFreqOff": "Desativado",
+  "backupFreqDaily": "Diário",
+  "backupFreqWeekly": "Semanal",
+  "backupFreqMonthly": "Mensal",
+  "backupFolder": "Pasta de backup automático",
+  "backupChangeFolder": "Alterar",
+  "backupLastAuto": "Último backup automático",
+  "backupNever": "nunca",
+  "backupInProgress": "Criando backup…",
+  "backupRestoring": "Restaurando…",
+  "backupSelectScope": "Selecione pelo menos uma categoria",
+  "backupNoAccount": "Nenhuma conta ativa",
+  "backupNoPermission": "Acesso ao armazenamento negado. Conceda \"Acesso a todos os arquivos\" nas configurações do app.",
+  "backupOpenFolder": "Abrir pasta",
+  "backupFolderUnsupported": "Esta pasta não está acessível. Escolha uma pasta no armazenamento interno.",
+  "backupRestoreConfirmTitle": "Restaurar do backup?",
+  "backupRestoreConfirmBody": "Os dados do arquivo serão restaurados sobre seus dados atuais (conversas, favoritos, configurações).",
+  "backupRestartHint": "Reinicie o app para ver as alterações",
+  "recycleBinTitle": "Lixeira",
+  "recycleBinSubtitle": "Conversas excluídas e proteção contra exclusões acidentais na sincronização",
+  "recycleBinPendingTitle": "Solicitações de exclusão",
+  "recycleBinPendingDesc": "O dispositivo \"{device}\" quer excluir {count} conversa(s). Aplicar ou manter?",
+  "@recycleBinPendingDesc": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "recycleBinApply": "Aplicar exclusão",
+  "recycleBinKeep": "Manter minhas conversas",
+  "recycleBinNoPending": "Nenhuma solicitação de exclusão pendente",
+  "recycleBinResetTitle": "Redefinir registros de exclusão",
+  "recycleBinResetDesc": "Limpa a lista de conversas excluídas. A sincronização deixará de excluí-las novamente em outros dispositivos e poderá trazê-las de volta.",
+  "recycleBinResetButton": "Limpar lista de excluídos",
+  "recycleBinResetDone": "Registros de exclusão limpos",
+  "recycleBinResetConfirm": "Limpar todos os registros de exclusão desta conta?",
+  "accountGraph": "Gráfico da Conta",
+  "accountGraphSubtitleDesktopOn": "Mostra um gráfico das suas conversas, grupos e canais quando nenhuma conversa está aberta",
+  "accountGraphSubtitleMobileOn": "Visualizando sua conta em modo planetário",
+  "accountGraphSubtitleDesktopOff": "Mostra uma dica quando nenhuma conversa está aberta",
+  "accountGraphSubtitleMobileOff": "O Gráfico da Conta está desativado",
+  "orbitSpeed": "Velocidade da Órbita",
+  "secOrbit": "{s} seg/órbita",
+  "@secOrbit": {
+    "placeholders": {
+      "s": {
+        "type": "int"
+      }
+    }
+  },
+  "minOrbit": "{m} min/órbita",
+  "@minOrbit": {
+    "placeholders": {
+      "m": {
+        "type": "int"
+      }
+    }
+  },
+  "animateGraph": "Animar",
+  "animateGraphOn": "As órbitas giram em tempo real",
+  "animateGraphOff": "O gráfico está congelado / estático",
+  "preserveView": "Preservar Visualização",
+  "preserveViewOn": "Mantém o zoom e a posição ao sair de uma conversa",
+  "preserveViewOff": "Volta ao centro ao retornar",
+  "migrationTitle": "Migração de Armazenamento",
+  "migrationBody": "O ONYX está migrando para um novo mecanismo de armazenamento de alta velocidade. As conversas e mídias carregarão muito mais rápido.",
+  "migrationAccounts": "Contas",
+  "migrationDataSize": "Tamanho dos dados",
+  "migrationBackupNote": "Um backup será criado antes da migração. O app pode ficar temporariamente sem resposta durante esse processo.",
+  "migrationStart": "Iniciar Migração",
+  "migrationSkip": "Pular",
+  "migrationPhaseBackup": "Criando backup",
+  "migrationPhaseImport": "Importando dados",
+  "migrationPhaseVerify": "Verificando",
+  "migrationPhasePreparing": "Preparando",
+  "migrationDontClose": "Não feche o app",
+  "migrationDoneTitle": "Concluído!",
+  "migrationDoneBody": "Armazenamento atualizado. Um backup foi salvo na pasta Backups.",
+  "migrationDoneNote": "Depois de confirmar que tudo funciona, você pode excluí-lo manualmente.",
+  "migrationDoneButton": "Ótimo!",
+  "migrationErrorTitle": "Erro na Migração",
+  "migrationErrorBody": "O app continuará no sistema antigo. A migração será tentada novamente na próxima abertura.",
+  "migrationErrorButton": "Entendi",
+  "audioTitle": "Áudio",
+  "audioSubtitle": "Seleção de microfone e alto-falante",
+  "audioMicInput": "Microfone (entrada)",
+  "audioSpeakerOutput": "Alto-falante (saída)",
+  "audioSystemDefault": "Padrão do sistema",
+  "audioChangesNote": "As alterações têm efeito na próxima entrada em um canal de voz.",
+  "wardlinkReceive": "Receber do dispositivo",
+  "wardlinkReceiveSubtitle": "Mostrar um código QR — o remetente o escaneia",
+  "wardlinkSend": "Enviar para dispositivo",
+  "wardlinkSendSubtitle": "Escaneie o código QR exibido no receptor",
+  "react": "Reagir",
+  "pin": "Fixar",
+  "unpin": "Desafixar",
+  "copyImage": "Copiar Imagem",
+  "forward": "Encaminhar",
+  "showInFileSystem": "Mostrar no sistema de arquivos",
+  "saveNotSupportedOnWeb": "Salvar não é suportado na web",
+  "imageNotLoadedYet": "Imagem ainda não carregada",
+  "voiceNotLoadedYet": "Áudio ainda não carregado",
+  "videoNotLoadedYet": "Vídeo ainda não carregado",
+  "fileNotLoadedYet": "Arquivo ainda não carregado",
+  "fileNotLoadedOpenFirst": "O arquivo não foi baixado neste dispositivo — toque nele na conversa para baixá-lo",
+  "editTimerLabel": "Editar  ·  {s}s",
+  "@editTimerLabel": {
+    "placeholders": {
+      "s": {
+        "type": "int"
+      }
+    }
+  },
+  "deleteTimerLabel": "Excluir  ·  {s}s",
+  "@deleteTimerLabel": {
+    "placeholders": {
+      "s": {
+        "type": "int"
+      }
+    }
+  },
+  "newChat": "Nova conversa",
+  "newChatSubtitle": "Criar uma nova conversa favorita",
+  "newFolder": "Nova pasta",
+  "newFolderSubtitle": "Agrupar conversas em uma pasta",
+  "searchEmoji": "Buscar emoji…",
+  "syncCompleted": "Sincronização concluída",
+  "syncCompletedWithErrors": "Sincronização concluída com erros",
+  "receivingFiles": "Recebendo arquivos...",
+  "syncFromUser": "de {sender}",
+  "@syncFromUser": {
+    "placeholders": {
+      "sender": {
+        "type": "String"
+      }
+    }
+  },
+  "aboutServer": "SERVIDOR",
+  "aboutWhatsNew": "NOVIDADES",
+  "aboutConnected": "Conectado",
+  "aboutConnecting": "Conectando...",
+  "aboutLoadingLocation": "Carregando...",
+  "aboutNoReleaseNotes": "Nenhuma nota de versão disponível.",
+  "aboutCheckForUpdates": "Verificar atualizações",
+  "aboutChecking": "Verificando...",
+  "aboutUpToDate": "Você está atualizado!",
+  "aboutUpdateAvailable": "Atualização disponível: {v}",
+  "@aboutUpdateAvailable": {
+    "placeholders": {
+      "v": {
+        "type": "String"
+      }
+    }
+  },
+  "downloadUpdateTitle": "Baixar Atualização",
+  "downloadUpdateVersion": "Versão",
+  "downloadUpdateWhatsNew": "NOVIDADES",
+  "downloadUpdateReady": "Pronto para baixar",
+  "downloadUpdateDownloading": "Baixando...",
+  "downloadUpdateComplete": "Download concluído!",
+  "downloadUpdateNoPlatform": "Nenhum download disponível para esta plataforma",
+  "downloadUpdateInstall": "Baixar e Instalar",
+  "downloadUpdateOpen": "Abrir",
+  "downloadUpdateRetry": "Tentar novamente",
+  "downloadUpdateCancel": "Cancelar download",
+  "editChat": "Editar conversa",
+  "chatNameLabel": "Nome da conversa",
+  "editFolder": "Editar pasta",
+  "folderNameLabel": "Nome da pasta",
+  "createChat": "Nova conversa",
+  "profileMessage": "Mensagem",
+  "tapAvatarHint": "Toque no avatar para alterar • Toque e segure para remover",
+  "tapAvatarLongRemove": "Toque para alterar • Toque e segure para remover",
+  "e2eeWarnTitle": "Não criptografado de ponta a ponta",
+  "e2eeWarnUnderstand": "Entendi",
+  "e2eeWarnDoNotShare": "Não compartilhe senhas, arquivos privados ou informações sensíveis aqui.",
+  "e2eeWarnGroupBody": "As mensagens deste grupo não são protegidas por criptografia de ponta a ponta — o servidor pode lê-las.",
+  "e2eeWarnGroupMedia": "As mídias anexadas são enviadas a um host público (catbox.moe) e podem ser acessadas por qualquer pessoa com o link.",
+  "e2eeWarnExtBody": "As mensagens deste grupo não são protegidas por criptografia de ponta a ponta — o servidor do dono do grupo pode lê-las.",
+  "e2eeWarnExtMedia": "As mídias anexadas são enviadas e armazenadas no próprio servidor do dono, não no ONYX.",
+  "e2eeWarnExtOnyxUnrelated": "O ONYX não tem nenhuma relação com este grupo e não pode moderar ou proteger seu conteúdo.",
+  "securityLevelTitle": "Nível de confiança do dispositivo",
+  "securityLevelEasy": "Fácil",
+  "securityLevelEasyDesc": "Um novo dispositivo é confiável imediatamente após o login. Menos atrito, mas a senha é sua única linha de defesa.",
+  "securityLevelBalanced": "Equilibrado",
+  "securityLevelBalancedDesc": "Qualquer dispositivo já confiável pode aprovar um novo. Recomendado para a maioria das pessoas.",
+  "securityLevelStrict": "Rigoroso",
+  "securityLevelStrictDesc": "Um novo dispositivo precisa da aprovação de dois dispositivos confiáveis separados.",
+  "securityLevelLowerRequiresTrusted": "Reduzir o nível de segurança requer um dispositivo confiável.",
+  "securityLevelUpdated": "Nível de segurança atualizado",
+  "sessionTtlTitle": "Duração da sessão",
+  "sessionTtlSubtitle": "Quanto tempo até este dispositivo pedir sua senha novamente",
+  "sessionTtlRecommended": "recomendado",
+  "sessionTtlDays": "{days} dias",
+  "@sessionTtlDays": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "sessionTtlNever": "Nunca",
+  "sessionTtlUpdated": "Duração da sessão atualizada",
+  "approvalsProgress": "Aprovado",
+  "pendingDeviceTitleSingle": "Novo dispositivo",
+  "pendingDeviceTitleMulti": "Novos dispositivos ({count})",
+  "@pendingDeviceTitleMulti": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "pendingDeviceApprove": "Aprovar",
+  "pendingDeviceDeny": "Negar",
+  "recoveryTitle": "Recuperação de conta",
+  "recoveryBannerText": "Este dispositivo ainda não foi aprovado. Se nenhum dispositivo confiável estiver acessível, você pode recuperar o acesso com sua senha e frase de recuperação.",
+  "recoveryBannerButton": "Recuperar acesso",
+  "recoveryIntro": "Digite sua senha e a frase de recuperação de 12 palavras exibida no cadastro. A solicitação não terá efeito imediato — seus dispositivos confiáveis terão um período para cancelá-la caso não seja você.",
+  "recoveryPasswordLabel": "Senha",
+  "recoveryPassphraseLabel": "Frase de recuperação (12 palavras)",
+  "recoverySubmit": "Enviar solicitação",
+  "recoveryInvalid": "Senha ou frase de recuperação inválida",
+  "recoveryAlreadyPending": "Já existe uma solicitação pendente",
+  "recoveryPendingTitle": "Solicitação enviada",
+  "recoveryPendingBody": "O acesso será restaurado {when}, a menos que um dispositivo confiável cancele a solicitação.",
+  "@recoveryPendingBody": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "recoveryCancelled": "Solicitação de recuperação cancelada",
+  "recoveryExecuted": "Acesso restaurado. Faça login novamente para aplicar a alteração.",
+  "recoveryCancelRequiresTrusted": "Somente um dispositivo confiável pode cancelar isso. Aprove este dispositivo em Dispositivos Ativos primeiro.",
+  "recoveryAlertRequestedTitle": "Alguém solicitou a recuperação da conta",
+  "recoveryAlertRequestedBody": "O dispositivo \"{deviceName}\" solicitou a recuperação da conta. Se não foi você, cancele agora. Caso contrário, terá efeito {when}.",
+  "@recoveryAlertRequestedBody": {
+    "placeholders": {
+      "deviceName": {
+        "type": "String"
+      },
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "recoveryAlertCancelButton": "Cancelar",
+  "recoveryAlertIgnoreButton": "Sou eu, ignorar",
+  "recoveryAlertFailedTitle": "Tentativa de recuperação falhou",
+  "recoveryAlertFailedBody": "Alguém tentou recuperar o acesso à sua conta, mas digitou a senha ou a frase de recuperação erradas.",
+  "recoveryAlertExecutedTitle": "Recuperação concluída",
+  "recoveryAlertExecutedBody": "A solicitação de recuperação teve efeito — a conta tem um novo dispositivo principal. Se não foi você, revogue a sessão desconhecida em Dispositivos Ativos imediatamente.",
+  "wardLinkSyncSettingsTitle": "Configurações de Sincronização",
+  "wardLinkSyncSettingsSubtitle": "Limite de tamanho de arquivo e notificações da bolha",
+  "wardLinkPairedDevicesSubtitle": "Adicionar e gerenciar dispositivos pareados",
+  "notifGeneralTitle": "Geral",
+  "notifGeneralSubtitle": "Ativar notificações e visibilidade do conteúdo",
+  "notifSoundSubtitle": "Som de notificação e arquivo de áudio",
+  "notifAdvancedTitle": "Avançado",
+  "notifAdvancedSubtitle": "Comportamento de início e posição do pop-up",
+  "securityPrivacyTitle": "Privacidade",
+  "securityPrivacySubtitle": "Configurações de visibilidade e busca",
+  "cacheStorageTitle": "Armazenamento",
+  "cacheStorageSubtitle": "Cache de mídia e limpeza de arquivos não usados",
+  "connectionServerTitle": "Conexão com o Servidor",
+  "connectionServerSubtitle": "Conectar ou desconectar do servidor WebSocket",
+  "interactPerformanceTitle": "Desempenho",
+  "interactPerformanceSubtitle": "Buffer de rolagem e janela de pré-carregamento de imagens",
+  "interactFilesTitle": "Arquivos e Armazenamento",
+  "interactFilesSubtitle": "Pasta de downloads e gerenciamento de dados do app",
+  "appearanceChatDisplayTitle": "Exibição da Conversa",
+  "appearanceChatDisplaySubtitle": "Alinhamento, avatares e animações",
+  "appearanceLayoutTitle": "Layout",
+  "appearanceLayoutSubtitle": "Navegação, gráfico e deslize entre abas",
+  "appearanceLiquidGlassTitle": "Efeitos Liquid Glass",
+  "trashChatsTitle": "Conversas Excluídas",
+  "trashChatsSubtitle": "Restaurar ou excluir permanentemente conversas",
+  "trashMessagesTitle": "Mensagens Excluídas",
+  "trashMessagesSubtitle": "Restaurar ou excluir permanentemente mensagens",
+  "download": "Baixar",
+  "retry": "Tentar novamente",
+  "refresh": "Atualizar",
+  "revoke": "Revogar",
+  "setup": "Configurar",
+  "current": "Atual",
+  "select": "Selecionar",
+  "token": "Token",
+  "always": "Sempre",
+  "favRemoveFromFolderNamed": "Remover de \"{folderName}\"",
+  "@favRemoveFromFolderNamed": {
+    "placeholders": {
+      "folderName": {
+        "type": "String"
+      }
+    }
+  },
+  "favMoveToFolder": "Mover para pasta",
+  "favRemoveFromFolder": "Remover da pasta",
+  "favUnlock": "Desbloquear",
+  "favLock": "Bloquear",
+  "favUnlockFolder": "Desbloquear pasta",
+  "favLockFolder": "Bloquear pasta",
+  "favChatsCount": "{n} conversas",
+  "@favChatsCount": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "favNewFolder": "Nova pasta",
+  "favChatsMovedToTopLevel": "As conversas serão movidas para o nível superior",
+  "favDeleteChatQuestion": "Excluir conversa?",
+  "favRemoveAvatarQuestion": "Remover avatar?",
+  "favSelectedRemovedFromFavorites": "As mensagens selecionadas serão removidas dos favoritos.",
+  "favDeleteMessageQuestion": "Excluir mensagem?",
+  "favMessageRemovedFromFavorites": "Esta mensagem será removida dos favoritos.",
+  "favDeleteAvatarQuestion": "Excluir avatar?",
+  "favRemoveAvatarConfirm": "Isso removerá este avatar favorito.",
+  "sendAlbum": "Enviar Álbum",
+  "sendAlbums": "Enviar Álbuns",
+  "sendAllMedia": "Enviar Tudo",
+  "setAsWallpaper": "Definir como papel de parede",
+  "sendVoice": "Enviar Voz",
+  "cropAndUpload": "Recortar e Enviar",
+  "deleteMessagesQuestion": "Excluir mensagens?",
+  "connectionDiagnostics": "Diagnóstico de Conexão",
+  "voiceChannels": "Canais de voz",
+  "forwardMessage": "Encaminhar mensagem",
+  "noChats": "Nenhuma conversa",
+  "noGroups": "Nenhum grupo",
+  "noFavorites": "Nenhum favorito",
+  "wifiOnlyOption": "Somente Wi-Fi",
+  "emptyTrash": "Esvaziar Lixeira",
+  "performanceReport": "Relatório de Desempenho",
+  "revokeSessionQuestion": "Revogar sessão?",
+  "revokeSessionConfirm": "Este dispositivo será desconectado imediatamente.",
+  "failedToRevokeSession": "Falha ao revogar a sessão",
+  "failedToApproveDevice": "Falha ao aprovar o dispositivo",
+  "noActiveSessionsFound": "Nenhuma sessão ativa encontrada",
+  "quotaExceeded": "Cota excedida",
+  "openSettingsAction": "Abrir Configurações",
+  "trashIsEmpty": "A lixeira está vazia",
+
+  "languageEnglish": "English",
+  "languageRussian": "Русский",
+  "deviceAuthTabQr": "QR",
+  "meshTitle": "Mesh",
+  "meshMenuModeWifi": "Wi-Fi",
+  "meshMenuModeBluetooth": "Bluetooth",
+
+  "mediaCachesCleared": "{n, plural, one{ Cache de mídia limpo ({n})} other{ {n} caches de mídia limpos}}",
+  "@mediaCachesCleared": {"placeholders": {"n": {"type": "int"}}},
+
+  "leaveGroupTitle": "Sair {isChannel, select, true{do canal} other{do grupo}}?",
+  "@leaveGroupTitle": {"placeholders": {"isChannel": {"type": "String"}}},
+
+  "cacheFilesDeleted": "{n, plural, one{{n} arquivo excluído} other{{n} arquivos excluídos}}",
+  "@cacheFilesDeleted": {"placeholders": {"n": {"type": "int"}}},
+
+  "orphanedCleanupDeleted": "{files, plural, one{{files} arquivo não usado excluído} other{{files} arquivos não usados excluídos}} ({freedMb} MB liberados)",
+  "@orphanedCleanupDeleted": {"placeholders": {"files": {"type": "int"}, "freedMb": {"type": "String"}}},
+
+  "deletedLogsCount": "{n, plural, one{{n} arquivo de log excluído.} other{{n} arquivos de log excluídos.}}",
+  "@deletedLogsCount": {"placeholders": {"n": {"type": "int"}}},
+
+  "notifEnabledSubtitle": "{enabled, select, true{Você será avisado sobre novas mensagens} other{Todas as notificações estão silenciadas}}",
+  "@notifEnabledSubtitle": {"placeholders": {"enabled": {"type": "String"}}},
+
+  "notifHideContentSubtitle": "{hidden, select, true{Notificações sem o texto da mensagem} other{Mostrar o texto da mensagem nas notificações}}",
+  "@notifHideContentSubtitle": {"placeholders": {"hidden": {"type": "String"}}},
+
+  "notifSoundEnabledSubtitle": "{enabled, select, true{Som ativado} other{Som desativado}}",
+  "@notifSoundEnabledSubtitle": {"placeholders": {"enabled": {"type": "String"}}},
+
+  "sessionExpiresInDays": "{n, plural, one{A sessão expira em {n} dia} other{A sessão expira em {n} dias}}",
+  "@sessionExpiresInDays": {"placeholders": {"n": {"type": "int"}}},
+
+  "sessionExpiresInHours": "{n, plural, one{A sessão expira em {n} hora} other{A sessão expira em {n} horas}}",
+  "@sessionExpiresInHours": {"placeholders": {"n": {"type": "int"}}},
+
+  "sessionActiveForDays": "{n, plural, one{A sessão é válida por mais {n} dia} other{A sessão é válida por mais {n} dias}}",
+  "@sessionActiveForDays": {"placeholders": {"n": {"type": "int"}}},
+
+  "meshRadarFound": "{n, plural, one{{n} dispositivo ao alcance} other{{n} dispositivos ao alcance}}",
+  "@meshRadarFound": {"placeholders": {"n": {"type": "int"}}},
+
+  "trashSummary": "{chats, plural, one{{chats} conversa} other{{chats} conversas}}, {messages, plural, one{{messages} mensagem} other{{messages} mensagens}}",
+  "@trashSummary": {"placeholders": {"chats": {"type": "int"}, "messages": {"type": "int"}}}
+}

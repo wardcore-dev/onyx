@@ -216,6 +216,20 @@ Win32Window::MessageHandler(HWND hwnd,
     case WM_DWMCOLORIZATIONCOLORCHANGED:
       UpdateTheme(hwnd);
       return 0;
+
+    case WM_NCHITTEST: {
+      // The custom title bar hides the native caption but this window still
+      // carries WS_SYSMENU/WS_MAXIMIZEBOX, so Windows keeps treating the
+      // top-right corner as the native min/max/close buttons at the OS level
+      // (e.g. triggering the Windows 11 Snap Layout hover flyout) even though
+      // Flutter draws its own buttons there. Reroute those hit-test results to
+      // HTCLIENT so the OS leaves that area to the Flutter UI entirely.
+      LRESULT hit = DefWindowProc(hwnd, message, wparam, lparam);
+      if (hit == HTCLOSE || hit == HTMAXBUTTON || hit == HTMINBUTTON) {
+        return HTCLIENT;
+      }
+      return hit;
+    }
   }
 
   return DefWindowProc(window_handle_, message, wparam, lparam);

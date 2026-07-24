@@ -160,7 +160,7 @@ class AuthDialogState extends State<AuthDialog> {
                     colorScheme.surfaceContainerHighest,
                     brightness,
                   );
-                  final l = AppLocalizations(SettingsManager.appLocale.value);
+                  final l = lookupAppLocalizations(SettingsManager.appLocale.value);
                   return Material(
                     color: Colors.transparent,
                     borderRadius: BorderRadius.circular(28),
@@ -478,7 +478,7 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
     final colorScheme = Theme.of(context).colorScheme;
     final words = widget.passphrase.split(' ');
 
-    final l = AppLocalizations(SettingsManager.appLocale.value);
+    final l = lookupAppLocalizations(SettingsManager.appLocale.value);
     return PopScope(
       canPop: false,
       child: Dialog(

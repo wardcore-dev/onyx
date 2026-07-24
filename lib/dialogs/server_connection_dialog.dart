@@ -68,7 +68,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
   Future<void> _fetchInfo() async {
     _parseHostPort();
     if (_parsedHost.isEmpty) {
-      setState(() => _error = AppLocalizations(SettingsManager.appLocale.value).enterValidIp);
+      setState(() => _error = lookupAppLocalizations(SettingsManager.appLocale.value).enterValidIp);
       return;
     }
 
@@ -86,7 +86,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = '${AppLocalizations(SettingsManager.appLocale.value).couldNotConnect('$_parsedHost:$_parsedPort')}\n${e.toString()}';
+          _error = '${lookupAppLocalizations(SettingsManager.appLocale.value).couldNotConnect('$_parsedHost:$_parsedPort')}\n${e.toString()}';
           _loading = false;
         });
       }
@@ -101,7 +101,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
       await _loadDefaultUsername();
       username = _usernameController.text.trim();
       if (username.isEmpty) {
-        setState(() => _error = AppLocalizations(SettingsManager.appLocale.value).usernameRequiredMsg);
+        setState(() => _error = lookupAppLocalizations(SettingsManager.appLocale.value).usernameRequiredMsg);
         return;
       }
     }
@@ -111,7 +111,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
 
     final password = _passwordController.text;
     if (!isChannel && password.isEmpty) {
-      setState(() => _error = AppLocalizations(SettingsManager.appLocale.value).passwordRequiredForGroups);
+      setState(() => _error = lookupAppLocalizations(SettingsManager.appLocale.value).passwordRequiredForGroups);
       return;
     }
 
@@ -135,7 +135,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
         Navigator.of(context).pop(true);
         final colorScheme = Theme.of(context).colorScheme;
         final isChannel = _serverInfo?['is_channel'] == true;
-        final l = AppLocalizations(SettingsManager.appLocale.value);
+        final l = lookupAppLocalizations(SettingsManager.appLocale.value);
         final connectionType = isChannel ? l.externalChannelType : l.externalGroupType;
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
@@ -160,7 +160,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = AppLocalizations(SettingsManager.appLocale.value).connectionFailed(e.toString());
+          _error = lookupAppLocalizations(SettingsManager.appLocale.value).connectionFailed(e.toString());
           _loading = false;
         });
       }

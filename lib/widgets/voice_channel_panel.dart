@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import '../voice/voice_channel_manager.dart';
 import '../managers/external_server_manager.dart';
+import '../managers/settings_manager.dart';
 
 class VoiceChannelPanel extends StatefulWidget {
   const VoiceChannelPanel({super.key, required this.serverId});
@@ -76,200 +77,233 @@ class _VoiceChannelPanelState extends State<VoiceChannelPanel> {
     return AnimatedSize(
       duration: const Duration(milliseconds: 200),
       curve: Curves.easeInOut,
-      child: Container(
-        color: scheme.surfaceContainerLow,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // ── Header ───────────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              child: Row(
-                children: [
-                  InkWell(
-                    onTap: () => setState(() => _expanded = !_expanded),
-                    borderRadius: BorderRadius.circular(6),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 2),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _expanded
-                                ? Icons.keyboard_arrow_down_rounded
-                                : Icons.keyboard_arrow_right_rounded,
-                            size: 16,
-                            color: scheme.onSurface.withValues(alpha: 0.5),
-                          ),
-                          const SizedBox(width: 4),
-                          const Icon(Icons.volume_up_rounded, size: 14),
-                          const SizedBox(width: 5),
-                          Text(
-                            'VOICE CHANNELS',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.6,
-                              color: scheme.onSurface.withValues(alpha: 0.6),
-                            ),
-                          ),
-                          if (_loading) ...[
-                            const SizedBox(width: 6),
-                            SizedBox(
-                              width: 10,
-                              height: 10,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 1.5,
-                                color:
-                                    scheme.onSurface.withValues(alpha: 0.35),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                  const Spacer(),
-                  // "+" button — add/create channel
-                  Tooltip(
-                    message: 'Create voice channel',
-                    child: InkWell(
-                      onTap: () {
-                        setState(() {
-                          _showCreate = !_showCreate;
-                          _expanded = true;
-                        });
-                        if (_showCreate) {
-                          Future.delayed(const Duration(milliseconds: 50),
-                              () => _createFocus.requestFocus());
-                        }
-                      },
-                      borderRadius: BorderRadius.circular(6),
-                      child: Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: Icon(
-                          _showCreate ? Icons.close_rounded : Icons.add_rounded,
-                          size: 18,
-                          color: scheme.onSurface.withValues(alpha: 0.55),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+      child: AnimatedBuilder(
+        animation: Listenable.merge([
+          SettingsManager.elementBrightness,
+          SettingsManager.elementOpacity,
+        ]),
+        builder: (_, __) => Container(
+          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color:
+                SettingsManager.glassSurfaceColor(scheme.surfaceContainerLow),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: scheme.outlineVariant.withValues(alpha: 0.3),
+              width: 1,
             ),
-
-            // ── Create channel input ──────────────────────────────────────
-            if (_showCreate && _expanded)
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ── Header ───────────────────────────────────────────────────
               Padding(
                 padding:
-                    const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 child: Row(
                   children: [
-                    const Icon(Icons.volume_up_rounded,
-                        size: 14, color: Colors.grey),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextField(
-                        controller: _createCtrl,
-                        focusNode: _createFocus,
-                        style: const TextStyle(fontSize: 13),
-                        decoration: InputDecoration(
-                          hintText: 'Channel name',
-                          hintStyle: TextStyle(
-                              fontSize: 13,
-                              color:
-                                  scheme.onSurface.withValues(alpha: 0.4)),
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 8),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide.none,
-                          ),
-                          filled: true,
-                          fillColor:
-                              scheme.surfaceContainerHighest,
+                    InkWell(
+                      onTap: () => setState(() => _expanded = !_expanded),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 2),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _expanded
+                                  ? Icons.keyboard_arrow_down_rounded
+                                  : Icons.keyboard_arrow_right_rounded,
+                              size: 16,
+                              color: scheme.onSurface.withValues(alpha: 0.5),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.volume_up_rounded, size: 14),
+                            const SizedBox(width: 5),
+                            Text(
+                              'VOICE CHANNELS',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.6,
+                                color: scheme.onSurface.withValues(alpha: 0.6),
+                              ),
+                            ),
+                            if (_loading) ...[
+                              const SizedBox(width: 6),
+                              SizedBox(
+                                width: 10,
+                                height: 10,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 1.5,
+                                  color:
+                                      scheme.onSurface.withValues(alpha: 0.35),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
-                        onSubmitted: _joinOrCreate,
-                        textInputAction: TextInputAction.go,
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    InkWell(
-                      onTap: () => _joinOrCreate(_createCtrl.text),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: scheme.primary.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(8),
+                    const Spacer(),
+                    // "+" button — add/create channel
+                    Tooltip(
+                      message: 'Create voice channel',
+                      child: InkWell(
+                        onTap: () {
+                          setState(() {
+                            _showCreate = !_showCreate;
+                            _expanded = true;
+                          });
+                          if (_showCreate) {
+                            Future.delayed(const Duration(milliseconds: 50),
+                                () => _createFocus.requestFocus());
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(6),
+                        child: Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Icon(
+                            _showCreate
+                                ? Icons.close_rounded
+                                : Icons.add_rounded,
+                            size: 18,
+                            color: scheme.onSurface.withValues(alpha: 0.55),
+                          ),
                         ),
-                        child: Icon(Icons.call_rounded,
-                            size: 16, color: scheme.primary),
                       ),
                     ),
                   ],
                 ),
               ),
 
-            // ── Channel list ─────────────────────────────────────────────
-            if (_expanded)
-              ValueListenableBuilder<bool>(
-                valueListenable: VoiceChannelManager.instance.isInChannel,
-                builder: (_, inChannel, __) =>
-                    ValueListenableBuilder<String?>(
-                  valueListenable:
-                      VoiceChannelManager.instance.currentChannelId,
-                  builder: (_, myChannelId, __) {
-                    final entries = _channels.entries.toList();
-
-                    if (entries.isEmpty && !_loading) {
-                      return Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                        child: Row(
-                          children: [
-                            Icon(Icons.volume_off_rounded,
-                                size: 13,
-                                color: scheme.onSurface
-                                    .withValues(alpha: 0.3)),
-                            const SizedBox(width: 6),
-                            Text(
-                              'No active channels — press + to create one',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: scheme.onSurface
-                                      .withValues(alpha: 0.4)),
+              // ── Create channel input ──────────────────────────────────────
+              if (_showCreate && _expanded)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.volume_up_rounded,
+                          size: 14, color: Colors.grey),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: _createCtrl,
+                          focusNode: _createFocus,
+                          style: const TextStyle(fontSize: 13),
+                          decoration: InputDecoration(
+                            hintText: 'Channel name',
+                            hintStyle: TextStyle(
+                                fontSize: 13,
+                                color: scheme.onSurface.withValues(alpha: 0.4)),
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 8),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(999),
+                              borderSide: BorderSide(
+                                color: scheme.outlineVariant
+                                    .withValues(alpha: 0.3),
+                                width: 1,
+                              ),
                             ),
-                          ],
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(999),
+                              borderSide: BorderSide(
+                                color: scheme.outlineVariant
+                                    .withValues(alpha: 0.3),
+                                width: 1,
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(999),
+                              borderSide: BorderSide(
+                                color: scheme.primary.withValues(alpha: 0.5),
+                                width: 1,
+                              ),
+                            ),
+                            filled: true,
+                            fillColor: SettingsManager.glassSurfaceColor(
+                                scheme.surfaceContainerHighest),
+                          ),
+                          onSubmitted: _joinOrCreate,
+                          textInputAction: TextInputAction.go,
                         ),
-                      );
-                    }
-
-                    return Column(
-                      children: entries.map((e) {
-                        final isMe =
-                            inChannel && myChannelId == e.key;
-                        return _ChannelRow(
-                          channelId: e.key,
-                          users: e.value,
-                          isMyChannel: isMe,
-                          myServerId: widget.serverId,
-                        );
-                      }).toList(),
-                    );
-                  },
+                      ),
+                      const SizedBox(width: 6),
+                      InkWell(
+                        onTap: () => _joinOrCreate(_createCtrl.text),
+                        borderRadius: BorderRadius.circular(999),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: scheme.primary.withValues(alpha: 0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: Icon(Icons.call_rounded,
+                              size: 16, color: scheme.primary),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
 
-            Divider(
-              height: 1,
-              thickness: 1,
-              color: scheme.outlineVariant.withValues(alpha: 0.35),
-            ),
-          ],
+              // ── Channel list ─────────────────────────────────────────────
+              if (_expanded)
+                ValueListenableBuilder<bool>(
+                  valueListenable: VoiceChannelManager.instance.isInChannel,
+                  builder: (_, inChannel, __) =>
+                      ValueListenableBuilder<String?>(
+                    valueListenable:
+                        VoiceChannelManager.instance.currentChannelId,
+                    builder: (_, myChannelId, __) {
+                      final entries = _channels.entries.toList();
+
+                      if (entries.isEmpty && !_loading) {
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                          child: Row(
+                            children: [
+                              Icon(Icons.volume_off_rounded,
+                                  size: 13,
+                                  color:
+                                      scheme.onSurface.withValues(alpha: 0.3)),
+                              const SizedBox(width: 6),
+                              Text(
+                                'No active channels — press + to create one',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: scheme.onSurface
+                                        .withValues(alpha: 0.4)),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return Column(
+                        children: entries.map((e) {
+                          final isMe = inChannel && myChannelId == e.key;
+                          return _ChannelRow(
+                            channelId: e.key,
+                            users: e.value,
+                            isMyChannel: isMe,
+                            myServerId: widget.serverId,
+                          );
+                        }).toList(),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -295,74 +329,94 @@ class _ChannelRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    return Material(
-      color: isMyChannel
-          ? scheme.primaryContainer.withValues(alpha: 0.22)
-          : Colors.transparent,
-      child: InkWell(
-        onTap: isMyChannel
-            ? null
-            : () =>
-                VoiceChannelManager.instance.joinChannel(myServerId, channelId),
-        child: Padding(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        SettingsManager.elementBrightness,
+        SettingsManager.elementOpacity,
+      ]),
+      builder: (_, __) => Container(
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+        decoration: BoxDecoration(
+          color: isMyChannel
+              ? SettingsManager.glassSurfaceColor(scheme.primaryContainer,
+                  alphaOverride: 0.3)
+              : SettingsManager.glassSurfaceColor(
+                  scheme.surfaceContainerHighest),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: isMyChannel
+                ? scheme.primary.withValues(alpha: 0.4)
+                : scheme.outlineVariant.withValues(alpha: 0.3),
+            width: 1,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: isMyChannel
+                ? null
+                : () => VoiceChannelManager.instance
+                    .joinChannel(myServerId, channelId),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(
-                    Icons.volume_up_rounded,
-                    size: 14,
-                    color: isMyChannel
-                        ? scheme.primary
-                        : scheme.onSurface.withValues(alpha: 0.5),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      channelId,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: isMyChannel
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                        color:
-                            isMyChannel ? scheme.primary : scheme.onSurface,
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.volume_up_rounded,
+                        size: 14,
+                        color: isMyChannel
+                            ? scheme.primary
+                            : scheme.onSurface.withValues(alpha: 0.5),
                       ),
-                    ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          channelId,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: isMyChannel
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                            color:
+                                isMyChannel ? scheme.primary : scheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      if (isMyChannel)
+                        _Chip(
+                          label: 'Leave',
+                          icon: Icons.call_end_rounded,
+                          color: scheme.error,
+                          onTap: () =>
+                              VoiceChannelManager.instance.leaveChannel(),
+                        )
+                      else
+                        _Chip(
+                          label: 'Join',
+                          icon: Icons.call_rounded,
+                          color: scheme.primary,
+                          onTap: () => VoiceChannelManager.instance
+                              .joinChannel(myServerId, channelId),
+                        ),
+                    ],
                   ),
-                  if (isMyChannel)
-                    _Chip(
-                      label: 'Leave',
-                      icon: Icons.call_end_rounded,
-                      color: scheme.error,
-                      onTap: () =>
-                          VoiceChannelManager.instance.leaveChannel(),
-                    )
-                  else
-                    _Chip(
-                      label: 'Join',
-                      icon: Icons.call_rounded,
-                      color: scheme.primary,
-                      onTap: () => VoiceChannelManager.instance
-                          .joinChannel(myServerId, channelId),
+                  if (users.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 20, top: 3),
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 2,
+                        children:
+                            users.map((u) => _UserPill(username: u)).toList(),
+                      ),
                     ),
                 ],
               ),
-              if (users.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(left: 20, top: 3),
-                  child: Wrap(
-                    spacing: 10,
-                    runSpacing: 2,
-                    children: users
-                        .map((u) => _UserPill(username: u))
-                        .toList(),
-                  ),
-                ),
-            ],
+            ),
           ),
         ),
       ),
@@ -389,12 +443,13 @@ class _Chip extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(999),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.13),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: color.withValues(alpha: 0.3), width: 1),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -403,9 +458,7 @@ class _Chip extends StatelessWidget {
             const SizedBox(width: 4),
             Text(label,
                 style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: color)),
+                    fontSize: 12, fontWeight: FontWeight.w600, color: color)),
           ],
         ),
       ),
@@ -437,8 +490,7 @@ class _UserPill extends StatelessWidget {
         Text(
           username,
           style: TextStyle(
-              fontSize: 11,
-              color: scheme.onSurface.withValues(alpha: 0.7)),
+              fontSize: 11, color: scheme.onSurface.withValues(alpha: 0.7)),
         ),
       ],
     );

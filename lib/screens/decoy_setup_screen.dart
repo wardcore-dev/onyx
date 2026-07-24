@@ -10,6 +10,7 @@ import '../managers/settings_manager.dart';
 import '../models/group.dart';
 import '../models/favorite_chat.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/onyx_dialog.dart';
 import 'pin_code_screen.dart';
 
 Future<void> showDecoySetupSheet(BuildContext context) {
@@ -224,16 +225,12 @@ class _DecoySetupSheetState extends State<_DecoySetupSheet> {
   // ── Generate all ───────────────────────────────────────────────────────────
   Future<void> _generateAll() async {
     final l = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.generateAll),
-        content: Text(l.generateAllConfirm),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l.cancel)),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(l.generateAll)),
-        ],
-      ),
+      title: l.generateAll,
+      message: l.generateAllConfirm,
+      confirmLabel: l.generateAll,
+      icon: Icons.auto_awesome,
     );
     if (confirmed != true) return;
 
@@ -305,16 +302,13 @@ class _DecoySetupSheetState extends State<_DecoySetupSheet> {
 
   Future<void> _disableFakePin() async {
     final l = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.disableFakePinTitle),
-        content: Text(l.disableFakePinContent),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l.cancel)),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(l.disableFakePin)),
-        ],
-      ),
+      title: l.disableFakePinTitle,
+      message: l.disableFakePinContent,
+      confirmLabel: l.disableFakePin,
+      isDestructive: true,
+      icon: Icons.lock_open_rounded,
     );
     if (confirmed != true) return;
     await DecoyManager.disable();

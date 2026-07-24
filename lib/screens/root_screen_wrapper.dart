@@ -216,7 +216,7 @@ class _WelcomeOverlayState extends State<_WelcomeOverlay>
     return ValueListenableBuilder<Locale>(
       valueListenable: SettingsManager.appLocale,
       builder: (context, locale, _) {
-        final l = AppLocalizations(locale);
+        final l = lookupAppLocalizations(locale);
         return Scaffold(
           backgroundColor: colorScheme.surface,
           body: Center(

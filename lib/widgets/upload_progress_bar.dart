@@ -95,7 +95,7 @@ class UploadProgressBar extends StatelessWidget {
           brightness,
         );
 
-        final loc = AppLocalizations(SettingsManager.appLocale.value);
+        final loc = lookupAppLocalizations(SettingsManager.appLocale.value);
         final count = tasks.length;
         final primary = tasks.first;
         final anyFailed = tasks.any((t) => t.status == UploadStatus.failed);

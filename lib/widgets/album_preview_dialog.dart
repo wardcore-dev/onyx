@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../managers/settings_manager.dart';
+import '../l10n/app_localizations.dart';
+import 'onyx_dialog.dart';
 
 class AlbumPreviewDialog extends StatefulWidget {
   
@@ -56,6 +58,7 @@ class _AlbumPreviewDialogState extends State<AlbumPreviewDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final l = AppLocalizations.of(context);
     final count = widget.filePaths.length;
     final thumbPaths = widget.filePaths.take(_maxThumb).toList();
     final extra = count - _maxThumb;
@@ -94,7 +97,7 @@ class _AlbumPreviewDialogState extends State<AlbumPreviewDialog> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              'Send Album',
+                              l.sendAlbum,
                               style: theme.textTheme.headlineSmall?.copyWith(
                                 fontWeight: FontWeight.bold,
                               ),
@@ -188,12 +191,12 @@ class _AlbumPreviewDialogState extends State<AlbumPreviewDialog> {
                               Navigator.pop(context);
                               widget.onCancel();
                             },
-                            child: const Text('Cancel'),
+                            child: Text(l.cancel),
                           ),
                           const SizedBox(width: 12),
                           FilledButton.tonal(
                             onPressed: _confirmSend,
-                            child: const Text('Send Album'),
+                            child: Text(l.sendAlbum),
                           ),
                         ],
                       ),
@@ -347,25 +350,77 @@ class _BulkAlbumConfirmDialogState extends State<BulkAlbumConfirmDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return AlertDialog(
-      icon: Icon(Icons.photo_library_outlined, color: cs.primary),
-      title: const Text('Send Albums'),
-      content: Text(
-        'Send ${widget.imageCount} images as ${widget.albumCount} albums?',
+    final l = AppLocalizations.of(context);
+    return OnyxDialogShell(
+      maxWidth: 380,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OnyxDialogHeader(
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.photo_library_outlined, size: 20, color: cs.primary),
+            ),
+            title: Text(
+              l.sendAlbums,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: cs.onSurface,
+              ),
+            ),
+            onClose: () {
+              Navigator.pop(context);
+              widget.onCancel();
+            },
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+            child: Text(
+              'Send ${widget.imageCount} images as ${widget.albumCount} albums?',
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.4,
+                color: cs.onSurface.withValues(alpha: 0.65),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                FilledButton(
+                  onPressed: _confirmSend,
+                  style: FilledButton.styleFrom(
+                    padding: kOnyxDialogButtonPadding,
+                    shape: kOnyxDialogButtonShape,
+                  ),
+                  child: Text(l.sendAllMedia),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    widget.onCancel();
+                  },
+                  style: OutlinedButton.styleFrom(
+                    padding: kOnyxDialogButtonPadding,
+                    shape: kOnyxDialogButtonShape,
+                  ),
+                  child: Text(l.cancel),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () {
-            Navigator.pop(context);
-            widget.onCancel();
-          },
-          child: const Text('Cancel'),
-        ),
-        FilledButton.tonal(
-          onPressed: _confirmSend,
-          child: const Text('Send All'),
-        ),
-      ],
     );
   }
 }

@@ -5,8 +5,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:ui';
 import 'package:ONYX/background/background_worker.dart';
 import 'package:ONYX/background/notification_service.dart';
+import '../services/reminder_service.dart';
 import 'package:ONYX/background/register_sync.dart';
 import 'package:ONYX/models/favorite_chat.dart';
 import 'package:ONYX/models/fav_folder.dart';
@@ -50,7 +52,6 @@ import '../utils/settings_backup.dart';
 import '../managers/unread_manager.dart';
 import '../models/group.dart';
 import '../models/app_themes.dart';
-import '../widgets/custom_title_bar.dart';
 import '../widgets/voice_confirm_dialog.dart';
 import '../widgets/search_dialog_content.dart';
 import '../screens/chats_tab.dart';
@@ -88,11 +89,13 @@ import '../utils/image_file_cache.dart';
 import '../utils/image_loader.dart';
 import '../managers/windows_notification_popup.dart';
 import '../l10n/app_localizations.dart';
+import '../l10n/app_localizations_extra.dart';
 import '../services/pending_device_approvals.dart';
 import '../widgets/pending_device_dialog.dart';
 import '../utils/update_checker.dart';
 import '../widgets/update_banner.dart';
 import '../widgets/about_onyx_dialog.dart';
+import '../widgets/onyx_dialog.dart';
 import '../widgets/account_graph_view.dart';
 import '../screens/pin_code_screen.dart';
 import '../managers/decoy_manager.dart';
@@ -148,7 +151,10 @@ class RootScreen extends StatefulWidget {
 }
 
 class RootScreenState extends State<RootScreen>
-    with SingleTickerProviderStateMixin, OptimizedStateMixin<RootScreen> {
+    with
+        SingleTickerProviderStateMixin,
+        OptimizedStateMixin<RootScreen>,
+        WidgetsBindingObserver {
   Map<String, List<ChatMessage>> chats = {};
 
   final Map<String, ValueNotifier<int>> _bleUnreadNotifiers = {};
@@ -302,6 +308,7 @@ class RootScreenState extends State<RootScreen>
   // correct order locally.
   final Map<String, Future<void>> _chatSendChains = {};
   StreamSubscription<String>? _notificationSubscription;
+  StreamSubscription<Map<String, dynamic>>? _reminderTapSubscription;
 
   final Set<int> _activeGroupChatIds = {};
   final Map<int, void Function(Map<String, dynamic>)> _groupMessageListeners =
@@ -316,6 +323,10 @@ class RootScreenState extends State<RootScreen>
   final List<String> _log = [];
   Timer? _wsHeartbeat;
   final Duration _heartbeatInterval = const Duration(seconds: 20);
+  // Tracks the last time we saw a `pong` (or connected) so a TCP session
+  // that dies silently while idle (e.g. hours in the system tray) can be
+  // detected and torn down instead of sitting as a zombie `_ws` forever.
+  DateTime? _lastPongAt;
 
   bool _pendingUiFlush = false;
   Timer? _uiFlushTimer;
@@ -1277,26 +1288,13 @@ class RootScreenState extends State<RootScreen>
 
       if (usedMb >= limitMb) {
         if (!mounted) return false;
-        final opened = await showDialog<bool>(
+        final opened = await showOnyxConfirmDialog(
           context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Quota exceeded'),
-            content: Text(
+          title: AppLocalizations.of(context).quotaExceeded,
+          message:
               'Quota limit is full. Free up space in settings (Settings → Cache).',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  Navigator.of(ctx).pop(true);
-                },
-                child: const Text('Open Settings'),
-              ),
-            ],
-          ),
+          confirmLabel: AppLocalizations.of(context).openSettingsAction,
+          icon: Icons.storage_rounded,
         );
 
         if (opened == true) {
@@ -3130,6 +3128,12 @@ class RootScreenState extends State<RootScreen>
   @override
   void initState() {
     super.initState();
+    // Required for didChangeAppLifecycleState to fire at all — without
+    // this, the background keep-alive foreground service (below) never
+    // starts when the app is minimized, and Android eventually freezes
+    // background execution (timers, the WebSocket) as it normally would
+    // for any app it isn't explicitly told to keep alive.
+    WidgetsBinding.instance.addObserver(this);
     HardwareKeyboard.instance.addHandler(_onGlobalKeyEvent);
     _motivationalHintIndex = Random().nextInt(_motivationalHints.length);
 
@@ -3182,6 +3186,27 @@ class RootScreenState extends State<RootScreen>
             .addPostFrameCallback((_) => completer.complete());
         await completer.future;
         if (!mounted) return;
+
+        // Reminder popups round-trip through this same
+        // onNotificationTapped(username) callback (Windows has no separate
+        // payload channel like flutter_local_notifications' payload string)
+        // — a reminder tap's "username" is actually an encoded routing
+        // string, see ReminderService.encodeWindowsReminderTap.
+        if (username.startsWith(ReminderService.reminderTapPrefix)) {
+          final parts =
+              username.substring(ReminderService.reminderTapPrefix.length)
+                  .split('|');
+          if (parts.length == 5) {
+            await _routeToReminder({
+              'chatType': parts[0],
+              'chatId': parts[1],
+              'messageId': parts[2],
+              'otherUsername': parts[3].isEmpty ? null : parts[3],
+              'externalServerId': parts[4].isEmpty ? null : parts[4],
+            });
+          }
+          return;
+        }
 
         final chatId = chatIdForUser(username);
         chats.putIfAbsent(chatId, () => []);
@@ -3263,51 +3288,294 @@ class RootScreenState extends State<RootScreen>
     Future.delayed(const Duration(seconds: 5), _scheduleUpdateCheck);
 
     _notificationSubscription =
-        NotificationService.openChatStream.listen((other) {
+        NotificationService.openChatStream.listen((other) async {
       if (!mounted) return;
-      NotificationService.clearMessagesForUser(other);
 
-      if (isDesktop) {
-        setState(() {
-          selectedChatOther = other;
-          selectedGroup = null;
-          selectedExternalGroup = null;
-          selectedExternalServer = null;
-          _selectedFavoriteId = null;
-        });
+      // Surface this chat in ChatsTab right away, independent of the lock
+      // race below — if the forced navigation into ChatScreen never fires
+      // (lost race with the PIN screen, or the OS never redelivers the tap
+      // at all), the user still lands somewhere useful: the chat list, with
+      // this conversation highlighted, instead of nowhere.
+      pendingHighlightChat.value = other;
+
+      Future<void> openChat() async {
+        debugPrint('[lock] openChat($other) running: mounted=$mounted '
+            'isDesktop=$isDesktop');
+        if (!mounted) return;
+        NotificationService.clearMessagesForUser(other);
+        if (pendingHighlightChat.value == other) pendingHighlightChat.value = null;
+
+        if (isDesktop) {
+          setState(() {
+            selectedChatOther = other;
+            selectedGroup = null;
+            selectedExternalGroup = null;
+            selectedExternalServer = null;
+            _selectedFavoriteId = null;
+          });
+          _checkKeyChangeOnChatOpen(other);
+
+          _markChatAsRead(other);
+          return;
+        }
+
+        // Same: no setState before push on mobile (avoids ChatsTab rebuild during animation).
+        selectedChatOther = other;
         _checkKeyChangeOnChatOpen(other);
+        Navigator.of(context)
+            .push(
+          _chatRoute((_) => ChatScreen(
+                myUsername: currentUsername ?? 'me',
+                otherUsername: other,
+                onSend: (t, replyTo) => _sendChatMessage(other, t, replyTo),
+                onTyping: () => _handleSendTyping(other),
+                onRequestResend: (id) {
+                  if (id != null) _requestResend(id);
+                },
+                onEditMessage: (id, text) => _editChatMessage(other, id, text),
+                onDeleteMessage: (id) => _deleteChatMessage(id),
+              )),
+        )
+            .then((_) {
+          if (mounted)
+            setState(() {
+              selectedChatOther = null;
+            });
+          _sendPresence('online');
 
-        _markChatAsRead(other);
-        return;
+          _markChatAsRead(other);
+        });
       }
 
-      // Same: no setState before push on mobile (avoids ChatsTab rebuild during animation).
-      selectedChatOther = other;
-      _checkKeyChangeOnChatOpen(other);
-      Navigator.of(context)
-          .push(
-        _chatRoute((_) => ChatScreen(
-              myUsername: currentUsername ?? 'me',
-              otherUsername: other,
-              onSend: (t, replyTo) => _sendChatMessage(other, t, replyTo),
-              onTyping: () => _handleSendTyping(other),
-              onRequestResend: (id) {
-                if (id != null) _requestResend(id);
-              },
-              onEditMessage: (id, text) => _editChatMessage(other, id, text),
-              onDeleteMessage: (id) => _deleteChatMessage(id),
-            )),
-      )
-          .then((_) {
-        if (mounted)
+      debugPrint('[lock] openChatStream tap for $other: '
+          'appLockActive=${appLockActive.value} mounted=$mounted');
+      if (appLockActive.value) {
+        // The resume-lock PIN screen (main.dart's _PinGateWidgetState) is up
+        // — or was just told to go up, synchronously, by the same lifecycle
+        // callback that triggered this dispatch — on this same root
+        // Navigator. There's no `await` between reading appLockActive.value
+        // here and the Navigator.push() inside openChat(), so this check
+        // can't itself race that lifecycle callback's own (also synchronous)
+        // appLockActive.value = true; the only thing that can vary is which
+        // of the two independent event-loop turns runs first. Pushing the
+        // chat while the PIN screen is already (or about to be) on top would
+        // either bury it uselessly or, worse, land on top and expose it
+        // without ever unlocking. Stash it and let it fire from
+        // runPendingUnlockNavigation (main.dart) once the PIN/biometric
+        // check actually succeeds — that path is only reachable after a
+        // real unlock, so it can never race the lock screen's own push.
+        debugPrint('[lock] stashing openChat($other) into pendingUnlockNavigation');
+        pendingUnlockNavigation = openChat;
+        return;
+      }
+      debugPrint('[lock] pushing openChat($other) immediately');
+      await openChat();
+    });
+
+    // Reminder taps can point at any chat type, not just a DM — separate
+    // from the openChatStream subscription above so the existing DM-only
+    // routing stays untouched.
+    _reminderTapSubscription =
+        NotificationService.openReminderStream.listen((payload) async {
+      if (!mounted) return;
+      await _routeToReminder(payload);
+    });
+
+    // Signals NotificationService that it's now safe to replay a
+    // cold-start notification tap (app launched fresh by tapping a
+    // notification) — both streams above are listening now.
+    NotificationService.markListenersReady();
+
+    // Recovers a tap that was handled by flutter_local_notifications'
+    // background isolate (e.g. WorkManager was the one that showed the
+    // notification, or Android routed the tap through
+    // onDidReceiveBackgroundNotificationResponse because the Activity wasn't
+    // attached) — that isolate's openChatStream/openReminderStream have no
+    // listeners, so the tap was stashed in SharedPreferences instead of
+    // being lost. See NotificationService.consumePendingTap.
+    unawaited(NotificationService.consumePendingTap());
+  }
+
+  /// Routes a tapped reminder to its chat AND, when the target screen
+  /// supports it, scrolls to and flashes the specific message — the same
+  /// mechanism a search-result tap uses (see [setPendingMessageScrollTarget]).
+  Future<void> _routeToReminder(Map<String, dynamic> payload) async {
+    // Stop the (possibly still-looping, on Windows/Linux) alarm sound the
+    // moment the user acts on the reminder — it shouldn't keep ringing
+    // once they've opened the message it was about.
+    unawaited(ReminderService.stopAlarmSound());
+    if (!mounted) return;
+    try {
+      await WindowsNotificationPopup.closeNotification();
+    } catch (_) {}
+
+    if (appLockActive.value) {
+      // Same reasoning as openChatStream's listener above: stash and let
+      // runPendingUnlockNavigation (main.dart) re-run this whole method —
+      // including this same guard — once the real unlock succeeds. Stopping
+      // the alarm/closing the notification again on that re-entry is
+      // harmless (both are already-idempotent no-ops the second time).
+      pendingUnlockNavigation = () => _routeToReminder(payload);
+      return;
+    }
+
+    final chatType = payload['chatType'] as String?;
+    final chatId = payload['chatId'] as String? ?? '';
+    final messageId = payload['messageId'] as String?;
+    switch (chatType) {
+      case 'dm':
+        final other = payload['otherUsername'] as String?;
+        if (other == null) return;
+        NotificationService.clearMessagesForUser(other);
+        // Same fallback as NotificationService.openChatStream — surfaces
+        // the chat in ChatsTab even if this navigation itself doesn't land
+        // (e.g. called from within main.dart's PIN-gate before RootScreen
+        // has finished rebuilding).
+        pendingHighlightChat.value = other;
+        // chatId is already chatIdForUser(other) — exactly the key
+        // ChatScreen's own scroll-target lookup expects.
+        if (messageId != null) {
+          setPendingMessageScrollTarget(chatId, messageId);
+        }
+        if (!mounted) return;
+        if (pendingHighlightChat.value == other) pendingHighlightChat.value = null;
+        if (isDesktop) {
+          setState(() {
+            selectedChatOther = other;
+            selectedGroup = null;
+            selectedExternalGroup = null;
+            selectedExternalServer = null;
+            _selectedFavoriteId = null;
+          });
+          _checkKeyChangeOnChatOpen(other);
+          _markChatAsRead(other);
+        } else {
+          // Mirrors NotificationService.openChatStream's mobile branch
+          // exactly — mobile has no split-view, so setting
+          // selectedChatOther alone (without a real push) wouldn't
+          // navigate anywhere the way it does on desktop.
+          selectedChatOther = other;
+          _checkKeyChangeOnChatOpen(other);
+          Navigator.of(context)
+              .push(
+            _chatRoute((_) => ChatScreen(
+                  myUsername: currentUsername ?? 'me',
+                  otherUsername: other,
+                  onSend: (t, replyTo) => _sendChatMessage(other, t, replyTo),
+                  onTyping: () => _handleSendTyping(other),
+                  onRequestResend: (id) {
+                    if (id != null) _requestResend(id);
+                  },
+                  onEditMessage: (id, text) =>
+                      _editChatMessage(other, id, text),
+                  onDeleteMessage: (id) => _deleteChatMessage(id),
+                )),
+          )
+              .then((_) {
+            if (mounted) {
+              setState(() {
+                selectedChatOther = null;
+              });
+            }
+            _sendPresence('online');
+            _markChatAsRead(other);
+          });
+        }
+        break;
+      case 'fav':
+        final favId = chatId.startsWith('fav:') ? chatId.substring(4) : chatId;
+        if (messageId != null) {
+          setPendingMessageScrollTarget(chatId, messageId);
+        }
+        if (!mounted) return;
+        if (isDesktop) {
           setState(() {
             selectedChatOther = null;
+            selectedGroup = null;
+            selectedExternalGroup = null;
+            selectedExternalServer = null;
+            _selectedFavoriteId = favId;
           });
-        _sendPresence('online');
-
-        _markChatAsRead(other);
-      });
-    });
+        } else {
+          try {
+            final fav = _favorites.firstWhere((f) => f.id == favId);
+            Navigator.of(context).push(
+              _chatRoute((_) => getFavoritesScreen(favId, fav.title)),
+            );
+          } catch (_) {}
+        }
+        break;
+      case 'group':
+        final groupId =
+            chatId.startsWith('group_') ? chatId.substring(6) : chatId;
+        final username = currentUsername;
+        if (username == null) return;
+        final groupIdInt = int.tryParse(groupId);
+        final groups = await AccountManager.loadGroupsCache(username);
+        final group = groups.where((g) => g.id == groupIdInt).firstOrNull;
+        if (group == null || !mounted) return;
+        if (messageId != null) {
+          // GroupChatScreen's own scroll-target key convention (see
+          // _consumePendingGroupScrollTarget) differs from our chatId.
+          setPendingMessageScrollTarget('native:$groupId', messageId);
+        }
+        if (isDesktop) {
+          setState(() {
+            selectedChatOther = null;
+            selectedExternalGroup = null;
+            selectedExternalServer = null;
+            _selectedFavoriteId = null;
+            selectedGroup = group;
+          });
+        } else {
+          Navigator.of(context).push(
+            _chatRoute((_) => GroupChatScreen(group: group)),
+          );
+        }
+        break;
+      case 'extgroup':
+        final serverId = payload['externalServerId'] as String?;
+        if (serverId == null) return;
+        final server = ExternalServerManager.servers.value
+            .where((s) => s.id == serverId)
+            .firstOrNull;
+        if (server == null) return;
+        final prefix = 'external_group_${serverId}_';
+        final groupId =
+            chatId.startsWith(prefix) ? chatId.substring(prefix.length) : '';
+        final groupIdInt = int.tryParse(groupId);
+        final groups = await ExternalServerManager.fetchGroups(serverId);
+        final group = groups.where((g) => g.id == groupIdInt).firstOrNull;
+        if (group == null || !mounted) return;
+        // Note: ExternalGroupChatScreen doesn't support scroll-to-message
+        // today (no consumePendingMessageScrollTarget wiring there), so this
+        // only opens the chat — a known, pre-existing gap in that screen.
+        if (isDesktop) {
+          setState(() {
+            selectedChatOther = null;
+            selectedGroup = null;
+            _selectedFavoriteId = null;
+            selectedExternalGroup = group;
+            selectedExternalServer = server;
+          });
+        } else {
+          Navigator.of(context).push(
+            _chatRoute((_) => ExternalGroupChatScreen(group: group, server: server)),
+          );
+        }
+        break;
+      case 'mesh':
+        final other = payload['otherUsername'] as String?;
+        final username = currentUsername;
+        if (other == null || username == null) return;
+        if (messageId != null) {
+          // Mesh screen's _chatId uses the same [me, other].sorted().join(':')
+          // shape as chatId already carries.
+          setPendingMessageScrollTarget(chatId, messageId);
+        }
+        openMeshChat(username, other);
+        break;
+    }
   }
 
   Future<void> _scheduleUpdateCheck() async {
@@ -3328,6 +3596,8 @@ class RootScreenState extends State<RootScreen>
     }
 
     await NotificationService.init();
+    ReminderService.currentAccountIdForReminders ??= () => currentUsername;
+    await ReminderService.init();
 
     if (await AccountManager.isLoggedIn) {
       await registerAdaptiveSync();
@@ -3409,14 +3679,26 @@ class RootScreenState extends State<RootScreen>
     // continues to receive messages and fire local notifications.
     if (!kIsWeb && !isDesktop) {
       if (state == AppLifecycleState.paused) {
-        FlutterForegroundTask.startService(
-          serviceId: 1001,
-          notificationTitle: 'Onyx',
-          notificationText: 'Connected — receiving messages',
-          callback: onyxForegroundTaskEntryPoint,
-        );
-        _appendLog(
-            '[lifecycle] Foreground service started (background keep-alive)');
+        if (SettingsManager.backgroundServiceEnabled.value) {
+          final customText =
+              SettingsManager.backgroundServiceNotificationText.value.trim();
+          FlutterForegroundTask.startService(
+            serviceId: 1001,
+            // No separate "Onyx" title line — the system already labels this
+            // notification with the app's own name/icon (see screenshot from
+            // the user's report), so repeating it here just duplicated it.
+            notificationTitle: customText.isEmpty
+                ? AppLocalizations.of(context).backgroundServiceDefaultText
+                : customText,
+            notificationText: '',
+            callback: onyxForegroundTaskEntryPoint,
+          );
+          _appendLog(
+              '[lifecycle] Foreground service started (background keep-alive)');
+        } else {
+          _appendLog(
+              '[lifecycle] Foreground service disabled in settings — not starting');
+        }
       } else if (state == AppLifecycleState.resumed) {
         FlutterForegroundTask.stopService();
         _appendLog('[lifecycle] Foreground service stopped (app foregrounded)');
@@ -3429,9 +3711,16 @@ class RootScreenState extends State<RootScreen>
       _stopReconnectLoop();
       Future.delayed(const Duration(milliseconds: 300), () {
         if (!mounted) return;
-        if (_ws == null || _ws!.closeCode != null) {
+        // A socket that died silently while backgrounded (TCP session
+        // dropped without onDone/onError ever firing) still has `_ws`
+        // non-null with closeCode == null — wsConnectedNotifier only stays
+        // true while the connection is actually confirmed alive, so check
+        // that too instead of trusting `_ws` alone.
+        if (_ws == null || _ws!.closeCode != null || !wsConnectedNotifier.value) {
           _appendLog('[lifecycle] App resumed — reconnecting immediately');
-          _connectWs();
+          _disconnectWs(manual: false, suppressPresence: true).then((_) {
+            _connectWs();
+          });
         } else {
           _sendPresence('online');
         }
@@ -3479,6 +3768,7 @@ class RootScreenState extends State<RootScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _snackDebounce?.cancel();
     callManager.isIncomingCall.removeListener(_onCallStateChanged);
     callManager.isInCall.removeListener(_onCallStateChanged);
@@ -3500,6 +3790,9 @@ class RootScreenState extends State<RootScreen>
 
     try {
       _notificationSubscription?.cancel();
+    } catch (_) {}
+    try {
+      _reminderTapSubscription?.cancel();
     } catch (_) {}
     try {
       _wsSub?.cancel();
@@ -4158,10 +4451,13 @@ class RootScreenState extends State<RootScreen>
           final isVisible = await windowManager.isVisible();
           final chatIsOpen = selectedChatOther == sender && count == 1;
           if (!chatIsOpen || isMinimized || !isVisible) {
+            final hideContent = SettingsManager.notifHideContent.value;
+            final popupTitle = hideContent ? 'ONYX' : senderDisplayName;
+            final popupBody = hideContent ? 'New message' : finalPreview;
             await WindowsNotificationPopup.showNotification(
               username: sender,
-              displayName: senderDisplayName,
-              message: finalPreview,
+              displayName: popupTitle,
+              message: popupBody,
               displayDuration: const Duration(seconds: 10),
               surfaceColor: hex(colorScheme.surface),
               onSurfaceColor: hex(colorScheme.onSurface),
@@ -4174,18 +4470,57 @@ class RootScreenState extends State<RootScreen>
                   : colorScheme.onSurfaceVariant),
               position: position,
             );
-            try {
-              final bytes = await getAvatarCachedBytes(sender);
-              if (bytes != null && bytes.isNotEmpty) {
-                await WindowsNotificationPopup.updateAvatar(bytes);
-              }
-            } catch (_) {}
+            if (!hideContent) {
+              try {
+                final bytes = await getAvatarCachedBytes(sender);
+                if (bytes != null && bytes.isNotEmpty) {
+                  await WindowsNotificationPopup.updateAvatar(bytes);
+                }
+              } catch (_) {}
+            }
           }
         }());
       }
 
       if (!kIsWeb && Platform.isAndroid) {
-        final chatIsOpen = selectedChatOther == sender && count == 1;
+        // selectedChatOther isn't cleared on backgrounding — without also
+        // checking lifecycleState, being minimized while this chat was the
+        // last one open made every incoming message from that sender look
+        // "already open" and suppressed the notification entirely, with
+        // nothing left to tap.
+        final chatIsOpen = selectedChatOther == sender &&
+            count == 1 &&
+            WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+        if (!chatIsOpen && !MuteManager.isMuted(sender)) {
+          unawaited(() async {
+            final hideContent = SettingsManager.notifHideContent.value;
+            final notifTitle = hideContent ? 'ONYX' : senderDisplayName;
+            final notifBody = hideContent ? 'New message' : finalPreview;
+            final avatarBytes =
+                hideContent ? null : await getAvatarCachedBytes(sender);
+            await NotificationService.showMessageNotification(
+              title: notifTitle,
+              body: notifBody,
+              username: sender,
+              avatarBytes: avatarBytes,
+              accentColor: colorScheme.primary,
+              avatarBgColor: colorScheme.primaryContainer,
+              avatarLetterColor: colorScheme.onPrimaryContainer,
+              timestamp: DateTime.now(),
+              conversationTitle: notifTitle,
+            );
+          }());
+        }
+      }
+
+      // macOS previously had no visual notification at all (only sound) —
+      // it now gets a real system notification, same as Android, via
+      // NotificationService.showMessageNotification (which now also wires
+      // macOS through to UNUserNotificationCenter).
+      if (!kIsWeb && Platform.isMacOS) {
+        final chatIsOpen = selectedChatOther == sender &&
+            count == 1 &&
+            WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
         if (!chatIsOpen && !MuteManager.isMuted(sender)) {
           unawaited(() async {
             final hideContent = SettingsManager.notifHideContent.value;
@@ -4713,45 +5048,117 @@ class RootScreenState extends State<RootScreen>
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: SettingsManager.glassSurfaceColor(cs.surfaceContainerHigh, alphaOverride: 0.96),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(l10n.recoveryAlertRequestedTitle),
-        content: Text(l10n.recoveryAlertRequestedBody(deviceName, when)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(l10n.recoveryAlertIgnoreButton),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Material(
+              color: cs.surface,
+              borderRadius: BorderRadius.circular(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // ── Header ────────────────────────────────────────────
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 16, 16),
+                    decoration: BoxDecoration(
+                      color: cs.error.withValues(alpha: 0.08),
+                      border: Border(
+                        bottom: BorderSide(
+                          color: cs.error.withValues(alpha: 0.12),
+                          width: 0.8,
+                        ),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: cs.error.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Icon(Icons.warning_rounded, color: cs.error, size: 24),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            l10n.recoveryAlertRequestedTitle,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // ── Body ─────────────────────────────────────────────
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          l10n.recoveryAlertRequestedBody(deviceName, when),
+                          style: TextStyle(color: cs.onSurface.withValues(alpha: 0.7), fontSize: 13),
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: FilledButton(
+                                onPressed: () => Navigator.pop(ctx),
+                                style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  shape: const StadiumBorder(),
+                                  backgroundColor: cs.primary.withValues(alpha: 0.16),
+                                  foregroundColor: cs.primary,
+                                ),
+                                child: Text(l10n.recoveryAlertIgnoreButton),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: FilledButton.icon(
+                                onPressed: () async {
+                                  Navigator.pop(ctx);
+                                  await _cancelPendingRecovery();
+                                },
+                                style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  shape: const StadiumBorder(),
+                                  backgroundColor: cs.error,
+                                  foregroundColor: cs.onError,
+                                ),
+                                icon: const Icon(Icons.block_rounded, size: 18),
+                                label: Text(l10n.recoveryAlertCancelButton),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await _cancelPendingRecovery();
-            },
-            child: Text(l10n.recoveryAlertCancelButton, style: const TextStyle(color: Colors.white)),
-          ),
-        ],
+        ),
       ),
     );
   }
 
   void _showRecoveryAlertDialog(String title, String body) {
-    final cs = Theme.of(context).colorScheme;
-    showDialog(
+    showOnyxInfoDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: SettingsManager.glassSurfaceColor(cs.surfaceContainerHigh, alphaOverride: 0.96),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(title),
-        content: Text(body),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(AppLocalizations.of(context).ok),
-          ),
-        ],
-      ),
+      title: title,
+      message: body,
+      icon: Icons.security_rounded,
     );
   }
 
@@ -5302,6 +5709,7 @@ class RootScreenState extends State<RootScreen>
               }
 
               if (typ == 'pong') {
+                _lastPongAt = DateTime.now();
                 _appendLog('[pong] received from server');
                 return;
               }
@@ -5681,7 +6089,7 @@ class RootScreenState extends State<RootScreen>
                 }
                 if (!mounted) return;
                 showSnack(
-                  AppLocalizations(SettingsManager.appLocale.value)
+                  lookupAppLocalizations(SettingsManager.appLocale.value)
                       .blockedByUserMessage,
                 );
                 return;
@@ -5900,13 +6308,28 @@ class RootScreenState extends State<RootScreen>
 
   void _startHeartbeat() {
     _wsHeartbeat?.cancel();
+    _lastPongAt = DateTime.now();
     _wsHeartbeat = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_ws == null || _ws!.closeCode != null) return;
+
+      // If we haven't heard a pong in over two ping cycles, the socket is
+      // almost certainly a zombie (TCP session died silently while the app
+      // was idle/tray-minimized) even though closeCode is still null and
+      // onDone/onError haven't fired. Force a teardown + reconnect instead
+      // of waiting for the OS to eventually notice (which can take hours).
+      final since = DateTime.now().difference(_lastPongAt!);
+      if (since > const Duration(seconds: 65)) {
+        _appendLog(
+            '[heartbeat] no pong for ${since.inSeconds}s — connection appears dead, forcing reconnect');
+        _handleWsClosed(manual: false, reason: 'heartbeat_timeout');
+        return;
+      }
+
       try {
-        if (_ws != null && _ws!.closeCode == null) {
-          _ws!.sink.add(jsonEncode({'type': 'ping'}));
-        }
+        _ws!.sink.add(jsonEncode({'type': 'ping'}));
       } catch (e) {
         _appendLog('[heartbeat] ping failed: $e');
+        _handleWsClosed(manual: false, reason: 'heartbeat_ping_failed');
       }
     });
   }
@@ -5943,7 +6366,14 @@ class RootScreenState extends State<RootScreen>
     _appendLog('[ws.reconnect] scheduling reconnect loop');
 
     _reconnectTimer = Timer.periodic(const Duration(seconds: 1), (t) async {
-      if (_ws != null && _ws!.closeCode == null) {
+      // `_ws != null` is not a reliable "we're connected" signal — it goes
+      // non-null the instant `_connectWs()` opens the socket, well before
+      // auth/handshake completes (or fails). Only `wsConnectedNotifier`
+      // (set on `init_complete`) means the connection is actually usable;
+      // checking `_ws` here caused the loop to stop itself one tick after
+      // firing its first attempt, so it never actually retried or backed
+      // off on a sustained outage.
+      if (wsConnectedNotifier.value == true) {
         _appendLog(
             '[ws.reconnect] connection restored, stopping reconnect loop');
         _stopReconnectLoop();
@@ -5952,6 +6382,10 @@ class RootScreenState extends State<RootScreen>
       final delay = computeDelay();
 
       if (t.tick % (delay.inSeconds == 0 ? 1 : delay.inSeconds) != 0) return;
+
+      // Don't stack a new attempt on top of one that's already in flight
+      // (socket opened, handshake still pending).
+      if (_ws != null && _ws!.closeCode == null) return;
 
       _reconnectAttempts++;
       _appendLog(
@@ -5962,15 +6396,6 @@ class RootScreenState extends State<RootScreen>
           maxRetries: 1,
           retryDelay: const Duration(milliseconds: 200),
         );
-
-        if (_ws == null) {
-          _connectWs();
-        } else {
-          _appendLog(
-            '[ws.reconnect] _ws already exists, stopping reconnect loop',
-          );
-          _stopReconnectLoop();
-        }
       } catch (e) {
         _appendLog('[ws.reconnect] attempt failed: $e');
       }
@@ -6220,10 +6645,26 @@ class RootScreenState extends State<RootScreen>
   }
 
   void sendOnlineStatus() {
-    if (_ws != null) {
-      _sendPresence('online');
+    // Called when the window is shown/focused/restored from the tray. A
+    // socket that has been idle for hours can die silently at the TCP
+    // level while `_ws` stays non-null with closeCode == null (nothing
+    // fires onDone/onError until the OS eventually notices, which can take
+    // hours) — so `_ws != null` alone doesn't mean "still connected".
+    // wsConnectedNotifier is only true once the server actually completed
+    // the handshake (`init_complete`) and is cleared as soon as we detect
+    // the connection is gone, so it's the reliable liveness signal here.
+    _stopReconnectLoop();
+    if (_ws == null || _ws!.closeCode != null || !wsConnectedNotifier.value) {
+      _appendLog(
+          '[tray] window shown — connection stale/missing, reconnecting');
+      // A zombie socket is still non-null with closeCode == null, which
+      // makes _connectWs()'s own "already connected" guard skip opening a
+      // new one — force it down first so the reconnect actually happens.
+      _disconnectWs(manual: false, suppressPresence: true).then((_) {
+        _connectWs();
+      });
     } else {
-      _connectWs();
+      _sendPresence('online');
     }
   }
 
@@ -7928,7 +8369,10 @@ class RootScreenState extends State<RootScreen>
                         (videoPath != null && File(videoPath).existsSync()));
                 return ValueListenableBuilder<bool>(
                   valueListenable: SettingsManager.showAccountIndicator,
-                  builder: (_, showInd, __) => AppBar(
+                  builder: (_, showInd, __) => ClipRect(
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                      child: AppBar(
                     title: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -8003,8 +8447,8 @@ class RootScreenState extends State<RootScreen>
                         (showInd && currentUsername != null) ? 100 : null,
                     backgroundColor: makeTransparent
                         ? Colors.transparent
-                        : Theme.of(context).colorScheme.surface,
-                    elevation: makeTransparent ? 0 : 0,
+                        : Theme.of(context).colorScheme.surface.withValues(alpha: 0.7),
+                    elevation: 0,
                     actions: [
                       if (_index == 0 || !isDesktop)
                         IconButton(
@@ -8012,6 +8456,8 @@ class RootScreenState extends State<RootScreen>
                           onPressed: _onSearchRequested,
                         ),
                     ],
+                      ),
+                    ),
                   ),
                 );
               },
@@ -8699,7 +9145,7 @@ class RootScreenState extends State<RootScreen>
                                                                                 locale,
                                                                                 __) =>
                                                                             Text(
-                                                                          AppLocalizations(locale)
+                                                                          lookupAppLocalizations(locale)
                                                                               .localizeMotivationalHint(_motivationalHints[_motivationalHintIndex]),
                                                                           textAlign:
                                                                               TextAlign.center,
@@ -8740,12 +9186,6 @@ class RootScreenState extends State<RootScreen>
                   ),
                 ],
               ),
-            ),
-            const Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: SizedBox(height: 42, child: CustomTitleBar()),
             ),
             if (currentUsername != null && !isNavBottom)
               Positioned(
@@ -8865,13 +9305,6 @@ class RootScreenState extends State<RootScreen>
                 ),
               ),
             ),
-            if (isDesktop)
-              const Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: SizedBox(height: 42, child: CustomTitleBar()),
-              ),
           ],
         ),
       );

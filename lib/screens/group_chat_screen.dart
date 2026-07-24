@@ -7,11 +7,13 @@ import '../enums/liquid_glass_quality.dart';
 import 'package:ONYX/screens/forward_screen.dart';
 import 'package:ONYX/managers/settings_manager.dart';
 import '../l10n/app_localizations.dart';
+import '../l10n/app_localizations_extra.dart';
 import 'package:ONYX/screens/chats_tab.dart' show getPreviewText;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'dart:async';
 import '../widgets/chat_background_layer.dart';
+import '../widgets/onyx_dialog.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:io';
@@ -47,6 +49,8 @@ import '../widgets/chat_search_bar.dart';
 import '../widgets/animated_message_bubble.dart';
 import '../widgets/message_reaction_bar.dart';
 import '../widgets/swipeable_message_wrapper.dart';
+import '../widgets/onyx_reminder_picker.dart';
+import '../services/reminder_service.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/adaptive_glass_icon_button.dart';
@@ -242,6 +246,60 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       });
     }
     _savePinnedMessage();
+  }
+
+  // Live cache of "chatId|messageId" keys with an active reminder.
+  Set<String> _reminderKeys = {};
+  StreamSubscription? _reminderKeysSub;
+
+  void _subscribeReminders() {
+    final accountId = _currentUsername;
+    if (accountId == null) return;
+    _reminderKeysSub =
+        ReminderService.watchActiveReminders(accountId).listen((rows) {
+      if (!mounted) return;
+      setState(() {
+        _reminderKeys = rows.map((r) => '${r.chatId}|${r.messageId}').toSet();
+      });
+    });
+  }
+
+  bool _hasReminderSync(String? msgId) {
+    if (msgId == null || msgId.isEmpty) return false;
+    final chatId = 'group_${widget.group.id}';
+    return _reminderKeys.contains('$chatId|$msgId');
+  }
+
+  Future<void> _handleGroupReminderToggle({
+    required Map<String, dynamic> msg,
+    required bool hasReminder,
+    required String chatId,
+    required String messageId,
+  }) async {
+    final myAccountId = _currentUsername;
+    if (myAccountId == null) return;
+    final l = AppLocalizations.of(context);
+
+    if (hasReminder) {
+      await ReminderService.cancelReminder(myAccountId, chatId, messageId);
+      rootScreenKey.currentState?.showSnack(l.reminderCancelled);
+      return;
+    }
+
+    final accentColorArgb = Theme.of(context).colorScheme.primary.toARGB32();
+    final picked = await showOnyxReminderPicker(context);
+    if (picked == null) return;
+    await ReminderService.scheduleReminder(
+      accountId: myAccountId,
+      messageId: messageId,
+      accentColorArgb: accentColorArgb,
+      chatType: 'group',
+      chatId: chatId,
+      chatTitle: widget.group.name,
+      messagePreview: getPreviewText(msg['content']?.toString() ?? ''),
+      scheduledAt: picked,
+    );
+    rootScreenKey.currentState?.showSnack(l.reminderSet);
   }
 
   String? _scrollHighlightId;
@@ -676,8 +734,14 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     _dragAutoScrollTimer = null;
   }
 
+  // Map insertion order (`.values`) reflects selection/drag-recompute order,
+  // not chronological order — always re-sort by message time first.
+  List<Map<String, dynamic>> get _selectedGroupMessagesChronological =>
+      _selectedGroupMessages.values.toList()
+        ..sort((a, b) => _getGroupMsgTime(a).compareTo(_getGroupMsgTime(b)));
+
   void _copySelectedGroupMessages() {
-    final texts = _selectedGroupMessages.values
+    final texts = _selectedGroupMessagesChronological
         .where(_isGroupTextMessage)
         .map((m) => m['content']?.toString() ?? '')
         .where((t) => t.isNotEmpty)
@@ -685,13 +749,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     if (texts.isNotEmpty) {
       Clipboard.setData(ClipboardData(text: texts));
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).msgCopied);
+          lookupAppLocalizations(SettingsManager.appLocale.value).msgCopied);
     }
     _exitGroupSelectionMode();
   }
 
   void _forwardSelectedGroupMessages() {
-    final contents = _selectedGroupMessages.values
+    final contents = _selectedGroupMessagesChronological
         .map((m) => m['content']?.toString() ?? '')
         .where((t) => t.isNotEmpty)
         .toList();
@@ -712,25 +776,15 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         .toList();
     if (toDelete.isEmpty) return;
     final l = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.deleteMessageTitle),
-        content: Text(toDelete.length == 1
-            ? l.deleteGroupMsgContent
-            : 'Delete ${toDelete.length} messages?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(l.cancel),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(l.delete, style: const TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+      title: l.deleteMessageTitle,
+      message: toDelete.length == 1
+          ? l.deleteGroupMsgContent
+          : 'Delete ${toDelete.length} messages?',
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
     if (confirmed == true) {
       _exitGroupSelectionMode();
@@ -762,6 +816,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     _loadPinnedMessage();
     _maybeShowE2eeWarning();
     _consumePendingGroupScrollTarget();
+    _subscribeReminders();
     _loadHistoryFromCache().then((_) {
       _loadHistoryFromNetwork();
     });
@@ -859,7 +914,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     }
   }
 
-  void _onGroupLongPress(Map<String, dynamic> msg) {
+  void _onGroupLongPress(Map<String, dynamic> msg) async {
     _focusNode.unfocus();
     final content = msg['content']?.toString() ?? '';
     final isImage = content.startsWith('IMAGEv1:');
@@ -894,6 +949,15 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
     _shouldPreserveExternalFocus = true;
     final colorScheme = Theme.of(context).colorScheme;
+
+    final reminderChatId = 'group_${widget.group.id}';
+    final reminderMsgId = msgId ?? '';
+    var hasReminder = false;
+    if (_currentUsername != null && reminderMsgId.isNotEmpty) {
+      hasReminder = await ReminderService.hasActiveReminder(
+          _currentUsername!, reminderChatId, reminderMsgId);
+    }
+    if (!mounted) return;
 
     Widget actionTile(IconData icon, String label, VoidCallback? onTap,
         {Color? color}) {
@@ -969,6 +1033,24 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                         _toggleGroupPin(msg);
                       },
                     ),
+                    if (reminderMsgId.isNotEmpty)
+                      actionTile(
+                        hasReminder
+                            ? Icons.alarm_off_rounded
+                            : Icons.alarm_add_rounded,
+                        hasReminder
+                            ? AppLocalizations.of(context).cancelReminder
+                            : AppLocalizations.of(context).setReminder,
+                        () {
+                          Navigator.pop(ctx);
+                          _handleGroupReminderToggle(
+                            msg: msg,
+                            hasReminder: hasReminder,
+                            chatId: reminderChatId,
+                            messageId: reminderMsgId,
+                          );
+                        },
+                      ),
                     if (isSaveable)
                       actionTile(Icons.save_alt_rounded, 'Save', () {
                         Navigator.pop(ctx);
@@ -997,30 +1079,15 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                         () {
                           Navigator.pop(ctx);
                           () async {
-                            final confirmed = await showDialog<bool>(
+                            final confirmed = await showOnyxConfirmDialog(
                               context: context,
-                              builder: (ctx2) => AlertDialog(
-                                title: Text(AppLocalizations.of(context)
-                                    .deleteMessageTitle),
-                                content: Text(AppLocalizations.of(context)
-                                    .deleteGroupMsgContent),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(ctx2, false),
-                                    child: Text(
-                                        AppLocalizations.of(context).cancel),
-                                  ),
-                                  FilledButton(
-                                    style: FilledButton.styleFrom(
-                                        backgroundColor: Colors.red.shade700),
-                                    onPressed: () => Navigator.pop(ctx2, true),
-                                    child: Text(
-                                        AppLocalizations.of(context).delete,
-                                        style: const TextStyle(
-                                            color: Colors.white)),
-                                  ),
-                                ],
-                              ),
+                              title: AppLocalizations.of(context)
+                                  .deleteMessageTitle,
+                              message: AppLocalizations.of(context)
+                                  .deleteGroupMsgContent,
+                              confirmLabel: AppLocalizations.of(context).delete,
+                              isDestructive: true,
+                              icon: Icons.delete_outline_rounded,
                             );
                             if (confirmed == true) {
                               _deleteGroupMessage(msgId);
@@ -1525,23 +1592,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   Future<void> _desktopDeleteGroupMessage(
       Map<String, dynamic> msg, String msgId) async {
     final l = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx2) => AlertDialog(
-        title: Text(l.deleteMessageTitle),
-        content: Text(l.deleteGroupMsgContent),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx2, false),
-            child: Text(l.cancel),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
-            onPressed: () => Navigator.pop(ctx2, true),
-            child: Text(l.delete, style: const TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+      title: l.deleteMessageTitle,
+      message: l.deleteGroupMsgContent,
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
     if (confirmed == true) _deleteGroupMessage(msgId);
   }
@@ -1586,12 +1643,14 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         unawaited(_saveHistoryToCache(_messages));
       } else if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).failedDelete);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .failedDelete);
       }
     } catch (e) {
       if (mounted)
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).failedDelete);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .failedDelete);
     }
   }
 
@@ -1615,12 +1674,12 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         unawaited(_saveHistoryToCache(_messages));
       } else if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).failedEdit);
+            lookupAppLocalizations(SettingsManager.appLocale.value).failedEdit);
       }
     } catch (e) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).failedEdit);
+            lookupAppLocalizations(SettingsManager.appLocale.value).failedEdit);
       }
     }
   }
@@ -1636,6 +1695,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
   @override
   void dispose() {
+    _reminderKeysSub?.cancel();
     _selectionNotifier.dispose();
     _isDisposed = true;
     _localRouteObserver.unsubscribe(this);
@@ -2022,7 +2082,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     } catch (e) {
       if (mounted && !_loadedFromCache) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).noInternetCached);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .noInternetCached);
       }
     }
   }
@@ -2252,7 +2313,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           _allMessageIds.remove(tempMessageId);
         });
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).sendFailed);
+            lookupAppLocalizations(SettingsManager.appLocale.value).sendFailed);
       }
     }
   }
@@ -2295,7 +2356,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     if (kIsWeb) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .mediaUploadNotSupportedWeb);
       }
       return;
@@ -2346,7 +2407,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     if (!FileTypeDetector.isAllowed(path)) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .unsupportedFileType(p.extension(path)));
       }
       return;
@@ -2394,7 +2455,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
             _pendingUploads.remove(task);
           });
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value).uploadFailed);
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .uploadFailed);
         }
         return;
       }
@@ -2479,7 +2541,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     if (items.isEmpty) {
       if (mounted)
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .albumUploadFailed);
       return;
     }
@@ -2582,7 +2644,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       if (link == null) {
         if (mounted) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .voiceUploadFailed);
         }
         return;
@@ -2611,7 +2673,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                 onCancel: () {
                   if (mounted) {
                     rootScreenKey.currentState?.showSnack(
-                        AppLocalizations(SettingsManager.appLocale.value)
+                        lookupAppLocalizations(SettingsManager.appLocale.value)
                             .voiceCancelled);
                   }
                 },
@@ -2887,7 +2949,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
             debugPrint('[err] $e');
           }
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value).leftGroup);
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .leftGroup);
           final username = _currentUsername ?? '';
           if (username.isNotEmpty) {
             final cached = await AccountManager.loadGroupsCache(username);
@@ -2906,34 +2969,28 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       } else {
         if (mounted) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .failedLeaveGroup);
         }
       }
     } catch (e) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).networkError);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .networkError);
       }
     }
   }
 
   Future<bool?> _showLeaveConfirmation(BuildContext context) {
     final l = AppLocalizations.of(context);
-    return showDialog<bool>(
+    return showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.leaveGroupTitle(widget.group.isChannel)),
-        content: Text(l.leaveGroupContent(widget.group.name)),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text(l.cancel)),
-          FilledButton.tonal(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: Text(l.leave)),
-        ],
-      ),
+      title: l.leaveGroupTitle(widget.group.isChannel.toString()),
+      message: l.leaveGroupContent(widget.group.name),
+      confirmLabel: l.leave,
+      isDestructive: true,
+      icon: Icons.logout_rounded,
     );
   }
 
@@ -2941,7 +2998,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     if (!_canManageGroup) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .avatarOnlyOwnerMod);
       }
       return;
@@ -2956,7 +3013,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       if (file.bytes == null) {
         if (mounted) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value).failedReadFile);
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .failedReadFile);
         }
         return;
       }
@@ -2966,7 +3024,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       if (path == null) {
         if (mounted) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .localFileRequired);
         }
         return;
@@ -3004,7 +3062,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     final contentType = MediaType.parse(mimeType);
     if (mounted) {
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).uploadingAvatar);
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .uploadingAvatar);
     }
     try {
       final req = http.MultipartRequest(
@@ -3056,21 +3115,22 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
         if (mounted) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .avatarUpdatedGroup);
           setState(() {});
         }
       } else {
         if (mounted) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .failedUpdateGroup);
         }
       }
     } catch (e) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).networkError);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .networkError);
       }
     }
   }
@@ -3098,20 +3158,22 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
         if (mounted) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value).avatarDeleted);
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .avatarDeleted);
           setState(() {});
         }
       } else {
         if (mounted) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .failedDeleteAvatar);
         }
       }
     } catch (e) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).networkError);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .networkError);
       }
     }
   }
@@ -3187,21 +3249,22 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
         if (mounted) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .avatarUpdatedGroup);
           setState(() {});
         }
       } else {
         if (mounted) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .failedUpdateGroup);
         }
       }
     } catch (e) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).networkError);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .networkError);
       }
     }
   }
@@ -3435,7 +3498,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                           .last));
                                   if (mounted) {
                                     rootScreenKey.currentState?.showSnack(
-                                        AppLocalizations(
+                                        lookupAppLocalizations(
                                                 SettingsManager.appLocale.value)
                                             .tokenCopied);
                                   }
@@ -3453,7 +3516,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                 if (newName.isEmpty || newName.length > 50) {
                                   if (mounted) {
                                     rootScreenKey.currentState?.showSnack(
-                                        AppLocalizations(
+                                        lookupAppLocalizations(
                                                 SettingsManager.appLocale.value)
                                             .groupNameLength);
                                   }
@@ -3528,7 +3591,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
                                     if (mounted) {
                                       rootScreenKey.currentState?.showSnack(
-                                          AppLocalizations(SettingsManager
+                                          lookupAppLocalizations(SettingsManager
                                                   .appLocale.value)
                                               .groupUpdated);
                                     }
@@ -3536,7 +3599,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                   } else {
                                     if (mounted) {
                                       rootScreenKey.currentState?.showSnack(
-                                          AppLocalizations(SettingsManager
+                                          lookupAppLocalizations(SettingsManager
                                                   .appLocale.value)
                                               .failedUpdateGroup);
                                     }
@@ -3544,7 +3607,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                 } catch (e) {
                                   if (mounted) {
                                     rootScreenKey.currentState?.showSnack(
-                                        AppLocalizations(
+                                        lookupAppLocalizations(
                                                 SettingsManager.appLocale.value)
                                             .networkError);
                                   }
@@ -3999,8 +4062,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                     children: [
                       FilledButton(
                         onPressed: () async {
-                          final prefs =
-                              await SharedPreferences.getInstance();
+                          final prefs = await SharedPreferences.getInstance();
                           await prefs.setBool(_e2eeWarnPrefsKey, true);
                           if (dialogContext.mounted) {
                             Navigator.of(dialogContext).pop();
@@ -4291,34 +4353,17 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                 onLongPress: _canManageGroup
                                     ? () async {
                                         final confirmed =
-                                            await showDialog<bool>(
+                                            await showOnyxConfirmDialog(
                                           context: context,
-                                          builder: (ctx) => AlertDialog(
-                                            title: Text(
-                                                AppLocalizations.of(context)
-                                                    .deleteAvatarTitle),
-                                            content: Text(
-                                                AppLocalizations.of(context)
-                                                    .deleteAvatarContent),
-                                            actions: [
-                                              TextButton(
-                                                  onPressed: () =>
-                                                      Navigator.of(ctx)
-                                                          .pop(false),
-                                                  child: Text(
-                                                      AppLocalizations.of(
-                                                              context)
-                                                          .cancel)),
-                                              FilledButton.tonal(
-                                                  onPressed: () =>
-                                                      Navigator.of(ctx)
-                                                          .pop(true),
-                                                  child: Text(
-                                                      AppLocalizations.of(
-                                                              context)
-                                                          .delete)),
-                                            ],
-                                          ),
+                                          title: AppLocalizations.of(context)
+                                              .deleteAvatarTitle,
+                                          message: AppLocalizations.of(context)
+                                              .deleteAvatarContent,
+                                          confirmLabel:
+                                              AppLocalizations.of(context)
+                                                  .delete,
+                                          isDestructive: true,
+                                          icon: Icons.delete_outline_rounded,
                                         );
                                         if (confirmed == true)
                                           await _deleteGroupAvatar();
@@ -4494,7 +4539,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                             .last));
                                     if (mounted) {
                                       rootScreenKey.currentState?.showSnack(
-                                        AppLocalizations(
+                                        lookupAppLocalizations(
                                                 SettingsManager.appLocale.value)
                                             .tokenCopied,
                                       );
@@ -4540,7 +4585,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                                 .colorScheme
                                                 .onSurface),
                                         const SizedBox(width: 10),
-                                        const Text('Token'),
+                                        Text(
+                                            AppLocalizations.of(context).token),
                                       ]),
                                     ),
                                   PopupMenuItem<String>(
@@ -4857,6 +4903,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                         outgoing: isMe,
                                         rawPreview: null,
                                         serverMessageId: null,
+                                        hasReminder: _hasReminderSync(
+                                            msg['id']?.toString()),
                                         time: (msg['timestamp_ms'] != null)
                                             ? DateTime
                                                 .fromMillisecondsSinceEpoch(
@@ -5500,7 +5548,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         existing.add(fp);
       } else {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .fileNotFound);
       }
     }
     if (existing.isEmpty) return;
@@ -5667,7 +5716,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           onSend: () => _sendGroupFile(filePath, basename, ext),
           onCancel: () {
             rootScreenKey.currentState?.showSnack(
-                AppLocalizations(SettingsManager.appLocale.value)
+                lookupAppLocalizations(SettingsManager.appLocale.value)
                     .fileCancelled);
           },
           onPasteExtra: isImage ? _pasteImageForAlbum : null,

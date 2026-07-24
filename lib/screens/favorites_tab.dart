@@ -20,6 +20,7 @@ import 'fav_sync_send_screen.dart';
 import '../managers/lock_manager.dart';
 import '../dialogs/pin_lock_dialog.dart';
 import '../widgets/inline_search_bar.dart';
+import '../widgets/onyx_dialog.dart';
 
 String _formatTime(DateTime t) {
   final now = DateTime.now();
@@ -381,6 +382,7 @@ class _FavoritesTabState extends State<FavoritesTab>
   void _showDesktopContextMenu(
       BuildContext context, Offset pos, FavoriteChat fav, List<FavFolder> folders) {
     final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
     final currentFolder =
         folders.where((f) => f.chatIds.contains(fav.id)).firstOrNull;
     showMenu<String>(
@@ -392,7 +394,7 @@ class _FavoritesTabState extends State<FavoritesTab>
           child: Row(children: [
             Icon(Icons.checklist_rounded, size: 18, color: cs.onSurface),
             const SizedBox(width: 10),
-            const Text('Select'),
+            Text(l.select),
           ]),
         ),
         if (currentFolder != null)
@@ -401,7 +403,7 @@ class _FavoritesTabState extends State<FavoritesTab>
             child: Row(children: [
               Icon(Icons.folder_off_outlined, size: 18, color: cs.onSurface),
               const SizedBox(width: 10),
-              Text('Remove from "${currentFolder.name}"'),
+              Text(l.favRemoveFromFolderNamed(currentFolder.name)),
             ]),
           ),
         if (folders.isNotEmpty)
@@ -410,7 +412,7 @@ class _FavoritesTabState extends State<FavoritesTab>
             child: Row(children: [
               Icon(Icons.drive_file_move_outline, size: 18, color: cs.onSurface),
               const SizedBox(width: 10),
-              const Text('Move to folder'),
+              Text(l.favMoveToFolder),
             ]),
           ),
         PopupMenuItem<String>(
@@ -418,7 +420,7 @@ class _FavoritesTabState extends State<FavoritesTab>
           child: Row(children: [
             Icon(Icons.edit_outlined, size: 18, color: cs.onSurface),
             const SizedBox(width: 10),
-            const Text('Edit'),
+            Text(l.edit),
           ]),
         ),
         PopupMenuItem<String>(
@@ -429,7 +431,7 @@ class _FavoritesTabState extends State<FavoritesTab>
               size: 18, color: cs.onSurface,
             ),
             const SizedBox(width: 10),
-            Text(LockManager.isLocked('fav_${fav.id}') ? 'Unlock' : 'Lock'),
+            Text(LockManager.isLocked('fav_${fav.id}') ? l.favUnlock : l.favLock),
           ]),
         ),
         PopupMenuItem<String>(
@@ -437,7 +439,7 @@ class _FavoritesTabState extends State<FavoritesTab>
           child: Row(children: [
             Icon(Icons.delete_outline, size: 18, color: cs.error),
             const SizedBox(width: 10),
-            Text('Delete', style: TextStyle(color: cs.error)),
+            Text(l.delete, style: TextStyle(color: cs.error)),
           ]),
         ),
       ],
@@ -468,6 +470,7 @@ class _FavoritesTabState extends State<FavoritesTab>
 
   void _showDesktopInlineContextMenu(
       BuildContext context, Offset pos, FavoriteChat fav, ColorScheme cs) {
+    final l = AppLocalizations.of(context);
     showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
@@ -477,7 +480,7 @@ class _FavoritesTabState extends State<FavoritesTab>
           child: Row(children: [
             Icon(Icons.folder_off_outlined, size: 18, color: cs.onSurface),
             const SizedBox(width: 10),
-            const Text('Remove from folder'),
+            Text(l.favRemoveFromFolder),
           ]),
         ),
         PopupMenuItem<String>(
@@ -485,7 +488,7 @@ class _FavoritesTabState extends State<FavoritesTab>
           child: Row(children: [
             Icon(Icons.edit_outlined, size: 18, color: cs.onSurface),
             const SizedBox(width: 10),
-            const Text('Edit'),
+            Text(l.edit),
           ]),
         ),
         PopupMenuItem<String>(
@@ -496,7 +499,7 @@ class _FavoritesTabState extends State<FavoritesTab>
               size: 18, color: cs.onSurface,
             ),
             const SizedBox(width: 10),
-            Text(LockManager.isLocked('fav_${fav.id}') ? 'Unlock' : 'Lock'),
+            Text(LockManager.isLocked('fav_${fav.id}') ? l.favUnlock : l.favLock),
           ]),
         ),
         PopupMenuItem<String>(
@@ -504,7 +507,7 @@ class _FavoritesTabState extends State<FavoritesTab>
           child: Row(children: [
             Icon(Icons.delete_outline, size: 18, color: cs.error),
             const SizedBox(width: 10),
-            Text('Delete', style: TextStyle(color: cs.error)),
+            Text(l.delete, style: TextStyle(color: cs.error)),
           ]),
         ),
       ],
@@ -650,6 +653,7 @@ class _FavoritesTabState extends State<FavoritesTab>
   void _showChatActions(BuildContext context, FavoriteChat fav,
       List<FavFolder> folders) {
     final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
     final currentFolder =
         folders.where((f) => f.chatIds.contains(fav.id)).firstOrNull;
 
@@ -697,7 +701,7 @@ class _FavoritesTabState extends State<FavoritesTab>
               const Divider(height: 1, indent: 16, endIndent: 16),
               ListTile(
                 leading: const Icon(Icons.checklist_rounded),
-                title: const Text('Select'),
+                title: Text(l.select),
                 onTap: () {
                   Navigator.of(ctx).pop();
                   _enterSelection(fav.id);
@@ -706,7 +710,7 @@ class _FavoritesTabState extends State<FavoritesTab>
               if (currentFolder != null)
                 ListTile(
                   leading: const Icon(Icons.folder_off_outlined),
-                  title: Text('Remove from "${currentFolder.name}"'),
+                  title: Text(l.favRemoveFromFolderNamed(currentFolder.name)),
                   onTap: () {
                     Navigator.of(ctx).pop();
                     rootScreenKey.currentState?.moveChatOutOfFolder(fav.id);
@@ -715,7 +719,7 @@ class _FavoritesTabState extends State<FavoritesTab>
               if (folders.isNotEmpty)
                 ListTile(
                   leading: const Icon(Icons.drive_file_move_outline),
-                  title: const Text('Move to folder'),
+                  title: Text(l.favMoveToFolder),
                   onTap: () {
                     Navigator.of(ctx).pop();
                     _showFolderPicker(context, fav, folders);
@@ -723,7 +727,7 @@ class _FavoritesTabState extends State<FavoritesTab>
                 ),
               ListTile(
                 leading: const Icon(Icons.edit_outlined),
-                title: const Text('Edit'),
+                title: Text(l.edit),
                 onTap: () {
                   Navigator.of(ctx).pop();
                   showDialog<void>(
@@ -742,7 +746,7 @@ class _FavoritesTabState extends State<FavoritesTab>
                       isLocked ? Icons.lock_open_rounded : Icons.lock_rounded,
                       color: cs.onSurface,
                     ),
-                    title: Text(isLocked ? 'Unlock' : 'Lock'),
+                    title: Text(isLocked ? l.favUnlock : l.favLock),
                     onTap: () async {
                       Navigator.of(ctx).pop();
                       if (isLocked) {
@@ -760,7 +764,7 @@ class _FavoritesTabState extends State<FavoritesTab>
               ),
               ListTile(
                 leading: Icon(Icons.delete_outline, color: cs.error),
-                title: Text('Delete', style: TextStyle(color: cs.error)),
+                title: Text(l.delete, style: TextStyle(color: cs.error)),
                 onTap: () {
                   Navigator.of(ctx).pop();
                   _confirmDelete(context, fav);
@@ -777,6 +781,7 @@ class _FavoritesTabState extends State<FavoritesTab>
   void _showFolderPicker(
       BuildContext context, FavoriteChat fav, List<FavFolder> folders) {
     final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -802,7 +807,7 @@ class _FavoritesTabState extends State<FavoritesTab>
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: Text('Move to folder',
+                child: Text(l.favMoveToFolder,
                     style: TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 15,
@@ -829,7 +834,7 @@ class _FavoritesTabState extends State<FavoritesTab>
                               child: Icon(Icons.folder,
                                   size: 18, color: cs.secondary)),
                       title: Text(folder.name),
-                      subtitle: Text('${folder.chatIds.length} chats',
+                      subtitle: Text(l.favChatsCount(folder.chatIds.length),
                           style: TextStyle(
                               fontSize: 11,
                               color: cs.onSurface.withValues(alpha: 0.5))),
@@ -857,6 +862,7 @@ class _FavoritesTabState extends State<FavoritesTab>
 
   void _showFolderActions(BuildContext context, FavFolder folder) {
     final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -901,7 +907,7 @@ class _FavoritesTabState extends State<FavoritesTab>
               const Divider(height: 1, indent: 16, endIndent: 16),
               ListTile(
                 leading: const Icon(Icons.edit_outlined),
-                title: const Text('Edit'),
+                title: Text(l.edit),
                 onTap: () {
                   Navigator.of(ctx).pop();
                   showDialog<void>(
@@ -921,7 +927,7 @@ class _FavoritesTabState extends State<FavoritesTab>
                       isLocked ? Icons.lock_open_rounded : Icons.lock_rounded,
                       color: cs.onSurface,
                     ),
-                    title: Text(isLocked ? 'Unlock folder' : 'Lock folder'),
+                    title: Text(isLocked ? l.favUnlockFolder : l.favLockFolder),
                     onTap: () async {
                       Navigator.of(ctx).pop();
                       if (isLocked) {
@@ -941,7 +947,7 @@ class _FavoritesTabState extends State<FavoritesTab>
                 leading: Icon(Icons.delete_outline, color: cs.error),
                 title: Text('Delete folder',
                     style: TextStyle(color: cs.error)),
-                subtitle: const Text('Chats will be moved to top level'),
+                subtitle: Text(l.favChatsMovedToTopLevel),
                 onTap: () async {
                   Navigator.of(ctx).pop();
                   final lockId = 'fav_folder_${folder.id}';
@@ -966,6 +972,7 @@ class _FavoritesTabState extends State<FavoritesTab>
   void _showDesktopFolderContextMenu(
       BuildContext context, Offset pos, FavFolder folder) {
     final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
     final lockId = 'fav_folder_${folder.id}';
     final isLocked = LockManager.isLocked(lockId);
     showMenu<String>(
@@ -977,7 +984,7 @@ class _FavoritesTabState extends State<FavoritesTab>
           child: Row(children: [
             Icon(Icons.edit_outlined, size: 18, color: cs.onSurface),
             const SizedBox(width: 10),
-            const Text('Edit'),
+            Text(l.edit),
           ]),
         ),
         PopupMenuItem<String>(
@@ -989,7 +996,7 @@ class _FavoritesTabState extends State<FavoritesTab>
               color: cs.onSurface,
             ),
             const SizedBox(width: 10),
-            Text(isLocked ? 'Unlock folder' : 'Lock folder'),
+            Text(isLocked ? l.favUnlockFolder : l.favLockFolder),
           ]),
         ),
         PopupMenuItem<String>(
@@ -1027,35 +1034,20 @@ class _FavoritesTabState extends State<FavoritesTab>
     });
   }
 
-  void _confirmDelete(BuildContext context, FavoriteChat fav) {
-    showDialog(
+  void _confirmDelete(BuildContext context, FavoriteChat fav) async {
+    final l = AppLocalizations.of(context);
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) {
-        final cs = Theme.of(ctx).colorScheme;
-        return AlertDialog(
-          backgroundColor:
-              cs.surface.withValues(alpha: SettingsManager.elementOpacity.value),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Delete chat?'),
-          content: Text(
-              'Remove "${fav.title}" and all its messages from favorites?'),
-          actions: [
-            TextButton(
-                onPressed: Navigator.of(ctx).pop,
-                child: const Text('Cancel')),
-            TextButton(
-              onPressed: () {
-                Navigator.of(ctx).pop();
-                LockManager.removeLock('fav_${fav.id}');
-                widget.onDelete(fav.id);
-              },
-              child: Text('Delete', style: TextStyle(color: cs.error)),
-            ),
-          ],
-        );
-      },
+      title: l.favDeleteChatQuestion,
+      message: 'Remove "${fav.title}" and all its messages from favorites?',
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
+    if (confirmed == true) {
+      LockManager.removeLock('fav_${fav.id}');
+      widget.onDelete(fav.id);
+    }
   }
 
   Future<void> _openFolderWithLockCheck(BuildContext ctx, FavFolder folder) async {
@@ -1476,7 +1468,7 @@ class _FavoritesTabState extends State<FavoritesTab>
         child: Padding(
           padding: const EdgeInsets.only(right: 8),
           child: AdaptiveGlassCard(
-            borderRadius: 14,
+            borderRadius: 22,
             padding: EdgeInsets.zero,
             onTap: t > 0.4 ? _exitSelection : null,
             child: Container(
@@ -1485,7 +1477,7 @@ class _FavoritesTabState extends State<FavoritesTab>
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: cs.onSurface.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(22),
               ),
               child: Opacity(
                 opacity: t,
@@ -1501,14 +1493,14 @@ class _FavoritesTabState extends State<FavoritesTab>
   Widget _morphCenterSlot(BuildContext context, ColorScheme cs, double t) {
     final count = _selectedIds.length;
     return AdaptiveGlassCard(
-      borderRadius: 14,
+      borderRadius: 22,
       padding: EdgeInsets.zero,
       onTap: t < 0.5 ? () => _showAddSheet(context) : null,
       child: Container(
         height: 44,
         decoration: BoxDecoration(
           color: cs.primary.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(22),
         ),
         child: _crossFadeContent(
           t: t,
@@ -1534,7 +1526,7 @@ class _FavoritesTabState extends State<FavoritesTab>
   Widget _morphSyncMoveSlot(BuildContext context, ColorScheme cs, double t) {
     final hasSelection = _selectedIds.isNotEmpty;
     return AdaptiveGlassCard(
-      borderRadius: 14,
+      borderRadius: 22,
       padding: EdgeInsets.zero,
       onTap: t < 0.5
           ? () => _showSyncSheet(context)
@@ -1546,7 +1538,7 @@ class _FavoritesTabState extends State<FavoritesTab>
         decoration: BoxDecoration(
           color: cs.primary
               .withValues(alpha: t >= 0.5 && !hasSelection ? 0.05 : 0.12),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(22),
         ),
         child: _crossFadeContent(
           t: t,
@@ -1567,7 +1559,7 @@ class _FavoritesTabState extends State<FavoritesTab>
         ? (hasSelection ? 0.12 : 0.05)
         : (_editMode ? 0.18 : 0.12);
     return AdaptiveGlassCard(
-      borderRadius: 14,
+      borderRadius: 22,
       padding: EdgeInsets.zero,
       onTap: t < 0.5
           ? () => setState(() => _editMode = !_editMode)
@@ -1578,7 +1570,7 @@ class _FavoritesTabState extends State<FavoritesTab>
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: color.withValues(alpha: bgAlpha),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(22),
         ),
         child: _crossFadeContent(
           t: t,
@@ -1591,40 +1583,26 @@ class _FavoritesTabState extends State<FavoritesTab>
     );
   }
 
-  void _confirmBulkDelete(BuildContext context) {
+  void _confirmBulkDelete(BuildContext context) async {
     final ids = _selectedIds.toList();
     if (ids.isEmpty) return;
-    showDialog<void>(
+    final l = AppLocalizations.of(context);
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) {
-        final cs = Theme.of(ctx).colorScheme;
-        return AlertDialog(
-          backgroundColor:
-              cs.surface.withValues(alpha: SettingsManager.elementOpacity.value),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text('Delete ${ids.length} chat${ids.length == 1 ? '' : 's'}?'),
-          content: const Text(
-              'The selected chats and all their messages will be removed from favorites.'),
-          actions: [
-            TextButton(
-                onPressed: Navigator.of(ctx).pop,
-                child: const Text('Cancel')),
-            TextButton(
-              onPressed: () {
-                Navigator.of(ctx).pop();
-                for (final id in ids) {
-                  LockManager.removeLock('fav_$id');
-                  widget.onDelete(id);
-                }
-                _exitSelection();
-              },
-              child: Text('Delete', style: TextStyle(color: cs.error)),
-            ),
-          ],
-        );
-      },
+      title: 'Delete ${ids.length} chat${ids.length == 1 ? '' : 's'}?',
+      message:
+          'The selected chats and all their messages will be removed from favorites.',
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
+    if (confirmed == true) {
+      for (final id in ids) {
+        LockManager.removeLock('fav_$id');
+        widget.onDelete(id);
+      }
+      _exitSelection();
+    }
   }
 
   void _bulkMoveToFolder(BuildContext context) {
@@ -1633,6 +1611,7 @@ class _FavoritesTabState extends State<FavoritesTab>
     final root = rootScreenKey.currentState;
     final folders = root?.favFolders ?? const <FavFolder>[];
     final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
 
     void applyMove(String folderId) {
       for (final id in ids) {
@@ -1714,7 +1693,7 @@ class _FavoritesTabState extends State<FavoritesTab>
                                 child: Icon(Icons.folder,
                                     size: 18, color: cs.secondary)),
                         title: Text(folder.name),
-                        subtitle: Text('${folder.chatIds.length} chats',
+                        subtitle: Text(l.favChatsCount(folder.chatIds.length),
                             style: TextStyle(
                                 fontSize: 11,
                                 color: cs.onSurface.withValues(alpha: 0.5))),
@@ -1736,6 +1715,7 @@ class _FavoritesTabState extends State<FavoritesTab>
 
   Future<String?> _promptFolderName(BuildContext context) {
     final controller = TextEditingController();
+    final l = AppLocalizations.of(context);
     return showDialog<String>(
       context: context,
       builder: (ctx) {
@@ -1745,7 +1725,7 @@ class _FavoritesTabState extends State<FavoritesTab>
               cs.surface.withValues(alpha: SettingsManager.elementOpacity.value),
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('New folder'),
+          title: Text(l.favNewFolder),
           content: TextField(
             controller: controller,
             autofocus: true,
@@ -1755,10 +1735,10 @@ class _FavoritesTabState extends State<FavoritesTab>
           actions: [
             TextButton(
                 onPressed: Navigator.of(ctx).pop,
-                child: const Text('Cancel')),
+                child: Text(l.cancel)),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(controller.text),
-              child: const Text('Create'),
+              child: Text(l.create),
             ),
           ],
         );
@@ -2319,6 +2299,7 @@ class _FavoritesTabState extends State<FavoritesTab>
 
   void _showInlineChatActions(
       BuildContext context, FavoriteChat fav, ColorScheme cs) {
+    final l = AppLocalizations.of(context);
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -2362,7 +2343,7 @@ class _FavoritesTabState extends State<FavoritesTab>
               const Divider(height: 1, indent: 16, endIndent: 16),
               ListTile(
                 leading: const Icon(Icons.folder_off_outlined),
-                title: const Text('Remove from folder'),
+                title: Text(l.favRemoveFromFolder),
                 onTap: () {
                   Navigator.of(ctx).pop();
                   rootScreenKey.currentState?.moveChatOutOfFolder(fav.id);
@@ -2378,7 +2359,7 @@ class _FavoritesTabState extends State<FavoritesTab>
                       isLocked ? Icons.lock_open_rounded : Icons.lock_rounded,
                       color: cs.onSurface,
                     ),
-                    title: Text(isLocked ? 'Unlock' : 'Lock'),
+                    title: Text(isLocked ? l.favUnlock : l.favLock),
                     onTap: () async {
                       Navigator.of(ctx).pop();
                       if (isLocked) {
@@ -2396,32 +2377,21 @@ class _FavoritesTabState extends State<FavoritesTab>
               ),
               ListTile(
                 leading: Icon(Icons.delete_outline, color: cs.error),
-                title: Text('Delete', style: TextStyle(color: cs.error)),
-                onTap: () {
+                title: Text(l.delete, style: TextStyle(color: cs.error)),
+                onTap: () async {
                   Navigator.of(ctx).pop();
-                  showDialog(
+                  final confirmed = await showOnyxConfirmDialog(
                     context: context,
-                    builder: (dCtx) => AlertDialog(
-                      title: const Text('Delete chat?'),
-                      content:
-                          Text('Remove "${fav.title}" and all its messages?'),
-                      actions: [
-                        TextButton(
-                            onPressed: Navigator.of(dCtx).pop,
-                            child: const Text('Cancel')),
-                        TextButton(
-                          onPressed: () {
-                            Navigator.of(dCtx).pop();
-                            LockManager.removeLock('fav_${fav.id}');
-                            rootScreenKey.currentState
-                                ?.deleteFavoriteById(fav.id);
-                          },
-                          child:
-                              Text('Delete', style: TextStyle(color: cs.error)),
-                        ),
-                      ],
-                    ),
+                    title: l.favDeleteChatQuestion,
+                    message: 'Remove "${fav.title}" and all its messages?',
+                    confirmLabel: l.delete,
+                    isDestructive: true,
+                    icon: Icons.delete_outline_rounded,
                   );
+                  if (confirmed == true) {
+                    LockManager.removeLock('fav_${fav.id}');
+                    rootScreenKey.currentState?.deleteFavoriteById(fav.id);
+                  }
                 },
               ),
               const SizedBox(height: 8),
@@ -2469,6 +2439,7 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
 
   void _showDesktopContextMenu(
       BuildContext context, Offset pos, FavoriteChat fav, ColorScheme cs) {
+    final l = AppLocalizations.of(context);
     showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
@@ -2478,7 +2449,7 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
           child: Row(children: [
             Icon(Icons.folder_off_outlined, size: 18, color: cs.onSurface),
             const SizedBox(width: 10),
-            const Text('Remove from folder'),
+            Text(l.favRemoveFromFolder),
           ]),
         ),
         PopupMenuItem<String>(
@@ -2486,7 +2457,7 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
           child: Row(children: [
             Icon(Icons.edit_outlined, size: 18, color: cs.onSurface),
             const SizedBox(width: 10),
-            const Text('Edit'),
+            Text(l.edit),
           ]),
         ),
         PopupMenuItem<String>(
@@ -2497,7 +2468,7 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
               size: 18, color: cs.onSurface,
             ),
             const SizedBox(width: 10),
-            Text(LockManager.isLocked('fav_${fav.id}') ? 'Unlock' : 'Lock'),
+            Text(LockManager.isLocked('fav_${fav.id}') ? l.favUnlock : l.favLock),
           ]),
         ),
         PopupMenuItem<String>(
@@ -2505,7 +2476,7 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
           child: Row(children: [
             Icon(Icons.delete_outline, size: 18, color: cs.error),
             const SizedBox(width: 10),
-            Text('Delete', style: TextStyle(color: cs.error)),
+            Text(l.delete, style: TextStyle(color: cs.error)),
           ]),
         ),
       ],
@@ -2526,32 +2497,25 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
         final ok = await showPinDialog(context, PinDialogMode.verify, lockId);
         if (ok) await LockManager.removeLock(lockId);
       } else if (value == 'delete') {
-        showDialog(
+        final confirmed = await showOnyxConfirmDialog(
           context: context,
-          builder: (dCtx) => AlertDialog(
-            title: const Text('Delete chat?'),
-            content: Text('Remove "${fav.title}" and all its messages?'),
-            actions: [
-              TextButton(
-                  onPressed: Navigator.of(dCtx).pop,
-                  child: const Text('Cancel')),
-              TextButton(
-                onPressed: () {
-                  Navigator.of(dCtx).pop();
-                  LockManager.removeLock('fav_${fav.id}');
-                  rootScreenKey.currentState?.deleteFavoriteById(fav.id);
-                },
-                child: Text('Delete', style: TextStyle(color: cs.error)),
-              ),
-            ],
-          ),
+          title: l.favDeleteChatQuestion,
+          message: 'Remove "${fav.title}" and all its messages?',
+          confirmLabel: l.delete,
+          isDestructive: true,
+          icon: Icons.delete_outline_rounded,
         );
+        if (confirmed == true) {
+          LockManager.removeLock('fav_${fav.id}');
+          rootScreenKey.currentState?.deleteFavoriteById(fav.id);
+        }
       }
     });
   }
 
   void _showChatActions(BuildContext context, FavoriteChat fav,
       ColorScheme cs) {
+    final l = AppLocalizations.of(context);
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -2594,7 +2558,7 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
               const Divider(height: 1, indent: 16, endIndent: 16),
               ListTile(
                 leading: const Icon(Icons.folder_off_outlined),
-                title: const Text('Remove from folder'),
+                title: Text(l.favRemoveFromFolder),
                 onTap: () {
                   Navigator.of(ctx).pop();
                   rootScreenKey.currentState?.moveChatOutOfFolder(fav.id);
@@ -2610,7 +2574,7 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
                       isLocked ? Icons.lock_open_rounded : Icons.lock_rounded,
                       color: cs.onSurface,
                     ),
-                    title: Text(isLocked ? 'Unlock' : 'Lock'),
+                    title: Text(isLocked ? l.favUnlock : l.favLock),
                     onTap: () async {
                       Navigator.of(ctx).pop();
                       if (isLocked) {
@@ -2628,32 +2592,21 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
               ),
               ListTile(
                 leading: Icon(Icons.delete_outline, color: cs.error),
-                title: Text('Delete', style: TextStyle(color: cs.error)),
-                onTap: () {
+                title: Text(l.delete, style: TextStyle(color: cs.error)),
+                onTap: () async {
                   Navigator.of(ctx).pop();
-                  showDialog(
+                  final confirmed = await showOnyxConfirmDialog(
                     context: context,
-                    builder: (dCtx) => AlertDialog(
-                      title: const Text('Delete chat?'),
-                      content: Text(
-                          'Remove "${fav.title}" and all its messages?'),
-                      actions: [
-                        TextButton(
-                            onPressed: Navigator.of(dCtx).pop,
-                            child: const Text('Cancel')),
-                        TextButton(
-                          onPressed: () {
-                            Navigator.of(dCtx).pop();
-                            LockManager.removeLock('fav_${fav.id}');
-                            rootScreenKey.currentState
-                                ?.deleteFavoriteById(fav.id);
-                          },
-                          child: Text('Delete',
-                              style: TextStyle(color: cs.error)),
-                        ),
-                      ],
-                    ),
+                    title: l.favDeleteChatQuestion,
+                    message: 'Remove "${fav.title}" and all its messages?',
+                    confirmLabel: l.delete,
+                    isDestructive: true,
+                    icon: Icons.delete_outline_rounded,
                   );
+                  if (confirmed == true) {
+                    LockManager.removeLock('fav_${fav.id}');
+                    rootScreenKey.currentState?.deleteFavoriteById(fav.id);
+                  }
                 },
               ),
               const SizedBox(height: 8),
@@ -3024,15 +2977,14 @@ class _EditChatDialogState extends State<_EditChatDialog> {
   }
 
   Future<void> _removeAvatar() async {
-    final ok = await showDialog<bool>(
+    final l = AppLocalizations.of(context);
+    final ok = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Remove avatar?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton.tonal(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
-        ],
-      ),
+      title: l.favRemoveAvatarQuestion,
+      message: '',
+      confirmLabel: l.remove,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
     if (ok == true && mounted) setState(() => _avatarPath = null);
   }
@@ -3287,15 +3239,14 @@ class _EditFolderDialogState extends State<_EditFolderDialog> {
   }
 
   Future<void> _removeAvatar() async {
-    final ok = await showDialog<bool>(
+    final l = AppLocalizations.of(context);
+    final ok = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Remove avatar?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton.tonal(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
-        ],
-      ),
+      title: l.favRemoveAvatarQuestion,
+      message: '',
+      confirmLabel: l.remove,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
     if (ok == true && mounted) setState(() => _avatarPath = null);
   }

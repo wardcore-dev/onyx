@@ -76,6 +76,7 @@ class _Bar extends StatelessWidget {
   final int userCount;
   final bool muted;
   final bool debugMode;
+
   /// 0=off  1=WebRTC loopback  2=direct PCM
   final int monitorMode;
   final double audioLevel;
@@ -84,93 +85,104 @@ class _Bar extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    return DefaultTextStyle(
-      style: TextStyle(
-        fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
-        decoration: TextDecoration.none,
-        color: scheme.onSurface,
-      ),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        SettingsManager.elementBrightness,
+        SettingsManager.elementOpacity,
+      ]),
+      builder: (_, __) => DefaultTextStyle(
+        style: TextStyle(
+          fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
+          decoration: TextDecoration.none,
+          color: scheme.onSurface,
         ),
-        child: Row(
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: const BoxDecoration(
-                color: Color(0xFF43B581),
-                shape: BoxShape.circle,
-              ),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: SettingsManager.glassSurfaceColor(
+                scheme.surfaceContainerHighest),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: scheme.outlineVariant.withValues(alpha: 0.3),
+              width: 1,
             ),
-            const SizedBox(width: 8),
-            const Icon(Icons.volume_up_rounded, size: 16),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    channelId,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600, fontSize: 13),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(
-                    '$userCount connected',
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: scheme.onSurface.withValues(alpha: 0.6)),
-                  ),
-                ],
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.14),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
               ),
-            ),
-            if (debugMode) ...[
-              _BarIconButton(
-                icon: monitorMode == 1
-                    ? Icons.hearing_rounded
-                    : monitorMode == 2
-                        ? Icons.surround_sound_rounded
-                        : Icons.hearing_disabled_rounded,
-                color: monitorMode == 1
-                    ? const Color(0xFF43B581)
-                    : monitorMode == 2
-                        ? Colors.amber
-                        : scheme.onSurface,
-                tooltip: monitorMode == 1
-                    ? 'Monitoring: server'
-                    : monitorMode == 2
-                        ? 'Monitoring: direct'
-                        : 'Monitor self',
-                onTap: () => VoiceChannelManager.instance.toggleSelfMonitor(),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF43B581),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Icon(Icons.volume_up_rounded, size: 16),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      channelId,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 13),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      '$userCount connected',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.onSurface.withValues(alpha: 0.6)),
+                    ),
+                  ],
+                ),
+              ),
+              if (debugMode) ...[
+                _BarIconButton(
+                  icon: monitorMode == 1
+                      ? Icons.hearing_rounded
+                      : monitorMode == 2
+                          ? Icons.surround_sound_rounded
+                          : Icons.hearing_disabled_rounded,
+                  color: monitorMode == 1
+                      ? const Color(0xFF43B581)
+                      : monitorMode == 2
+                          ? Colors.amber
+                          : scheme.onSurface,
+                  tooltip: monitorMode == 1
+                      ? 'Monitoring: server'
+                      : monitorMode == 2
+                          ? 'Monitoring: direct'
+                          : 'Monitor self',
+                  onTap: () => VoiceChannelManager.instance.toggleSelfMonitor(),
+                ),
+                const SizedBox(width: 4),
+              ],
+              _MicVuButton(
+                muted: muted,
+                audioLevel: audioLevel,
+                onTap: () => VoiceChannelManager.instance.toggleMute(),
               ),
               const SizedBox(width: 4),
+              _BarIconButton(
+                icon: Icons.call_end_rounded,
+                color: scheme.error,
+                tooltip: 'Leave channel',
+                onTap: () => VoiceChannelManager.instance.leaveChannel(),
+              ),
             ],
-            _MicVuButton(
-              muted: muted,
-              audioLevel: audioLevel,
-              onTap: () => VoiceChannelManager.instance.toggleMute(),
-            ),
-            const SizedBox(width: 4),
-            _BarIconButton(
-              icon: Icons.call_end_rounded,
-              color: scheme.error,
-              tooltip: 'Leave channel',
-              onTap: () => VoiceChannelManager.instance.leaveChannel(),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -203,7 +215,7 @@ class _MicVuButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(999),
         child: SizedBox(
           width: 32,
           height: 32,
@@ -268,7 +280,7 @@ class _BarIconButton extends StatelessWidget {
         padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(999),
         ),
         child: Icon(icon, size: 20, color: color),
       ),

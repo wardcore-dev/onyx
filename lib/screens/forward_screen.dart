@@ -21,6 +21,7 @@ import '../managers/user_cache.dart';
 import '../widgets/avatar_widget.dart';
 import '../widgets/chat_background_layer.dart';
 import '../widgets/animated_nav_icon.dart';
+import '../l10n/app_localizations.dart';
 
 class ForwardScreen extends StatefulWidget {
   final List<String> contents;
@@ -629,7 +630,7 @@ class _ForwardScreenState extends State<ForwardScreen> {
                             child: Row(
                               children: [
                                 Text(
-                                  'Forward message',
+                                  AppLocalizations.of(context).forwardMessage,
                                   style: Theme.of(context)
                                       .textTheme
                                       .titleMedium
@@ -687,7 +688,7 @@ class _ForwardScreenState extends State<ForwardScreen> {
         return Scaffold(
           extendBodyBehindAppBar: true,
           appBar: AppBar(
-            title: const Text('Forward message'),
+            title: Text(AppLocalizations.of(context).forwardMessage),
             backgroundColor: Colors.transparent,
           ),
           body: Stack(
@@ -717,7 +718,7 @@ class _ForwardScreenState extends State<ForwardScreen> {
 
   Widget _buildChatsTab(double bottomInset) {
     if (_chatUsernames.isEmpty) {
-      return const Center(child: Text('No chats'));
+      return Center(child: Text(AppLocalizations.of(context).noChats));
     }
     return ListView.separated(
       padding: EdgeInsets.fromLTRB(
@@ -790,7 +791,7 @@ class _ForwardScreenState extends State<ForwardScreen> {
         .where((g) => g.canPost)
         .toList();
     if (all.isEmpty) {
-      return const Center(child: Text('No groups'));
+      return Center(child: Text(AppLocalizations.of(context).noGroups));
     }
     return ListView.separated(
       padding: EdgeInsets.fromLTRB(
@@ -909,7 +910,7 @@ class _ForwardScreenState extends State<ForwardScreen> {
 
   Widget _buildFavoritesTab(double bottomInset) {
     if (_favorites.isEmpty) {
-      return const Center(child: Text('No favorites'));
+      return Center(child: Text(AppLocalizations.of(context).noFavorites));
     }
 
     final scheme = Theme.of(context).colorScheme;

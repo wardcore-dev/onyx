@@ -15,6 +15,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../dialogs/pin_lock_dialog.dart';
 import '../globals.dart';
 import '../l10n/app_localizations.dart';
+import '../l10n/app_localizations_extra.dart';
 import '../managers/lock_manager.dart';
 import '../managers/settings_manager.dart';
 import '../models/fav_folder.dart';
@@ -1031,7 +1032,7 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
         ] else if (_done)
           OutlinedButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
+            child: Text(AppLocalizations.of(context).close),
           ),
       ],
     );

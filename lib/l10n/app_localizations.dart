@@ -1,1609 +1,6764 @@
-// lib/l10n/app_localizations.dart
-import 'package:flutter/material.dart';
+import 'dart:async';
 
-class AppLocalizations {
-  final Locale locale;
-  AppLocalizations(this.locale);
+import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/intl.dart' as intl;
 
-  bool get _ru => locale.languageCode == 'ru';
+import 'app_localizations_de.dart';
+import 'app_localizations_en.dart';
+import 'app_localizations_es.dart';
+import 'app_localizations_fr.dart';
+import 'app_localizations_pt.dart';
+import 'app_localizations_ru.dart';
+
+// ignore_for_file: type=lint
+
+/// Callers can lookup localized strings with an instance of AppLocalizations
+/// returned by `AppLocalizations.of(context)`.
+///
+/// Applications need to include `AppLocalizations.delegate()` in their app's
+/// `localizationDelegates` list, and the locales they support in the app's
+/// `supportedLocales` list. For example:
+///
+/// ```dart
+/// import 'l10n/app_localizations.dart';
+///
+/// return MaterialApp(
+///   localizationsDelegates: AppLocalizations.localizationsDelegates,
+///   supportedLocales: AppLocalizations.supportedLocales,
+///   home: MyApplicationHome(),
+/// );
+/// ```
+///
+/// ## Update pubspec.yaml
+///
+/// Please make sure to update your pubspec.yaml to include the following
+/// packages:
+///
+/// ```yaml
+/// dependencies:
+///   # Internationalization support.
+///   flutter_localizations:
+///     sdk: flutter
+///   intl: any # Use the pinned version from flutter_localizations
+///
+///   # Rest of dependencies
+/// ```
+///
+/// ## iOS Applications
+///
+/// iOS applications define key application metadata, including supported
+/// locales, in an Info.plist file that is built into the application bundle.
+/// To configure the locales supported by your app, you’ll need to edit this
+/// file.
+///
+/// First, open your project’s ios/Runner.xcworkspace Xcode workspace file.
+/// Then, in the Project Navigator, open the Info.plist file under the Runner
+/// project’s Runner folder.
+///
+/// Next, select the Information Property List item, select Add Item from the
+/// Editor menu, then select Localizations from the pop-up menu.
+///
+/// Select and expand the newly-created Localizations item then, for each
+/// locale your application supports, add a new item and select the locale
+/// you wish to add from the pop-up menu in the Value field. This list should
+/// be consistent with the languages listed in the AppLocalizations.supportedLocales
+/// property.
+abstract class AppLocalizations {
+  AppLocalizations(String locale)
+      : localeName = intl.Intl.canonicalizedLocale(locale.toString());
+
+  final String localeName;
 
   static AppLocalizations of(BuildContext context) {
-    return Localizations.of<AppLocalizations>(context, AppLocalizations) ??
-        AppLocalizations(const Locale('en'));
+    return Localizations.of<AppLocalizations>(context, AppLocalizations)!;
   }
 
   static const LocalizationsDelegate<AppLocalizations> delegate =
       _AppLocalizationsDelegate();
 
-  String get navChats => _ru ? 'Чаты' : 'Chats';
-  String get navGroups => _ru ? 'Группы' : 'Groups';
-  String get navFavorites => _ru ? 'Избранное' : 'Favorites';
-  String get navAccounts => _ru ? 'Аккаунты' : 'Accounts';
-  String get navSettings => _ru ? 'Настройки' : 'Settings';
-
-  String get cancel => _ru ? 'Отмена' : 'Cancel';
-  String get save => _ru ? 'Сохранить' : 'Save';
-  String get ok => _ru ? 'OK' : 'OK';
-  String get yes => _ru ? 'Да' : 'Yes';
-  String get no => _ru ? 'Нет' : 'No';
-  String get close => _ru ? 'Закрыть' : 'Close';
-  String get confirm => _ru ? 'Подтвердить' : 'Confirm';
-  String get delete => _ru ? 'Удалить' : 'Delete';
-  String get clear => _ru ? 'Очистить' : 'Clear';
-  String get loading => _ru ? 'Загрузка...' : 'Loading...';
-  String get error => _ru ? 'Ошибка' : 'Error';
-  String get success => _ru ? 'Успешно' : 'Success';
-  String get copy => _ru ? 'Копировать' : 'Copy';
-  String get copied => _ru ? 'Скопировано' : 'Copied';
-  String get test => _ru ? 'Тест' : 'Test';
-  String get connect => _ru ? 'Подключить' : 'Connect';
-  String get disconnect => _ru ? 'Отключить' : 'Disconnect';
-  String get enabled => _ru ? 'Включено' : 'Enabled';
-  String get disabled => _ru ? 'Выключено' : 'Disabled';
-  String get on => _ru ? 'Вкл' : 'On';
-  String get off => _ru ? 'Выкл' : 'Off';
-
-  String get settingsTitle => _ru ? 'Настройки' : 'Settings';
-  String get supportOnyx => _ru ? 'Поддержать ONYX' : 'Support ONYX';
-
-  String get securityTitle => _ru ? 'Безопасность' : 'Security & Privacy';
-  String get securitySubtitle => _ru ? 'Советы и детали шифрования' : 'Tap to view tips and encryption details';
-  String get tipOfTheDay => _ru ? 'Совет дня' : 'Tip of the day';
-  String get statusSettings => _ru ? 'Настройки статуса' : 'Status Settings';
-  String get showDisplayNameInGroups => _ru ? 'Показывать имя в группах' : 'Show my display name in groups';
-  String get showDisplayNameSubtitle => _ru ? 'Если выключено, ваши сообщения будут подписаны как "Anonymous"' : 'When off, your messages appear as "Anonymous"';
-  String get pinLock => _ru ? 'PIN-блокировка' : 'PIN Lock';
-  String get enablePinLock => _ru ? 'Включить PIN-блокировку' : 'Enable PIN Lock';
-  String get enablePinSubtitle => _ru ? 'Требовать 4-значный PIN при запуске приложения' : 'Require a 4-digit PIN to unlock the app on launch';
-  String get pinLockEnabled => _ru ? ' PIN-блокировка включена' : ' PIN Lock enabled';
-  String get pinLockDisabled => _ru ? 'PIN-блокировка отключена' : 'PIN Lock disabled';
-  String get useBiometrics => _ru ? 'Использовать биометрию' : 'Use Biometrics';
-  String get useBiometricsSubtitle => _ru ? 'Разблокировать по отпечатку или лицу' : 'Unlock with fingerprint or face recognition';
-  String get biometricsUnavailable => _ru ? 'Биометрия недоступна на этом устройстве' : 'Biometrics not available on this device';
-  String get lockOnResume => _ru ? 'Блокировать при сворачивании' : 'Lock when backgrounded';
-  String get lockOnResumeSubtitle => _ru ? 'Запрашивать PIN каждый раз при возврате в приложение' : 'Require PIN every time the app returns to foreground';
-
-  // ── PIN entry screen (app unlock + per-chat lock) ─────────────────────────
-  String get pinScreenSetTitle => _ru ? 'Задать PIN' : 'Set PIN';
-  String get pinScreenConfirmTitle => _ru ? 'Подтвердите PIN' : 'Confirm PIN';
-  String get pinScreenEnterTitle => _ru ? 'Введите PIN' : 'Enter PIN';
-  String get pinScreenChooseSubtitle => _ru ? 'Придумайте 4-значный PIN' : 'Choose a 4-digit PIN';
-  String get pinScreenChooseChatSubtitle => _ru ? 'Придумайте 4-значный PIN для этого чата' : 'Choose a 4-digit PIN for this chat';
-  String get pinScreenReenterSubtitle => _ru ? 'Введите PIN ещё раз для подтверждения' : 'Re-enter your PIN to confirm';
-  String get pinScreenUnlockSubtitle => _ru ? 'Введите свой 4-значный PIN для разблокировки' : 'Enter your 4-digit PIN to unlock';
-  String get pinScreenGenericSubtitle => _ru ? 'Введите свой 4-значный PIN' : 'Enter your 4-digit PIN';
-  String get pinScreenDisableHeader => _ru ? 'Введите текущий PIN, чтобы отключить' : 'Enter current PIN to disable';
-  String get pinScreenMismatchError => _ru ? 'PIN-коды не совпадают. Попробуйте снова.' : 'PINs do not match. Try again.';
-  String get pinScreenIncorrectError => _ru ? 'Неверный PIN' : 'Incorrect PIN';
-
-  String get searchChatsHint => _ru ? 'Поиск чатов и сообщений…' : 'Search chats and messages…';
-  String get searchGroupsHint => _ru ? 'Поиск групп и сообщений…' : 'Search groups and messages…';
-  String get searchFavoritesHint => _ru ? 'Поиск избранного…' : 'Search favorites…';
-  String get searchSettingsHint => _ru ? 'Поиск в настройках…' : 'Search settings…';
-  List<String> get securityTips => _ru
-      ? [
-          'Не используйте ONYX на рутованных устройствах — это ослабляет безопасность шифрования.',
-          'Ваши сообщения защищены сквозным шифрованием X25519 и XChaCha20-Poly1305.',
-          'Приватные ключи никогда не покидают устройство и хранятся в защищённом хранилище.',
-          'Никогда не делитесь паролем или приватными ключами — ONYX никогда их не запросит.',
-          'Выход из аккаунта или его удаление безвозвратно удаляет ключи с устройства.',
-          'Всегда сверяйте pubkey с собеседником перед обсуждением чувствительных тем.',
-        ]
-      : [
-          'Avoid using ONYX on rooted or jailbroken devices — they weaken encryption security.',
-          'Your messages are protected with end-to-end encryption using X25519 and XChaCha20-Poly1305.',
-          'Private keys never leave your device and are stored in secure system storage.',
-          'Never share your password or private keys — ONYX will never ask for them.',
-          'Logging out or deleting your account permanently removes your keys from this device.',
-          'Always check pubkey with interlocutor before discussing sensitive topics.',
-        ];
-
-  String get keyMgmtTitle => _ru ? 'Управление ключами' : 'Key Management';
-  String get keyMgmtSubtitle => _ru ? 'Ротация или сброс ключа шифрования' : 'Rotate or reset your encryption identity';
-  String get keyMgmtDescription => _ru
-      ? 'Выполните ротацию E2EE-ключа, если подозреваете его компрометацию. Контакты получат новый ключ автоматически.'
-      : 'Rotate your E2EE identity key if you suspect it was compromised. Contacts receive the new key automatically.';
-  String get rotateE2eeKey => _ru ? 'Ротация E2EE-ключа' : 'Rotate E2EE Key';
-  String get rotateE2eeKeyPrimaryOnly => _ru ? 'Ротация E2EE-ключа (только основное устройство)' : 'Rotate E2EE Key (primary device only)';
-  String get rotateKeyDialogTitle => _ru ? 'Ротировать ключ шифрования?' : 'Rotate encryption key?';
-  String get rotateKeyDialogContent => _ru
-      ? 'Будет создана новая пара ключей X25519 и загружена на сервер.\n\nСессия и история сообщений НЕ затрагиваются. Контакты автоматически начнут использовать новый ключ.'
-      : 'A new X25519 keypair will be generated and uploaded to the server.\n\nYour session and message history are NOT affected. Contacts will automatically use the new key on their next message.';
-  String get rotateKeyBtn => _ru ? 'Ротировать' : 'Rotate';
-  String get rotatingKey => _ru ? ' Ротация ключа...' : ' Rotating key…';
-  String get keyRotated => _ru ? ' E2EE-ключ ротирован и загружен' : ' E2EE key rotated and uploaded';
-  String get keyRotationFailed => _ru ? ' Ошибка ротации ключа' : ' Key rotation failed';
-  String get activeDevices => _ru ? 'Активные устройства' : 'Active Devices';
-  String get activeDevicesSubtitle => _ru
-      ? 'Устройства, пароль и ключ шифрования'
-      : 'Devices, password and encryption key';
-  String get activeDevicesPrimaryOnly => _ru ? 'Активные устройства (только основное)' : 'Active Devices (primary device only)';
-  String get changePassword => _ru ? 'Изменить пароль' : 'Change Password';
-  String get changePasswordPrimaryOnly => _ru ? 'Изменить пароль (только основное устройство)' : 'Change Password (primary device only)';
-
-  String get notificationsTitle => _ru ? 'Уведомления' : 'Notifications';
-  String get notificationsSubtitle => _ru ? 'Управление оповещениями' : 'Manage alerts and delivery options';
-  String get notificationsEnabled => _ru ? 'Включить уведомления' : 'Enable Notifications';
-  String get notificationsEnabledSubtitle => _ru ? 'Показывать системные уведомления о новых сообщениях' : 'Show system notifications for new messages';
-  String get notificationPosition => _ru ? 'Позиция уведомлений' : 'Notification Position';
-  String get notifPosTopLeft => _ru ? 'Верх-лево' : 'Top Left';
-  String get notifPosTopRight => _ru ? 'Верх-право' : 'Top Right';
-  String get notifPosBottomLeft => _ru ? 'Низ-лево' : 'Bottom Left';
-  String get notifPosBottomRight => _ru ? 'Низ-право' : 'Bottom Right';
-
-  String get appearanceTitle => _ru ? 'Внешний вид' : 'Appearance';
-  String get appearanceSubtitle => _ru ? 'Тема и тёмный режим' : 'Choose theme and dark mode';
-  String get selectTheme => _ru ? 'Выбрать тему' : 'Select Theme';
-  String get darkMode => _ru ? 'Тёмный режим' : 'Dark Mode';
-  String get fontAndTextSize => _ru ? 'Шрифт и размер текста' : 'Font & Text Size';
-  String get fontFamily => _ru ? 'Семейство шрифтов' : 'Font Family';
-  String get messageSize => _ru ? 'Размер сообщений' : 'Message Size';
-  String get ownMessagesRight => _ru ? 'Мои сообщения: справа' : 'Own messages: Right';
-  String get ownMessagesLeft => _ru ? 'Мои сообщения: слева' : 'Own messages: Left';
-  String get alignAllRight => _ru ? 'Выровнять все сообщения вправо' : 'Align all messages right';
-  String get alignAllRightSubtitle => _ru ? 'Все сообщения отображаются справа, как в зеркале' : 'All messages aligned to the right side like a mirror';
-  String get showAvatarInChats => _ru ? 'Аватар в списке чатов' : 'Show avatar in chats list';
-  String get showAccountIndicator => _ru ? 'Показывать текущий аккаунт' : 'Show current account';
-  String get showAccountIndicatorSubtitle => _ru ? 'Отображать имя и юзернейм в углу приложения' : 'Display name and username in the app corner';
-  String get showAvatarSubtitle => _ru ? 'Показывать аватар собеседника в списке чатов' : 'Show contact avatar in chat list';
-  String get chatBackground => _ru ? 'Фон чата' : 'Chat Background';
-  String get chatBgSubtitle => _ru ? 'Установить изображение как фон в чатах' : 'Set an image as chat background';
-  String get chooseImage => _ru ? 'Выбрать изображение' : 'Choose Image';
-  String get clearBackground => _ru ? 'Убрать фон' : 'Clear Background';
-  String get applyGlobally => _ru ? 'Применить ко всем чатам' : 'Apply globally';
-  String get applyGloballySubtitle => _ru ? 'Использовать этот фон во всех чатах' : 'Use this background in all chats';
-  String get blurBackground => _ru ? 'Размыть фон' : 'Blur background';
-  String get elementOpacity => _ru ? 'Прозрачность элементов' : 'Element Opacity';
-  String get elementBrightness => _ru ? 'Яркость элементов' : 'Element Brightness';
-  String get uiLayout => _ru ? 'Макет интерфейса' : 'UI Layout';
-  String get navBarPosition => _ru ? 'Позиция навигации' : 'Navigation Bar Position';
-  String get navLeft => _ru ? 'Слева' : 'Left';
-  String get navBottom => _ru ? 'Снизу' : 'Bottom';
-  String get inputBarMaxWidth => _ru ? 'Ширина строки ввода' : 'Input Bar Width';
-  String get minimizeBottomNav => _ru ? 'Компактная навигация' : 'Minimize Bottom Nav';
-  String get minimizeBottomNavSubtitle => _ru ? 'Скрыть подписи в нижней панели' : 'Hide labels in bottom navigation bar';
-  String get swipeTabs => _ru ? 'Свайп между вкладками' : 'Swipe between tabs';
-  String get swipeTabsSubtitle => _ru ? 'Переключать вкладки горизонтальным свайпом' : 'Switch tabs with horizontal swipe gesture';
-  String get smoothScroll => _ru ? 'Плавная прокрутка' : 'Smooth Scrolling';
-  String get performanceOptimizations => _ru ? 'Оптимизация производительности' : 'Performance Optimizations';
-  String get macOsWindowStyle => _ru ? 'Стиль окна' : 'Window Style';
-  String get macOsWindowStyleSubtitle => _ru ? 'Кнопки управления окном' : 'Window controls style';
-  String get macOsNativeTitleBar => _ru ? 'Нативный macOS (светофор слева)' : 'Native macOS (traffic lights)';
-  String get macOsCustomTitleBar => _ru ? 'Windows-стиль (справа)' : 'Windows-style (right side)';
-  String get updateAvailableLabel => _ru ? 'Доступно обновление' : 'Update available';
-  String get updateDownload => _ru ? 'Скачать' : 'Download';
-
-  String get cacheTitle => _ru ? 'Кэш' : 'Cache';
-  String get cacheSubtitle => _ru ? 'Управление локальным и серверным кэшем медиа' : 'Manage local & server media cache';
-  String get mediaCacheSize => _ru ? 'Кэш медиа: ' : 'Media messages cache: ';
-  String get clearLocalCache => _ru ? 'Очистить локальный кэш' : 'Clear Local Cache';
-  String get clearLocalCacheTitle => _ru ? 'Очистить локальный кэш?' : 'Clear local cache';
-  String get clearLocalCacheContent => _ru
-      ? 'Вы уверены, что хотите удалить весь кэшированный медиаконтент (голос, изображения, видео)?\nЗагрузки на сервере и история чатов НЕ затрагиваются.'
-      : 'Are you sure you want to delete all cached media (voice, images, videos)?\nThis does NOT affect server uploads or chat history.';
-  String get clearAll => _ru ? 'Очистить всё' : 'Clear All';
-  String get serverMediaCache => _ru ? 'Серверный кэш медиа' : 'Server Media Cache';
-  String get serverMediaCacheSubtitle => _ru ? 'Хранится на сервере: изображения, голос, видео.' : 'Stored on server: images, voice, video.';
-  String get clearServerCache => _ru ? 'Очистить серверный кэш' : 'Clear Server Cache';
-  String get dangerZone => _ru ? 'Опасная зона' : 'Danger Zone';
-  String get dangerZoneSubtitle => _ru ? 'Удалить аккаунт с сервера и/или стереть локальные данные.' : 'Delete account from server and/or wipe local data.';
-  String get factoryReset => _ru ? 'Сброс' : 'Factory Reset';
-  String get factoryResetHint => _ru ? 'Выберите что сбросить. Нужно выбрать хотя бы один пункт.' : 'Select what to reset. At least one option must be chosen.';
-  String get resetDeleteAccount => _ru ? 'Удалить аккаунт с сервера' : 'Delete account from server';
-  String resetDeleteAccountSubtitle(String username) => _ru
-      ? 'Навсегда удалит @$username — все сообщения, медиа и ключи с сервера.'
-      : 'Permanently deletes @$username — all messages, media and keys from the server.';
-  String get resetNoAccount => _ru ? 'Нет авторизованного аккаунта.' : 'No account is logged in.';
-  String get resetDeleteLocal => _ru ? 'Удалить локальные данные' : 'Delete local app data';
-  String get resetDeleteLocalSubtitle => _ru ? 'Удалит все локальные чаты, ключи, настройки, кэш и медиа.' : 'Wipes all local chats, keys, settings, cache and media.';
-  String get reset => _ru ? 'Сбросить' : 'Reset';
-  String get resetFailed => _ru ? 'Сброс не удался' : 'Reset failed';
-  String mediaCachesCleared(int n) => _ru ? ' Очищено $n кэш${n == 1 ? '' : 'а'}' : ' Cleared $n media cache${n == 1 ? '' : 's'}';
-
-  String get connectionTitle => _ru ? 'Соединение' : 'Connection';
-  String get connectionSubtitle => _ru ? 'Статус и управление WebSocket' : 'WebSocket status & controls';
-
-  String get proxyTitle => _ru ? 'Прокси' : 'Proxy';
-  String get proxySubtitle => _ru ? 'Маршрутизация через HTTP или SOCKS5 прокси' : 'Route traffic through HTTP or SOCKS5 proxy';
-  String get enableProxy => _ru ? 'Включить прокси' : 'Enable Proxy';
-  String get proxyType => _ru ? 'Тип прокси' : 'Proxy Type';
-  String get proxyHost => _ru ? 'Хост' : 'Host';
-  String get proxyPort => _ru ? 'Порт' : 'Port';
-  String get proxyUsername => _ru ? 'Логин' : 'Username';
-  String get proxyPassword => _ru ? 'Пароль' : 'Password';
-  String get testProxy => _ru ? 'Проверить прокси' : 'Test Proxy';
-  String get proxyTesting => _ru ? 'Проверка...' : 'Testing...';
-  String get proxyOk => _ru ? ' Прокси работает' : ' Proxy OK';
-  String get proxyFailed => _ru ? ' Прокси недоступен' : ' Proxy unreachable';
-  String get useProxy => _ru ? 'Использовать прокси' : 'Use proxy';
-  String get proxyDirectConnection => _ru ? 'Прямое подключение' : 'Direct connection';
-  String get proxyRouted => _ru ? 'Трафик идёт через прокси' : 'Traffic routed through proxy';
-  String get proxyConnectedStatus => _ru ? 'Подключено' : 'Connected';
-  String get proxyNotConnectedStatus => _ru ? 'Не подключено' : 'Not connected';
-  String get proxyLoginOptional => _ru ? 'Логин (необязательно)' : 'Login (optional)';
-  String get proxyPasswordOptional => _ru ? 'Пароль (необязательно)' : 'Password (optional)';
-  String get proxyApplyReconnect => _ru ? 'Применить и переподключить' : 'Apply & Reconnect';
-
-  String get appDataTitle => _ru ? 'Папка данных ONYX' : 'ONYX data folder';
-  String get appDataSubtitle => _ru ? 'Перенос системной папки данных на другой диск' : 'Move the app data folder to another drive';
-  String get appDataCurrentPath => _ru ? 'Текущая папка' : 'Current folder';
-  String get appDataDefault => _ru ? 'По умолчанию (системная папка)' : 'Default (system folder)';
-  String get appDataMove => _ru ? 'Переместить…' : 'Move…';
-  String get appDataReset => _ru ? 'Сбросить' : 'Reset';
-  String get appDataMigrating => _ru ? 'Перемещение данных…' : 'Moving data…';
-  String get appDataMigrateError => _ru ? 'Ошибка при перемещении' : 'Error during move';
-  String get appDataRestartRequired => _ru
-      ? 'Папка изменена. Перезапустите ONYX, чтобы изменения вступили в силу.'
-      : 'Folder changed. Restart ONYX for the change to take effect.';
-  String get appDataRestart => _ru ? 'Перезапустить ONYX' : 'Restart ONYX';
-  String get appDataOpenFolder => _ru ? 'Открыть папку' : 'Open folder';
-  String get appDataDeleteOldFolder => _ru ? 'Удалить предыдущую папку' : 'Delete previous folder';
-  String get appDataDeleteOldFolderSubtitle => _ru
-      ? 'Удалить исходную системную папку данных, оставшуюся после переноса'
-      : 'Delete the original system data folder left after migration';
-  String get appDataDeleteOldFolderConfirm => _ru
-      ? 'Удалить исходную папку ONYX?\n\nЭто действие необратимо. Убедитесь, что данные успешно перенесены.'
-      : 'Delete the original ONYX data folder?\n\nThis cannot be undone. Make sure data was migrated successfully.';
-  String get appDataDeleteOldFolderSuccess => _ru ? 'Предыдущая папка удалена' : 'Previous folder deleted';
-  String get appDataDeleteOldFolderError => _ru ? 'Ошибка при удалении: ' : 'Error deleting: ';
-
-  String get interactTitle => _ru ? 'Взаимодействие' : 'Interaction';
-  String get interactSubtitle => _ru ? 'Подтверждение загрузки файлов' : 'File upload confirmations';
-  String get confirmFileUpload => _ru ? 'Подтверждение отправки файла' : 'Confirm File Upload';
-  String get confirmFileUploadSubtitle => _ru ? 'Показывать диалог подтверждения перед отправкой файлов' : 'Show confirmation dialog before sending files';
-  String get confirmVoiceMessage => _ru ? 'Подтверждение голосового сообщения' : 'Confirm Voice Message';
-  String get confirmVoiceSubtitle => _ru ? 'Показывать диалог подтверждения перед отправкой голосового' : 'Show confirmation dialog before sending voice';
-
-  String get downloadFolder => _ru ? 'Папка для сохранения файлов' : 'Download folder';
-  String get downloadFolderSubtitle => _ru ? 'Куда сохранять полученные файлы (по умолчанию: Загрузки/ONYX)' : 'Where to save received files (default: Downloads/ONYX)';
-  String get downloadFolderDefault => _ru ? 'По умолчанию (Загрузки/ONYX)' : 'Default (Downloads/ONYX)';
-  String get downloadFolderChange => _ru ? 'Выбрать папку' : 'Choose folder';
-  String get downloadFolderReset => _ru ? 'Сбросить' : 'Reset';
-
-  String get contactTitle => _ru ? 'Контакты' : 'Contact';
-  String get contactSubtitle => _ru ? 'Сайт, репозиторий и обратная связь' : 'Website, repository & feedback';
-  String get contactWebsite => _ru ? 'Официальный сайт' : 'Official website';
-  String get contactRepository => _ru ? 'Исходный код (клиент)' : 'Source code (client)';
-  String get contactRepositoryServer => _ru ? 'Исходный код (self-hosted сервер)' : 'Source code (self-hosted server)';
-  String get contactEmail => _ru ? 'Написать нам' : 'Contact us';
-
-  String get debugTitle => _ru ? 'Отладка / Логи' : 'Debug/Logs';
-  String get debugSubtitle => _ru ? 'Производительность и журналирование в реальном времени' : 'Real-time performance & logging';
-  String get debugMode => _ru ? 'Режим отладки' : 'Debug Mode';
-  String get debugModeSubtitle => _ru ? 'Включить мониторинг производительности и логи' : 'Enable performance monitoring & logs';
-  String get enableFileLogging => _ru ? 'Запись логов в файл' : 'Enable File Logging';
-  String get enableFileLoggingSubtitle => _ru ? 'Записывать логи на диск (отключите для приватности)' : 'Write app logs to disk (disable for privacy)';
-  String get deleteAllLogs => _ru ? 'Удалить все логи' : 'Delete All Logs';
-
-  String get languageTitle => _ru ? 'Язык' : 'Language';
-  String get languageSubtitle => _ru ? 'Язык интерфейса приложения' : 'App interface language';
-  String get languageEnglish => 'English';
-  String get languageRussian => 'Русский';
-  String get languageChanged => _ru ? 'Язык изменён' : 'Language changed';
-
-  String get noChatsYet => _ru ? 'Чатов пока нет' : 'No chats yet';
-  String get deleteChatTitle => _ru ? 'Удалить чат?' : 'Delete chat?';
-  String get blockUserLabel => _ru ? 'Заблокировать' : 'Block user';
-  String get unblockUserLabel => _ru ? 'Разблокировать' : 'Unblock';
-  String get muteUserLabel => _ru ? 'Отключить уведомления' : 'Mute notifications';
-  String get unmuteUserLabel => _ru ? 'Включить уведомления' : 'Unmute notifications';
-  String get blockedByUserMessage => _ru
-      ? 'Этот пользователь ограничил получение сообщений от вас.'
-      : 'This user has restricted incoming messages from you.';
-  String unblockUserConfirmContent(String name) => _ru
-      ? 'Разблокировать $name?'
-      : 'Unblock $name?';
-  String blockUserConfirmContent(String name) => _ru
-      ? 'Заблокировать $name? Они не смогут отправлять вам сообщения.'
-      : 'Block $name? They won\'t be able to send you messages.';
-  String deleteChatContent(String name) => _ru
-      ? 'Удалить чат с "$name"? Это действие необратимо.'
-      : 'Are you sure you want to delete the chat with "$name"? This action cannot be undone.';
-
-  String localizePreview(String key) {
-    if (!_ru) return key;
-    
-    if (key.startsWith('Album · ') && key.endsWith(' photos')) {
-      final countStr = key.substring('Album · '.length, key.length - ' photos'.length);
-      final n = int.tryParse(countStr);
-      if (n != null) return 'Альбом · $n фото';
-    }
-    if (key.startsWith('[Message not decrypted]')) return '[Сообщение не расшифровано]';
-    const map = {
-      'Voice message': 'Голосовое',
-      'Music': 'Музыка',
-      'Video file': 'Видео',
-      'Video': 'Видео',
-      'Image': 'Фото',
-      'Album': 'Альбом',
-      'File': 'Файл',
-      'Document': 'Документ',
-      'Spreadsheet': 'Таблица',
-      'Presentation': 'Презентация',
-      'Archive': 'Архив',
-      'Artifact': 'Код',
-    };
-    return map[key] ?? key;
-  }
-
-  String get editProfile => _ru ? 'Профиль' : 'Edit Profile';
-  String get displayName => _ru ? 'Отображаемое имя' : 'Display Name';
-  String get addAccount => _ru ? 'Добавить аккаунт' : 'Add Account';
-  String get welcomeTitle => _ru ? 'Добро пожаловать' : 'Welcome';
-  String get welcomeTagline => _ru ? 'Безопасный мессенджер с шифрованием' : 'Secure end-to-end encrypted messenger';
-  String get otherAccounts => _ru ? 'Другие аккаунты' : 'Other Accounts';
-  String get tapToSwitch => _ru ? 'Нажмите для входа' : 'Tap to switch';
-  String get deleteFromRecentTitle => _ru ? 'Удалить из недавних?' : 'Delete account from recent?';
-
-  String get authUsernameLabel => _ru ? 'Юзернейм (3–16 симв.)' : 'Username (3-16 chars)';
-  String get authPasswordLabel => _ru ? 'Пароль (мин. 16 симв.)' : 'Password (min 16 chars)';
-  String get loginBtn => _ru ? 'Войти' : 'Login';
-  String get registerBtn => _ru ? 'Регистрация' : 'Register';
-
-  // QR auth / device linking
-  String get deviceAuthTitle => _ru ? 'Привязать устройство' : 'Link Device';
-  String get deviceAuthTabQr => 'QR';
-  String get deviceAuthTabScan => _ru ? 'Скан' : 'Scan';
-  String get deviceAuthLanNote => _ru
-      ? 'Оба устройства должны быть в одной локальной сети'
-      : 'Both devices must be on the same local network';
-  String get loginWithQr => _ru ? 'Войти по QR' : 'Login via QR';
-  String get qrAuthWaitingTitle => _ru ? 'Ожидание телефона' : 'Waiting for phone';
-  String get qrAuthWaitingSubtitle => _ru
-      ? 'Отсканируйте этот код на авторизованном устройстве — оно передаст сессию на этот экран'
-      : 'Scan this code on an authorized device to transfer the session here';
-  String get qrAuthSuccess => _ru ? 'Устройство авторизовано' : 'Device authorized';
-  String get qrAuthFailed => _ru ? 'Ошибка QR-авторизации' : 'QR auth failed';
-  String get qrAuthCancelled => _ru ? 'QR-авторизация отменена' : 'QR auth cancelled';
-  String get authorizeDevice => _ru ? 'Авторизовать устройство' : 'Authorize device';
-  String get authorizeDeviceSubtitle => _ru
-      ? 'Разрешить другому устройству войти через QR-код'
-      : 'Allow another device to log in by scanning a QR code';
-  String get authorizeDeviceScanHint => _ru
-      ? 'Наведите камеру на QR-код, отображаемый на другом устройстве'
-      : 'Point the camera at the QR code shown on the other device';
-  String get authorizeDeviceSuccess => _ru ? 'Устройство успешно авторизовано' : 'Device authorized successfully';
-  String get authorizeDeviceFailed => _ru ? 'Не удалось авторизовать устройство' : 'Failed to authorize device';
-  String get authorizeDeviceSending => _ru ? 'Отправка данных...' : 'Sending credentials…';
-  String get qrAuthEncryptedNote => _ru
-      ? 'Передача зашифрована (X25519 + AES-256-GCM)'
-      : 'Transfer is encrypted (X25519 + AES-256-GCM)';
-  // Desktop → Phone grant flow
-  String get scanFromPc => _ru ? 'Получить с компьютера' : 'Receive from PC';
-  String get scanFromPcHint => _ru
-      ? 'Наведите камеру на QR-код, отображаемый на другом устройстве, чтобы войти здесь'
-      : 'Point the camera at the QR code shown on another device to sign in here';
-  String get grantDeviceTitle => _ru ? 'Авторизовать телефон' : 'Authorize phone';
-  String get grantDeviceSubtitle => _ru
-      ? 'Отсканируйте этот код на другом устройстве — оно получит доступ к этому аккаунту'
-      : 'Scan this code on another device to sign in there with this account';
-  String get grantDeviceSuccess => _ru ? 'Телефон успешно авторизован' : 'Phone authorized successfully';
-  String get grantDeviceFailed => _ru ? 'Не удалось авторизовать телефон' : 'Failed to authorize phone';
-  String get enterUsernameMsg => _ru ? 'Введите имя пользователя' : 'Enter your username';
-  String get loginSuccess => _ru ? 'Вход выполнен' : 'Login successful';
-  String get loginFailed => _ru ? 'Ошибка входа' : 'Login failed';
-  String get registeringMsg => _ru ? 'Регистрация...' : 'Registering...';
-  String get registrationFailed => _ru ? ' Ошибка регистрации' : ' Registration failed';
-  String get usernameInvalidMsg => _ru ? 'Юзернейм: 3–16 симв., только буквы, цифры, _ . -' : 'Username: 3-16 chars, only letters, digits, _ . -';
-  String get passwordTooShortMsg => _ru ? 'Пароль слишком короткий (мин. 16)' : 'Password too short (min 16)';
-  String get generatePasswordTooltip => _ru ? 'Сгенерировать надёжный пароль' : 'Generate strong password';
-  String get savePasswordWarning => _ru
-      ? 'Обязательно сохраните пароль в надёжном месте — запишите его. Восстановление без пароля невозможно.'
-      : 'Make sure to save your password in a safe place — write it down. Recovery without a password is impossible.';
-
-  String get passphraseWriteDown => _ru
-      ? 'Эта фраза больше никогда не будет показана. Запишите эти 12 слов от руки и храните их в надёжном месте — они нужны для восстановления аккаунта, если вы забудете пароль.'
-      : 'This passphrase will never be shown again. Write down these 12 words by hand and keep them somewhere safe — you\'ll need them to recover your account if you forget your password.';
-  String get passphraseWriteOnPaper => _ru
-      ? 'Запишите секретную фразу на бумаге прямо сейчас — второго шанса не будет!'
-      : 'Write your passphrase on paper right now — there will be no second chance!';
-  String get copyToClipboard => _ru ? 'Копировать в буфер' : 'Copy to clipboard';
-  String get copiedToClipboard => _ru ? 'Скопировано!' : 'Copied!';
-  String passphraseCountdown(int s) => _ru ? 'Прочитайте внимательно — доступно через $s с...' : 'Please read carefully — available in $s s...';
-  String get iSavedIt => _ru ? 'Я сохранил(-а)' : "I've saved it";
-  String deleteFromRecentContent(String acc) => _ru
-      ? 'Удалить "$acc" из списка? Аккаунт на сервере не будет удалён.'
-      : 'Are you sure you want to remove "$acc" from the recent list?\nThis does not delete the account from the server.';
-
-  String get createGroupChannel => _ru ? 'Создать группу/канал' : 'Create Group/Channel';
-  String get channelAdminOnly => _ru ? 'Канал (только администратор)' : 'Channel (only admin posts)';
-  String get viewByToken => _ru ? 'Просмотр по токену' : 'View by token';
-  String get viewByIp => _ru ? 'Просмотр по IP (внешний сервер)' : 'View by IP (external server)';
-  String get createGroupOrChannel => _ru ? 'Создать группу или канал' : 'Create group or channel';
-  String get removeExternalServerTitle => _ru ? 'Удалить внешний сервер?' : 'Remove external server?';
-  String removeExternalServerContent(String name) => _ru
-      ? 'Удалить "$name" и все его группы из списка? Вы сможете переподключиться позже.'
-      : 'Remove "$name" and all its groups from your list? You can rejoin later by entering the server address again.';
-  String get noGroupsYet => _ru ? 'Групп пока нет' : 'No groups yet';
-  String get groupNameLabel => _ru ? 'Название группы:' : 'Group name:';
-  String get groupNameHint => _ru ? 'Введите название' : 'Enter name';
-  String get pasteToken => _ru ? 'Вставьте токен:' : 'Paste token:';
-  String get create => _ru ? 'Создать' : 'Create';
-  String get view => _ru ? 'Просмотр' : 'View';
-  String get leave => _ru ? 'Выйти' : 'Leave';
-  String get remove => _ru ? 'Удалить' : 'Remove';
-  String get leaveGroupAction => _ru ? 'Покинуть' : 'Leave';
-  String leaveGroupTitle(bool isChannel) => _ru
-      ? 'Покинуть ${isChannel ? "канал" : "группу"}?'
-      : 'Leave ${isChannel ? "channel" : "group"}?';
-  String leaveGroupContent(String name) => _ru
-      ? 'Покинуть "$name"? Вы больше не будете получать сообщения из неё.'
-      : 'Are you sure you want to leave "$name"? You will no longer receive messages from it.';
-
-  String get chooseCrypto => _ru ? 'Выберите криптовалюту для доната' : 'Choose a crypto to donate';
-  String get addressCopied => _ru ? 'адрес скопирован' : 'address copied';
-
-  String get hideFromSearch => _ru ? 'Не показывать меня в поиске' : 'Hide me from search';
-  String get hideFromSearchSubtitle => _ru ? 'Другие пользователи не смогут найти вас по имени' : 'Others won\'t find you by username search';
-  String get hideFromSearchSavedOk => _ru ? ' Настройки приватности сохранены' : ' Privacy settings saved';
-  String get hideFromSearchSavedFail => _ru ? ' Сохранено локально, ошибка синхронизации' : ' Saved locally, failed to sync';
-
-  String get statusVisibility => _ru ? 'Видимость' : 'Visibility';
-  String get statusShowStatus => _ru ? 'Показывать' : 'Show Status';
-  String get statusHideStatus => _ru ? 'Скрывать' : 'Hide Status';
-  String get statusCustomText => _ru ? 'Текст статуса' : 'Custom Status Text';
-  String get statusWhenOnline => _ru ? 'Когда онлайн' : 'When Online';
-  String get statusWhenOffline => _ru ? 'Когда офлайн' : 'When Offline';
-  String get statusSavedOk => _ru ? ' Настройки статуса сохранены и синхронизированы' : ' Status settings saved and synced';
-  String get statusSavedFail => _ru ? ' Сохранено локально, ошибка синхронизации' : ' Saved locally, failed to sync to server';
-
-  String get clearServerCacheTitle => _ru ? 'Очистить серверный кэш?' : 'Clear server media?';
-  String get clearServerCacheContent => _ru
-      ? 'Это удалит все загруженные медиа с сервера:\n'
-        '• Голосовые сообщения\n'
-        '• Изображения\n'
-        '• Видео\n'
-        '• Файлы\n'
-        '• Аватар\n\n'
-        'Локальный кэш останется. Действие необратимо.'
-      : 'This will delete ALL your uploaded media from the server, including:\n'
-        '• Voice messages\n'
-        '• Images\n'
-        '• Videos\n'
-        '• Files\n'
-        '• Avatar\n\n'
-        'Local cache will remain. This action cannot be undone.';
-  String get serverMediaCleared => _ru ? ' Серверный кэш полностью очищен' : ' All server media cleared';
-  String get notLoggedIn => _ru ? 'Не авторизован' : 'Not logged in';
-
-  // Cache manager screen
-  String get serverMediaManagerTitle => _ru ? 'Серверные медиа' : 'Server Media';
-  String get cacheTabImages => _ru ? 'Изображения' : 'Images';
-  String get cacheTabVoice => _ru ? 'Голос' : 'Voice';
-  String get cacheTabAudio => _ru ? 'Аудио' : 'Audio';
-  String get cacheTabVideo => _ru ? 'Видео' : 'Video';
-  String get cacheTabFiles => _ru ? 'Файлы' : 'Files';
-  String get cacheTabDocuments => _ru ? 'Документы' : 'Documents';
-  String get cacheTabArchives => _ru ? 'Архивы' : 'Archives';
-  String get cacheTabData => _ru ? 'Данные' : 'Data';
-  String get cacheTabAvatars => _ru ? 'Аватары' : 'Avatars';
-  String get cacheNoFiles => _ru ? 'Нет файлов в этой категории' : 'No files in this category';
-  String get cacheClearTabTitle => _ru ? 'Очистить категорию?' : 'Clear category?';
-  String cacheClearTabContent(String typeName) => _ru
-      ? 'Удалить все файлы в категории "$typeName"? Действие необратимо.'
-      : 'Delete all files in "$typeName"? This cannot be undone.';
-  String cacheFilesDeleted(int n) => _ru
-      ? 'Удалено файлов: $n'
-      : 'Deleted $n file${n == 1 ? '' : 's'}';
-  String get cacheFileDeleteFailed => _ru ? 'Не удалось удалить файл' : 'Failed to delete file';
-  String get cacheClearAll => _ru ? 'Очистить всё' : 'Clear All';
-  String get cacheClearTab => _ru ? 'Очистить вкладку' : 'Clear tab';
-  String get cleanUnusedFiles => _ru ? 'Очистить неиспользуемые файлы' : 'Clean unused files';
-  String get cleaningUnusedFiles => _ru ? 'Очистка...' : 'Cleaning...';
-  String get orphanedCleanupAppNotReady => _ru ? 'Приложение ещё не готово' : 'App not ready';
-  String get orphanedCleanupNoFiles => _ru ? 'Неиспользуемые файлы не найдены' : 'No unused files found';
-  String orphanedCleanupDeleted(int files, String freedMb) => _ru
-      ? 'Удалено $files неиспользуем${files == 1 ? 'ый файл' : files < 5 ? 'ых файла' : 'ых файлов'} ($freedMb MB освобождено)'
-      : 'Deleted $files unused file${files == 1 ? '' : 's'} ($freedMb MB freed)';
-  String get manageCacheTitle => _ru ? 'Управление кэшем' : 'Manage Cache';
-  String get manageCacheButton => _ru ? 'Управление кэшем медиа' : 'Manage Media Cache';
-  String get localCacheTab => _ru ? 'Локальный' : 'Local';
-  String get serverCacheTab => _ru ? 'Серверный' : 'Server';
-  String get cacheSelectAll => _ru ? 'Выбрать все' : 'Select all';
-  String get cacheDeselectAll => _ru ? 'Снять выбор' : 'Deselect all';
-  String get cacheSelected => _ru ? 'выбрано' : 'selected';
-  String get clearLocalCacheDialogTitle => _ru ? 'Очистить кэш?' : 'Clear local cache';
-  String get clearLocalCacheDialogContent => _ru
-      ? 'Удалить весь кэшированный медиаконтент (голос, фото, видео)?\nЗагрузки на сервере и история чатов не затрагиваются.'
-      : 'Are you sure you want to delete all cached media (voice, images, videos)?\nThis does NOT affect server uploads or chat history.';
-
-  String get deleteAllLogsTitle => _ru ? 'Удалить все логи?' : 'Delete all logs?';
-  String get deleteAllLogsContent => _ru
-      ? 'Все файлы логов будут безвозвратно удалены с диска.\nДействие необратимо.'
-      : 'This will permanently delete all app log files from disk.\nThis action cannot be undone.';
-  String get noLogsFound => _ru ? 'Лог-файлы не найдены.' : 'No log files found.';
-  String deletedLogsCount(int n) => _ru
-      ? 'Удалено лог-файлов: $n.'
-      : 'Deleted $n log file${n == 1 ? '' : 's'}.';
-
-  String get changePasswordInfo => _ru
-      ? 'Введите фразу восстановления и текущий пароль для установки нового.'
-      : 'Enter your recovery passphrase and current password to set a new password.';
-  String get changePasswordPassphraseLabel => _ru ? 'Фраза восстановления (12 слов)' : 'Recovery passphrase (12 words)';
-  String get changePasswordCurrentLabel => _ru ? 'Текущий пароль' : 'Current password';
-  String get changePasswordNewLabel => _ru ? 'Новый пароль (минимум 16 символов)' : 'New password (min 16 chars)';
-  String get changePasswordChange => _ru ? 'Изменить' : 'Change';
-  String get changePasswordFieldsRequired => _ru ? 'Заполните все поля' : 'All fields are required';
-  String get changePasswordTooShort => _ru ? 'Новый пароль должен содержать минимум 16 символов' : 'New password must be at least 16 characters';
-  String get changePasswordChanging => _ru ? 'Изменение пароля...' : 'Changing password...';
-  String get changePasswordSuccess => _ru ? ' Пароль успешно изменён' : ' Password changed successfully';
-
-  String get clearBgTitle => _ru ? 'Убрать фон?' : 'Clear background?';
-  String get clearBgContent => _ru ? 'Убрать пользовательский фон чата и восстановить стандартный.' : 'Remove custom chat background and restore default.';
-  String get chatBgSet => _ru ? ' Фон чата установлен' : ' Chat background set';
-  String get chatBgCleared => _ru ? 'Фон убран' : 'Background cleared';
-
-  String get allMessagesLeft => _ru ? 'Все сообщения: слева' : 'All messages: Left';
-  String get allMessagesRight2 => _ru ? 'Все сообщения: справа' : 'All messages: Right';
-  String get allMessagesMixed => _ru ? 'Все сообщения: смешанно' : 'All messages: Mixed';
-  String get applyBackgroundToApp => _ru ? 'Применить фон во всём приложении' : 'Apply background to whole app';
-  String get uiElementsOpacityLabel => _ru ? 'Прозрачность элементов' : 'UI Elements Opacity';
-  String get uiElementsBrightnessLabel => _ru ? 'Яркость элементов' : 'UI Elements Brightness';
-  String get navPanelPosition => _ru ? 'Позиция панели навигации' : 'Navigation Panel Position';
-  String get navPosBottom => _ru ? 'Снизу (под списком чатов)' : 'Bottom (under chat list)';
-  String get navPosLeft => _ru ? 'Слева (боковая панель)' : 'Left (sidebar)';
-  String get tabSwiping => _ru ? 'Свайп между вкладками' : 'Tab Swiping';
-  String get tabSwipingSubtitle => _ru ? 'Переключать вкладки свайпом' : 'Swipe between tabs with a bounce effect';
-  String get showAvatarsInChats => _ru ? 'Аватары в чатах' : 'Show avatars in chats';
-  String get smoothScrollDown => _ru ? 'Плавная прокрутка' : 'Smooth scroll down';
-  String get messageAnimations => _ru ? 'Анимации сообщений' : 'Message animations';
-  String get chatListMoveAnimations => _ru ? 'Анимация перемещения чатов' : 'Chat list move animations';
-  String get scrollDownButtonPosition => _ru ? 'Положение кнопки вниз' : 'Scroll-down button position';
-  String get scrollDownButtonPositionLeft => _ru ? 'Слева' : 'Left';
-  String get scrollDownButtonPositionCenter => _ru ? 'По центру' : 'Center';
-  String get scrollDownButtonPositionRight => _ru ? 'Справа' : 'Right';
-  String get scrollDownButtonSize => _ru ? 'Размер кнопки вниз' : 'Scroll-down button size';
-  String get loadOlderMessagesOnScroll => _ru ? 'Старые сообщения' : 'Load older messages on scroll';
-  String get showSnackbars => _ru ? 'Всплывающие уведомления' : 'Show snackbars';
-  String get autoLoadVideos => _ru ? 'Загружать видео сразу' : 'Auto-load videos';
-  String get autoLoadVideosSubtitle => _ru
-      ? 'Когда выключено, видео грузятся только по нажатию — меньше лагов при прокрутке'
-      : 'When off, videos load only on tap — smoother scrolling';
-  String get tapToLoadVideo => _ru ? 'Нажмите, чтобы загрузить' : 'Tap to load video';
-  String get chooseBackground => _ru ? 'Выбрать' : 'Choose';
-  String get presetsBackground => _ru ? 'Пресеты' : 'Presets';
-  String get clearBackground2 => _ru ? 'Очистить' : 'Clear';
-  String get liquidGlassSubtitle => _ru ? 'Настройки эффектов стекла для каждого элемента' : 'Configure glass effects and quality per element';
-  String get liquidGlassNavBarLabel => _ru ? 'Навигационная панель' : 'Navigation Bar';
-  String get liquidGlassNavBarDesc => _ru ? 'Эффект стекла нижней навигации' : 'Glass effect on the bottom navigation bar';
-  String get liquidGlassCardsLabel => _ru ? 'Карточки и список' : 'Cards & List Items';
-  String get liquidGlassCardsDesc => _ru ? 'Эффект стекла в списке чатов и настройках' : 'Glass effect on chat list and settings cards';
-  String get liquidGlassInputLabel => _ru ? 'Панель ввода' : 'Input Bar';
-  String get liquidGlassInputDesc => _ru ? 'Эффект стекла панели ввода' : 'Glass effect on the message composition bar';
-  String get liquidGlassSearchLabel => _ru ? 'Поиск' : 'Search';
-  String get liquidGlassSearchDesc => _ru ? 'Стеклянная панель поиска' : 'Spotlight-style glass panel for user search';
-  String get liquidGlassAppBarLabel => _ru ? 'Кнопки шапки' : 'App Bar Buttons';
-  String get liquidGlassAppBarDesc => _ru ? 'Эффект стекла на кнопках верхней панели чата' : 'Glass effect on the chat app bar\'s icon buttons';
-  String get sendFavoritesScanHint => _ru ? 'Наведите камеру на QR-код\nна устройстве получателя' : 'Point the camera at the QR code shown on the receiver device';
-  String get mediaPickerGallery => _ru ? 'Галерея' : 'Gallery';
-  String get mediaPickerCamera => _ru ? 'Камера' : 'Camera';
-  String get mediaPickerFile => _ru ? 'Файл' : 'File';
-  String mediaPickerSend(int n) => _ru ? 'Отправить $n' : 'Send $n';
-  String get mediaPickerChooseWallpaper => _ru ? 'Выбрать обои' : 'Choose wallpaper';
-  String get mediaPickerFiles => _ru ? 'Файлы' : 'Files';
-  String get mediaPickerDeniedTitle => _ru ? 'Доступ к галерее запрещён' : 'Gallery access denied';
-  String get mediaPickerDeniedBody => _ru ? 'Разрешите доступ в настройках или выберите файл напрямую.' : 'Allow access in settings or pick a file directly.';
-  String get mediaPickerPickFile => _ru ? 'Выбрать файл' : 'Pick File';
-  String get mediaPickerOpenSettings => _ru ? 'Настройки' : 'Open Settings';
-
-  String get notifWarning => _ru
-      ? 'Уведомления доставляются только пока приложение запущено в фоне. Чтобы не пропускать сообщения, держите ONYX свёрнутым.'
-      : 'Notifications are delivered only while the app is running. To never miss a message, keep ONYX minimised to the system tray instead of closing it.';
-  String notifEnabledSubtitle(bool enabled) => _ru
-      ? (enabled ? 'Вы будете получать уведомления о новых сообщениях' : 'Все уведомления отключены')
-      : (enabled ? 'You will be alerted for new messages' : 'All notifications are silenced');
-  String get notifPopupPosition => _ru ? 'Позиция попапа' : 'Popup position';
-  String get notifPopupPositionSubtitle => _ru ? 'Выберите угол экрана для показа уведомлений' : 'Choose where the notification popup appears on screen';
-  String localizeNotifPosition(String pos) {
-    if (!_ru) {
-      const map = {
-        'top_left': '↖  Top left',
-        'top_right': '↗  Top right',
-        'bottom_left': '↙  Bottom left',
-        'bottom_right': '↘  Bottom right',
-      };
-      return map[pos] ?? pos;
-    }
-    const map = {
-      'top_left': '↖  Сверху слева',
-      'top_right': '↗  Сверху справа',
-      'bottom_left': '↙  Снизу слева',
-      'bottom_right': '↘  Снизу справа',
-    };
-    return map[pos] ?? pos;
-  }
-  String get notifEnableLabel => _ru ? 'Включить уведомления' : 'Enable notifications';
-
-  String get notifHideContentLabel => _ru ? 'Скрывать содержимое' : 'Hide message content';
-  String notifHideContentSubtitle(bool hidden) => _ru
-      ? (hidden ? 'Уведомления без текста сообщения' : 'Показывать текст сообщения')
-      : (hidden ? 'Notifications without message text' : 'Show message text in notifications');
-
-  String get notifSoundEnableLabel => _ru ? 'Звук уведомлений' : 'Notification sound';
-  String notifSoundEnabledSubtitle(bool enabled) => _ru
-      ? (enabled ? 'Звук включён' : 'Звук выключен')
-      : (enabled ? 'Sound enabled' : 'Sound disabled');
-  String get notifSoundChooseLabel => _ru ? 'Выберите звук' : 'Choose sound';
-
-  String get notifSoundCustom => _ru ? 'Загрузить свой звук...' : 'Upload custom sound...';
-  String get notifSoundCustomLoaded => _ru ? 'Кастомный звук установлен' : 'Custom sound set';
-  String get notifSoundCustomError => _ru ? 'Не удалось загрузить звук' : 'Failed to load sound';
-  String get notifSoundCustomInvalidFormat => _ru
-      ? 'Поддерживаются: WAV, MP3, M4A, OGG, AAC'
-      : 'Supported: WAV, MP3, M4A, OGG, AAC';
-
-  String localizeNotifSound(String sound) {
-    if (sound.startsWith('custom:')) {
-      final name = sound.substring(7);
-      return _ru ? 'Свой: $name' : 'Custom: $name';
-    }
-    if (!_ru) {
-      const map = {
-        'notification0': 'Default',
-        'notification1': 'Alert',
-        'notification2': 'Gentle',
-      };
-      return map[sound] ?? sound;
-    }
-    const map = {
-      'notification0': 'Стандартный',
-      'notification1': 'Сигнал',
-      'notification2': 'Мягкий',
-    };
-    return map[sound] ?? sound;
-  }
-
-  String get resetting => _ru ? 'Сброс...' : 'Resetting...';
-
-  String get launchAtStartupLabel => _ru ? 'Автозапуск' : 'Launch at startup';
-  String get launchAtStartupSubtitle => _ru
-      ? 'Запускать ONYX автоматически при входе в систему'
-      : 'Automatically start ONYX when you log in';
-  String get launchAtStartupEnabled => _ru ? 'Автозапуск включён' : 'Launch at startup enabled';
-  String get launchAtStartupDisabled => _ru ? 'Автозапуск отключён' : 'Launch at startup disabled';
-  String get launchAtStartupFailed => _ru ? 'Не удалось изменить автозапуск' : 'Failed to change startup setting';
-  String get avatarUpdated => _ru ? 'Аватар обновлён' : 'Avatar updated';
-  String get fileNotFound => _ru ? 'Файл не найден' : 'File not found';
-  String get fileSent => _ru ? 'Файл отправлен' : 'File sent';
-  String get imageSent => _ru ? 'Изображение отправлено' : 'Image sent';
-  String get videoSent => _ru ? 'Видео отправлено' : 'Video sent';
-  String uploadingFile(String name) => _ru ? 'Загрузка $name...' : 'Uploading $name...';
-  String albumSent(int n) => _ru ? 'Альбом отправлен ($n фото)' : 'Album sent ($n images)';
-  String get fileEmpty => _ru ? 'Файл пустой' : 'File is empty';
-  String get networkError => _ru ? 'Ошибка сети' : 'Network error';
-  String get avatarRemoved => _ru ? 'Аватар удалён' : 'Avatar removed';
-  String get uinCopied => _ru ? 'UIN скопирован' : 'UIN copied';
-  String get displayNameLength => _ru ? 'Имя должно быть от 1 до 16 символов' : 'Display name must be 1–16 characters';
-  String get failedSendLan => _ru ? 'Ошибка отправки по LAN' : 'Failed to send via LAN';
-  String get fileCancelled => _ru ? 'Отправка отменена' : 'File cancelled';
-  String get doneRestarting => _ru ? 'Готово! Перезапуск...' : 'Done! Restarting...';
-
-  String get deleteMessageTitle => _ru ? 'Удалить сообщение?' : 'Delete message?';
-  String get deleteMessageContent => _ru ? 'Сообщение будет удалено для обеих сторон.' : 'This message will be deleted for both sides.';
-  String get cannotDeleteMsg => _ru ? 'Нельзя удалить: сообщение ещё не сохранено на сервере' : 'Cannot delete: message not yet saved on server';
-  String get deleteForMeTitle => _ru ? 'Удалить только у себя?' : 'Delete for me?';
-  String get deleteForMeContent => _ru
-      ? 'Сообщение будет удалено только с вашего устройства. У собеседника оно останется.'
-      : 'This will only remove the message from your device. The other person will still see it.';
-  String get deleteFavMessageContent => _ru
-      ? 'Сообщение будет удалено из избранного.'
-      : 'This message will be removed from favorites.';
-  String get pinnedMessage => _ru ? 'Закреплённое сообщение' : 'Pinned Message';
-  String get msgCopied => _ru ? 'Скопировано' : 'Copied';
-  String copiedUsername(String name) => _ru ? 'Скопировано @$name' : 'Copied @$name';
-  String get deliveryModeTitle => _ru ? 'Режим доставки' : 'Choose delivery mode';
-  String get deliveryInternet => _ru ? 'Интернет' : 'Internet';
-  String get deliveryInternetSubtitle => _ru ? 'Отправка через сервер (зашифровано)' : 'Send via server (encrypted)';
-  String get deliveryLanSubtitle => _ru ? 'Отправка по локальной сети (напрямую)' : 'Send via local network (direct)';
-  String get deliveryUserNotInLan => _ru ? 'Пользователь не найден в LAN' : 'User not found in LAN';
-  String get fastChange => _ru ? 'Быстрое переключение' : 'Fast change';
-  String get fastChangeSubtitle => _ru ? 'Переключать режим долгим нажатием' : 'Toggle mode on long press';
-  String get lanModeEnabled => _ru ? 'Режим LAN включён' : 'LAN mode enabled';
-  String get internetModeEnabled => _ru ? 'Режим интернет включён' : 'Internet mode enabled';
-  String get previewMessageTitle => _ru ? 'Предпросмотр сообщения' : 'Preview Message';
-  String get previewYourMessage => _ru ? 'Ваше сообщение:' : 'Your message:';
-  String replyingTo(String name) => _ru ? 'Ответ: $name' : 'Replying to: $name';
-  String get send => _ru ? 'Отправить' : 'Send';
-  String get fileSentLan => _ru ? 'Файл отправлен по LAN' : 'File sent via LAN';
-  String uploadingImages(int n) => _ru ? 'Загрузка $n изображений...' : 'Uploading $n images...';
-  String get albumUploadFailed => _ru ? 'Ошибка загрузки альбома' : 'Album upload failed';
-  String get message => _ru ? 'Написать' : 'Message';
-  String get noMessagesYet => _ru ? 'Нет сообщений' : 'No messages yet';
-  String get voiceCallsTitle => _ru ? 'Голосовые звонки' : 'Voice Calls';
-  String get voiceCallsContent => _ru
-      ? 'Голосовые звонки пока работают только через LAN (локальная сеть).\n\n'
-        'Мы собираем средства на поддержку сервера и разработку альтернативы.'
-      : 'Voice calls currently work only over LAN (local network).\n\n'
-        'We are raising funds for central server maintenance and development of an alternative.';
-  String get supportOnyxBtn => _ru ? 'Задонатить' : 'Support ONYX';
-  String get call => _ru ? 'Позвонить' : 'Call';
-  String get securityCheckTitle => _ru ? 'Проверка безопасности' : 'Security check';
-  String securityCheckContent(String name) => _ru
-      ? 'Сравните эти эмодзи с $name.\nЕсли совпадают — ваш чат защищён.'
-      : 'Compare these emojis with $name.\nIf they match — your chat is secure.';
-  String get failedToFetchPubkey => _ru ? 'Ошибка получения публичного ключа' : 'Failed to fetch pubkey';
-  String get userHasNoPubkey => _ru ? 'У пользователя нет публичного ключа' : 'User has no pubkey';
-
-  String get galleryMenuLabel => _ru ? 'Галерея' : 'Gallery';
-  String get galleryTitle => _ru ? 'Галерея' : 'Gallery';
-  String get galleryTabMedia => _ru ? 'Медиа' : 'Media';
-  String get galleryTabVoice => _ru ? 'Голосовые' : 'Voice';
-  String get galleryTabFiles => _ru ? 'Файлы' : 'Files';
-  String get galleryEmptyMedia => _ru ? 'Нет фото и видео' : 'No photos or videos yet';
-  String get galleryEmptyVoice => _ru ? 'Нет голосовых сообщений' : 'No voice messages yet';
-  String get galleryEmptyFiles => _ru ? 'Нет файлов' : 'No files yet';
-  String get galleryShowInChat => _ru ? 'Показать в чате' : 'Show in chat';
-
-  String get failedDelete => _ru ? 'Не удалось удалить' : 'Failed to delete';
-  String get failedEdit => _ru ? 'Не удалось изменить сообщение' : 'Failed to edit message';
-  String get noInternetCached => _ru ? 'Нет интернета — показаны кэшированные сообщения' : 'No internet — showing cached messages';
-  String get sendFailed => _ru ? 'Ошибка отправки' : 'Send failed';
-  String get mediaUploadNotSupportedWeb => _ru ? 'Загрузка медиа недоступна в веб-версии' : 'Media upload not supported on web';
-  String get localFileRequired => _ru ? 'Требуется локальный файл' : 'Local file required';
-  String get uploadFailed => _ru ? 'Ошибка загрузки' : 'Upload failed';
-  String get voiceUploadFailed => _ru ? 'Ошибка загрузки голосового' : 'Voice upload failed';
-  String get voiceCancelled => _ru ? 'Голосовое отменено' : 'Voice message cancelled';
-  String get uploadingVoice => _ru ? 'Загрузка голосового...' : 'Uploading voice...';
-  String uploadingAlbumProgress(int done, int total) => _ru
-      ? 'Загрузка альбома: $done/$total фото'
-      : 'Uploading album: $done/$total photos';
-  String get uploadingImageLabel => _ru ? 'Загрузка изображения...' : 'Uploading image...';
-  String get uploadingVideoLabel => _ru ? 'Загрузка видео...' : 'Uploading video...';
-  String get uploadingAudioLabel => _ru ? 'Загрузка аудио...' : 'Uploading audio...';
-  String get uploadingFileLabel => _ru ? 'Загрузка файла...' : 'Uploading file...';
-  String get leftGroup => _ru ? 'Вы вышли из группы' : 'You have left the group';
-  String get failedLeaveGroup => _ru ? 'Не удалось покинуть группу' : 'Failed to leave group';
-  String get avatarOnlyOwnerMod => _ru ? 'Только владелец и модераторы могут менять аватар' : 'Only owners and moderators can change the avatar';
-  String get failedReadFile => _ru ? 'Не удалось прочитать файл' : 'Failed to read file';
-  String get uploadingAvatar => _ru ? 'Загрузка аватара...' : 'Uploading avatar...';
-  String get avatarUpdatedGroup => _ru ? 'Аватар группы обновлён' : 'Group avatar updated';
-  String get avatarDeleted => _ru ? 'Аватар удалён' : 'Avatar deleted';
-  String get failedDeleteAvatar => _ru ? 'Не удалось удалить аватар' : 'Failed to delete avatar';
-  String get copyLink => _ru ? 'Скопировать ссылку' : 'Copy link';
-  String get tokenCopied => _ru ? 'Токен скопирован' : 'Token copied';
-  String get groupNameLength => _ru ? 'Название группы: 1–50 символов' : 'Group name must be 1–50 chars';
-  String get groupUpdated => _ru ? 'Группа обновлена' : 'Group updated';
-  String get failedUpdateGroup => _ru ? 'Не удалось обновить группу' : 'Failed to update group';
-  String get deleteAvatarTitle => _ru ? 'Удалить аватар?' : 'Delete avatar?';
-  String get deleteAvatarContent => _ru ? 'Аватар группы будет удалён для всех.' : 'This will remove the group avatar for everyone.';
-  String get deleteGroupMsgContent => _ru ? 'Сообщение будет удалено для всех участников.' : 'This message will be deleted for everyone.';
-  String get reply => _ru ? 'Ответить' : 'Reply';
-  String get edit => _ru ? 'Изменить' : 'Edit';
-  String get editGroupTitle => _ru ? 'Редактировать группу' : 'Edit group';
-  String get editChannelTitle => _ru ? 'Редактировать канал' : 'Edit channel';
-  String get channelNameLabel => _ru ? 'Название канала' : 'Channel name';
-  String get channelNameHint => _ru ? 'Введите название канала' : 'Enter channel name';
-  String memberCount(int n) {
-    if (!_ru) return '$n ${n == 1 ? 'member' : 'members'}';
-    final mod10 = n % 10, mod100 = n % 100;
-    final word = (mod10 == 1 && mod100 != 11)
-        ? 'участник'
-        : (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20))
-            ? 'участника'
-            : 'участников';
-    return '$n $word';
-  }
-  String unsupportedFileType(String ext) => _ru ? 'Неподдерживаемый тип файла: $ext' : 'Unsupported file type: $ext';
-
-  String failedToConnect(String e) => _ru ? 'Ошибка подключения: $e' : 'Failed to connect: $e';
-  String roleChanged(String role) => _ru ? 'Ваша роль изменена на $role' : 'Your role was changed to $role';
-  String get unbannedReconnecting => _ru ? 'Вы разбанены! Переподключение...' : 'You have been unbanned! Reconnecting...';
-  String get onlyModsCanPost => _ru ? 'Только владелец и модераторы могут писать в каналах' : 'Only owner and moderators can post in channels';
-  String get failedSendMessage => _ru ? 'Ошибка отправки сообщения' : 'Failed to send message';
-  String get uploadFailedConnectionAborted => _ru
-      ? 'Ошибка загрузки: соединение прервано. Попробуйте файл меньшего размера.'
-      : 'Upload failed: Connection aborted. Try smaller file or check server settings.';
-  String get failedSendMedia => _ru ? 'Ошибка отправки медиа' : 'Failed to send media';
-  String get joinedGroup => _ru ? 'Вы присоединились к группе!' : 'You have joined the group!';
-  String get failedJoinGroup => _ru ? 'Не удалось вступить в группу' : 'Failed to join group';
-  String get cancelled => _ru ? 'Отменено' : 'Cancelled';
-  String get avatarWillBeDeleted => _ru ? 'Аватар будет удалён' : 'Avatar will be deleted';
-  String get ipCopied => _ru ? 'IP скопирован' : 'IP copied';
-  String get nameCannotBeEmpty => _ru ? 'Название не может быть пустым' : 'Name cannot be empty';
-  String get groupRenamed => _ru ? 'Группа переименована' : 'Group renamed successfully';
-  String errorMsg(String e) => _ru ? 'Ошибка: $e' : 'Error: $e';
-  String get failedRename => _ru ? 'Ошибка переименования' : 'Failed to rename';
-  String get imageTooLarge => _ru ? 'Изображение слишком большое (макс. 5 МБ)' : 'Image too large (max 5MB)';
-  String get avatarUpdatedSuccessfully => _ru ? 'Аватар обновлён' : 'Avatar updated successfully';
-  String get failedUploadAvatar => _ru ? 'Ошибка загрузки аватара' : 'Failed to upload avatar';
-  String get deletingAvatar => _ru ? 'Удаление аватара...' : 'Deleting avatar...';
-  String get avatarDeletedSuccessfully => _ru ? 'Аватар удалён' : 'Avatar deleted successfully';
-  String userBanned(String name) => _ru ? '$name заблокирован' : '$name banned';
-  String get failedBan => _ru ? 'Не удалось заблокировать' : 'Failed to ban';
-  String roleUpdated(String role) => _ru ? 'Роль изменена на $role' : 'Role updated to $role';
-  String get failedChangeRole => _ru ? 'Не удалось изменить роль' : 'Failed to change role';
-  String userUnbanned(String name) => _ru ? '$name разблокирован' : '$name unbanned';
-  String get failedUnban => _ru ? 'Не удалось разблокировать' : 'Failed to unban';
-  String get youHaveBeenBanned => _ru ? 'Вы заблокированы' : 'You have been banned';
-  String get renameGroupTitle => _ru ? 'Переименовать группу' : 'Rename Group';
-  String get rename => _ru ? 'Переименовать' : 'Rename';
-  String get join => _ru ? 'Вступить' : 'Join';
-  String get manageMembers => _ru ? 'Управление участниками' : 'Manage members';
-  String get banMemberTitle => _ru ? 'Заблокировать участника' : 'Ban Member';
-  String get ban => _ru ? 'Заблокировать' : 'Ban';
-  String get selectNewRole => _ru ? 'Выберите новую роль:' : 'Select new role:';
-  String get moderator => _ru ? 'Модератор' : 'Moderator';
-  String get memberRole => _ru ? 'Участник' : 'Member';
-  String get manageMembersTitle => _ru ? 'Управление участниками' : 'Manage Members';
-  String get viewBans => _ru ? 'Заблокированные' : 'View Bans';
-  String get unbanUserTitle => _ru ? 'Разблокировать пользователя' : 'Unban User';
-  String get unban => _ru ? 'Разблокировать' : 'Unban';
-  String get bannedUsersTitle => _ru ? 'Заблокированные пользователи' : 'Banned Users';
-  String get bannedFromGroup => _ru ? 'Вы заблокированы в этой группе.' : 'You have been banned from this group.';
-  String bannedReason(String reason) => _ru ? 'Причина: $reason' : 'Reason: $reason';
-  String get noBannedUsers => _ru ? 'Нет заблокированных пользователей' : 'No banned users';
-  String bannedBy(String name) => _ru ? 'Заблокировал: $name' : 'Banned by: $name';
-  String bannedDate(String date) => _ru ? 'Дата: $date' : 'Date: $date';
-  String banConfirm(String name) => _ru ? 'Заблокировать $name в группе?' : 'Ban $name from the group?';
-  String get banReason => _ru ? 'Причина (необязательно)' : 'Reason (optional)';
-  String changeRoleTitle(String name) => _ru ? 'Изменить роль: $name' : 'Change role for $name';
-  String currentRoleLabel(String role) => _ru ? 'Текущая роль: $role' : 'Current role: $role';
-  String ownerCount(int n) => _ru ? 'Владельцы: $n/3' : 'Owners: $n/3';
-  String get ownerCurrent => _ru ? 'Владелец (текущий)' : 'Owner (current)';
-  String get ownerLimitReached => _ru ? 'Владелец (лимит достигнут)' : 'Owner (limit reached)';
-  String get owner => _ru ? 'Владелец' : 'Owner';
-  String get cannotDemoteLastOwner => _ru ? 'Нельзя понизить последнего владельца' : 'Cannot demote the last owner';
-  String get noMembersYet => _ru ? 'Нет участников' : 'No members';
-  String get changeRole => _ru ? 'Изменить роль' : 'Change role';
-  String unbanConfirm(String name) => _ru ? 'Разблокировать $name?' : 'Unban $name?';
-
-  String localizeHint(String hint) {
-    if (!_ru) return hint;
-    return 'Сообщение...';
-  }
-
-  String localizeMotivationalHint(String s) {
-    if (!_ru) return s;
-    const map = {
-      'Talk different.': 'Говори иначе.',
-      'Nothing unnecessary.': 'Ничего лишнего.',
-      "Don't know. Don't want to.": 'Не знаю. И не хочу знать.',
-      "Be yourself — or someone else.": 'Будь собой - или кем-то другим.',
-      'Privacy is on. Extra questions are off.': 'Приватность включена. Лишние вопросы отключены.',
-      "I don't collect data. I've got enough on my plate.": 'Я не собираю данные. У меня хватает своих забот.',
-    };
-    return map[s] ?? s;
-  }
-
-  String get today => _ru ? 'Сегодня' : 'Today';
-  String get yesterday => _ru ? 'Вчера' : 'Yesterday';
-
-  String get failedCreateGroup => _ru ? 'Не удалось создать группу' : 'Failed to create group';
-  String get invalidInviteLinkFormat => _ru ? 'Неверный формат ссылки' : 'Invalid invite link format';
-  String get invalidInviteLink => _ru ? 'Недействительная ссылка' : 'Invalid invite link';
-  String get groupAddedForViewing => _ru ? 'Группа добавлена!' : 'Group added for viewing!';
-  String get failedAddGroup => _ru ? 'Не удалось добавить группу' : 'Failed to add group';
-  String serverRemoved(String name) => _ru ? 'Сервер "$name" удалён' : 'Server "$name" removed';
-  String get channelAdminOnlySubtitle => _ru ? 'Канал (только админы)' : 'Channel (admin only)';
-  String get groupSubtitle => _ru ? 'Группа' : 'Group';
-  String get newGroup => _ru ? 'Новая группа' : 'New group';
-  String get externalGroup => _ru ? 'Внешняя группа' : 'External Group';
-  String get externalChannel => _ru ? 'Внешний канал' : 'External Channel';
-
-  String get joinExternalServer => _ru ? 'Подключиться к серверу' : 'Join External Server';
-  String get enterServerAddress => _ru ? 'Введите адрес сервера' : 'Enter server address';
-  String get enterValidIp => _ru ? 'Введите корректный IP-адрес или хост' : 'Enter a valid IP address or hostname';
-  String couldNotConnect(String host) => _ru ? 'Не удалось подключиться к $host' : 'Could not connect to $host';
-  String get usernameRequiredMsg => _ru ? 'Логин не указан. Убедитесь, что создали аккаунт в приложении.' : 'Username is required. Please make sure you have created an account in the app.';
-  String get passwordRequiredForGroups => _ru ? 'Для групп необходим пароль' : 'Password is required for groups';
-  String connectionFailed(String e) => _ru ? 'Ошибка подключения: $e' : 'Connection failed: $e';
-  String connectedToServer(String type, String name) => _ru ? 'Подключено к $type "$name"' : 'Connected to $type "$name"';
-  String get externalGroupType => _ru ? 'внешней группе' : 'external group';
-  String get externalChannelType => _ru ? 'внешнему каналу' : 'external channel';
-  String get identityVisible => _ru ? 'Ваш аккаунт будет виден серверу' : 'Your identity will be visible to the server';
-  String get usernameLabel => _ru ? 'Имя пользователя' : 'Username';
-  String get passwordLabel => _ru ? 'Пароль' : 'Password';
-  String get noPasswordForChannels => _ru ? 'Для каналов пароль не требуется' : 'No password required for channels';
-  String get noRegistrationRequired => _ru ? 'Регистрация не требуется.' : 'No registration required.';
-  String get back => _ru ? 'Назад' : 'Back';
-  String get connecting => _ru ? 'Подключение...' : 'Connecting...';
-  String get connectBtn => _ru ? 'Подключить' : 'Connect';
-  String get serverInfoGroups => _ru ? 'Группы' : 'Groups';
-  String get serverInfoMembers => _ru ? 'Участники' : 'Members';
-  String get serverInfoMedia => _ru ? 'Медиа' : 'Media';
-  String get serverInfoMaxFile => _ru ? 'Макс. размер файла' : 'Max file size';
-
-  String get thirdPartyServer => _ru ? 'СТОРОННИЙ СЕРВЕР' : 'THIRD-PARTY SERVER';
-  String get thirdPartyWarning => _ru ? 'Этот сервер не управляется ONYX. Подключайтесь только если доверяете владельцу.' : 'This server is not operated by ONYX. Only connect if you trust the owner.';
-  String get serverWillKnow => _ru ? 'Сервер узнает:' : 'Server will know:';
-  String get serverWillNotReceive => _ru ? 'Сервер НЕ получит:' : 'Server will NOT receive:';
-  String get knowIpAddress => _ru ? 'Ваш IP-адрес' : 'Your IP address';
-  String get knowUsername => _ru ? 'Ваш логин' : 'Your chosen username';
-  String get knowMessages => _ru ? 'Содержимое ваших сообщений на этом сервере' : 'Content of your messages in this server';
-  String get notReceiveAccount => _ru ? 'Ваш аккаунт и пароль ONYX' : 'Your ONYX account or password';
-  String get notReceiveContacts => _ru ? 'Ваши контакты и личные чаты' : 'Your contacts and private chats';
-  String get notReceiveKeys => _ru ? 'Ваши ключи шифрования' : 'Your encryption keys';
-
-  String get yourPassphraseTitle => _ru ? 'Ваша секретная фраза' : 'Your Recovery Passphrase';
-
-  String localizeFontDescription(String s) {
-    if (!_ru) return s;
-    const map = {
-      'Default system font': 'Системный шрифт по умолчанию',
-      'Friendly and open-ended': 'Дружелюбный и открытый',
-      'Classic modern sans-serif': 'Современный sans-serif',
-      'Clean and universal': 'Чистый и универсальный',
-      'Optimized for screen display': 'Оптимизирован для экрана',
-      'Bold rounded geometric': 'Скруглённый геометрический',
-      'Bold rounded Apple design': 'Скруглённый дизайн Apple',
-    };
-    return map[s] ?? s;
-  }
-
-  String localizeDonateText(String s) {
-    if (!_ru) return s;
-    const map = {
-      'Most widely accepted': 'Принимается повсеместно',
-      'Available on any exchange': 'Доступен на любой бирже',
-      'Maximum liquidity': 'Максимальная ликвидность',
-      'High transaction fees': 'Высокие комиссии',
-      'Transactions are public': 'Транзакции публичны',
-      'Slow confirmation (~10 min)': 'Медленное подтверждение (~10 мин)',
-      'Low fees': 'Низкие комиссии',
-      'Fast confirmation (~2.5 min)': 'Быстрое подтверждение (~2.5 мин)',
-      'Available on most exchanges': 'Доступен на большинстве бирж',
-      'Less popular than BTC': 'Менее популярен, чем BTC',
-      'Fully anonymous by default': 'Полная анонимность по умолчанию',
-      'Untraceable transactions': 'Неотслеживаемые транзакции',
-      'Perfectly fits our philosophy': 'Идеально подходит под нашу философию',
-      'Best fit for a privacy app': 'Лучший выбор для приватного приложения',
-      'Harder to buy (limited exchanges)': 'Сложнее купить (ограниченный выбор бирж)',
-      'Longer sync time in wallet': 'Долгая синхронизация кошелька',
-    };
-    return map[s] ?? s;
-  }
-
-  // ── Token / session expiry ────────────────────────────────────────────────
-  String get sessionExpiredBanner => _ru
-      ? 'Сессия истекла — войдите заново'
-      : 'Session expired — please log in again';
-  String get sessionExpiredTitle =>
-      _ru ? 'Сессия истекла' : 'Session expired';
-  String get sessionExpiredSubtitle =>
-      _ru ? 'Войдите заново' : 'Please sign in again';
-  String get sessionSignIn => _ru ? 'Войти' : 'Sign in';
-  String sessionExpiresInDays(int n) => _ru
-      ? 'Сессия истекает через $n д.'
-      : 'Session expires in $n day${n == 1 ? '' : 's'}';
-  String sessionExpiresInHours(int n) => _ru
-      ? 'Сессия истекает через $n ч.'
-      : 'Session expires in $n hour${n == 1 ? '' : 's'}';
-  String sessionActiveForDays(int n) => _ru
-      ? 'Сессия активна ещё $n д.'
-      : 'Session valid for $n more day${n == 1 ? '' : 's'}';
-  String get sessionRenewSoon =>
-      _ru ? 'Скоро потребуется повторный вход' : 'Re-login will be required soon';
-  String get sessionStillValid =>
-      _ru ? 'Токен авторизации действителен' : 'Authorization token is valid';
-
-  String get blockedUsersTitle => _ru ? 'Заблокированные' : 'Blocked Users';
-  String get blockedUsersSubtitle => _ru ? 'Управление блокировками' : 'Manage blocked users';
-  String get blockedUsersEmpty => _ru ? 'Список заблокированных пуст' : 'No blocked users';
-  String get unblockAction => _ru ? 'Разблокировать' : 'Unblock';
-  String get writeMessage => _ru ? 'Написать' : 'Write';
-
-  // ── Fake PIN / Decoy account ──────────────────────────────────────────────
-  String get fakePinTitle => _ru ? 'Фейковый PIN' : 'Fake PIN';
-  String get fakePinSubtitle => _ru ? 'Открыть фейковый аккаунт под принуждением' : 'Open a decoy account under duress';
-  String get fakePinSheetTitle => _ru ? 'Настройка фейкового PIN' : 'Fake PIN Setup';
-  String get fakePinStatusActive => _ru ? 'Активен' : 'Active';
-  String get fakePinStatusOff => _ru ? 'Выкл' : 'Off';
-  String get fakePinDescription => _ru
-      ? 'Когда этот PIN вводится на экране блокировки, приложение открывается с фейковым аккаунтом вместо настоящего.'
-      : 'When this PIN is entered at the lock screen, the app opens showing your decoy account instead of your real one.';
-  String get setFakePin => _ru ? 'Установить фейковый PIN' : 'Set Fake PIN';
-  String get disableFakePin => _ru ? 'Отключить фейковый PIN' : 'Disable Fake PIN';
-  String get changeFakePin => _ru ? 'Изменить фейковый PIN' : 'Change Fake PIN';
-  String get disableFakePinTitle => _ru ? 'Отключить фейковый PIN?' : 'Disable Fake PIN?';
-  String get disableFakePinContent => _ru
-      ? 'Фейковый PIN будет удалён. Настройки фейкового аккаунта сохранятся.'
-      : 'The fake PIN will be removed. Your decoy account settings will be kept.';
-  String get fakePinEnabledSnack => _ru ? 'Фейковый PIN включён' : 'Fake PIN enabled';
-  String get fakePinDisabledSnack => _ru ? 'Фейковый PIN отключён' : 'Fake PIN disabled';
-  String get fakePinCannotMatchReal => _ru ? 'Фейковый PIN не может совпадать с реальным' : 'Fake PIN cannot match your real PIN';
-  String get decoyAccountSection => _ru ? 'Фейковый аккаунт' : 'Decoy Account';
-  String get decoyAccountSubtitle => _ru ? 'Этот аккаунт будет показан при вводе фейкового PIN' : 'This account will be shown when the fake PIN is used';
-  String get decoyDisplayNameLabel => _ru ? 'Имя' : 'Display name';
-  String get decoyUsernameLabel => _ru ? 'Имя пользователя' : 'Username';
-  String get decoyDisplayNameHint => _ru ? 'Введите имя' : 'Enter display name';
-  String get decoyUsernameHint => _ru ? 'Введите логин' : 'Enter username';
-  String get saveDecoyAccount => _ru ? 'Сохранить фейковый аккаунт' : 'Save decoy account';
-  String get decoyAccountSaved => _ru ? 'Фейковый аккаунт сохранён' : 'Decoy account saved';
-  String get decoyFieldsRequired => _ru ? 'Имя и логин не могут быть пустыми' : 'Username and display name cannot be empty';
-  String get removeAvatar => _ru ? 'Удалить аватарку' : 'Remove avatar';
-  String get fakePinSecurityNote => _ru
-      ? 'Фейковый PIN должен отличаться от реального. Фейковый аккаунт не подключается ни к какому серверу — он показывает только настроенный вами профиль.'
-      : 'The fake PIN must differ from your real PIN. The decoy account has no server connection — it only shows the profile you configured here.';
-  String get decoyNoChats => _ru ? 'Нет чатов' : 'No chats yet';
-  String get decoyNoGroups => _ru ? 'Нет групп' : 'No groups yet';
-  String get decoyNoFavorites => _ru ? 'Нет избранного' : 'No favorites yet';
-  String get decoyOtherAccounts => _ru ? 'Другие аккаунты' : 'Other accounts';
-  String get decoyNoOtherAccounts => _ru ? 'Нет других аккаунтов' : 'No other accounts';
-  String get lock => _ru ? 'Заблокировать' : 'Lock';
-  String get decoyAppearance => _ru ? 'Внешний вид' : 'Appearance';
-  String get decoyNotifications => _ru ? 'Уведомления' : 'Notifications';
-  String get decoyStorage => _ru ? 'Хранилище' : 'Storage';
-  String get decoyAppearanceSubtitle => _ru ? 'Тема и параметры отображения' : 'Theme and display options';
-  String get decoyNotificationsSubtitle => _ru ? 'Звук и оповещения' : 'Sound and alert settings';
-  String get decoyStorageSubtitle => _ru ? 'Управление кэшем файлов' : 'Manage cached files';
-
-  // Decoy contacts
-  String get decoyContactsSection => _ru ? 'Фейковые чаты' : 'Fake Chats';
-  String get decoyContactsSubtitle => _ru
-      ? 'Добавьте контакты с перепиской — они появятся когда открывается фейк-аккаунт'
-      : 'Add contacts with messages — they appear when the decoy account is opened';
-  String get generateContacts => _ru ? 'Сгенерировать контакты' : 'Generate Contacts';
-  String get addDecoyContact => _ru ? 'Добавить контакт' : 'Add Contact';
-  String get decoyNoContacts => _ru ? 'Нет фейковых чатов' : 'No fake chats yet';
-  String get decoyContactUsername => _ru ? 'Юзернейм контакта' : 'Contact username';
-  String get decoyContactDisplayName => _ru ? 'Имя контакта' : 'Contact display name';
-  String contactsGenerated(int n) =>
-      _ru ? 'Добавлено $n контактов' : 'Added $n contacts';
-  String get contactAdded => _ru ? 'Контакт добавлен' : 'Contact added';
-  String get contactRemoved => _ru ? 'Контакт удалён' : 'Contact removed';
-  String get decoyContactExists => _ru ? 'Такой контакт уже есть' : 'Contact already exists';
-  String get decoyContactsCleared => _ru ? 'Все чаты очищены' : 'All chats cleared';
-  String get clearDecoyChats => _ru ? 'Очистить все чаты' : 'Clear All Chats';
-  String get messagesCount => _ru ? 'сообщений' : 'messages';
-  String get add => _ru ? 'Добавить' : 'Add';
-  String get decoyChatsSubtitle => _ru
-      ? 'Контакты с историей переписки'
-      : 'Contacts with message history';
-  String get decoyGroupsSection => _ru ? 'Группы и каналы' : 'Groups & Channels';
-  String get decoyGroupsSubtitle => _ru ? 'Фейковые группы и каналы' : 'Fake groups and channels';
-  String get decoyFavoritesSection => _ru ? 'Избранное' : 'Favorites';
-  String get decoyFavoritesSubtitle => _ru ? 'Закреплённые чаты' : 'Pinned favorite chats';
-  String get noFakeGroups => _ru ? 'Нет групп' : 'No groups yet';
-  String get noFakeFavorites => _ru ? 'Нет избранного' : 'No favorites yet';
-  String get addFakeGroup => _ru ? 'Группу' : 'Group';
-  String get addFakeChannel => _ru ? 'Канал' : 'Channel';
-  String get addFakeFavorite => _ru ? 'Добавить избранное' : 'Add Favorite';
-  String get groupType => _ru ? 'Группа' : 'Group';
-  String get channelType => _ru ? 'Канал' : 'Channel';
-  String get favTitleHint => _ru ? 'Название' : 'Title';
-  String get generateAll => _ru ? 'Сгенерировать всё' : 'Generate All';
-  String get generateAllConfirm => _ru
-      ? 'Будет сгенерирован случайный контент. Текущие данные будут заменены.'
-      : 'Random content will be generated, replacing existing data.';
-
-  // ── Send Favorites screen ─────────────────────────────────────────────────
-  String get sendFavoritesTitle => _ru ? 'Отправка избранного' : 'Send Favorites';
-  String get sendFavoritesShowQrToReceiver => _ru ? 'Показать QR получателю' : 'Show QR to Receiver';
-  String get sendFavoritesScanReceiver => _ru ? 'Сканировать QR получателя' : 'Scan Receiver QR';
-  String get sendFavoritesSending => _ru ? 'Идёт отправка избранного' : 'Sending Favorites';
-  String get sendFavoritesSelectTitle => _ru ? 'Выберите чаты для отправки' : 'Select chats to send';
-  String get sendFavoritesHintDesktop => _ru
-      ? 'Получатель должен нажать «Получить» первым. Затем сканируйте QR-код здесь.'
-      : 'The receiver must press "Receive" first. Then scan the QR code shown here.';
-  String get sendFavoritesHintMobile => _ru
-      ? 'Получатель должен нажать «Получить» первым и показать QR-код.'
-      : 'The receiver must press "Receive" first and show the QR code.';
-  String allChatsCount(int n) => _ru ? 'Все чаты ($n)' : 'All chats ($n)';
-  String get sendFavoritesNoFavs => _ru ? 'Нет избранных чатов.' : 'No favourite chats yet.';
-  String get sendFavoritesSelectAtLeastOne => _ru ? 'Выберите хотя бы один чат' : 'Select at least one chat';
-  String chatsSelected(int n) {
-    if (!_ru) return '$n chat${n == 1 ? '' : 's'} selected';
-    final mod10 = n % 10, mod100 = n % 100;
-    final word = (mod10 == 1 && mod100 != 11)
-        ? 'чат выбран'
-        : (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20))
-            ? 'чата выбрано'
-            : 'чатов выбрано';
-    return '$n $word';
-  }
-  String get sendFavoritesShowQrBtn => _ru ? 'Показать QR' : 'Show QR';
-  String get sendFavoritesScanQrBtn => _ru ? 'Сканировать QR' : 'Scan QR';
-
-  // ── Receive Favorites screen ──────────────────────────────────────────────
-  String get receiveFavoritesTitle => _ru ? 'Получение избранного' : 'Receive Favorites';
-  String get receiveFavoritesScanSender => _ru ? 'Сканировать QR отправителя' : 'Scan Sender QR';
-  String get receiveFavoritesScanOnSender => _ru ? 'Сканируйте QR на устройстве отправителя' : 'Scan on sender device';
-  String get receiveFavoritesInstruction => _ru
-      ? 'Откройте Избранное → Синхронизация → Отправить, затем сканируйте этот код'
-      : 'Open Favorites on the sender, tap Sync → Send, then scan this code';
-  String get receiveFavoritesE2E => _ru
-      ? 'Сквозное шифрование · только локальная сеть'
-      : 'End-to-end encrypted · local network only';
-  String get receiveFavoritesScanHint => _ru
-      ? 'Наведите камеру на QR-код\nна устройстве отправителя'
-      : 'Point the camera at the QR code shown on the sender device';
-  String get receiveFavoritesScanEncrypted => _ru
-      ? 'Передача зашифрована · только локальная сеть'
-      : 'Transfer is encrypted · local network only';
-  String get receiveFavoritesWaiting => _ru
-      ? 'Ожидание сканирования QR-кода отправителем…'
-      : 'Waiting for sender to scan QR code…';
-  String get receiveFavoritesComplete => _ru ? 'Передача завершена.' : 'Transfer complete.';
-  String get receiveFavoritesConnecting => _ru ? 'Подключение к отправителю…' : 'Connecting to sender…';
-  String get receiveFavoritesConnected => _ru ? 'Подключено! Ожидание файлов…' : 'Connected! Waiting for files…';
-  String get cancelTransfer => _ru ? 'Прервать передачу' : 'Cancel transfer';
-
-  // ── WardLink (passive local-network sync) ──────────────────────────────────
-  String get wardLinkTitle => _ru ? 'WardLink' : 'WardLink';
-  String get wardLinkSubtitle => _ru
-      ? 'Пассивная синхронизация между вашими устройствами в локальной сети'
-      : 'Passive sync between your devices on the local network';
-  String get wardLinkEnable => _ru ? 'Пассивная синхронизация' : 'Passive sync';
-  String get wardLinkEnableDesc => _ru
-      ? 'Автоматически синхронизировать данные с доверенными устройствами, когда они в одной сети. На телефоне работает, пока приложение открыто; на компьютере — постоянно.'
-      : 'Automatically sync with trusted devices on the same network. On phones this works while the app is open; on desktop it runs continuously.';
-  String get wardLinkPairedDevices => _ru ? 'Доверенные устройства' : 'Trusted devices';
-  String get wardLinkNoPairedDevices =>
-      _ru ? 'Нет сопряжённых устройств' : 'No paired devices yet';
-  String get wardLinkAddDevice => _ru ? 'Добавить' : 'Add';
-  String get wardLinkRemoveDevice => _ru ? 'Удалить' : 'Remove';
-  String get wardLinkRemoveConfirm => _ru
-      ? 'Перестать синхронизироваться с этим устройством?'
-      : 'Stop syncing with this device?';
-  String get wardLinkFavoritesOnlyNote => _ru
-      ? 'Синхронизируется содержимое «Избранного» — сообщения и медиа'
-      : 'Syncs your Favorites — their messages and media';
-  String get wardLinkMaxFileSize =>
-      _ru ? 'Лимит размера файла' : 'Max file size';
-  String get wardLinkPairTitle => _ru ? 'Сопряжение устройства' : 'Pair device';
-  String get wardLinkShowCode => _ru ? 'Показать код' : 'Show code';
-  String get wardLinkScanCode => _ru ? 'Сканировать код' : 'Scan code';
-  String get wardLinkShowInstruction => _ru
-      ? 'Откройте WardLink на другом своём устройстве и отсканируйте этот код'
-      : 'Open WardLink on your other device and scan this code';
-  String get wardLinkScanInstruction => _ru
-      ? 'Наведите камеру на код WardLink другого устройства'
-      : 'Point the camera at the WardLink code on the other device';
-  String get wardLinkPairedOk => _ru ? 'Устройство сопряжено' : 'Device paired';
-  String get wardLinkPairFailed =>
-      _ru ? 'Не удалось выполнить сопряжение' : 'Pairing failed';
-  String get wardLinkE2E => _ru
-      ? 'Сквозное шифрование · только LAN'
-      : 'End-to-end encrypted · LAN only';
-  String get wardLinkSyncingNow => _ru ? 'Синхронизация…' : 'Syncing…';
-  String get wardLinkDone => _ru ? 'Синхронизировано' : 'Synced';
-  String get wardLinkCurrentFile => _ru ? 'Текущий файл' : 'Current file';
-  String get wardLinkLog => _ru ? 'Журнал синхронизации' : 'Sync log';
-  String get wardLinkLogEmpty => _ru ? 'Событий пока нет' : 'No events yet';
-  String get wardLinkHoldForLog =>
-      _ru ? 'Удерживайте кружок для журнала' : 'Hold the bubble for the log';
-  String get wardLinkUpToDate => _ru ? 'Всё актуально' : 'Up to date';
-  String wardLinkFilesDone(int n) =>
-      _ru ? 'Передано файлов: $n' : 'Files transferred: $n';
-  String get wardLinkNoFilesYet =>
-      _ru ? 'Файлы не передавались' : 'No files transferred';
-  String wardLinkSyncedAgo(String when) =>
-      _ru ? 'Синхронизировано: $when' : 'Synced $when';
-  String get wardLinkNeverSynced => _ru ? 'Ещё не синхронизировано' : 'Not synced yet';
-  String get wardLinkFirewallHintWindows => _ru
-      ? 'Если телефон не может подключиться к ПК — разрешите ONYX в брандмауэре Windows (порт TCP ${'47832'}). ONYX пробует добавить правило автоматически, но при необходимости: Брандмауэр Windows → Дополнительные параметры → Входящие правила → Создать правило → Порт → TCP → 47832.'
-      : 'If the phone cannot reach this PC, allow ONYX in Windows Firewall (TCP port ${'47832'}). ONYX tries to add the rule automatically; if it fails: Windows Firewall → Advanced → Inbound Rules → New Rule → Port → TCP → 47832.';
-  String get wardLinkFirewallHintMac => _ru
-      ? 'Если телефон не может подключиться к Mac — убедитесь, что брандмауэр macOS не блокирует входящие соединения для ONYX: Системные настройки → Сеть → Брандмауэр → Параметры → добавьте ONYX.'
-      : 'If the phone cannot reach this Mac, make sure the macOS firewall is not blocking ONYX: System Settings → Network → Firewall → Options → add ONYX.';
-  String get wardLinkFirewallHintLinux => _ru
-      ? 'Если телефон не может подключиться — откройте порт TCP 47832 в вашем брандмауэре. Например: sudo ufw allow 47832/tcp  или  sudo firewall-cmd --add-port=47832/tcp --permanent'
-      : 'If the phone cannot connect, open TCP port 47832 in your firewall. Example: sudo ufw allow 47832/tcp  or  sudo firewall-cmd --add-port=47832/tcp --permanent';
-  String get wardLinkSyncFromBeginning =>
-      _ru ? 'Синхронизировать с начала' : 'Sync from beginning';
-  String get wardLinkSyncFromBeginningDesc => _ru
-      ? 'Подтянуть всю историю, которой нет на этом устройстве'
-      : 'Pull all history not yet on this device';
-  String get wardLinkSyncPending =>
-      _ru ? 'Синхронизация в процессе…' : 'Sync pending…';
-  String get wardLinkBubbleVisibility =>
-      _ru ? 'Кружок синхронизации' : 'Sync bubble';
-  String get wardLinkBubbleShowAlways =>
-      _ru ? 'Показывать всегда' : 'Show always';
-  String get wardLinkBubbleShowOnErrors =>
-      _ru ? 'Показывать только при ошибках' : 'Show on errors only';
-  String get wardLinkBubbleSize => _ru ? 'Размер кружка' : 'Bubble size';
-
-  // ── Mesh ─────────────────────────────────────────────────────────────────
-  String get meshTitle => 'Mesh';
-  String get meshSubtitle => _ru ? 'Mesh-сеть без интернета' : 'Offline mesh network';
-  String get meshEnable => _ru ? 'Включить Mesh-сеть' : 'Enable Mesh network';
-  String get meshEnableDesc => _ru
-      ? 'Прямое общение без интернета через Wi-Fi или Bluetooth.\nРаботает только в личных чатах.'
-      : 'Direct messaging without internet via Wi-Fi or Bluetooth.\nWorks only in direct messages.';
-  String get meshUnavailable => _ru
-      ? 'Mesh-сеть недоступна на этой платформе.'
-      : 'Mesh network is not available on this platform.';
-  String get meshOpenRadar => _ru ? 'Открыть Радар' : 'Open Radar';
-  String meshNearbyCount(int n) => _ru ? 'В эфире: $n устройств' : 'Nearby: $n devices';
-  String get meshRadarTitle => _ru ? 'Mesh Радар' : 'Mesh Radar';
-  String get meshRadarScanning => _ru ? 'Сканируем эфир…' : 'Scanning…';
-  String meshRadarFound(int n) => _ru ? '$n устройств в диапазоне' : '$n device${n == 1 ? '' : 's'} in range';
-  String get meshRadarSearchHint => _ru ? 'Поиск по имени...' : 'Search by name...';
-  String meshRadarSearchEmpty(String q) => _ru ? 'Никого не найдено по запросу "$q"' : 'No results for "$q"';
-  String get meshRadarNoDevices => _ru
-      ? 'Нет устройств поблизости.\nMesh сканирует каждые 20 сек.'
-      : 'No devices nearby.\nMesh scans every 20 s.';
-  String get meshRadarDisabled => _ru
-      ? 'Mesh режим выключен.\nВключите тоггл в Настройках → Mesh.'
-      : 'Mesh mode is off.\nEnable it in Settings → Mesh.';
-  String get meshRadarStarting => _ru ? 'Запускаем сканирование BLE…' : 'Starting BLE scan…';
-  String get meshMenuRadar => _ru ? 'Радар' : 'Radar';
-  String get meshMenuDiagnostics => _ru ? 'Диагностика' : 'Diagnostics';
-  String get meshMenuModeAuto => _ru ? 'Авто' : 'Auto';
-  String get meshMenuModeWifi => 'Wi-Fi';
-  String get meshMenuModeBluetooth => 'Bluetooth';
-  String get meshBluetoothOffTitle => _ru ? 'Bluetooth выключен' : 'Bluetooth is off';
-  String get meshBluetoothOffContent => _ru
-      ? 'Mesh-чат переключён в режим "только Bluetooth", но Bluetooth выключен. Включите его в настройках системы, чтобы видеть устройства поблизости.'
-      : 'Mesh chat was switched to Bluetooth-only mode, but Bluetooth is turned off. Enable it in system settings to reach nearby devices.';
-  String get meshOpenSystemSettings => _ru ? 'Открыть настройки' : 'Open Settings';
-  String get meshModeLabel => _ru ? 'РЕЖИМ' : 'MODE';
-  String get meshModeActive => _ru ? 'Mesh режим активен' : 'Mesh mode active';
-  String get meshChatLabel => _ru ? 'Mesh Чат' : 'Mesh Chat';
-  String get meshLocationRequired => _ru
-      ? 'Включите службы геолокации для BLE сканирования (Android ≤11)'
-      : 'Enable location services for BLE scanning (Android ≤11)';
-  String get meshChatEmpty => _ru
-      ? 'Нет сообщений.\nОтправьте первое сообщение через Mesh.'
-      : 'No messages yet.\nSend the first mesh message.';
-  String get meshChatInputHint => _ru ? 'Сообщение…' : 'Message…';
-  String get meshChatSend => _ru ? 'Отправить' : 'Send';
-  String get meshChatOutOfRange => _ru ? 'Вне зоны' : 'Out of range';
-
-  // Mesh delivery status
-  String get meshStatusSending =>
-      _ru ? 'Отправка…' : 'Sending…';
-  String get meshStatusSendingWifi =>
-      _ru ? 'Отправка через Wi-Fi…' : 'Sending via Wi-Fi…';
-  String get meshStatusSendingBle =>
-      _ru ? 'Отправка через Bluetooth…' : 'Sending via Bluetooth…';
-  String get meshStatusRelayed =>
-      _ru ? 'В пути через сеть' : 'In transit via mesh';
-  String get meshStatusDelivered =>
-      _ru ? 'Доставлено' : 'Delivered';
-  String get meshStatusFailed =>
-      _ru ? 'Не доставлено' : 'Not delivered';
-  String get meshStatusRetry =>
-      _ru ? 'Повторить' : 'Retry';
-  String get meshStatusFailedHint =>
-      _ru ? 'Сообщение не дошло до получателя' : 'Message did not reach the recipient';
-
-  String get meshErrorVideoWifiOnly =>
-      _ru
-          ? 'Видео отправляется только через Wi-Fi. Подключитесь к той же Wi-Fi сети, что и получатель.'
-          : 'Video can only be sent over Wi-Fi. Connect to the same Wi-Fi network as the recipient.';
-  String get meshErrorFileTooLargeForBle =>
-      _ru
-          ? 'Файл слишком большой для Bluetooth (макс. 10 МБ). Нужен общий Wi-Fi.'
-          : 'File is too large for Bluetooth (max 10 MB). Connect to a shared Wi-Fi network.';
-  String get meshErrorFileTooLarge =>
-      _ru ? 'Файл слишком большой (макс. 200 МБ).' : 'File is too large (max 200 MB).';
-  String get meshErrorAttachmentsUnsupported =>
-      _ru ? 'Вложения только на мобильных/десктопе' : 'Attachments are only supported on mobile/desktop';
-  String get meshErrorPickFileFailed =>
-      _ru ? 'Ошибка выбора файла' : 'Failed to pick file';
-  String get meshErrorSendFileFailed =>
-      _ru ? 'Ошибка отправки файла' : 'Failed to send file';
-  String get meshErrorSendVoiceFailed =>
-      _ru ? 'Ошибка отправки голосового сообщения' : 'Failed to send voice message';
-  String meshErrorOutOfRange(String username) =>
-      _ru ? '$username вне зоны досягаемости' : '$username is out of range';
-
-  // ── Backup ────────────────────────────────────────────────────────────────
-  String get backupTitle => _ru ? 'Бэкап' : 'Backup';
-  String get backupSubtitle => _ru
-      ? 'Локальное сохранение и восстановление данных'
-      : 'Local backup and restore of your data';
-  String get backupExport => _ru ? 'Сохранить все данные' : 'Save all data';
-  String get backupRestore =>
-      _ru ? 'Восстановить из бэкапа' : 'Restore from backup';
-  String get backupScope => _ru ? 'Что бэкапить' : 'What to back up';
-  String get backupFavorites => _ru ? 'Избранные чаты' : 'Favorite chats';
-  String get backupPersonal => _ru ? 'Личные чаты' : 'Personal chats';
-  String get backupIncludeMedia => _ru ? 'Включать медиа' : 'Include media';
-  String get backupMediaImages => _ru ? 'Изображения' : 'Images';
-  String get backupMediaVideos => _ru ? 'Видео' : 'Videos';
-  String get backupMediaVoice => _ru ? 'Голосовые и аудио' : 'Voice & audio';
-  String get backupMediaOther => _ru ? 'Другие файлы' : 'Other files';
-  String get backupSchedule => _ru ? 'Запланированный бэкап' : 'Scheduled backup';
-  String get backupFreqOff => _ru ? 'Выкл' : 'Off';
-  String get backupFreqDaily => _ru ? 'Каждый день' : 'Daily';
-  String get backupFreqWeekly => _ru ? 'Каждую неделю' : 'Weekly';
-  String get backupFreqMonthly => _ru ? 'Каждый месяц' : 'Monthly';
-  String get backupFolder => _ru ? 'Папка авто-бэкапов' : 'Auto-backup folder';
-  String get backupChangeFolder => _ru ? 'Изменить' : 'Change';
-  String get backupLastAuto => _ru ? 'Последний авто-бэкап' : 'Last auto-backup';
-  String get backupNever => _ru ? 'ещё не было' : 'never';
-  String get backupInProgress => _ru ? 'Создание бэкапа…' : 'Creating backup…';
-  String get backupRestoring => _ru ? 'Восстановление…' : 'Restoring…';
-  String get backupSelectScope => _ru
-      ? 'Выберите хотя бы одну категорию'
-      : 'Select at least one category';
-  String get backupNoAccount =>
-      _ru ? 'Нет активного аккаунта' : 'No active account';
-  String get backupNoPermission => _ru
-      ? 'Нет доступа к хранилищу. Разрешите «Доступ ко всем файлам» в настройках приложения.'
-      : 'Storage access denied. Grant "All files access" in app settings.';
-  String get backupOpenFolder => _ru ? 'Открыть папку' : 'Open folder';
-  String get backupFolderUnsupported => _ru
-      ? 'Эта папка недоступна. Выберите папку во внутреннем хранилище.'
-      : 'This folder is not accessible. Please pick a folder on internal storage.';
-  String get backupRestoreConfirmTitle =>
-      _ru ? 'Восстановить из бэкапа?' : 'Restore from backup?';
-  String get backupRestoreConfirmBody => _ru
-      ? 'Данные из файла будут восстановлены поверх текущих (чаты, избранное, настройки).'
-      : 'Data from the file will be restored over your current data (chats, favorites, settings).';
-  String get backupRestartHint => _ru
-      ? 'Перезапустите приложение, чтобы увидеть изменения'
-      : 'Restart the app to see the changes';
-
-  // ── Recycle bin / deletion safety ──────────────────────────────────────────
-  String get recycleBinTitle => _ru ? 'Корзина' : 'Trash';
-  String get recycleBinSubtitle => _ru
-      ? 'Удалённые чаты и защита от случайных удалений по синхронизации'
-      : 'Deleted chats and protection from accidental sync deletions';
-  String get recycleBinPendingTitle => _ru
-      ? 'Запросы на удаление'
-      : 'Deletion requests';
-  String recycleBinPendingDesc(String device, int count) => _ru
-      ? 'Устройство «$device» предлагает удалить $count чат(ов). Применить или оставить?'
-      : 'Device "$device" wants to delete $count chat(s). Apply or keep?';
-  String get recycleBinApply => _ru ? 'Удалить' : 'Apply delete';
-  String get recycleBinKeep => _ru ? 'Оставить мои чаты' : 'Keep my chats';
-  String get recycleBinNoPending => _ru
-      ? 'Нет ожидающих запросов на удаление'
-      : 'No pending deletion requests';
-  String get recycleBinResetTitle =>
-      _ru ? 'Сбросить записи об удалениях' : 'Reset deletion records';
-  String get recycleBinResetDesc => _ru
-      ? 'Очищает список удалённых чатов. После этого синхронизация перестанет повторно удалять их на других устройствах и сможет вернуть их обратно.'
-      : 'Clears the list of deleted chats. Sync will stop re-deleting them on other devices and can bring them back.';
-  String get recycleBinResetButton =>
-      _ru ? 'Очистить список удалённых' : 'Clear deleted list';
-  String get recycleBinResetDone =>
-      _ru ? 'Записи об удалениях очищены' : 'Deletion records cleared';
-  String get recycleBinResetConfirm => _ru
-      ? 'Очистить все записи об удалениях для этого аккаунта?'
-      : 'Clear all deletion records for this account?';
-
-  // ── Account Graph settings ────────────────────────────────────────────────
-  String get accountGraph => _ru ? 'График аккаунта' : 'Account Graph';
-  String get accountGraphSubtitleDesktopOn => _ru
-      ? 'Показывает граф чатов, групп и каналов, когда чат не открыт'
-      : 'Shows a graph of your chats, groups and channels when no chat is open';
-  String get accountGraphSubtitleMobileOn => _ru
-      ? 'Визуализация вашего аккаунта в планетарном виде'
-      : 'Visualizing your account in planetary view';
-  String get accountGraphSubtitleDesktopOff => _ru
-      ? 'Показывает подсказку, когда чат не открыт'
-      : 'Shows a hint when no chat is open';
-  String get accountGraphSubtitleMobileOff => _ru ? 'График аккаунта отключён' : 'Account Graph is disabled';
-  String get orbitSpeed => _ru ? 'Скорость орбиты' : 'Orbit Speed';
-  String secOrbit(int s) => _ru ? '$s сек/орбита' : '$s sec/orbit';
-  String minOrbit(int m) => _ru ? '$m мин/орбита' : '$m min/orbit';
-  String get animateGraph => _ru ? 'Анимация' : 'Animate';
-  String get animateGraphOn => _ru ? 'Орбиты вращаются в реальном времени' : 'Orbits rotate in real time';
-  String get animateGraphOff => _ru ? 'Граф заморожен / статичен' : 'Graph is frozen / static';
-  String get preserveView => _ru ? 'Сохранять вид' : 'Preserve View';
-  String get preserveViewOn => _ru ? 'Сохраняет масштаб и позицию при выходе из чата' : 'Keeps zoom & position when leaving a chat';
-  String get preserveViewOff => _ru ? 'Сбрасывает в центр при возврате' : 'Resets to center when returning';
-
-  // Migration dialog
-  String get migrationTitle => _ru ? 'Миграция хранилища' : 'Storage Migration';
-  String get migrationBody => _ru
-      ? 'ONYX переходит на новый высокоскоростной движок хранения данных. Чаты и медиа будут загружаться значительно быстрее.'
-      : 'ONYX is switching to a new high-speed storage engine. Chats and media will load much faster.';
-  String get migrationAccounts => _ru ? 'Аккаунтов' : 'Accounts';
-  String get migrationDataSize => _ru ? 'Размер данных' : 'Data size';
-  String get migrationBackupNote => _ru
-      ? 'Перед миграцией будет создана резервная копия. Во время этого приложение может временно не отвечать.'
-      : 'A backup will be created before migration. The app may be temporarily unresponsive during this process.';
-  String get migrationStart => _ru ? 'Начать миграцию' : 'Start Migration';
-  String get migrationSkip => _ru ? 'Пропустить' : 'Skip';
-  String get migrationPhaseBackup => _ru ? 'Создание резервной копии' : 'Creating backup';
-  String get migrationPhaseImport => _ru ? 'Импорт данных' : 'Importing data';
-  String get migrationPhaseVerify => _ru ? 'Проверка' : 'Verifying';
-  String get migrationPhasePreparing => _ru ? 'Подготовка' : 'Preparing';
-  String get migrationDontClose => _ru ? 'Не закрывайте приложение' : 'Do not close the app';
-  String get migrationDoneTitle => _ru ? 'Готово!' : 'Done!';
-  String get migrationDoneBody => _ru
-      ? 'Хранилище обновлено. Резервная копия сохранена в папке Backups.'
-      : 'Storage updated. A backup has been saved to the Backups folder.';
-  String get migrationDoneNote => _ru
-      ? 'После того как убедитесь, что всё работает — можете удалить её вручную.'
-      : 'Once you confirm everything works — you can delete it manually.';
-  String get migrationDoneButton => _ru ? 'Отлично!' : 'Great!';
-  String get migrationErrorTitle => _ru ? 'Ошибка миграции' : 'Migration Error';
-  String get migrationErrorBody => _ru
-      ? 'Приложение продолжит работу на старой системе. Повторная попытка будет при следующем запуске.'
-      : 'The app will continue on the old system. Migration will be retried on next launch.';
-  String get migrationErrorButton => _ru ? 'Понятно' : 'Got it';
-
-  // ── Audio settings ────────────────────────────────────────────────────────
-  String get audioTitle => _ru ? 'Аудио' : 'Audio';
-  String get audioSubtitle => _ru ? 'Выбор микрофона и колонок' : 'Microphone and speaker device selection';
-  String get audioMicInput => _ru ? 'Микрофон (вход)' : 'Microphone (input)';
-  String get audioSpeakerOutput => _ru ? 'Колонки (выход)' : 'Speaker (output)';
-  String get audioSystemDefault => _ru ? 'Системный по умолчанию' : 'System default';
-  String get audioChangesNote => _ru
-      ? 'Изменения вступят в силу при следующем подключении к голосовому каналу.'
-      : 'Changes take effect on the next voice channel join.';
-
-  // ── WardLink ──────────────────────────────────────────────────────────────
-  String get wardlinkReceive => _ru ? 'Получить с устройства' : 'Receive from device';
-  String get wardlinkReceiveSubtitle => _ru ? 'Покажите QR-код — отправитель его сканирует' : 'Show a QR code — the sender scans it';
-  String get wardlinkSend => _ru ? 'Отправить на устройство' : 'Send to device';
-  String get wardlinkSendSubtitle => _ru ? 'Сканируйте QR-код на устройстве получателя' : 'Scan the QR code shown on the receiver';
-
-  // ── Message context menu ──────────────────────────────────────────────────
-  String get react => _ru ? 'Реакция' : 'React';
-  String get pin => _ru ? 'Закрепить' : 'Pin';
-  String get unpin => _ru ? 'Открепить' : 'Unpin';
-  String get copyImage => _ru ? 'Копировать изображение' : 'Copy Image';
-  String get forward => _ru ? 'Переслать' : 'Forward';
-  String get showInFileSystem => _ru ? 'Показать в проводнике' : 'Show in file system';
-  String get saveNotSupportedOnWeb => _ru ? 'Сохранение недоступно в веб-версии' : 'Save not supported on web';
-  String get imageNotLoadedYet => _ru ? 'Изображение ещё не загружено' : 'Image not loaded yet';
-  String get voiceNotLoadedYet => _ru ? 'Голосовое сообщение ещё не загружено' : 'Voice not loaded yet';
-  String get videoNotLoadedYet => _ru ? 'Видео ещё не загружено' : 'Video not loaded yet';
-  String get fileNotLoadedYet => _ru ? 'Файл ещё не загружен' : 'File not loaded yet';
-  String get fileNotLoadedOpenFirst => _ru ? 'Файл не скачан на устройство — нажмите на него в чате, чтобы скачать' : 'File isn\'t downloaded to this device — tap it in the chat to download it';
-  String editTimerLabel(int s) => _ru ? 'Изменить  ·  ${s}с' : 'Edit  ·  ${s}s'; // ignore: unnecessary_brace_in_string_interps
-  String deleteTimerLabel(int s) => _ru ? 'Удалить  ·  ${s}с' : 'Delete  ·  ${s}s'; // ignore: unnecessary_brace_in_string_interps
-
-  // ── Favorites tab ─────────────────────────────────────────────────────────
-  String get newChat => _ru ? 'Новый чат' : 'New chat';
-  String get newChatSubtitle => _ru ? 'Создать новый избранный чат' : 'Create a new favorite chat';
-  String get newFolder => _ru ? 'Новая папка' : 'New folder';
-  String get newFolderSubtitle => _ru ? 'Группировать чаты в папку' : 'Group chats into a folder';
-
-  // ── Emoji picker ──────────────────────────────────────────────────────────
-  String get searchEmoji => _ru ? 'Поиск эмодзи…' : 'Search emoji…';
-
-  // ── LAN favorites sync ────────────────────────────────────────────────────
-  String get syncCompleted => _ru ? 'Синхронизация завершена' : 'Sync completed';
-  String get syncCompletedWithErrors => _ru ? 'Синхронизация завершена с ошибками' : 'Sync completed with errors';
-  String get receivingFiles => _ru ? 'Получение файлов...' : 'Receiving files...';
-  String syncFromUser(String sender) => _ru ? 'от $sender' : 'from $sender';
-  String syncFileCount(int n) {
-    if (!_ru) return '$n file${n == 1 ? '' : 's'}';
-    final mod10 = n % 10, mod100 = n % 100;
-    if (mod100 >= 11 && mod100 <= 14) return '$n файлов';
-    if (mod10 == 1) return '$n файл';
-    if (mod10 >= 2 && mod10 <= 4) return '$n файла';
-    return '$n файлов';
-  }
-
-  // ── About ONYX dialog ─────────────────────────────────────────────────────
-  String get aboutServer => _ru ? 'СЕРВЕР' : 'SERVER';
-  String get aboutWhatsNew => _ru ? "ЧТО НОВОГО" : "WHAT'S NEW";
-  String get aboutConnected => _ru ? 'Подключено' : 'Connected';
-  String get aboutConnecting => _ru ? 'Подключение...' : 'Connecting...';
-  String get aboutLoadingLocation => _ru ? 'Загрузка...' : 'Loading...';
-  String get aboutNoReleaseNotes => _ru ? 'Нет информации об обновлении.' : 'No release notes available.';
-  String get aboutCheckForUpdates => _ru ? 'Проверить обновления' : 'Check for updates';
-  String get aboutChecking => _ru ? 'Проверка...' : 'Checking...';
-  String get aboutUpToDate => _ru ? 'Версия актуальна!' : "You're up to date!";
-  String aboutUpdateAvailable(String v) => _ru ? 'Доступно обновление: $v' : 'Update available: $v';
-
-  // ── Download Update dialog ────────────────────────────────────────────────
-  String get downloadUpdateTitle => _ru ? 'Скачать обновление' : 'Download Update';
-  String get downloadUpdateVersion => _ru ? 'Версия' : 'Version';
-  String get downloadUpdateWhatsNew => _ru ? "ЧТО НОВОГО" : "WHAT'S NEW";
-  String get downloadUpdateReady => _ru ? 'Готово к загрузке' : 'Ready to download';
-  String get downloadUpdateDownloading => _ru ? 'Загрузка...' : 'Downloading...';
-  String get downloadUpdateComplete => _ru ? 'Загрузка завершена!' : 'Download complete!';
-  String get downloadUpdateNoPlatform => _ru ? 'Нет загрузки для этой платформы' : 'No download available for this platform';
-  String get downloadUpdateInstall => _ru ? 'Скачать и установить' : 'Download & Install';
-  String get downloadUpdateOpen => _ru ? 'Открыть' : 'Open';
-  String get downloadUpdateRetry => _ru ? 'Повторить' : 'Retry';
-  String get downloadUpdateCancel => _ru ? 'Отменить загрузку' : 'Cancel download';
-
-  // ── Edit chat / folder / group dialogs ────────────────────────────────────
-  String get editChat => _ru ? 'Редактировать чат' : 'Edit chat';
-  String get chatNameLabel => _ru ? 'Название чата' : 'Chat name';
-  String get editFolder => _ru ? 'Редактировать папку' : 'Edit folder';
-  String get folderNameLabel => _ru ? 'Название папки' : 'Folder name';
-  String get createChat => _ru ? 'Новый чат' : 'New chat';
-
-  // ── User profile dialog ───────────────────────────────────────────────────
-  String get profileMessage => _ru ? 'Написать' : 'Message';
-
-  // ── Profile edit dialog ───────────────────────────────────────────────────
-  String get tapAvatarHint => _ru ? 'Нажмите на аватар • Удержите чтобы удалить' : 'Tap avatar to change • Long-press to remove';
-
-  // ── Folder dialogs ────────────────────────────────────────────────────────
-  String get tapAvatarLongRemove => _ru ? 'Нажмите чтобы сменить • Удержите чтобы удалить' : 'Tap to change • Long-press to remove';
-
-  // ── "Not end-to-end encrypted" group warning dialog ───────────────────────
-  String get e2eeWarnTitle =>
-      _ru ? 'Без сквозного шифрования' : 'Not end-to-end encrypted';
-  String get e2eeWarnUnderstand => _ru ? 'Понятно' : 'I understand';
-  String get e2eeWarnDoNotShare => _ru
-      ? 'Не делитесь здесь паролями, личными файлами и конфиденциальной информацией.'
-      : 'Do not share passwords, private files or sensitive information here.';
-
-  // Native groups (media stored on the ONYX server / public host).
-  String get e2eeWarnGroupBody => _ru
-      ? 'Сообщения в этой группе не защищены сквозным шифрованием — сервер может их читать.'
-      : 'Messages in this group are not protected by end-to-end encryption — the server can read them.';
-  String get e2eeWarnGroupMedia => _ru
-      ? 'Прикреплённые медиа загружаются на публичный хостинг (catbox.moe) и доступны любому, у кого есть ссылка.'
-      : 'Attached media is uploaded to a public host (catbox.moe) and is reachable by anyone who has the link.';
-
-  // External (self-hosted) groups.
-  String get e2eeWarnExtBody => _ru
-      ? 'Сообщения в этой группе не защищены сквозным шифрованием — сервер владельца группы может их читать.'
-      : "Messages in this group are not protected by end-to-end encryption — the group owner's server can read them.";
-  String get e2eeWarnExtMedia => _ru
-      ? 'Прикреплённые медиа загружаются и хранятся на собственном сервере владельца, а не в ONYX.'
-      : "Attached media is uploaded to and stored on the owner's own server, not on ONYX.";
-  String get e2eeWarnExtOnyxUnrelated => _ru
-      ? 'ONYX не имеет ни малейшего отношения к этой группе и не может модерировать или защищать её содержимое.'
-      : 'ONYX has nothing to do with this group and cannot moderate or protect its content.';
-
-  // --- Device-trust security level & session TTL (Active Devices screen) ---
-  String get securityLevelTitle => _ru ? 'Уровень защиты' : 'Device trust level';
-  String get securityLevelEasy => _ru ? 'Просто' : 'Easy';
-  String get securityLevelEasyDesc => _ru
-      ? 'Новое устройство доверяется сразу после входа. Минимум трения, но пароль — единственная защита.'
-      : 'A new device is trusted immediately after login. Least friction, but the password is your only line of defense.';
-  String get securityLevelBalanced => _ru ? 'Сбалансировано' : 'Balanced';
-  String get securityLevelBalancedDesc => _ru
-      ? 'Новое устройство одобряет любое уже доверенное устройство. Рекомендуется большинству.'
-      : 'Any already-trusted device can approve a new one. Recommended for most people.';
-  String get securityLevelStrict => _ru ? 'Строго' : 'Strict';
-  String get securityLevelStrictDesc => _ru
-      ? 'Новое устройство требует одобрения от двух разных доверенных устройств.'
-      : 'A new device needs approval from two separate trusted devices.';
-  String get securityLevelLowerRequiresTrusted => _ru
-      ? 'Понизить уровень защиты можно только с доверенного устройства.'
-      : 'Lowering the security level requires a trusted device.';
-  String get securityLevelUpdated => _ru ? 'Уровень защиты обновлён' : 'Security level updated';
-
-  String get sessionTtlTitle => _ru ? 'Срок жизни сессии' : 'Session lifetime';
-  String get sessionTtlSubtitle => _ru
-      ? 'Через сколько потребуется снова ввести пароль на этом устройстве'
-      : 'How long before this device asks for your password again';
-  String get sessionTtlRecommended => _ru ? 'рекомендовано' : 'recommended';
-  String sessionTtlDays(int days) => _ru ? '$days дней' : '$days days';
-  String get sessionTtlNever => _ru ? 'Никогда' : 'Never';
-  String get sessionTtlUpdated => _ru ? 'Срок жизни сессии обновлён' : 'Session lifetime updated';
-
-  String get approvalsProgress => _ru ? 'Одобрено' : 'Approved';
-
-  // --- Pending device approval dialog / floating reminder ---
-  String get pendingDeviceTitleSingle => _ru ? 'Новое устройство хочет доступ' : 'New device wants access';
-  String pendingDeviceTitleMulti(int count) => _ru ? 'Новые устройства ($count)' : 'New devices ($count)';
-  String get pendingDeviceApprove => _ru ? 'Одобрить' : 'Approve';
-  String get pendingDeviceDeny => _ru ? 'Отклонить' : 'Deny';
-
-  // --- Account recovery ---
-  String get recoveryTitle => _ru ? 'Восстановление доступа' : 'Account recovery';
-  String get recoveryBannerText => _ru
-      ? 'Это устройство ещё не одобрено. Если ни одно доверенное устройство недоступно — можно восстановить доступ паролем и фразой восстановления.'
-      : "This device isn't approved yet. If no trusted device is reachable, you can recover access with your password and recovery phrase.";
-  String get recoveryBannerButton => _ru ? 'Восстановить доступ' : 'Recover access';
-  String get recoveryIntro => _ru
-      ? 'Введите пароль и 12-словную фразу восстановления, которую вам показали при регистрации. Запрос вступит в силу не сразу — у ваших доверенных устройств будет время его отменить, если это не вы.'
-      : 'Enter your password and the 12-word recovery phrase shown to you at registration. The request won\'t take effect immediately — your trusted devices get a window to cancel it if this isn\'t you.';
-  String get recoveryPasswordLabel => _ru ? 'Пароль' : 'Password';
-  String get recoveryPassphraseLabel => _ru ? 'Фраза восстановления (12 слов)' : 'Recovery phrase (12 words)';
-  String get recoverySubmit => _ru ? 'Отправить запрос' : 'Submit request';
-  String get recoveryInvalid => _ru ? 'Неверный пароль или фраза восстановления' : 'Invalid password or recovery phrase';
-  String get recoveryAlreadyPending => _ru ? 'Запрос уже отправлен и ожидает исполнения' : 'A request is already pending';
-  String get recoveryPendingTitle => _ru ? 'Запрос отправлен' : 'Request submitted';
-  String recoveryPendingBody(String when) => _ru
-      ? 'Доступ будет восстановлен $when, если запрос не отменят с одного из доверенных устройств.'
-      : 'Access will be restored $when unless a trusted device cancels the request.';
-  String get recoveryCancelled => _ru ? 'Запрос восстановления отменён' : 'Recovery request cancelled';
-  String get recoveryExecuted => _ru ? 'Доступ восстановлен. Перезайдите, чтобы применить изменения.' : 'Access restored. Please re-login to apply the change.';
-
-  String get recoveryAlertRequestedTitle => _ru ? 'Кто-то запросил восстановление доступа' : 'Someone requested account recovery';
-  String recoveryAlertRequestedBody(String deviceName, String when) => _ru
-      ? 'Устройство "$deviceName" запросило восстановление доступа. Если это не вы — отмените запрос сейчас. Иначе он вступит в силу $when.'
-      : 'Device "$deviceName" requested account recovery. If this wasn\'t you, cancel it now. Otherwise it takes effect $when.';
-  String get recoveryAlertCancelButton => _ru ? 'Отменить запрос' : 'Cancel request';
-  String get recoveryAlertIgnoreButton => _ru ? 'Это я, игнорировать' : "It's me, ignore";
-  String get recoveryAlertFailedTitle => _ru ? 'Неудачная попытка восстановления' : 'Failed recovery attempt';
-  String get recoveryAlertFailedBody => _ru
-      ? 'Кто-то пытался восстановить доступ к вашему аккаунту, но ввёл неверный пароль или фразу восстановления.'
-      : 'Someone tried to recover access to your account but entered the wrong password or recovery phrase.';
-  String get recoveryAlertExecutedTitle => _ru ? 'Восстановление выполнено' : 'Recovery completed';
-  String get recoveryAlertExecutedBody => _ru
-      ? 'Запрос на восстановление доступа вступил в силу — у аккаунта новое основное устройство. Если это были не вы, немедленно отзовите незнакомую сессию в Активных устройствах.'
-      : "The recovery request has taken effect — the account has a new primary device. If this wasn't you, revoke the unfamiliar session in Active Devices immediately.";
+  /// A list of this localizations delegate along with the default localizations
+  /// delegates.
+  ///
+  /// Returns a list of localizations delegates containing this delegate along with
+  /// GlobalMaterialLocalizations.delegate, GlobalCupertinoLocalizations.delegate,
+  /// and GlobalWidgetsLocalizations.delegate.
+  ///
+  /// Additional delegates can be added by appending to this list in
+  /// MaterialApp. This list does not have to be used at all if a custom list
+  /// of delegates is preferred or required.
+  static const List<LocalizationsDelegate<dynamic>> localizationsDelegates =
+      <LocalizationsDelegate<dynamic>>[
+    delegate,
+    GlobalMaterialLocalizations.delegate,
+    GlobalCupertinoLocalizations.delegate,
+    GlobalWidgetsLocalizations.delegate,
+  ];
+
+  /// A list of this localizations delegate's supported locales.
+  static const List<Locale> supportedLocales = <Locale>[
+    Locale('de'),
+    Locale('en'),
+    Locale('es'),
+    Locale('fr'),
+    Locale('pt'),
+    Locale('ru')
+  ];
+
+  /// No description provided for @navChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats'**
+  String get navChats;
+
+  /// No description provided for @navGroups.
+  ///
+  /// In en, this message translates to:
+  /// **'Groups'**
+  String get navGroups;
+
+  /// No description provided for @navFavorites.
+  ///
+  /// In en, this message translates to:
+  /// **'Favorites'**
+  String get navFavorites;
+
+  /// No description provided for @navAccounts.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts'**
+  String get navAccounts;
+
+  /// No description provided for @navSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Settings'**
+  String get navSettings;
+
+  /// No description provided for @cancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get cancel;
+
+  /// No description provided for @save.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get save;
+
+  /// No description provided for @ok.
+  ///
+  /// In en, this message translates to:
+  /// **'OK'**
+  String get ok;
+
+  /// No description provided for @yes.
+  ///
+  /// In en, this message translates to:
+  /// **'Yes'**
+  String get yes;
+
+  /// No description provided for @no.
+  ///
+  /// In en, this message translates to:
+  /// **'No'**
+  String get no;
+
+  /// No description provided for @close.
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get close;
+
+  /// No description provided for @confirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm'**
+  String get confirm;
+
+  /// No description provided for @delete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get delete;
+
+  /// No description provided for @clear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get clear;
+
+  /// No description provided for @loading.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading...'**
+  String get loading;
+
+  /// No description provided for @error.
+  ///
+  /// In en, this message translates to:
+  /// **'Error'**
+  String get error;
+
+  /// No description provided for @success.
+  ///
+  /// In en, this message translates to:
+  /// **'Success'**
+  String get success;
+
+  /// No description provided for @copy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get copy;
+
+  /// No description provided for @copied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied'**
+  String get copied;
+
+  /// No description provided for @test.
+  ///
+  /// In en, this message translates to:
+  /// **'Test'**
+  String get test;
+
+  /// No description provided for @connect.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect'**
+  String get connect;
+
+  /// No description provided for @disconnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnect'**
+  String get disconnect;
+
+  /// No description provided for @enabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Enabled'**
+  String get enabled;
+
+  /// No description provided for @disabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Disabled'**
+  String get disabled;
+
+  /// No description provided for @on.
+  ///
+  /// In en, this message translates to:
+  /// **'On'**
+  String get on;
+
+  /// No description provided for @off.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get off;
+
+  /// No description provided for @settingsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Settings'**
+  String get settingsTitle;
+
+  /// No description provided for @supportOnyx.
+  ///
+  /// In en, this message translates to:
+  /// **'Support ONYX'**
+  String get supportOnyx;
+
+  /// No description provided for @securityTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Security & Privacy'**
+  String get securityTitle;
+
+  /// No description provided for @securitySubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to view tips and encryption details'**
+  String get securitySubtitle;
+
+  /// No description provided for @tipOfTheDay.
+  ///
+  /// In en, this message translates to:
+  /// **'Tip of the day'**
+  String get tipOfTheDay;
+
+  /// No description provided for @statusSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Status Settings'**
+  String get statusSettings;
+
+  /// No description provided for @showDisplayNameInGroups.
+  ///
+  /// In en, this message translates to:
+  /// **'Show my display name in groups'**
+  String get showDisplayNameInGroups;
+
+  /// No description provided for @showDisplayNameSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'When off, your messages appear as \"Anonymous\"'**
+  String get showDisplayNameSubtitle;
+
+  /// No description provided for @pinLock.
+  ///
+  /// In en, this message translates to:
+  /// **'PIN Lock'**
+  String get pinLock;
+
+  /// No description provided for @enablePinLock.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable PIN Lock'**
+  String get enablePinLock;
+
+  /// No description provided for @enablePinSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Require a 4-digit PIN to unlock the app on launch'**
+  String get enablePinSubtitle;
+
+  /// No description provided for @pinLockEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **' PIN Lock enabled'**
+  String get pinLockEnabled;
+
+  /// No description provided for @pinLockDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'PIN Lock disabled'**
+  String get pinLockDisabled;
+
+  /// No description provided for @useBiometrics.
+  ///
+  /// In en, this message translates to:
+  /// **'Use Biometrics'**
+  String get useBiometrics;
+
+  /// No description provided for @useBiometricsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock with fingerprint or face recognition'**
+  String get useBiometricsSubtitle;
+
+  /// No description provided for @biometricsUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Biometrics not available on this device'**
+  String get biometricsUnavailable;
+
+  /// No description provided for @lockOnResume.
+  ///
+  /// In en, this message translates to:
+  /// **'Lock when backgrounded'**
+  String get lockOnResume;
+
+  /// No description provided for @lockOnResumeSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Require PIN every time the app returns to foreground'**
+  String get lockOnResumeSubtitle;
+
+  /// No description provided for @pinScreenSetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Set PIN'**
+  String get pinScreenSetTitle;
+
+  /// No description provided for @pinScreenConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm PIN'**
+  String get pinScreenConfirmTitle;
+
+  /// No description provided for @pinScreenEnterTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter PIN'**
+  String get pinScreenEnterTitle;
+
+  /// No description provided for @pinScreenChooseSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a 4-digit PIN'**
+  String get pinScreenChooseSubtitle;
+
+  /// No description provided for @pinScreenChooseChatSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a 4-digit PIN for this chat'**
+  String get pinScreenChooseChatSubtitle;
+
+  /// No description provided for @pinScreenReenterSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Re-enter your PIN to confirm'**
+  String get pinScreenReenterSubtitle;
+
+  /// No description provided for @pinScreenUnlockSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter your 4-digit PIN to unlock'**
+  String get pinScreenUnlockSubtitle;
+
+  /// No description provided for @pinScreenGenericSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter your 4-digit PIN'**
+  String get pinScreenGenericSubtitle;
+
+  /// No description provided for @pinScreenDisableHeader.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter current PIN to disable'**
+  String get pinScreenDisableHeader;
+
+  /// No description provided for @pinScreenMismatchError.
+  ///
+  /// In en, this message translates to:
+  /// **'PINs do not match. Try again.'**
+  String get pinScreenMismatchError;
+
+  /// No description provided for @pinScreenIncorrectError.
+  ///
+  /// In en, this message translates to:
+  /// **'Incorrect PIN'**
+  String get pinScreenIncorrectError;
+
+  /// No description provided for @searchChatsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search chats and messages…'**
+  String get searchChatsHint;
+
+  /// No description provided for @searchGroupsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search groups and messages…'**
+  String get searchGroupsHint;
+
+  /// No description provided for @searchFavoritesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search favorites…'**
+  String get searchFavoritesHint;
+
+  /// No description provided for @searchSettingsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search settings…'**
+  String get searchSettingsHint;
+
+  /// No description provided for @keyMgmtTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Key Management'**
+  String get keyMgmtTitle;
+
+  /// No description provided for @keyMgmtSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate or reset your encryption identity'**
+  String get keyMgmtSubtitle;
+
+  /// No description provided for @keyMgmtDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate your E2EE identity key if you suspect it was compromised. Contacts receive the new key automatically.'**
+  String get keyMgmtDescription;
+
+  /// No description provided for @rotateE2eeKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate E2EE Key'**
+  String get rotateE2eeKey;
+
+  /// No description provided for @rotateE2eeKeyPrimaryOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate E2EE Key (primary device only)'**
+  String get rotateE2eeKeyPrimaryOnly;
+
+  /// No description provided for @rotateKeyDialogTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate encryption key?'**
+  String get rotateKeyDialogTitle;
+
+  /// No description provided for @rotateKeyDialogContent.
+  ///
+  /// In en, this message translates to:
+  /// **'A new X25519 keypair will be generated and uploaded to the server.nnYour session and message history are NOT affected. Contacts will automatically use the new key on their next message.'**
+  String get rotateKeyDialogContent;
+
+  /// No description provided for @rotateKeyBtn.
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate'**
+  String get rotateKeyBtn;
+
+  /// No description provided for @rotatingKey.
+  ///
+  /// In en, this message translates to:
+  /// **' Rotating key…'**
+  String get rotatingKey;
+
+  /// No description provided for @keyRotated.
+  ///
+  /// In en, this message translates to:
+  /// **' E2EE key rotated and uploaded'**
+  String get keyRotated;
+
+  /// No description provided for @keyRotationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **' Key rotation failed'**
+  String get keyRotationFailed;
+
+  /// No description provided for @activeDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Active Devices'**
+  String get activeDevices;
+
+  /// No description provided for @activeDevicesSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Devices, password and encryption key'**
+  String get activeDevicesSubtitle;
+
+  /// No description provided for @activeDevicesPrimaryOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Active Devices (primary device only)'**
+  String get activeDevicesPrimaryOnly;
+
+  /// No description provided for @changePassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Change Password'**
+  String get changePassword;
+
+  /// No description provided for @changePasswordPrimaryOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Change Password (primary device only)'**
+  String get changePasswordPrimaryOnly;
+
+  /// No description provided for @notificationsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get notificationsTitle;
+
+  /// No description provided for @notificationsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage alerts and delivery options'**
+  String get notificationsSubtitle;
+
+  /// No description provided for @notificationsEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable Notifications'**
+  String get notificationsEnabled;
+
+  /// No description provided for @notificationsEnabledSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Show system notifications for new messages'**
+  String get notificationsEnabledSubtitle;
+
+  /// No description provided for @notificationPosition.
+  ///
+  /// In en, this message translates to:
+  /// **'Notification Position'**
+  String get notificationPosition;
+
+  /// No description provided for @notifPosTopLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Top Left'**
+  String get notifPosTopLeft;
+
+  /// No description provided for @notifPosTopRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Top Right'**
+  String get notifPosTopRight;
+
+  /// No description provided for @notifPosBottomLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Bottom Left'**
+  String get notifPosBottomLeft;
+
+  /// No description provided for @notifPosBottomRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Bottom Right'**
+  String get notifPosBottomRight;
+
+  /// No description provided for @appearanceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Appearance'**
+  String get appearanceTitle;
+
+  /// No description provided for @appearanceSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose theme and dark mode'**
+  String get appearanceSubtitle;
+
+  /// No description provided for @selectTheme.
+  ///
+  /// In en, this message translates to:
+  /// **'Select Theme'**
+  String get selectTheme;
+
+  /// No description provided for @darkMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Dark Mode'**
+  String get darkMode;
+
+  /// No description provided for @fontAndTextSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Font & Text Size'**
+  String get fontAndTextSize;
+
+  /// No description provided for @fontFamily.
+  ///
+  /// In en, this message translates to:
+  /// **'Font Family'**
+  String get fontFamily;
+
+  /// No description provided for @messageSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Message Size'**
+  String get messageSize;
+
+  /// No description provided for @fontPreviewMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Example'**
+  String get fontPreviewMessage;
+
+  /// No description provided for @ownMessagesRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Own messages: Right'**
+  String get ownMessagesRight;
+
+  /// No description provided for @ownMessagesLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Own messages: Left'**
+  String get ownMessagesLeft;
+
+  /// No description provided for @alignAllRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Align all messages right'**
+  String get alignAllRight;
+
+  /// No description provided for @alignAllRightSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'All messages aligned to the right side like a mirror'**
+  String get alignAllRightSubtitle;
+
+  /// No description provided for @showAvatarInChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Show avatar in chats list'**
+  String get showAvatarInChats;
+
+  /// No description provided for @showAccountIndicator.
+  ///
+  /// In en, this message translates to:
+  /// **'Show current account'**
+  String get showAccountIndicator;
+
+  /// No description provided for @showAccountIndicatorSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Display name and username in the app corner'**
+  String get showAccountIndicatorSubtitle;
+
+  /// No description provided for @showAvatarSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Show contact avatar in chat list'**
+  String get showAvatarSubtitle;
+
+  /// No description provided for @chatBackground.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat Background'**
+  String get chatBackground;
+
+  /// No description provided for @chatBgSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Set an image as chat background'**
+  String get chatBgSubtitle;
+
+  /// No description provided for @chooseImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose Image'**
+  String get chooseImage;
+
+  /// No description provided for @clearBackground.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear Background'**
+  String get clearBackground;
+
+  /// No description provided for @applyGlobally.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply globally'**
+  String get applyGlobally;
+
+  /// No description provided for @applyGloballySubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Use this background in all chats'**
+  String get applyGloballySubtitle;
+
+  /// No description provided for @blurBackground.
+  ///
+  /// In en, this message translates to:
+  /// **'Blur background'**
+  String get blurBackground;
+
+  /// No description provided for @elementOpacity.
+  ///
+  /// In en, this message translates to:
+  /// **'Element Opacity'**
+  String get elementOpacity;
+
+  /// No description provided for @elementBrightness.
+  ///
+  /// In en, this message translates to:
+  /// **'Element Brightness'**
+  String get elementBrightness;
+
+  /// No description provided for @uiLayout.
+  ///
+  /// In en, this message translates to:
+  /// **'UI Layout'**
+  String get uiLayout;
+
+  /// No description provided for @navBarPosition.
+  ///
+  /// In en, this message translates to:
+  /// **'Navigation Bar Position'**
+  String get navBarPosition;
+
+  /// No description provided for @navLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Left'**
+  String get navLeft;
+
+  /// No description provided for @navBottom.
+  ///
+  /// In en, this message translates to:
+  /// **'Bottom'**
+  String get navBottom;
+
+  /// No description provided for @inputBarMaxWidth.
+  ///
+  /// In en, this message translates to:
+  /// **'Input Bar Width'**
+  String get inputBarMaxWidth;
+
+  /// No description provided for @minimizeBottomNav.
+  ///
+  /// In en, this message translates to:
+  /// **'Minimize Bottom Nav'**
+  String get minimizeBottomNav;
+
+  /// No description provided for @minimizeBottomNavSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide labels in bottom navigation bar'**
+  String get minimizeBottomNavSubtitle;
+
+  /// No description provided for @swipeTabs.
+  ///
+  /// In en, this message translates to:
+  /// **'Swipe between tabs'**
+  String get swipeTabs;
+
+  /// No description provided for @swipeTabsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch tabs with horizontal swipe gesture'**
+  String get swipeTabsSubtitle;
+
+  /// No description provided for @smoothScroll.
+  ///
+  /// In en, this message translates to:
+  /// **'Smooth Scrolling'**
+  String get smoothScroll;
+
+  /// No description provided for @performanceOptimizations.
+  ///
+  /// In en, this message translates to:
+  /// **'Performance Optimizations'**
+  String get performanceOptimizations;
+
+  /// No description provided for @macOsWindowStyle.
+  ///
+  /// In en, this message translates to:
+  /// **'Window Style'**
+  String get macOsWindowStyle;
+
+  /// No description provided for @macOsWindowStyleSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Window controls style'**
+  String get macOsWindowStyleSubtitle;
+
+  /// No description provided for @macOsNativeTitleBar.
+  ///
+  /// In en, this message translates to:
+  /// **'Native macOS (traffic lights)'**
+  String get macOsNativeTitleBar;
+
+  /// No description provided for @macOsCustomTitleBar.
+  ///
+  /// In en, this message translates to:
+  /// **'Windows-style (right side)'**
+  String get macOsCustomTitleBar;
+
+  /// No description provided for @updateAvailableLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Update available'**
+  String get updateAvailableLabel;
+
+  /// No description provided for @updateDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Download'**
+  String get updateDownload;
+
+  /// No description provided for @cacheTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Cache'**
+  String get cacheTitle;
+
+  /// No description provided for @cacheSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage local & server media cache'**
+  String get cacheSubtitle;
+
+  /// No description provided for @mediaCacheSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Media messages cache: '**
+  String get mediaCacheSize;
+
+  /// No description provided for @clearLocalCache.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear Local Cache'**
+  String get clearLocalCache;
+
+  /// No description provided for @clearLocalCacheTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear local cache'**
+  String get clearLocalCacheTitle;
+
+  /// No description provided for @clearLocalCacheContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you sure you want to delete all cached media (voice, images, videos)?nThis does NOT affect server uploads or chat history.'**
+  String get clearLocalCacheContent;
+
+  /// No description provided for @clearAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear All'**
+  String get clearAll;
+
+  /// No description provided for @serverMediaCache.
+  ///
+  /// In en, this message translates to:
+  /// **'Server Media Cache'**
+  String get serverMediaCache;
+
+  /// No description provided for @serverMediaCacheSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Stored on server: images, voice, video.'**
+  String get serverMediaCacheSubtitle;
+
+  /// No description provided for @clearServerCache.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear Server Cache'**
+  String get clearServerCache;
+
+  /// No description provided for @dangerZone.
+  ///
+  /// In en, this message translates to:
+  /// **'Danger Zone'**
+  String get dangerZone;
+
+  /// No description provided for @dangerZoneSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete account from server and/or wipe local data.'**
+  String get dangerZoneSubtitle;
+
+  /// No description provided for @factoryReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Factory Reset'**
+  String get factoryReset;
+
+  /// No description provided for @factoryResetHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Select what to reset. At least one option must be chosen.'**
+  String get factoryResetHint;
+
+  /// No description provided for @resetDeleteAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete account from server'**
+  String get resetDeleteAccount;
+
+  /// No description provided for @resetDeleteAccountSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Permanently deletes @{username} — all messages, media and keys from the server.'**
+  String resetDeleteAccountSubtitle(String username);
+
+  /// No description provided for @resetNoAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'No account is logged in.'**
+  String get resetNoAccount;
+
+  /// No description provided for @resetDeleteLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete local app data'**
+  String get resetDeleteLocal;
+
+  /// No description provided for @resetDeleteLocalSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Wipes all local chats, keys, settings, cache and media.'**
+  String get resetDeleteLocalSubtitle;
+
+  /// No description provided for @reset.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset'**
+  String get reset;
+
+  /// No description provided for @resetFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset failed'**
+  String get resetFailed;
+
+  /// No description provided for @connectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection'**
+  String get connectionTitle;
+
+  /// No description provided for @connectionSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'WebSocket status & controls'**
+  String get connectionSubtitle;
+
+  /// No description provided for @proxyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Proxy'**
+  String get proxyTitle;
+
+  /// No description provided for @proxySubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Route traffic through HTTP or SOCKS5 proxy'**
+  String get proxySubtitle;
+
+  /// No description provided for @enableProxy.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable Proxy'**
+  String get enableProxy;
+
+  /// No description provided for @proxyType.
+  ///
+  /// In en, this message translates to:
+  /// **'Proxy Type'**
+  String get proxyType;
+
+  /// No description provided for @proxyHost.
+  ///
+  /// In en, this message translates to:
+  /// **'Host'**
+  String get proxyHost;
+
+  /// No description provided for @proxyPort.
+  ///
+  /// In en, this message translates to:
+  /// **'Port'**
+  String get proxyPort;
+
+  /// No description provided for @proxyUsername.
+  ///
+  /// In en, this message translates to:
+  /// **'Username'**
+  String get proxyUsername;
+
+  /// No description provided for @proxyPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Password'**
+  String get proxyPassword;
+
+  /// No description provided for @testProxy.
+  ///
+  /// In en, this message translates to:
+  /// **'Test Proxy'**
+  String get testProxy;
+
+  /// No description provided for @proxyTesting.
+  ///
+  /// In en, this message translates to:
+  /// **'Testing...'**
+  String get proxyTesting;
+
+  /// No description provided for @proxyOk.
+  ///
+  /// In en, this message translates to:
+  /// **' Proxy OK'**
+  String get proxyOk;
+
+  /// No description provided for @proxyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **' Proxy unreachable'**
+  String get proxyFailed;
+
+  /// No description provided for @useProxy.
+  ///
+  /// In en, this message translates to:
+  /// **'Use proxy'**
+  String get useProxy;
+
+  /// No description provided for @proxyDirectConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct connection'**
+  String get proxyDirectConnection;
+
+  /// No description provided for @proxyRouted.
+  ///
+  /// In en, this message translates to:
+  /// **'Traffic routed through proxy'**
+  String get proxyRouted;
+
+  /// No description provided for @proxyConnectedStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get proxyConnectedStatus;
+
+  /// No description provided for @proxyNotConnectedStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Not connected'**
+  String get proxyNotConnectedStatus;
+
+  /// No description provided for @proxyLoginOptional.
+  ///
+  /// In en, this message translates to:
+  /// **'Login (optional)'**
+  String get proxyLoginOptional;
+
+  /// No description provided for @proxyPasswordOptional.
+  ///
+  /// In en, this message translates to:
+  /// **'Password (optional)'**
+  String get proxyPasswordOptional;
+
+  /// No description provided for @proxyApplyReconnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply & Reconnect'**
+  String get proxyApplyReconnect;
+
+  /// No description provided for @appDataTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'ONYX data folder'**
+  String get appDataTitle;
+
+  /// No description provided for @appDataSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Move the app data folder to another drive'**
+  String get appDataSubtitle;
+
+  /// No description provided for @appDataCurrentPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Current folder'**
+  String get appDataCurrentPath;
+
+  /// No description provided for @appDataDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'Default (system folder)'**
+  String get appDataDefault;
+
+  /// No description provided for @appDataMove.
+  ///
+  /// In en, this message translates to:
+  /// **'Move…'**
+  String get appDataMove;
+
+  /// No description provided for @appDataReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset'**
+  String get appDataReset;
+
+  /// No description provided for @appDataMigrating.
+  ///
+  /// In en, this message translates to:
+  /// **'Moving data…'**
+  String get appDataMigrating;
+
+  /// No description provided for @appDataMigrateError.
+  ///
+  /// In en, this message translates to:
+  /// **'Error during move'**
+  String get appDataMigrateError;
+
+  /// No description provided for @appDataRestartRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Folder changed. Restart ONYX for the change to take effect.'**
+  String get appDataRestartRequired;
+
+  /// No description provided for @appDataRestart.
+  ///
+  /// In en, this message translates to:
+  /// **'Restart ONYX'**
+  String get appDataRestart;
+
+  /// No description provided for @appDataOpenFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Open folder'**
+  String get appDataOpenFolder;
+
+  /// No description provided for @appDataDeleteOldFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete previous folder'**
+  String get appDataDeleteOldFolder;
+
+  /// No description provided for @appDataDeleteOldFolderSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete the original system data folder left after migration'**
+  String get appDataDeleteOldFolderSubtitle;
+
+  /// No description provided for @appDataDeleteOldFolderConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete the original ONYX data folder?nnThis cannot be undone. Make sure data was migrated successfully.'**
+  String get appDataDeleteOldFolderConfirm;
+
+  /// No description provided for @appDataDeleteOldFolderSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Previous folder deleted'**
+  String get appDataDeleteOldFolderSuccess;
+
+  /// No description provided for @appDataDeleteOldFolderError.
+  ///
+  /// In en, this message translates to:
+  /// **'Error deleting: '**
+  String get appDataDeleteOldFolderError;
+
+  /// No description provided for @interactTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Interaction'**
+  String get interactTitle;
+
+  /// No description provided for @interactSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'File upload confirmations'**
+  String get interactSubtitle;
+
+  /// No description provided for @confirmFileUpload.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm File Upload'**
+  String get confirmFileUpload;
+
+  /// No description provided for @confirmFileUploadSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Show confirmation dialog before sending files'**
+  String get confirmFileUploadSubtitle;
+
+  /// No description provided for @confirmVoiceMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm Voice Message'**
+  String get confirmVoiceMessage;
+
+  /// No description provided for @confirmVoiceSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Show confirmation dialog before sending voice'**
+  String get confirmVoiceSubtitle;
+
+  /// No description provided for @downloadFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Download folder'**
+  String get downloadFolder;
+
+  /// No description provided for @downloadFolderSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Where to save received files (default: Downloads/ONYX)'**
+  String get downloadFolderSubtitle;
+
+  /// No description provided for @downloadFolderDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'Default (Downloads/ONYX)'**
+  String get downloadFolderDefault;
+
+  /// No description provided for @downloadFolderChange.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose folder'**
+  String get downloadFolderChange;
+
+  /// No description provided for @downloadFolderReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset'**
+  String get downloadFolderReset;
+
+  /// No description provided for @contactTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact'**
+  String get contactTitle;
+
+  /// No description provided for @contactSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Website, repository & feedback'**
+  String get contactSubtitle;
+
+  /// No description provided for @contactWebsite.
+  ///
+  /// In en, this message translates to:
+  /// **'Official website'**
+  String get contactWebsite;
+
+  /// No description provided for @contactRepository.
+  ///
+  /// In en, this message translates to:
+  /// **'Source code (client)'**
+  String get contactRepository;
+
+  /// No description provided for @contactRepositoryServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Source code (self-hosted server)'**
+  String get contactRepositoryServer;
+
+  /// No description provided for @contactEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact us'**
+  String get contactEmail;
+
+  /// No description provided for @debugTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Debug/Logs'**
+  String get debugTitle;
+
+  /// No description provided for @debugSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Real-time performance & logging'**
+  String get debugSubtitle;
+
+  /// No description provided for @debugMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Debug Mode'**
+  String get debugMode;
+
+  /// No description provided for @debugModeSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable performance monitoring & logs'**
+  String get debugModeSubtitle;
+
+  /// No description provided for @enableFileLogging.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable File Logging'**
+  String get enableFileLogging;
+
+  /// No description provided for @enableFileLoggingSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Write app logs to disk (disable for privacy)'**
+  String get enableFileLoggingSubtitle;
+
+  /// No description provided for @deleteAllLogs.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete All Logs'**
+  String get deleteAllLogs;
+
+  /// No description provided for @languageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Language'**
+  String get languageTitle;
+
+  /// No description provided for @languageSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'App interface language'**
+  String get languageSubtitle;
+
+  /// No description provided for @languageChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'Language changed'**
+  String get languageChanged;
+
+  /// No description provided for @noChatsYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No chats yet'**
+  String get noChatsYet;
+
+  /// No description provided for @deleteChatTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete chat?'**
+  String get deleteChatTitle;
+
+  /// No description provided for @blockUserLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Block user'**
+  String get blockUserLabel;
+
+  /// No description provided for @unblockUserLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Unblock'**
+  String get unblockUserLabel;
+
+  /// No description provided for @muteUserLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute notifications'**
+  String get muteUserLabel;
+
+  /// No description provided for @unmuteUserLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute notifications'**
+  String get unmuteUserLabel;
+
+  /// No description provided for @blockedByUserMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This user has restricted incoming messages from you.'**
+  String get blockedByUserMessage;
+
+  /// No description provided for @unblockUserConfirmContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Unblock {name}?'**
+  String unblockUserConfirmContent(String name);
+
+  /// No description provided for @blockUserConfirmContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Block {name}? They won\'t be able to send you messages.'**
+  String blockUserConfirmContent(String name);
+
+  /// No description provided for @deleteChatContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you sure you want to delete the chat with \"{name}\"? This action cannot be undone.'**
+  String deleteChatContent(String name);
+
+  /// No description provided for @editProfile.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit Profile'**
+  String get editProfile;
+
+  /// No description provided for @displayName.
+  ///
+  /// In en, this message translates to:
+  /// **'Display Name'**
+  String get displayName;
+
+  /// No description provided for @addAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Add Account'**
+  String get addAccount;
+
+  /// No description provided for @welcomeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome'**
+  String get welcomeTitle;
+
+  /// No description provided for @welcomeTagline.
+  ///
+  /// In en, this message translates to:
+  /// **'Secure end-to-end encrypted messenger'**
+  String get welcomeTagline;
+
+  /// No description provided for @otherAccounts.
+  ///
+  /// In en, this message translates to:
+  /// **'Other Accounts'**
+  String get otherAccounts;
+
+  /// No description provided for @tapToSwitch.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to switch'**
+  String get tapToSwitch;
+
+  /// No description provided for @deleteFromRecentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete account from recent?'**
+  String get deleteFromRecentTitle;
+
+  /// No description provided for @authUsernameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Username (3-16 chars)'**
+  String get authUsernameLabel;
+
+  /// No description provided for @authPasswordLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Password (min 16 chars)'**
+  String get authPasswordLabel;
+
+  /// No description provided for @loginBtn.
+  ///
+  /// In en, this message translates to:
+  /// **'Login'**
+  String get loginBtn;
+
+  /// No description provided for @registerBtn.
+  ///
+  /// In en, this message translates to:
+  /// **'Register'**
+  String get registerBtn;
+
+  /// No description provided for @deviceAuthTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Link Device'**
+  String get deviceAuthTitle;
+
+  /// No description provided for @deviceAuthTabScan.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan'**
+  String get deviceAuthTabScan;
+
+  /// No description provided for @deviceAuthLanNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Both devices must be on the same local network'**
+  String get deviceAuthLanNote;
+
+  /// No description provided for @loginWithQr.
+  ///
+  /// In en, this message translates to:
+  /// **'Login via QR'**
+  String get loginWithQr;
+
+  /// No description provided for @qrAuthWaitingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for phone'**
+  String get qrAuthWaitingTitle;
+
+  /// No description provided for @qrAuthWaitingSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan this code on an authorized device to transfer the session here'**
+  String get qrAuthWaitingSubtitle;
+
+  /// No description provided for @qrAuthSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Device authorized'**
+  String get qrAuthSuccess;
+
+  /// No description provided for @qrAuthFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'QR auth failed'**
+  String get qrAuthFailed;
+
+  /// No description provided for @qrAuthCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'QR auth cancelled'**
+  String get qrAuthCancelled;
+
+  /// No description provided for @authorizeDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Authorize device'**
+  String get authorizeDevice;
+
+  /// No description provided for @authorizeDeviceSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow another device to log in by scanning a QR code'**
+  String get authorizeDeviceSubtitle;
+
+  /// No description provided for @authorizeDeviceScanHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Point the camera at the QR code shown on the other device'**
+  String get authorizeDeviceScanHint;
+
+  /// No description provided for @authorizeDeviceSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Device authorized successfully'**
+  String get authorizeDeviceSuccess;
+
+  /// No description provided for @authorizeDeviceFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to authorize device'**
+  String get authorizeDeviceFailed;
+
+  /// No description provided for @authorizeDeviceSending.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending credentials…'**
+  String get authorizeDeviceSending;
+
+  /// No description provided for @qrAuthEncryptedNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Transfer is encrypted (X25519 + AES-256-GCM)'**
+  String get qrAuthEncryptedNote;
+
+  /// No description provided for @scanFromPc.
+  ///
+  /// In en, this message translates to:
+  /// **'Receive from PC'**
+  String get scanFromPc;
+
+  /// No description provided for @scanFromPcHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Point the camera at the QR code shown on another device to sign in here'**
+  String get scanFromPcHint;
+
+  /// No description provided for @grantDeviceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Authorize phone'**
+  String get grantDeviceTitle;
+
+  /// No description provided for @grantDeviceSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan this code on another device to sign in there with this account'**
+  String get grantDeviceSubtitle;
+
+  /// No description provided for @grantDeviceSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone authorized successfully'**
+  String get grantDeviceSuccess;
+
+  /// No description provided for @grantDeviceFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to authorize phone'**
+  String get grantDeviceFailed;
+
+  /// No description provided for @enterUsernameMsg.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter your username'**
+  String get enterUsernameMsg;
+
+  /// No description provided for @loginSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Login successful'**
+  String get loginSuccess;
+
+  /// No description provided for @loginFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Login failed'**
+  String get loginFailed;
+
+  /// No description provided for @registeringMsg.
+  ///
+  /// In en, this message translates to:
+  /// **'Registering...'**
+  String get registeringMsg;
+
+  /// No description provided for @registrationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **' Registration failed'**
+  String get registrationFailed;
+
+  /// No description provided for @usernameInvalidMsg.
+  ///
+  /// In en, this message translates to:
+  /// **'Username: 3-16 chars, only letters, digits, _ . -'**
+  String get usernameInvalidMsg;
+
+  /// No description provided for @passwordTooShortMsg.
+  ///
+  /// In en, this message translates to:
+  /// **'Password too short (min 16)'**
+  String get passwordTooShortMsg;
+
+  /// No description provided for @generatePasswordTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate strong password'**
+  String get generatePasswordTooltip;
+
+  /// No description provided for @savePasswordWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Make sure to save your password in a safe place — write it down. Recovery without a password is impossible.'**
+  String get savePasswordWarning;
+
+  /// No description provided for @passphraseWriteDown.
+  ///
+  /// In en, this message translates to:
+  /// **'This passphrase will never be shown again. Write down these 12 words by hand and keep them somewhere safe — you\'ll need them to recover your account if you forget your password.'**
+  String get passphraseWriteDown;
+
+  /// No description provided for @passphraseWriteOnPaper.
+  ///
+  /// In en, this message translates to:
+  /// **'Write your passphrase on paper right now — there will be no second chance!'**
+  String get passphraseWriteOnPaper;
+
+  /// No description provided for @copyToClipboard.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy to clipboard'**
+  String get copyToClipboard;
+
+  /// No description provided for @copiedToClipboard.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied!'**
+  String get copiedToClipboard;
+
+  /// No description provided for @passphraseCountdown.
+  ///
+  /// In en, this message translates to:
+  /// **'Please read carefully — available in {s} s...'**
+  String passphraseCountdown(int s);
+
+  /// No description provided for @iSavedIt.
+  ///
+  /// In en, this message translates to:
+  /// **'I\'ve saved it'**
+  String get iSavedIt;
+
+  /// No description provided for @deleteFromRecentContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you sure you want to remove \"{acc}\" from the recent list?nThis does not delete the account from the server.'**
+  String deleteFromRecentContent(String acc);
+
+  /// No description provided for @createGroupChannel.
+  ///
+  /// In en, this message translates to:
+  /// **'Create Group/Channel'**
+  String get createGroupChannel;
+
+  /// No description provided for @channelAdminOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Channel (only admin posts)'**
+  String get channelAdminOnly;
+
+  /// No description provided for @viewByToken.
+  ///
+  /// In en, this message translates to:
+  /// **'View by token'**
+  String get viewByToken;
+
+  /// No description provided for @viewByIp.
+  ///
+  /// In en, this message translates to:
+  /// **'View by IP (external server)'**
+  String get viewByIp;
+
+  /// No description provided for @createGroupOrChannel.
+  ///
+  /// In en, this message translates to:
+  /// **'Create group or channel'**
+  String get createGroupOrChannel;
+
+  /// No description provided for @removeExternalServerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove external server?'**
+  String get removeExternalServerTitle;
+
+  /// No description provided for @removeExternalServerContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove \"{name}\" and all its groups from your list? You can rejoin later by entering the server address again.'**
+  String removeExternalServerContent(String name);
+
+  /// No description provided for @noGroupsYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No groups yet'**
+  String get noGroupsYet;
+
+  /// No description provided for @groupNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Group name:'**
+  String get groupNameLabel;
+
+  /// No description provided for @groupNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter name'**
+  String get groupNameHint;
+
+  /// No description provided for @pasteToken.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste token:'**
+  String get pasteToken;
+
+  /// No description provided for @create.
+  ///
+  /// In en, this message translates to:
+  /// **'Create'**
+  String get create;
+
+  /// No description provided for @view.
+  ///
+  /// In en, this message translates to:
+  /// **'View'**
+  String get view;
+
+  /// No description provided for @leave.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave'**
+  String get leave;
+
+  /// No description provided for @remove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get remove;
+
+  /// No description provided for @leaveGroupAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave'**
+  String get leaveGroupAction;
+
+  /// No description provided for @leaveGroupContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you sure you want to leave \"{name}\"? You will no longer receive messages from it.'**
+  String leaveGroupContent(String name);
+
+  /// No description provided for @chooseCrypto.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a crypto to donate'**
+  String get chooseCrypto;
+
+  /// No description provided for @addressCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'address copied'**
+  String get addressCopied;
+
+  /// No description provided for @hideFromSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide me from search'**
+  String get hideFromSearch;
+
+  /// No description provided for @hideFromSearchSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Others won\'t find you by username search'**
+  String get hideFromSearchSubtitle;
+
+  /// No description provided for @hideFromSearchSavedOk.
+  ///
+  /// In en, this message translates to:
+  /// **' Privacy settings saved'**
+  String get hideFromSearchSavedOk;
+
+  /// No description provided for @hideFromSearchSavedFail.
+  ///
+  /// In en, this message translates to:
+  /// **' Saved locally, failed to sync'**
+  String get hideFromSearchSavedFail;
+
+  /// No description provided for @statusVisibility.
+  ///
+  /// In en, this message translates to:
+  /// **'Visibility'**
+  String get statusVisibility;
+
+  /// No description provided for @statusShowStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Show Status'**
+  String get statusShowStatus;
+
+  /// No description provided for @statusHideStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide Status'**
+  String get statusHideStatus;
+
+  /// No description provided for @statusCustomText.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom Status Text'**
+  String get statusCustomText;
+
+  /// No description provided for @statusWhenOnline.
+  ///
+  /// In en, this message translates to:
+  /// **'When Online'**
+  String get statusWhenOnline;
+
+  /// No description provided for @statusWhenOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'When Offline'**
+  String get statusWhenOffline;
+
+  /// No description provided for @statusSavedOk.
+  ///
+  /// In en, this message translates to:
+  /// **' Status settings saved and synced'**
+  String get statusSavedOk;
+
+  /// No description provided for @statusSavedFail.
+  ///
+  /// In en, this message translates to:
+  /// **' Saved locally, failed to sync to server'**
+  String get statusSavedFail;
+
+  /// No description provided for @clearServerCacheTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear server media?'**
+  String get clearServerCacheTitle;
+
+  /// No description provided for @clearServerCacheContent.
+  ///
+  /// In en, this message translates to:
+  /// **'This will delete ALL your uploaded media from the server, including:n\'\n        \'• Voice messagesn\'\n        \'• Imagesn\'\n        \'• Videosn\'\n        \'• Filesn\'\n        \'• Avatarnn\'\n        \'Local cache will remain. This action cannot be undone.'**
+  String get clearServerCacheContent;
+
+  /// No description provided for @serverMediaCleared.
+  ///
+  /// In en, this message translates to:
+  /// **' All server media cleared'**
+  String get serverMediaCleared;
+
+  /// No description provided for @notLoggedIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Not logged in'**
+  String get notLoggedIn;
+
+  /// No description provided for @serverMediaManagerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Server Media'**
+  String get serverMediaManagerTitle;
+
+  /// No description provided for @cacheTabImages.
+  ///
+  /// In en, this message translates to:
+  /// **'Images'**
+  String get cacheTabImages;
+
+  /// No description provided for @cacheTabVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice'**
+  String get cacheTabVoice;
+
+  /// No description provided for @cacheTabAudio.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio'**
+  String get cacheTabAudio;
+
+  /// No description provided for @cacheTabVideo.
+  ///
+  /// In en, this message translates to:
+  /// **'Video'**
+  String get cacheTabVideo;
+
+  /// No description provided for @cacheTabFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Files'**
+  String get cacheTabFiles;
+
+  /// No description provided for @cacheTabDocuments.
+  ///
+  /// In en, this message translates to:
+  /// **'Documents'**
+  String get cacheTabDocuments;
+
+  /// No description provided for @cacheTabArchives.
+  ///
+  /// In en, this message translates to:
+  /// **'Archives'**
+  String get cacheTabArchives;
+
+  /// No description provided for @cacheTabData.
+  ///
+  /// In en, this message translates to:
+  /// **'Data'**
+  String get cacheTabData;
+
+  /// No description provided for @cacheTabAvatars.
+  ///
+  /// In en, this message translates to:
+  /// **'Avatars'**
+  String get cacheTabAvatars;
+
+  /// No description provided for @cacheNoFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'No files in this category'**
+  String get cacheNoFiles;
+
+  /// No description provided for @cacheClearTabTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear category?'**
+  String get cacheClearTabTitle;
+
+  /// No description provided for @cacheClearTabContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete all files in \"{typeName}\"? This cannot be undone.'**
+  String cacheClearTabContent(String typeName);
+
+  /// No description provided for @cacheFileDeleteFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to delete file'**
+  String get cacheFileDeleteFailed;
+
+  /// No description provided for @cacheClearAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear All'**
+  String get cacheClearAll;
+
+  /// No description provided for @cacheClearTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear tab'**
+  String get cacheClearTab;
+
+  /// No description provided for @cleanUnusedFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Clean unused files'**
+  String get cleanUnusedFiles;
+
+  /// No description provided for @cleaningUnusedFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Cleaning...'**
+  String get cleaningUnusedFiles;
+
+  /// No description provided for @orphanedCleanupAppNotReady.
+  ///
+  /// In en, this message translates to:
+  /// **'App not ready'**
+  String get orphanedCleanupAppNotReady;
+
+  /// No description provided for @orphanedCleanupNoFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'No unused files found'**
+  String get orphanedCleanupNoFiles;
+
+  /// No description provided for @manageCacheTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage Cache'**
+  String get manageCacheTitle;
+
+  /// No description provided for @manageCacheButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage Media Cache'**
+  String get manageCacheButton;
+
+  /// No description provided for @localCacheTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Local'**
+  String get localCacheTab;
+
+  /// No description provided for @serverCacheTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Server'**
+  String get serverCacheTab;
+
+  /// No description provided for @cacheSelectAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Select all'**
+  String get cacheSelectAll;
+
+  /// No description provided for @cacheDeselectAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Deselect all'**
+  String get cacheDeselectAll;
+
+  /// No description provided for @cacheSelected.
+  ///
+  /// In en, this message translates to:
+  /// **'selected'**
+  String get cacheSelected;
+
+  /// No description provided for @clearLocalCacheDialogTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear local cache'**
+  String get clearLocalCacheDialogTitle;
+
+  /// No description provided for @clearLocalCacheDialogContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you sure you want to delete all cached media (voice, images, videos)?nThis does NOT affect server uploads or chat history.'**
+  String get clearLocalCacheDialogContent;
+
+  /// No description provided for @deleteAllLogsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete all logs?'**
+  String get deleteAllLogsTitle;
+
+  /// No description provided for @deleteAllLogsContent.
+  ///
+  /// In en, this message translates to:
+  /// **'This will permanently delete all app log files from disk.\nThis action cannot be undone.'**
+  String get deleteAllLogsContent;
+
+  /// No description provided for @noLogsFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No log files found.'**
+  String get noLogsFound;
+
+  /// No description provided for @changePasswordInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter your recovery passphrase and current password to set a new password.'**
+  String get changePasswordInfo;
+
+  /// No description provided for @changePasswordPassphraseLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery passphrase (12 words)'**
+  String get changePasswordPassphraseLabel;
+
+  /// No description provided for @changePasswordCurrentLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Current password'**
+  String get changePasswordCurrentLabel;
+
+  /// No description provided for @changePasswordNewLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'New password (min 16 chars)'**
+  String get changePasswordNewLabel;
+
+  /// No description provided for @changePasswordChange.
+  ///
+  /// In en, this message translates to:
+  /// **'Change'**
+  String get changePasswordChange;
+
+  /// No description provided for @changePasswordFieldsRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'All fields are required'**
+  String get changePasswordFieldsRequired;
+
+  /// No description provided for @changePasswordTooShort.
+  ///
+  /// In en, this message translates to:
+  /// **'New password must be at least 16 characters'**
+  String get changePasswordTooShort;
+
+  /// No description provided for @changePasswordChanging.
+  ///
+  /// In en, this message translates to:
+  /// **'Changing password...'**
+  String get changePasswordChanging;
+
+  /// No description provided for @changePasswordSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **' Password changed successfully'**
+  String get changePasswordSuccess;
+
+  /// No description provided for @clearBgTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear background?'**
+  String get clearBgTitle;
+
+  /// No description provided for @clearBgContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove custom chat background and restore default.'**
+  String get clearBgContent;
+
+  /// No description provided for @chatBgSet.
+  ///
+  /// In en, this message translates to:
+  /// **' Chat background set'**
+  String get chatBgSet;
+
+  /// No description provided for @chatBgCleared.
+  ///
+  /// In en, this message translates to:
+  /// **'Background cleared'**
+  String get chatBgCleared;
+
+  /// No description provided for @allMessagesLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'All messages: Left'**
+  String get allMessagesLeft;
+
+  /// No description provided for @allMessagesRight2.
+  ///
+  /// In en, this message translates to:
+  /// **'All messages: Right'**
+  String get allMessagesRight2;
+
+  /// No description provided for @allMessagesMixed.
+  ///
+  /// In en, this message translates to:
+  /// **'All messages: Mixed'**
+  String get allMessagesMixed;
+
+  /// No description provided for @applyBackgroundToApp.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply background to whole app'**
+  String get applyBackgroundToApp;
+
+  /// No description provided for @uiElementsOpacityLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'UI Elements Opacity'**
+  String get uiElementsOpacityLabel;
+
+  /// No description provided for @uiElementsBrightnessLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'UI Elements Brightness'**
+  String get uiElementsBrightnessLabel;
+
+  /// No description provided for @navPanelPosition.
+  ///
+  /// In en, this message translates to:
+  /// **'Navigation Panel Position'**
+  String get navPanelPosition;
+
+  /// No description provided for @navPosBottom.
+  ///
+  /// In en, this message translates to:
+  /// **'Bottom (under chat list)'**
+  String get navPosBottom;
+
+  /// No description provided for @navPosLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Left (sidebar)'**
+  String get navPosLeft;
+
+  /// No description provided for @tabSwiping.
+  ///
+  /// In en, this message translates to:
+  /// **'Tab Swiping'**
+  String get tabSwiping;
+
+  /// No description provided for @tabSwipingSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Swipe between tabs with a bounce effect'**
+  String get tabSwipingSubtitle;
+
+  /// No description provided for @showAvatarsInChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Show avatars in chats'**
+  String get showAvatarsInChats;
+
+  /// No description provided for @smoothScrollDown.
+  ///
+  /// In en, this message translates to:
+  /// **'Smooth scroll down'**
+  String get smoothScrollDown;
+
+  /// No description provided for @messageAnimations.
+  ///
+  /// In en, this message translates to:
+  /// **'Message animations'**
+  String get messageAnimations;
+
+  /// No description provided for @chatListMoveAnimations.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat list move animations'**
+  String get chatListMoveAnimations;
+
+  /// No description provided for @scrollDownButtonPosition.
+  ///
+  /// In en, this message translates to:
+  /// **'Scroll-down button position'**
+  String get scrollDownButtonPosition;
+
+  /// No description provided for @scrollDownButtonPositionLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Left'**
+  String get scrollDownButtonPositionLeft;
+
+  /// No description provided for @scrollDownButtonPositionCenter.
+  ///
+  /// In en, this message translates to:
+  /// **'Center'**
+  String get scrollDownButtonPositionCenter;
+
+  /// No description provided for @scrollDownButtonPositionRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Right'**
+  String get scrollDownButtonPositionRight;
+
+  /// No description provided for @scrollDownButtonSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Scroll-down button size'**
+  String get scrollDownButtonSize;
+
+  /// No description provided for @loadOlderMessagesOnScroll.
+  ///
+  /// In en, this message translates to:
+  /// **'Load older messages on scroll'**
+  String get loadOlderMessagesOnScroll;
+
+  /// No description provided for @showSnackbars.
+  ///
+  /// In en, this message translates to:
+  /// **'Show snackbars'**
+  String get showSnackbars;
+
+  /// No description provided for @autoLoadVideos.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto-load videos'**
+  String get autoLoadVideos;
+
+  /// No description provided for @autoLoadVideosSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'When off, videos load only on tap — smoother scrolling'**
+  String get autoLoadVideosSubtitle;
+
+  /// No description provided for @tapToLoadVideo.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to load video'**
+  String get tapToLoadVideo;
+
+  /// No description provided for @chooseBackground.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose'**
+  String get chooseBackground;
+
+  /// No description provided for @presetsBackground.
+  ///
+  /// In en, this message translates to:
+  /// **'Presets'**
+  String get presetsBackground;
+
+  /// No description provided for @clearBackground2.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get clearBackground2;
+
+  /// No description provided for @liquidGlassSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Configure glass effects and quality per element'**
+  String get liquidGlassSubtitle;
+
+  /// No description provided for @liquidGlassNavBarLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Navigation Bar'**
+  String get liquidGlassNavBarLabel;
+
+  /// No description provided for @liquidGlassNavBarDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Glass effect on the bottom navigation bar'**
+  String get liquidGlassNavBarDesc;
+
+  /// No description provided for @liquidGlassCardsLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cards & List Items'**
+  String get liquidGlassCardsLabel;
+
+  /// No description provided for @liquidGlassCardsDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Glass effect on chat list and settings cards'**
+  String get liquidGlassCardsDesc;
+
+  /// No description provided for @liquidGlassInputLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Input Bar'**
+  String get liquidGlassInputLabel;
+
+  /// No description provided for @liquidGlassInputDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Glass effect on the message composition bar'**
+  String get liquidGlassInputDesc;
+
+  /// No description provided for @liquidGlassSearchLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Search'**
+  String get liquidGlassSearchLabel;
+
+  /// No description provided for @liquidGlassSearchDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Spotlight-style glass panel for user search'**
+  String get liquidGlassSearchDesc;
+
+  /// No description provided for @liquidGlassAppBarLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'App Bar Buttons'**
+  String get liquidGlassAppBarLabel;
+
+  /// No description provided for @liquidGlassAppBarDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Glass effect on the chat app bar\'s icon buttons'**
+  String get liquidGlassAppBarDesc;
+
+  /// No description provided for @sendFavoritesScanHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Point the camera at the QR code shown on the receiver device'**
+  String get sendFavoritesScanHint;
+
+  /// No description provided for @mediaPickerGallery.
+  ///
+  /// In en, this message translates to:
+  /// **'Gallery'**
+  String get mediaPickerGallery;
+
+  /// No description provided for @mediaPickerCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera'**
+  String get mediaPickerCamera;
+
+  /// No description provided for @mediaPickerFile.
+  ///
+  /// In en, this message translates to:
+  /// **'File'**
+  String get mediaPickerFile;
+
+  /// No description provided for @mediaPickerSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send {n}'**
+  String mediaPickerSend(int n);
+
+  /// No description provided for @mediaPickerChooseWallpaper.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose wallpaper'**
+  String get mediaPickerChooseWallpaper;
+
+  /// No description provided for @mediaPickerFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Files'**
+  String get mediaPickerFiles;
+
+  /// No description provided for @mediaPickerDeniedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Gallery access denied'**
+  String get mediaPickerDeniedTitle;
+
+  /// No description provided for @mediaPickerDeniedBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow access in settings or pick a file directly.'**
+  String get mediaPickerDeniedBody;
+
+  /// No description provided for @mediaPickerPickFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick File'**
+  String get mediaPickerPickFile;
+
+  /// No description provided for @mediaPickerOpenSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Settings'**
+  String get mediaPickerOpenSettings;
+
+  /// No description provided for @notifWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications are delivered only while the app is running. To never miss a message, keep ONYX minimised to the system tray instead of closing it.'**
+  String get notifWarning;
+
+  /// No description provided for @backgroundServiceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Background service'**
+  String get backgroundServiceTitle;
+
+  /// No description provided for @backgroundServiceSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep ONYX connected while minimised'**
+  String get backgroundServiceSubtitle;
+
+  /// No description provided for @backgroundServiceEnableLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep running in background'**
+  String get backgroundServiceEnableLabel;
+
+  /// No description provided for @backgroundServiceEnableSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Shows an ongoing notification so the OS doesn\'t stop ONYX from receiving messages while minimised'**
+  String get backgroundServiceEnableSubtitle;
+
+  /// No description provided for @backgroundServiceTextLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Notification text'**
+  String get backgroundServiceTextLabel;
+
+  /// No description provided for @backgroundServiceDefaultText.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for messages'**
+  String get backgroundServiceDefaultText;
+
+  /// No description provided for @notifPopupPosition.
+  ///
+  /// In en, this message translates to:
+  /// **'Popup position'**
+  String get notifPopupPosition;
+
+  /// No description provided for @notifPopupPositionSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose where the notification popup appears on screen'**
+  String get notifPopupPositionSubtitle;
+
+  /// No description provided for @notifEnableLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable notifications'**
+  String get notifEnableLabel;
+
+  /// No description provided for @notifHideContentLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide message content'**
+  String get notifHideContentLabel;
+
+  /// No description provided for @notifSoundEnableLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Notification sound'**
+  String get notifSoundEnableLabel;
+
+  /// No description provided for @notifSoundChooseLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose sound'**
+  String get notifSoundChooseLabel;
+
+  /// No description provided for @notifSoundCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload custom sound...'**
+  String get notifSoundCustom;
+
+  /// No description provided for @notifSoundCustomLoaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom sound set'**
+  String get notifSoundCustomLoaded;
+
+  /// No description provided for @notifSoundCustomError.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to load sound'**
+  String get notifSoundCustomError;
+
+  /// No description provided for @notifSoundCustomInvalidFormat.
+  ///
+  /// In en, this message translates to:
+  /// **'Supported: WAV, MP3, M4A, OGG, AAC'**
+  String get notifSoundCustomInvalidFormat;
+
+  /// No description provided for @resetting.
+  ///
+  /// In en, this message translates to:
+  /// **'Resetting...'**
+  String get resetting;
+
+  /// No description provided for @launchAtStartupLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Launch at startup'**
+  String get launchAtStartupLabel;
+
+  /// No description provided for @launchAtStartupSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatically start ONYX when you log in'**
+  String get launchAtStartupSubtitle;
+
+  /// No description provided for @launchAtStartupEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Launch at startup enabled'**
+  String get launchAtStartupEnabled;
+
+  /// No description provided for @launchAtStartupDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Launch at startup disabled'**
+  String get launchAtStartupDisabled;
+
+  /// No description provided for @launchAtStartupFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to change startup setting'**
+  String get launchAtStartupFailed;
+
+  /// No description provided for @avatarUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Avatar updated'**
+  String get avatarUpdated;
+
+  /// No description provided for @fileNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'File not found'**
+  String get fileNotFound;
+
+  /// No description provided for @fileSent.
+  ///
+  /// In en, this message translates to:
+  /// **'File sent'**
+  String get fileSent;
+
+  /// No description provided for @imageSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Image sent'**
+  String get imageSent;
+
+  /// No description provided for @videoSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Video sent'**
+  String get videoSent;
+
+  /// No description provided for @uploadingFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading {name}...'**
+  String uploadingFile(String name);
+
+  /// No description provided for @albumSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Album sent ({n} images)'**
+  String albumSent(int n);
+
+  /// No description provided for @fileEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'File is empty'**
+  String get fileEmpty;
+
+  /// No description provided for @networkError.
+  ///
+  /// In en, this message translates to:
+  /// **'Network error'**
+  String get networkError;
+
+  /// No description provided for @avatarRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Avatar removed'**
+  String get avatarRemoved;
+
+  /// No description provided for @uinCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'UIN copied'**
+  String get uinCopied;
+
+  /// No description provided for @displayNameLength.
+  ///
+  /// In en, this message translates to:
+  /// **'Display name must be 1–16 characters'**
+  String get displayNameLength;
+
+  /// No description provided for @failedSendLan.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to send via LAN'**
+  String get failedSendLan;
+
+  /// No description provided for @fileCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'File cancelled'**
+  String get fileCancelled;
+
+  /// No description provided for @doneRestarting.
+  ///
+  /// In en, this message translates to:
+  /// **'Done! Restarting...'**
+  String get doneRestarting;
+
+  /// No description provided for @deleteMessageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete message?'**
+  String get deleteMessageTitle;
+
+  /// No description provided for @deleteMessageContent.
+  ///
+  /// In en, this message translates to:
+  /// **'This message will be deleted for both sides.'**
+  String get deleteMessageContent;
+
+  /// No description provided for @cannotDeleteMsg.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot delete: message not yet saved on server'**
+  String get cannotDeleteMsg;
+
+  /// No description provided for @deleteForMeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete for me?'**
+  String get deleteForMeTitle;
+
+  /// No description provided for @deleteForMeContent.
+  ///
+  /// In en, this message translates to:
+  /// **'This will only remove the message from your device. The other person will still see it.'**
+  String get deleteForMeContent;
+
+  /// No description provided for @deleteFavMessageContent.
+  ///
+  /// In en, this message translates to:
+  /// **'This message will be removed from favorites.'**
+  String get deleteFavMessageContent;
+
+  /// No description provided for @pinnedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinned Message'**
+  String get pinnedMessage;
+
+  /// No description provided for @setReminder.
+  ///
+  /// In en, this message translates to:
+  /// **'Set Reminder'**
+  String get setReminder;
+
+  /// No description provided for @cancelReminder.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel Reminder'**
+  String get cancelReminder;
+
+  /// No description provided for @reminderSet.
+  ///
+  /// In en, this message translates to:
+  /// **'Reminder set'**
+  String get reminderSet;
+
+  /// No description provided for @reminderCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Reminder cancelled'**
+  String get reminderCancelled;
+
+  /// No description provided for @reminderNotificationPrefix.
+  ///
+  /// In en, this message translates to:
+  /// **'Reminder'**
+  String get reminderNotificationPrefix;
+
+  /// No description provided for @reminderGenericBody.
+  ///
+  /// In en, this message translates to:
+  /// **'You have a reminder'**
+  String get reminderGenericBody;
+
+  /// No description provided for @reminderHourLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Hour'**
+  String get reminderHourLabel;
+
+  /// No description provided for @reminderMinuteLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Minute'**
+  String get reminderMinuteLabel;
+
+  /// No description provided for @reminderPickDate.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose date'**
+  String get reminderPickDate;
+
+  /// No description provided for @reminderDateToday.
+  ///
+  /// In en, this message translates to:
+  /// **'Today'**
+  String get reminderDateToday;
+
+  /// No description provided for @reminderDateTomorrow.
+  ///
+  /// In en, this message translates to:
+  /// **'Tomorrow'**
+  String get reminderDateTomorrow;
+
+  /// No description provided for @reminderInvalidTime.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid time'**
+  String get reminderInvalidTime;
+
+  /// No description provided for @reminderPastTime.
+  ///
+  /// In en, this message translates to:
+  /// **'This time has already passed'**
+  String get reminderPastTime;
+
+  /// No description provided for @msgCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied'**
+  String get msgCopied;
+
+  /// No description provided for @copiedUsername.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied @{name}'**
+  String copiedUsername(String name);
+
+  /// No description provided for @deliveryModeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose delivery mode'**
+  String get deliveryModeTitle;
+
+  /// No description provided for @deliveryInternet.
+  ///
+  /// In en, this message translates to:
+  /// **'Internet'**
+  String get deliveryInternet;
+
+  /// No description provided for @deliveryInternetSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Send via server (encrypted)'**
+  String get deliveryInternetSubtitle;
+
+  /// No description provided for @deliveryLanSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Send via local network (direct)'**
+  String get deliveryLanSubtitle;
+
+  /// No description provided for @deliveryUserNotInLan.
+  ///
+  /// In en, this message translates to:
+  /// **'User not found in LAN'**
+  String get deliveryUserNotInLan;
+
+  /// No description provided for @fastChange.
+  ///
+  /// In en, this message translates to:
+  /// **'Fast change'**
+  String get fastChange;
+
+  /// No description provided for @fastChangeSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Toggle mode on long press'**
+  String get fastChangeSubtitle;
+
+  /// No description provided for @lanModeEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **'LAN mode enabled'**
+  String get lanModeEnabled;
+
+  /// No description provided for @internetModeEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Internet mode enabled'**
+  String get internetModeEnabled;
+
+  /// No description provided for @previewMessageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview Message'**
+  String get previewMessageTitle;
+
+  /// No description provided for @previewYourMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Your message:'**
+  String get previewYourMessage;
+
+  /// No description provided for @replyingTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Replying to: {name}'**
+  String replyingTo(String name);
+
+  /// No description provided for @send.
+  ///
+  /// In en, this message translates to:
+  /// **'Send'**
+  String get send;
+
+  /// No description provided for @fileSentLan.
+  ///
+  /// In en, this message translates to:
+  /// **'File sent via LAN'**
+  String get fileSentLan;
+
+  /// No description provided for @uploadingImages.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading {n} images...'**
+  String uploadingImages(int n);
+
+  /// No description provided for @albumUploadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Album upload failed'**
+  String get albumUploadFailed;
+
+  /// No description provided for @message.
+  ///
+  /// In en, this message translates to:
+  /// **'Message'**
+  String get message;
+
+  /// No description provided for @noMessagesYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No messages yet'**
+  String get noMessagesYet;
+
+  /// No description provided for @voiceCallsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice Calls'**
+  String get voiceCallsTitle;
+
+  /// No description provided for @voiceCallsContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice calls currently work only over LAN (local network).\n\nWe are raising funds for central server maintenance and development of an alternative.'**
+  String get voiceCallsContent;
+
+  /// No description provided for @supportOnyxBtn.
+  ///
+  /// In en, this message translates to:
+  /// **'Support ONYX'**
+  String get supportOnyxBtn;
+
+  /// No description provided for @call.
+  ///
+  /// In en, this message translates to:
+  /// **'Call'**
+  String get call;
+
+  /// No description provided for @securityCheckTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Security check'**
+  String get securityCheckTitle;
+
+  /// No description provided for @securityCheckContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Compare these emojis with {name}.\nIf they match — your chat is secure.'**
+  String securityCheckContent(String name);
+
+  /// No description provided for @failedToFetchPubkey.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to fetch pubkey'**
+  String get failedToFetchPubkey;
+
+  /// No description provided for @userHasNoPubkey.
+  ///
+  /// In en, this message translates to:
+  /// **'User has no pubkey'**
+  String get userHasNoPubkey;
+
+  /// No description provided for @galleryMenuLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Gallery'**
+  String get galleryMenuLabel;
+
+  /// No description provided for @galleryTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Gallery'**
+  String get galleryTitle;
+
+  /// No description provided for @galleryTabMedia.
+  ///
+  /// In en, this message translates to:
+  /// **'Media'**
+  String get galleryTabMedia;
+
+  /// No description provided for @galleryTabVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice'**
+  String get galleryTabVoice;
+
+  /// No description provided for @galleryTabFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Files'**
+  String get galleryTabFiles;
+
+  /// No description provided for @galleryEmptyMedia.
+  ///
+  /// In en, this message translates to:
+  /// **'No photos or videos yet'**
+  String get galleryEmptyMedia;
+
+  /// No description provided for @galleryEmptyVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'No voice messages yet'**
+  String get galleryEmptyVoice;
+
+  /// No description provided for @galleryEmptyFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'No files yet'**
+  String get galleryEmptyFiles;
+
+  /// No description provided for @galleryShowInChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Show in chat'**
+  String get galleryShowInChat;
+
+  /// No description provided for @failedDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to delete'**
+  String get failedDelete;
+
+  /// No description provided for @failedEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to edit message'**
+  String get failedEdit;
+
+  /// No description provided for @noInternetCached.
+  ///
+  /// In en, this message translates to:
+  /// **'No internet — showing cached messages'**
+  String get noInternetCached;
+
+  /// No description provided for @sendFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Send failed'**
+  String get sendFailed;
+
+  /// No description provided for @mediaUploadNotSupportedWeb.
+  ///
+  /// In en, this message translates to:
+  /// **'Media upload not supported on web'**
+  String get mediaUploadNotSupportedWeb;
+
+  /// No description provided for @localFileRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Local file required'**
+  String get localFileRequired;
+
+  /// No description provided for @uploadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload failed'**
+  String get uploadFailed;
+
+  /// No description provided for @voiceUploadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice upload failed'**
+  String get voiceUploadFailed;
+
+  /// No description provided for @voiceCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice message cancelled'**
+  String get voiceCancelled;
+
+  /// No description provided for @uploadingVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading voice...'**
+  String get uploadingVoice;
+
+  /// No description provided for @uploadingAlbumProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading album: {done}/{total} photos'**
+  String uploadingAlbumProgress(int done, int total);
+
+  /// No description provided for @uploadingImageLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading image...'**
+  String get uploadingImageLabel;
+
+  /// No description provided for @uploadingVideoLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading video...'**
+  String get uploadingVideoLabel;
+
+  /// No description provided for @uploadingAudioLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading audio...'**
+  String get uploadingAudioLabel;
+
+  /// No description provided for @uploadingFileLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading file...'**
+  String get uploadingFileLabel;
+
+  /// No description provided for @leftGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'You have left the group'**
+  String get leftGroup;
+
+  /// No description provided for @failedLeaveGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to leave group'**
+  String get failedLeaveGroup;
+
+  /// No description provided for @avatarOnlyOwnerMod.
+  ///
+  /// In en, this message translates to:
+  /// **'Only owners and moderators can change the avatar'**
+  String get avatarOnlyOwnerMod;
+
+  /// No description provided for @failedReadFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to read file'**
+  String get failedReadFile;
+
+  /// No description provided for @uploadingAvatar.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading avatar...'**
+  String get uploadingAvatar;
+
+  /// No description provided for @avatarUpdatedGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Group avatar updated'**
+  String get avatarUpdatedGroup;
+
+  /// No description provided for @avatarDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Avatar deleted'**
+  String get avatarDeleted;
+
+  /// No description provided for @failedDeleteAvatar.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to delete avatar'**
+  String get failedDeleteAvatar;
+
+  /// No description provided for @copyLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy link'**
+  String get copyLink;
+
+  /// No description provided for @tokenCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Token copied'**
+  String get tokenCopied;
+
+  /// No description provided for @groupNameLength.
+  ///
+  /// In en, this message translates to:
+  /// **'Group name must be 1–50 chars'**
+  String get groupNameLength;
+
+  /// No description provided for @groupUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Group updated'**
+  String get groupUpdated;
+
+  /// No description provided for @failedUpdateGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to update group'**
+  String get failedUpdateGroup;
+
+  /// No description provided for @deleteAvatarTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete avatar?'**
+  String get deleteAvatarTitle;
+
+  /// No description provided for @deleteAvatarContent.
+  ///
+  /// In en, this message translates to:
+  /// **'This will remove the group avatar for everyone.'**
+  String get deleteAvatarContent;
+
+  /// No description provided for @deleteGroupMsgContent.
+  ///
+  /// In en, this message translates to:
+  /// **'This message will be deleted for everyone.'**
+  String get deleteGroupMsgContent;
+
+  /// No description provided for @reply.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply'**
+  String get reply;
+
+  /// No description provided for @edit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit'**
+  String get edit;
+
+  /// No description provided for @editGroupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit group'**
+  String get editGroupTitle;
+
+  /// No description provided for @editChannelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit channel'**
+  String get editChannelTitle;
+
+  /// No description provided for @channelNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Channel name'**
+  String get channelNameLabel;
+
+  /// No description provided for @channelNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter channel name'**
+  String get channelNameHint;
+
+  /// No description provided for @unsupportedFileType.
+  ///
+  /// In en, this message translates to:
+  /// **'Unsupported file type: {ext}'**
+  String unsupportedFileType(String ext);
+
+  /// No description provided for @failedToConnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to connect: {e}'**
+  String failedToConnect(String e);
+
+  /// No description provided for @roleChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'Your role was changed to {role}'**
+  String roleChanged(String role);
+
+  /// No description provided for @unbannedReconnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'You have been unbanned! Reconnecting...'**
+  String get unbannedReconnecting;
+
+  /// No description provided for @onlyModsCanPost.
+  ///
+  /// In en, this message translates to:
+  /// **'Only owner and moderators can post in channels'**
+  String get onlyModsCanPost;
+
+  /// No description provided for @failedSendMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to send message'**
+  String get failedSendMessage;
+
+  /// No description provided for @uploadFailedConnectionAborted.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload failed: Connection aborted. Try smaller file or check server settings.'**
+  String get uploadFailedConnectionAborted;
+
+  /// No description provided for @failedSendMedia.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to send media'**
+  String get failedSendMedia;
+
+  /// No description provided for @joinedGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'You have joined the group!'**
+  String get joinedGroup;
+
+  /// No description provided for @failedJoinGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to join group'**
+  String get failedJoinGroup;
+
+  /// No description provided for @cancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancelled'**
+  String get cancelled;
+
+  /// No description provided for @avatarWillBeDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Avatar will be deleted'**
+  String get avatarWillBeDeleted;
+
+  /// No description provided for @ipCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'IP copied'**
+  String get ipCopied;
+
+  /// No description provided for @nameCannotBeEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Name cannot be empty'**
+  String get nameCannotBeEmpty;
+
+  /// No description provided for @groupRenamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Group renamed successfully'**
+  String get groupRenamed;
+
+  /// No description provided for @errorMsg.
+  ///
+  /// In en, this message translates to:
+  /// **'Error: {e}'**
+  String errorMsg(String e);
+
+  /// No description provided for @failedRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to rename'**
+  String get failedRename;
+
+  /// No description provided for @imageTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'Image too large (max 5MB)'**
+  String get imageTooLarge;
+
+  /// No description provided for @avatarUpdatedSuccessfully.
+  ///
+  /// In en, this message translates to:
+  /// **'Avatar updated successfully'**
+  String get avatarUpdatedSuccessfully;
+
+  /// No description provided for @failedUploadAvatar.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to upload avatar'**
+  String get failedUploadAvatar;
+
+  /// No description provided for @deletingAvatar.
+  ///
+  /// In en, this message translates to:
+  /// **'Deleting avatar...'**
+  String get deletingAvatar;
+
+  /// No description provided for @avatarDeletedSuccessfully.
+  ///
+  /// In en, this message translates to:
+  /// **'Avatar deleted successfully'**
+  String get avatarDeletedSuccessfully;
+
+  /// No description provided for @userBanned.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} banned'**
+  String userBanned(String name);
+
+  /// No description provided for @failedBan.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to ban'**
+  String get failedBan;
+
+  /// No description provided for @roleUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Role updated to {role}'**
+  String roleUpdated(String role);
+
+  /// No description provided for @failedChangeRole.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to change role'**
+  String get failedChangeRole;
+
+  /// No description provided for @userUnbanned.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} unbanned'**
+  String userUnbanned(String name);
+
+  /// No description provided for @failedUnban.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to unban'**
+  String get failedUnban;
+
+  /// No description provided for @youHaveBeenBanned.
+  ///
+  /// In en, this message translates to:
+  /// **'You have been banned'**
+  String get youHaveBeenBanned;
+
+  /// No description provided for @renameGroupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename Group'**
+  String get renameGroupTitle;
+
+  /// No description provided for @rename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get rename;
+
+  /// No description provided for @join.
+  ///
+  /// In en, this message translates to:
+  /// **'Join'**
+  String get join;
+
+  /// No description provided for @manageMembers.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage members'**
+  String get manageMembers;
+
+  /// No description provided for @banMemberTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Ban Member'**
+  String get banMemberTitle;
+
+  /// No description provided for @ban.
+  ///
+  /// In en, this message translates to:
+  /// **'Ban'**
+  String get ban;
+
+  /// No description provided for @selectNewRole.
+  ///
+  /// In en, this message translates to:
+  /// **'Select new role:'**
+  String get selectNewRole;
+
+  /// No description provided for @moderator.
+  ///
+  /// In en, this message translates to:
+  /// **'Moderator'**
+  String get moderator;
+
+  /// No description provided for @memberRole.
+  ///
+  /// In en, this message translates to:
+  /// **'Member'**
+  String get memberRole;
+
+  /// No description provided for @manageMembersTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage Members'**
+  String get manageMembersTitle;
+
+  /// No description provided for @viewBans.
+  ///
+  /// In en, this message translates to:
+  /// **'View Bans'**
+  String get viewBans;
+
+  /// No description provided for @unbanUserTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Unban User'**
+  String get unbanUserTitle;
+
+  /// No description provided for @unban.
+  ///
+  /// In en, this message translates to:
+  /// **'Unban'**
+  String get unban;
+
+  /// No description provided for @bannedUsersTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Banned Users'**
+  String get bannedUsersTitle;
+
+  /// No description provided for @bannedFromGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'You have been banned from this group.'**
+  String get bannedFromGroup;
+
+  /// No description provided for @bannedReason.
+  ///
+  /// In en, this message translates to:
+  /// **'Reason: {reason}'**
+  String bannedReason(String reason);
+
+  /// No description provided for @noBannedUsers.
+  ///
+  /// In en, this message translates to:
+  /// **'No banned users'**
+  String get noBannedUsers;
+
+  /// No description provided for @bannedBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Banned by: {name}'**
+  String bannedBy(String name);
+
+  /// No description provided for @bannedDate.
+  ///
+  /// In en, this message translates to:
+  /// **'Date: {date}'**
+  String bannedDate(String date);
+
+  /// No description provided for @banConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Ban {name} from the group?'**
+  String banConfirm(String name);
+
+  /// No description provided for @banReason.
+  ///
+  /// In en, this message translates to:
+  /// **'Reason (optional)'**
+  String get banReason;
+
+  /// No description provided for @changeRoleTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Change role for {name}'**
+  String changeRoleTitle(String name);
+
+  /// No description provided for @currentRoleLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Current role: {role}'**
+  String currentRoleLabel(String role);
+
+  /// No description provided for @ownerCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Owners: {n}/3'**
+  String ownerCount(int n);
+
+  /// No description provided for @ownerCurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner (current)'**
+  String get ownerCurrent;
+
+  /// No description provided for @ownerLimitReached.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner (limit reached)'**
+  String get ownerLimitReached;
+
+  /// No description provided for @owner.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner'**
+  String get owner;
+
+  /// No description provided for @cannotDemoteLastOwner.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot demote the last owner'**
+  String get cannotDemoteLastOwner;
+
+  /// No description provided for @noMembersYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No members'**
+  String get noMembersYet;
+
+  /// No description provided for @changeRole.
+  ///
+  /// In en, this message translates to:
+  /// **'Change role'**
+  String get changeRole;
+
+  /// No description provided for @unbanConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Unban {name}?'**
+  String unbanConfirm(String name);
+
+  /// No description provided for @today.
+  ///
+  /// In en, this message translates to:
+  /// **'Today'**
+  String get today;
+
+  /// No description provided for @yesterday.
+  ///
+  /// In en, this message translates to:
+  /// **'Yesterday'**
+  String get yesterday;
+
+  /// No description provided for @failedCreateGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to create group'**
+  String get failedCreateGroup;
+
+  /// No description provided for @invalidInviteLinkFormat.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid invite link format'**
+  String get invalidInviteLinkFormat;
+
+  /// No description provided for @invalidInviteLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid invite link'**
+  String get invalidInviteLink;
+
+  /// No description provided for @groupAddedForViewing.
+  ///
+  /// In en, this message translates to:
+  /// **'Group added for viewing!'**
+  String get groupAddedForViewing;
+
+  /// No description provided for @failedAddGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to add group'**
+  String get failedAddGroup;
+
+  /// No description provided for @serverRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Server \"{name}\" removed'**
+  String serverRemoved(String name);
+
+  /// No description provided for @channelAdminOnlySubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Channel (admin only)'**
+  String get channelAdminOnlySubtitle;
+
+  /// No description provided for @groupSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Group'**
+  String get groupSubtitle;
+
+  /// No description provided for @newGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'New group'**
+  String get newGroup;
+
+  /// No description provided for @externalGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'External Group'**
+  String get externalGroup;
+
+  /// No description provided for @externalChannel.
+  ///
+  /// In en, this message translates to:
+  /// **'External Channel'**
+  String get externalChannel;
+
+  /// No description provided for @joinExternalServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Join External Server'**
+  String get joinExternalServer;
+
+  /// No description provided for @enterServerAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter server address'**
+  String get enterServerAddress;
+
+  /// No description provided for @enterValidIp.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid IP address or hostname'**
+  String get enterValidIp;
+
+  /// No description provided for @couldNotConnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not connect to {host}'**
+  String couldNotConnect(String host);
+
+  /// No description provided for @usernameRequiredMsg.
+  ///
+  /// In en, this message translates to:
+  /// **'Username is required. Please make sure you have created an account in the app.'**
+  String get usernameRequiredMsg;
+
+  /// No description provided for @passwordRequiredForGroups.
+  ///
+  /// In en, this message translates to:
+  /// **'Password is required for groups'**
+  String get passwordRequiredForGroups;
+
+  /// No description provided for @connectionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection failed: {e}'**
+  String connectionFailed(String e);
+
+  /// No description provided for @connectedToServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected to {type} \"{name}\"'**
+  String connectedToServer(String type, String name);
+
+  /// No description provided for @externalGroupType.
+  ///
+  /// In en, this message translates to:
+  /// **'external group'**
+  String get externalGroupType;
+
+  /// No description provided for @externalChannelType.
+  ///
+  /// In en, this message translates to:
+  /// **'external channel'**
+  String get externalChannelType;
+
+  /// No description provided for @identityVisible.
+  ///
+  /// In en, this message translates to:
+  /// **'Your identity will be visible to the server'**
+  String get identityVisible;
+
+  /// No description provided for @usernameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Username'**
+  String get usernameLabel;
+
+  /// No description provided for @passwordLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Password'**
+  String get passwordLabel;
+
+  /// No description provided for @noPasswordForChannels.
+  ///
+  /// In en, this message translates to:
+  /// **'No password required for channels'**
+  String get noPasswordForChannels;
+
+  /// No description provided for @noRegistrationRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'No registration required.'**
+  String get noRegistrationRequired;
+
+  /// No description provided for @back.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get back;
+
+  /// No description provided for @connecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting...'**
+  String get connecting;
+
+  /// No description provided for @connectBtn.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect'**
+  String get connectBtn;
+
+  /// No description provided for @serverInfoGroups.
+  ///
+  /// In en, this message translates to:
+  /// **'Groups'**
+  String get serverInfoGroups;
+
+  /// No description provided for @serverInfoMembers.
+  ///
+  /// In en, this message translates to:
+  /// **'Members'**
+  String get serverInfoMembers;
+
+  /// No description provided for @serverInfoMedia.
+  ///
+  /// In en, this message translates to:
+  /// **'Media'**
+  String get serverInfoMedia;
+
+  /// No description provided for @serverInfoMaxFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Max file size'**
+  String get serverInfoMaxFile;
+
+  /// No description provided for @thirdPartyServer.
+  ///
+  /// In en, this message translates to:
+  /// **'THIRD-PARTY SERVER'**
+  String get thirdPartyServer;
+
+  /// No description provided for @thirdPartyWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'This server is not operated by ONYX. Only connect if you trust the owner.'**
+  String get thirdPartyWarning;
+
+  /// No description provided for @serverWillKnow.
+  ///
+  /// In en, this message translates to:
+  /// **'Server will know:'**
+  String get serverWillKnow;
+
+  /// No description provided for @serverWillNotReceive.
+  ///
+  /// In en, this message translates to:
+  /// **'Server will NOT receive:'**
+  String get serverWillNotReceive;
+
+  /// No description provided for @knowIpAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Your IP address'**
+  String get knowIpAddress;
+
+  /// No description provided for @knowUsername.
+  ///
+  /// In en, this message translates to:
+  /// **'Your chosen username'**
+  String get knowUsername;
+
+  /// No description provided for @knowMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Content of your messages in this server'**
+  String get knowMessages;
+
+  /// No description provided for @notReceiveAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Your ONYX account or password'**
+  String get notReceiveAccount;
+
+  /// No description provided for @notReceiveContacts.
+  ///
+  /// In en, this message translates to:
+  /// **'Your contacts and private chats'**
+  String get notReceiveContacts;
+
+  /// No description provided for @notReceiveKeys.
+  ///
+  /// In en, this message translates to:
+  /// **'Your encryption keys'**
+  String get notReceiveKeys;
+
+  /// No description provided for @yourPassphraseTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Your Recovery Passphrase'**
+  String get yourPassphraseTitle;
+
+  /// No description provided for @sessionExpiredBanner.
+  ///
+  /// In en, this message translates to:
+  /// **'Session expired — please log in again'**
+  String get sessionExpiredBanner;
+
+  /// No description provided for @sessionExpiredTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Session expired'**
+  String get sessionExpiredTitle;
+
+  /// No description provided for @sessionExpiredSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Please sign in again'**
+  String get sessionExpiredSubtitle;
+
+  /// No description provided for @sessionSignIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in'**
+  String get sessionSignIn;
+
+  /// No description provided for @sessionRenewSoon.
+  ///
+  /// In en, this message translates to:
+  /// **'Re-login will be required soon'**
+  String get sessionRenewSoon;
+
+  /// No description provided for @sessionStillValid.
+  ///
+  /// In en, this message translates to:
+  /// **'Authorization token is valid'**
+  String get sessionStillValid;
+
+  /// No description provided for @blockedUsersTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Blocked Users'**
+  String get blockedUsersTitle;
+
+  /// No description provided for @blockedUsersSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage blocked users'**
+  String get blockedUsersSubtitle;
+
+  /// No description provided for @blockedUsersEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No blocked users'**
+  String get blockedUsersEmpty;
+
+  /// No description provided for @unblockAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Unblock'**
+  String get unblockAction;
+
+  /// No description provided for @writeMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Write'**
+  String get writeMessage;
+
+  /// No description provided for @fakePinTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Fake PIN'**
+  String get fakePinTitle;
+
+  /// No description provided for @fakePinSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Open a decoy account under duress'**
+  String get fakePinSubtitle;
+
+  /// No description provided for @fakePinSheetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Fake PIN Setup'**
+  String get fakePinSheetTitle;
+
+  /// No description provided for @fakePinStatusActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get fakePinStatusActive;
+
+  /// No description provided for @fakePinStatusOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get fakePinStatusOff;
+
+  /// No description provided for @fakePinDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'When this PIN is entered at the lock screen, the app opens showing your decoy account instead of your real one.'**
+  String get fakePinDescription;
+
+  /// No description provided for @setFakePin.
+  ///
+  /// In en, this message translates to:
+  /// **'Set Fake PIN'**
+  String get setFakePin;
+
+  /// No description provided for @disableFakePin.
+  ///
+  /// In en, this message translates to:
+  /// **'Disable Fake PIN'**
+  String get disableFakePin;
+
+  /// No description provided for @changeFakePin.
+  ///
+  /// In en, this message translates to:
+  /// **'Change Fake PIN'**
+  String get changeFakePin;
+
+  /// No description provided for @disableFakePinTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Disable Fake PIN?'**
+  String get disableFakePinTitle;
+
+  /// No description provided for @disableFakePinContent.
+  ///
+  /// In en, this message translates to:
+  /// **'The fake PIN will be removed. Your decoy account settings will be kept.'**
+  String get disableFakePinContent;
+
+  /// No description provided for @fakePinEnabledSnack.
+  ///
+  /// In en, this message translates to:
+  /// **'Fake PIN enabled'**
+  String get fakePinEnabledSnack;
+
+  /// No description provided for @fakePinDisabledSnack.
+  ///
+  /// In en, this message translates to:
+  /// **'Fake PIN disabled'**
+  String get fakePinDisabledSnack;
+
+  /// No description provided for @fakePinCannotMatchReal.
+  ///
+  /// In en, this message translates to:
+  /// **'Fake PIN cannot match your real PIN'**
+  String get fakePinCannotMatchReal;
+
+  /// No description provided for @decoyAccountSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Decoy Account'**
+  String get decoyAccountSection;
+
+  /// No description provided for @decoyAccountSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'This account will be shown when the fake PIN is used'**
+  String get decoyAccountSubtitle;
+
+  /// No description provided for @decoyDisplayNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Display name'**
+  String get decoyDisplayNameLabel;
+
+  /// No description provided for @decoyUsernameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Username'**
+  String get decoyUsernameLabel;
+
+  /// No description provided for @decoyDisplayNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter display name'**
+  String get decoyDisplayNameHint;
+
+  /// No description provided for @decoyUsernameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter username'**
+  String get decoyUsernameHint;
+
+  /// No description provided for @saveDecoyAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Save decoy account'**
+  String get saveDecoyAccount;
+
+  /// No description provided for @decoyAccountSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Decoy account saved'**
+  String get decoyAccountSaved;
+
+  /// No description provided for @decoyFieldsRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Username and display name cannot be empty'**
+  String get decoyFieldsRequired;
+
+  /// No description provided for @removeAvatar.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove avatar'**
+  String get removeAvatar;
+
+  /// No description provided for @fakePinSecurityNote.
+  ///
+  /// In en, this message translates to:
+  /// **'The fake PIN must differ from your real PIN. The decoy account has no server connection — it only shows the profile you configured here.'**
+  String get fakePinSecurityNote;
+
+  /// No description provided for @decoyNoChats.
+  ///
+  /// In en, this message translates to:
+  /// **'No chats yet'**
+  String get decoyNoChats;
+
+  /// No description provided for @decoyNoGroups.
+  ///
+  /// In en, this message translates to:
+  /// **'No groups yet'**
+  String get decoyNoGroups;
+
+  /// No description provided for @decoyNoFavorites.
+  ///
+  /// In en, this message translates to:
+  /// **'No favorites yet'**
+  String get decoyNoFavorites;
+
+  /// No description provided for @decoyOtherAccounts.
+  ///
+  /// In en, this message translates to:
+  /// **'Other accounts'**
+  String get decoyOtherAccounts;
+
+  /// No description provided for @decoyNoOtherAccounts.
+  ///
+  /// In en, this message translates to:
+  /// **'No other accounts'**
+  String get decoyNoOtherAccounts;
+
+  /// No description provided for @lock.
+  ///
+  /// In en, this message translates to:
+  /// **'Lock'**
+  String get lock;
+
+  /// No description provided for @decoyAppearance.
+  ///
+  /// In en, this message translates to:
+  /// **'Appearance'**
+  String get decoyAppearance;
+
+  /// No description provided for @decoyNotifications.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get decoyNotifications;
+
+  /// No description provided for @decoyStorage.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage'**
+  String get decoyStorage;
+
+  /// No description provided for @decoyAppearanceSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Theme and display options'**
+  String get decoyAppearanceSubtitle;
+
+  /// No description provided for @decoyNotificationsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sound and alert settings'**
+  String get decoyNotificationsSubtitle;
+
+  /// No description provided for @decoyStorageSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage cached files'**
+  String get decoyStorageSubtitle;
+
+  /// No description provided for @decoyContactsSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Fake Chats'**
+  String get decoyContactsSection;
+
+  /// No description provided for @decoyContactsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Add contacts with messages — they appear when the decoy account is opened'**
+  String get decoyContactsSubtitle;
+
+  /// No description provided for @generateContacts.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate Contacts'**
+  String get generateContacts;
+
+  /// No description provided for @addDecoyContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Add Contact'**
+  String get addDecoyContact;
+
+  /// No description provided for @decoyNoContacts.
+  ///
+  /// In en, this message translates to:
+  /// **'No fake chats yet'**
+  String get decoyNoContacts;
+
+  /// No description provided for @decoyContactUsername.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact username'**
+  String get decoyContactUsername;
+
+  /// No description provided for @decoyContactDisplayName.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact display name'**
+  String get decoyContactDisplayName;
+
+  /// No description provided for @contactsGenerated.
+  ///
+  /// In en, this message translates to:
+  /// **'Added {n} contacts'**
+  String contactsGenerated(int n);
+
+  /// No description provided for @contactAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact added'**
+  String get contactAdded;
+
+  /// No description provided for @contactRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact removed'**
+  String get contactRemoved;
+
+  /// No description provided for @decoyContactExists.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact already exists'**
+  String get decoyContactExists;
+
+  /// No description provided for @decoyContactsCleared.
+  ///
+  /// In en, this message translates to:
+  /// **'All chats cleared'**
+  String get decoyContactsCleared;
+
+  /// No description provided for @clearDecoyChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear All Chats'**
+  String get clearDecoyChats;
+
+  /// No description provided for @messagesCount.
+  ///
+  /// In en, this message translates to:
+  /// **'messages'**
+  String get messagesCount;
+
+  /// No description provided for @add.
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get add;
+
+  /// No description provided for @decoyChatsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Contacts with message history'**
+  String get decoyChatsSubtitle;
+
+  /// No description provided for @decoyGroupsSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Groups & Channels'**
+  String get decoyGroupsSection;
+
+  /// No description provided for @decoyGroupsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Fake groups and channels'**
+  String get decoyGroupsSubtitle;
+
+  /// No description provided for @decoyFavoritesSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Favorites'**
+  String get decoyFavoritesSection;
+
+  /// No description provided for @decoyFavoritesSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinned favorite chats'**
+  String get decoyFavoritesSubtitle;
+
+  /// No description provided for @noFakeGroups.
+  ///
+  /// In en, this message translates to:
+  /// **'No groups yet'**
+  String get noFakeGroups;
+
+  /// No description provided for @noFakeFavorites.
+  ///
+  /// In en, this message translates to:
+  /// **'No favorites yet'**
+  String get noFakeFavorites;
+
+  /// No description provided for @addFakeGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Group'**
+  String get addFakeGroup;
+
+  /// No description provided for @addFakeChannel.
+  ///
+  /// In en, this message translates to:
+  /// **'Channel'**
+  String get addFakeChannel;
+
+  /// No description provided for @addFakeFavorite.
+  ///
+  /// In en, this message translates to:
+  /// **'Add Favorite'**
+  String get addFakeFavorite;
+
+  /// No description provided for @groupType.
+  ///
+  /// In en, this message translates to:
+  /// **'Group'**
+  String get groupType;
+
+  /// No description provided for @channelType.
+  ///
+  /// In en, this message translates to:
+  /// **'Channel'**
+  String get channelType;
+
+  /// No description provided for @favTitleHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Title'**
+  String get favTitleHint;
+
+  /// No description provided for @generateAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate All'**
+  String get generateAll;
+
+  /// No description provided for @generateAllConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Random content will be generated, replacing existing data.'**
+  String get generateAllConfirm;
+
+  /// No description provided for @sendFavoritesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Send Favorites'**
+  String get sendFavoritesTitle;
+
+  /// No description provided for @sendFavoritesShowQrToReceiver.
+  ///
+  /// In en, this message translates to:
+  /// **'Show QR to Receiver'**
+  String get sendFavoritesShowQrToReceiver;
+
+  /// No description provided for @sendFavoritesScanReceiver.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan Receiver QR'**
+  String get sendFavoritesScanReceiver;
+
+  /// No description provided for @sendFavoritesSending.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending Favorites'**
+  String get sendFavoritesSending;
+
+  /// No description provided for @sendFavoritesSelectTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Select chats to send'**
+  String get sendFavoritesSelectTitle;
+
+  /// No description provided for @sendFavoritesHintDesktop.
+  ///
+  /// In en, this message translates to:
+  /// **'The receiver must press \"Receive\" first. Then scan the QR code shown here.'**
+  String get sendFavoritesHintDesktop;
+
+  /// No description provided for @sendFavoritesHintMobile.
+  ///
+  /// In en, this message translates to:
+  /// **'The receiver must press \"Receive\" first and show the QR code.'**
+  String get sendFavoritesHintMobile;
+
+  /// No description provided for @allChatsCount.
+  ///
+  /// In en, this message translates to:
+  /// **'All chats ({n})'**
+  String allChatsCount(int n);
+
+  /// No description provided for @sendFavoritesNoFavs.
+  ///
+  /// In en, this message translates to:
+  /// **'No favourite chats yet.'**
+  String get sendFavoritesNoFavs;
+
+  /// No description provided for @sendFavoritesSelectAtLeastOne.
+  ///
+  /// In en, this message translates to:
+  /// **'Select at least one chat'**
+  String get sendFavoritesSelectAtLeastOne;
+
+  /// No description provided for @sendFavoritesShowQrBtn.
+  ///
+  /// In en, this message translates to:
+  /// **'Show QR'**
+  String get sendFavoritesShowQrBtn;
+
+  /// No description provided for @sendFavoritesScanQrBtn.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan QR'**
+  String get sendFavoritesScanQrBtn;
+
+  /// No description provided for @receiveFavoritesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Receive Favorites'**
+  String get receiveFavoritesTitle;
+
+  /// No description provided for @receiveFavoritesScanSender.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan Sender QR'**
+  String get receiveFavoritesScanSender;
+
+  /// No description provided for @receiveFavoritesScanOnSender.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan on sender device'**
+  String get receiveFavoritesScanOnSender;
+
+  /// No description provided for @receiveFavoritesInstruction.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Favorites on the sender, tap Sync → Send, then scan this code'**
+  String get receiveFavoritesInstruction;
+
+  /// No description provided for @receiveFavoritesE2E.
+  ///
+  /// In en, this message translates to:
+  /// **'End-to-end encrypted · local network only'**
+  String get receiveFavoritesE2E;
+
+  /// No description provided for @receiveFavoritesScanHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Point the camera at the QR code shown on the sender device'**
+  String get receiveFavoritesScanHint;
+
+  /// No description provided for @receiveFavoritesScanEncrypted.
+  ///
+  /// In en, this message translates to:
+  /// **'Transfer is encrypted · local network only'**
+  String get receiveFavoritesScanEncrypted;
+
+  /// No description provided for @receiveFavoritesWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for sender to scan QR code…'**
+  String get receiveFavoritesWaiting;
+
+  /// No description provided for @receiveFavoritesComplete.
+  ///
+  /// In en, this message translates to:
+  /// **'Transfer complete.'**
+  String get receiveFavoritesComplete;
+
+  /// No description provided for @receiveFavoritesConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting to sender…'**
+  String get receiveFavoritesConnecting;
+
+  /// No description provided for @receiveFavoritesConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected! Waiting for files…'**
+  String get receiveFavoritesConnected;
+
+  /// No description provided for @cancelTransfer.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel transfer'**
+  String get cancelTransfer;
+
+  /// No description provided for @wardLinkTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'WardLink'**
+  String get wardLinkTitle;
+
+  /// No description provided for @wardLinkSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Passive sync between your devices on the local network'**
+  String get wardLinkSubtitle;
+
+  /// No description provided for @wardLinkEnable.
+  ///
+  /// In en, this message translates to:
+  /// **'Passive sync'**
+  String get wardLinkEnable;
+
+  /// No description provided for @wardLinkEnableDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatically sync with trusted devices on the same network. On phones this works while the app is open; on desktop it runs continuously.'**
+  String get wardLinkEnableDesc;
+
+  /// No description provided for @wardLinkPairedDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Trusted devices'**
+  String get wardLinkPairedDevices;
+
+  /// No description provided for @wardLinkNoPairedDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'No paired devices yet'**
+  String get wardLinkNoPairedDevices;
+
+  /// No description provided for @wardLinkAddDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get wardLinkAddDevice;
+
+  /// No description provided for @wardLinkRemoveDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get wardLinkRemoveDevice;
+
+  /// No description provided for @wardLinkRemoveConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop syncing with this device?'**
+  String get wardLinkRemoveConfirm;
+
+  /// No description provided for @wardLinkFavoritesOnlyNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncs your Favorites — their messages and media'**
+  String get wardLinkFavoritesOnlyNote;
+
+  /// No description provided for @wardLinkMaxFileSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Max file size'**
+  String get wardLinkMaxFileSize;
+
+  /// No description provided for @wardLinkPairTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Pair device'**
+  String get wardLinkPairTitle;
+
+  /// No description provided for @wardLinkShowCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Show code'**
+  String get wardLinkShowCode;
+
+  /// No description provided for @wardLinkScanCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan code'**
+  String get wardLinkScanCode;
+
+  /// No description provided for @wardLinkShowInstruction.
+  ///
+  /// In en, this message translates to:
+  /// **'Open WardLink on your other device and scan this code'**
+  String get wardLinkShowInstruction;
+
+  /// No description provided for @wardLinkScanInstruction.
+  ///
+  /// In en, this message translates to:
+  /// **'Point the camera at the WardLink code on the other device'**
+  String get wardLinkScanInstruction;
+
+  /// No description provided for @wardLinkPairedOk.
+  ///
+  /// In en, this message translates to:
+  /// **'Device paired'**
+  String get wardLinkPairedOk;
+
+  /// No description provided for @wardLinkPairFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing failed'**
+  String get wardLinkPairFailed;
+
+  /// No description provided for @wardLinkE2E.
+  ///
+  /// In en, this message translates to:
+  /// **'End-to-end encrypted · LAN only'**
+  String get wardLinkE2E;
+
+  /// No description provided for @wardLinkSyncingNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing…'**
+  String get wardLinkSyncingNow;
+
+  /// No description provided for @wardLinkDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Synced'**
+  String get wardLinkDone;
+
+  /// No description provided for @wardLinkCurrentFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Current file'**
+  String get wardLinkCurrentFile;
+
+  /// No description provided for @wardLinkLog.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync log'**
+  String get wardLinkLog;
+
+  /// No description provided for @wardLinkLogEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No events yet'**
+  String get wardLinkLogEmpty;
+
+  /// No description provided for @wardLinkHoldForLog.
+  ///
+  /// In en, this message translates to:
+  /// **'Hold the bubble for the log'**
+  String get wardLinkHoldForLog;
+
+  /// No description provided for @wardLinkUpToDate.
+  ///
+  /// In en, this message translates to:
+  /// **'Up to date'**
+  String get wardLinkUpToDate;
+
+  /// No description provided for @wardLinkFilesDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Files transferred: {n}'**
+  String wardLinkFilesDone(int n);
+
+  /// No description provided for @wardLinkNoFilesYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No files transferred'**
+  String get wardLinkNoFilesYet;
+
+  /// No description provided for @wardLinkSyncedAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'Synced {when}'**
+  String wardLinkSyncedAgo(String when);
+
+  /// No description provided for @wardLinkNeverSynced.
+  ///
+  /// In en, this message translates to:
+  /// **'Not synced yet'**
+  String get wardLinkNeverSynced;
+
+  /// No description provided for @wardLinkFirewallHintWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'If the phone cannot reach this PC, allow ONYX in Windows Firewall (TCP port 47832). ONYX tries to add the rule automatically; if it fails: Windows Firewall → Advanced → Inbound Rules → New Rule → Port → TCP → 47832.'**
+  String get wardLinkFirewallHintWindows;
+
+  /// No description provided for @wardLinkFirewallHintMac.
+  ///
+  /// In en, this message translates to:
+  /// **'If the phone cannot reach this Mac, make sure the macOS firewall is not blocking ONYX: System Settings → Network → Firewall → Options → add ONYX.'**
+  String get wardLinkFirewallHintMac;
+
+  /// No description provided for @wardLinkFirewallHintLinux.
+  ///
+  /// In en, this message translates to:
+  /// **'If the phone cannot connect, open TCP port 47832 in your firewall. Example: sudo ufw allow 47832/tcp  or  sudo firewall-cmd --add-port=47832/tcp --permanent'**
+  String get wardLinkFirewallHintLinux;
+
+  /// No description provided for @wardLinkSyncFromBeginning.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync from beginning'**
+  String get wardLinkSyncFromBeginning;
+
+  /// No description provided for @wardLinkSyncFromBeginningDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Pull all history not yet on this device'**
+  String get wardLinkSyncFromBeginningDesc;
+
+  /// No description provided for @wardLinkSyncPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync pending…'**
+  String get wardLinkSyncPending;
+
+  /// No description provided for @wardLinkBubbleVisibility.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync bubble'**
+  String get wardLinkBubbleVisibility;
+
+  /// No description provided for @wardLinkBubbleShowAlways.
+  ///
+  /// In en, this message translates to:
+  /// **'Show always'**
+  String get wardLinkBubbleShowAlways;
+
+  /// No description provided for @wardLinkBubbleShowOnErrors.
+  ///
+  /// In en, this message translates to:
+  /// **'Show on errors only'**
+  String get wardLinkBubbleShowOnErrors;
+
+  /// No description provided for @wardLinkBubbleSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Bubble size'**
+  String get wardLinkBubbleSize;
+
+  /// No description provided for @meshSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline mesh network'**
+  String get meshSubtitle;
+
+  /// No description provided for @meshEnable.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable Mesh network'**
+  String get meshEnable;
+
+  /// No description provided for @meshEnableDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct messaging without internet via Wi-Fi or Bluetooth.\nWorks only in direct messages.'**
+  String get meshEnableDesc;
+
+  /// No description provided for @meshUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Mesh network is not available on this platform.'**
+  String get meshUnavailable;
+
+  /// No description provided for @meshOpenRadar.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Radar'**
+  String get meshOpenRadar;
+
+  /// No description provided for @meshNearbyCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Nearby: {n} devices'**
+  String meshNearbyCount(int n);
+
+  /// No description provided for @meshRadarTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Mesh Radar'**
+  String get meshRadarTitle;
+
+  /// No description provided for @meshRadarScanning.
+  ///
+  /// In en, this message translates to:
+  /// **'Scanning…'**
+  String get meshRadarScanning;
+
+  /// No description provided for @meshRadarSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search by name...'**
+  String get meshRadarSearchHint;
+
+  /// No description provided for @meshRadarSearchEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No results for \"{q}\"'**
+  String meshRadarSearchEmpty(String q);
+
+  /// No description provided for @meshRadarNoDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'No devices nearby.\nMesh scans every 20 s.'**
+  String get meshRadarNoDevices;
+
+  /// No description provided for @meshRadarDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Mesh mode is off.\nEnable it in Settings → Mesh.'**
+  String get meshRadarDisabled;
+
+  /// No description provided for @meshRadarStarting.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting BLE scan…'**
+  String get meshRadarStarting;
+
+  /// No description provided for @meshMenuRadar.
+  ///
+  /// In en, this message translates to:
+  /// **'Radar'**
+  String get meshMenuRadar;
+
+  /// No description provided for @meshMenuDiagnostics.
+  ///
+  /// In en, this message translates to:
+  /// **'Diagnostics'**
+  String get meshMenuDiagnostics;
+
+  /// No description provided for @meshMenuModeAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto'**
+  String get meshMenuModeAuto;
+
+  /// No description provided for @meshBluetoothOffTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Bluetooth is off'**
+  String get meshBluetoothOffTitle;
+
+  /// No description provided for @meshBluetoothOffContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Mesh chat was switched to Bluetooth-only mode, but Bluetooth is turned off. Enable it in system settings to reach nearby devices.'**
+  String get meshBluetoothOffContent;
+
+  /// No description provided for @meshOpenSystemSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Settings'**
+  String get meshOpenSystemSettings;
+
+  /// No description provided for @meshModeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'MODE'**
+  String get meshModeLabel;
+
+  /// No description provided for @meshModeActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Mesh mode active'**
+  String get meshModeActive;
+
+  /// No description provided for @meshChatLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Mesh Chat'**
+  String get meshChatLabel;
+
+  /// No description provided for @meshLocationRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable location services for BLE scanning (Android ≤11)'**
+  String get meshLocationRequired;
+
+  /// No description provided for @meshChatEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No messages yet.\nSend the first mesh message.'**
+  String get meshChatEmpty;
+
+  /// No description provided for @meshChatInputHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Message…'**
+  String get meshChatInputHint;
+
+  /// No description provided for @meshChatSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send'**
+  String get meshChatSend;
+
+  /// No description provided for @meshChatOutOfRange.
+  ///
+  /// In en, this message translates to:
+  /// **'Out of range'**
+  String get meshChatOutOfRange;
+
+  /// No description provided for @meshStatusSending.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending…'**
+  String get meshStatusSending;
+
+  /// No description provided for @meshStatusSendingWifi.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending via Wi-Fi…'**
+  String get meshStatusSendingWifi;
+
+  /// No description provided for @meshStatusSendingBle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending via Bluetooth…'**
+  String get meshStatusSendingBle;
+
+  /// No description provided for @meshStatusRelayed.
+  ///
+  /// In en, this message translates to:
+  /// **'In transit via mesh'**
+  String get meshStatusRelayed;
+
+  /// No description provided for @meshStatusDelivered.
+  ///
+  /// In en, this message translates to:
+  /// **'Delivered'**
+  String get meshStatusDelivered;
+
+  /// No description provided for @meshStatusFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Not delivered'**
+  String get meshStatusFailed;
+
+  /// No description provided for @meshStatusRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get meshStatusRetry;
+
+  /// No description provided for @meshStatusFailedHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Message did not reach the recipient'**
+  String get meshStatusFailedHint;
+
+  /// No description provided for @meshErrorVideoWifiOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Video can only be sent over Wi-Fi. Connect to the same Wi-Fi network as the recipient.'**
+  String get meshErrorVideoWifiOnly;
+
+  /// No description provided for @meshErrorFileTooLargeForBle.
+  ///
+  /// In en, this message translates to:
+  /// **'File is too large for Bluetooth (max 10 MB). Connect to a shared Wi-Fi network.'**
+  String get meshErrorFileTooLargeForBle;
+
+  /// No description provided for @meshErrorFileTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'File is too large (max 200 MB).'**
+  String get meshErrorFileTooLarge;
+
+  /// No description provided for @meshErrorAttachmentsUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Attachments are only supported on mobile/desktop'**
+  String get meshErrorAttachmentsUnsupported;
+
+  /// No description provided for @meshErrorPickFileFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to pick file'**
+  String get meshErrorPickFileFailed;
+
+  /// No description provided for @meshErrorSendFileFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to send file'**
+  String get meshErrorSendFileFailed;
+
+  /// No description provided for @meshErrorSendVoiceFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to send voice message'**
+  String get meshErrorSendVoiceFailed;
+
+  /// No description provided for @meshErrorOutOfRange.
+  ///
+  /// In en, this message translates to:
+  /// **'{username} is out of range'**
+  String meshErrorOutOfRange(String username);
+
+  /// No description provided for @backupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Backup'**
+  String get backupTitle;
+
+  /// No description provided for @backupSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Local backup and restore of your data'**
+  String get backupSubtitle;
+
+  /// No description provided for @backupExport.
+  ///
+  /// In en, this message translates to:
+  /// **'Save all data'**
+  String get backupExport;
+
+  /// No description provided for @backupRestore.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from backup'**
+  String get backupRestore;
+
+  /// No description provided for @backupScope.
+  ///
+  /// In en, this message translates to:
+  /// **'What to back up'**
+  String get backupScope;
+
+  /// No description provided for @backupFavorites.
+  ///
+  /// In en, this message translates to:
+  /// **'Favorite chats'**
+  String get backupFavorites;
+
+  /// No description provided for @backupPersonal.
+  ///
+  /// In en, this message translates to:
+  /// **'Personal chats'**
+  String get backupPersonal;
+
+  /// No description provided for @backupIncludeMedia.
+  ///
+  /// In en, this message translates to:
+  /// **'Include media'**
+  String get backupIncludeMedia;
+
+  /// No description provided for @backupMediaImages.
+  ///
+  /// In en, this message translates to:
+  /// **'Images'**
+  String get backupMediaImages;
+
+  /// No description provided for @backupMediaVideos.
+  ///
+  /// In en, this message translates to:
+  /// **'Videos'**
+  String get backupMediaVideos;
+
+  /// No description provided for @backupMediaVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice & audio'**
+  String get backupMediaVoice;
+
+  /// No description provided for @backupMediaOther.
+  ///
+  /// In en, this message translates to:
+  /// **'Other files'**
+  String get backupMediaOther;
+
+  /// No description provided for @backupSchedule.
+  ///
+  /// In en, this message translates to:
+  /// **'Scheduled backup'**
+  String get backupSchedule;
+
+  /// No description provided for @backupFreqOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get backupFreqOff;
+
+  /// No description provided for @backupFreqDaily.
+  ///
+  /// In en, this message translates to:
+  /// **'Daily'**
+  String get backupFreqDaily;
+
+  /// No description provided for @backupFreqWeekly.
+  ///
+  /// In en, this message translates to:
+  /// **'Weekly'**
+  String get backupFreqWeekly;
+
+  /// No description provided for @backupFreqMonthly.
+  ///
+  /// In en, this message translates to:
+  /// **'Monthly'**
+  String get backupFreqMonthly;
+
+  /// No description provided for @backupFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto-backup folder'**
+  String get backupFolder;
+
+  /// No description provided for @backupChangeFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Change'**
+  String get backupChangeFolder;
+
+  /// No description provided for @backupLastAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Last auto-backup'**
+  String get backupLastAuto;
+
+  /// No description provided for @backupNever.
+  ///
+  /// In en, this message translates to:
+  /// **'never'**
+  String get backupNever;
+
+  /// No description provided for @backupInProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Creating backup…'**
+  String get backupInProgress;
+
+  /// No description provided for @backupRestoring.
+  ///
+  /// In en, this message translates to:
+  /// **'Restoring…'**
+  String get backupRestoring;
+
+  /// No description provided for @backupSelectScope.
+  ///
+  /// In en, this message translates to:
+  /// **'Select at least one category'**
+  String get backupSelectScope;
+
+  /// No description provided for @backupNoAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'No active account'**
+  String get backupNoAccount;
+
+  /// No description provided for @backupNoPermission.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage access denied. Grant \"All files access\" in app settings.'**
+  String get backupNoPermission;
+
+  /// No description provided for @backupOpenFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Open folder'**
+  String get backupOpenFolder;
+
+  /// No description provided for @backupFolderUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'This folder is not accessible. Please pick a folder on internal storage.'**
+  String get backupFolderUnsupported;
+
+  /// No description provided for @backupRestoreConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from backup?'**
+  String get backupRestoreConfirmTitle;
+
+  /// No description provided for @backupRestoreConfirmBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Data from the file will be restored over your current data (chats, favorites, settings).'**
+  String get backupRestoreConfirmBody;
+
+  /// No description provided for @backupRestartHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Restart the app to see the changes'**
+  String get backupRestartHint;
+
+  /// No description provided for @recycleBinTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Trash'**
+  String get recycleBinTitle;
+
+  /// No description provided for @recycleBinSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Deleted chats and protection from accidental sync deletions'**
+  String get recycleBinSubtitle;
+
+  /// No description provided for @recycleBinPendingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Deletion requests'**
+  String get recycleBinPendingTitle;
+
+  /// No description provided for @recycleBinPendingDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Device \"{device}\" wants to delete {count} chat(s). Apply or keep?'**
+  String recycleBinPendingDesc(String device, int count);
+
+  /// No description provided for @recycleBinApply.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply delete'**
+  String get recycleBinApply;
+
+  /// No description provided for @recycleBinKeep.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep my chats'**
+  String get recycleBinKeep;
+
+  /// No description provided for @recycleBinNoPending.
+  ///
+  /// In en, this message translates to:
+  /// **'No pending deletion requests'**
+  String get recycleBinNoPending;
+
+  /// No description provided for @recycleBinResetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset deletion records'**
+  String get recycleBinResetTitle;
+
+  /// No description provided for @recycleBinResetDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Clears the list of deleted chats. Sync will stop re-deleting them on other devices and can bring them back.'**
+  String get recycleBinResetDesc;
+
+  /// No description provided for @recycleBinResetButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear deleted list'**
+  String get recycleBinResetButton;
+
+  /// No description provided for @recycleBinResetDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Deletion records cleared'**
+  String get recycleBinResetDone;
+
+  /// No description provided for @recycleBinResetConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear all deletion records for this account?'**
+  String get recycleBinResetConfirm;
+
+  /// No description provided for @accountGraph.
+  ///
+  /// In en, this message translates to:
+  /// **'Account Graph'**
+  String get accountGraph;
+
+  /// No description provided for @accountGraphSubtitleDesktopOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Shows a graph of your chats, groups and channels when no chat is open'**
+  String get accountGraphSubtitleDesktopOn;
+
+  /// No description provided for @accountGraphSubtitleMobileOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Visualizing your account in planetary view'**
+  String get accountGraphSubtitleMobileOn;
+
+  /// No description provided for @accountGraphSubtitleDesktopOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Shows a hint when no chat is open'**
+  String get accountGraphSubtitleDesktopOff;
+
+  /// No description provided for @accountGraphSubtitleMobileOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Account Graph is disabled'**
+  String get accountGraphSubtitleMobileOff;
+
+  /// No description provided for @orbitSpeed.
+  ///
+  /// In en, this message translates to:
+  /// **'Orbit Speed'**
+  String get orbitSpeed;
+
+  /// No description provided for @secOrbit.
+  ///
+  /// In en, this message translates to:
+  /// **'{s} sec/orbit'**
+  String secOrbit(int s);
+
+  /// No description provided for @minOrbit.
+  ///
+  /// In en, this message translates to:
+  /// **'{m} min/orbit'**
+  String minOrbit(int m);
+
+  /// No description provided for @animateGraph.
+  ///
+  /// In en, this message translates to:
+  /// **'Animate'**
+  String get animateGraph;
+
+  /// No description provided for @animateGraphOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Orbits rotate in real time'**
+  String get animateGraphOn;
+
+  /// No description provided for @animateGraphOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Graph is frozen / static'**
+  String get animateGraphOff;
+
+  /// No description provided for @preserveView.
+  ///
+  /// In en, this message translates to:
+  /// **'Preserve View'**
+  String get preserveView;
+
+  /// No description provided for @preserveViewOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Keeps zoom & position when leaving a chat'**
+  String get preserveViewOn;
+
+  /// No description provided for @preserveViewOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Resets to center when returning'**
+  String get preserveViewOff;
+
+  /// No description provided for @migrationTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage Migration'**
+  String get migrationTitle;
+
+  /// No description provided for @migrationBody.
+  ///
+  /// In en, this message translates to:
+  /// **'ONYX is switching to a new high-speed storage engine. Chats and media will load much faster.'**
+  String get migrationBody;
+
+  /// No description provided for @migrationAccounts.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts'**
+  String get migrationAccounts;
+
+  /// No description provided for @migrationDataSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Data size'**
+  String get migrationDataSize;
+
+  /// No description provided for @migrationBackupNote.
+  ///
+  /// In en, this message translates to:
+  /// **'A backup will be created before migration. The app may be temporarily unresponsive during this process.'**
+  String get migrationBackupNote;
+
+  /// No description provided for @migrationStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Start Migration'**
+  String get migrationStart;
+
+  /// No description provided for @migrationSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get migrationSkip;
+
+  /// No description provided for @migrationPhaseBackup.
+  ///
+  /// In en, this message translates to:
+  /// **'Creating backup'**
+  String get migrationPhaseBackup;
+
+  /// No description provided for @migrationPhaseImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Importing data'**
+  String get migrationPhaseImport;
+
+  /// No description provided for @migrationPhaseVerify.
+  ///
+  /// In en, this message translates to:
+  /// **'Verifying'**
+  String get migrationPhaseVerify;
+
+  /// No description provided for @migrationPhasePreparing.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing'**
+  String get migrationPhasePreparing;
+
+  /// No description provided for @migrationDontClose.
+  ///
+  /// In en, this message translates to:
+  /// **'Do not close the app'**
+  String get migrationDontClose;
+
+  /// No description provided for @migrationDoneTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Done!'**
+  String get migrationDoneTitle;
+
+  /// No description provided for @migrationDoneBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage updated. A backup has been saved to the Backups folder.'**
+  String get migrationDoneBody;
+
+  /// No description provided for @migrationDoneNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Once you confirm everything works — you can delete it manually.'**
+  String get migrationDoneNote;
+
+  /// No description provided for @migrationDoneButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Great!'**
+  String get migrationDoneButton;
+
+  /// No description provided for @migrationErrorTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Migration Error'**
+  String get migrationErrorTitle;
+
+  /// No description provided for @migrationErrorBody.
+  ///
+  /// In en, this message translates to:
+  /// **'The app will continue on the old system. Migration will be retried on next launch.'**
+  String get migrationErrorBody;
+
+  /// No description provided for @migrationErrorButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Got it'**
+  String get migrationErrorButton;
+
+  /// No description provided for @audioTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio'**
+  String get audioTitle;
+
+  /// No description provided for @audioSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone and speaker device selection'**
+  String get audioSubtitle;
+
+  /// No description provided for @audioMicInput.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone (input)'**
+  String get audioMicInput;
+
+  /// No description provided for @audioSpeakerOutput.
+  ///
+  /// In en, this message translates to:
+  /// **'Speaker (output)'**
+  String get audioSpeakerOutput;
+
+  /// No description provided for @audioSystemDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'System default'**
+  String get audioSystemDefault;
+
+  /// No description provided for @audioChangesNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Changes take effect on the next voice channel join.'**
+  String get audioChangesNote;
+
+  /// No description provided for @wardlinkReceive.
+  ///
+  /// In en, this message translates to:
+  /// **'Receive from device'**
+  String get wardlinkReceive;
+
+  /// No description provided for @wardlinkReceiveSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Show a QR code — the sender scans it'**
+  String get wardlinkReceiveSubtitle;
+
+  /// No description provided for @wardlinkSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send to device'**
+  String get wardlinkSend;
+
+  /// No description provided for @wardlinkSendSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan the QR code shown on the receiver'**
+  String get wardlinkSendSubtitle;
+
+  /// No description provided for @react.
+  ///
+  /// In en, this message translates to:
+  /// **'React'**
+  String get react;
+
+  /// No description provided for @pin.
+  ///
+  /// In en, this message translates to:
+  /// **'Pin'**
+  String get pin;
+
+  /// No description provided for @unpin.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpin'**
+  String get unpin;
+
+  /// No description provided for @copyImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy Image'**
+  String get copyImage;
+
+  /// No description provided for @forward.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward'**
+  String get forward;
+
+  /// No description provided for @showInFileSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'Show in file system'**
+  String get showInFileSystem;
+
+  /// No description provided for @saveNotSupportedOnWeb.
+  ///
+  /// In en, this message translates to:
+  /// **'Save not supported on web'**
+  String get saveNotSupportedOnWeb;
+
+  /// No description provided for @imageNotLoadedYet.
+  ///
+  /// In en, this message translates to:
+  /// **'Image not loaded yet'**
+  String get imageNotLoadedYet;
+
+  /// No description provided for @voiceNotLoadedYet.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice not loaded yet'**
+  String get voiceNotLoadedYet;
+
+  /// No description provided for @videoNotLoadedYet.
+  ///
+  /// In en, this message translates to:
+  /// **'Video not loaded yet'**
+  String get videoNotLoadedYet;
+
+  /// No description provided for @fileNotLoadedYet.
+  ///
+  /// In en, this message translates to:
+  /// **'File not loaded yet'**
+  String get fileNotLoadedYet;
+
+  /// No description provided for @fileNotLoadedOpenFirst.
+  ///
+  /// In en, this message translates to:
+  /// **'File isn\'t downloaded to this device — tap it in the chat to download it'**
+  String get fileNotLoadedOpenFirst;
+
+  /// No description provided for @editTimerLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit  ·  {s}s'**
+  String editTimerLabel(int s);
+
+  /// No description provided for @deleteTimerLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete  ·  {s}s'**
+  String deleteTimerLabel(int s);
+
+  /// No description provided for @newChat.
+  ///
+  /// In en, this message translates to:
+  /// **'New chat'**
+  String get newChat;
+
+  /// No description provided for @newChatSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Create a new favorite chat'**
+  String get newChatSubtitle;
+
+  /// No description provided for @newFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'New folder'**
+  String get newFolder;
+
+  /// No description provided for @newFolderSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Group chats into a folder'**
+  String get newFolderSubtitle;
+
+  /// No description provided for @searchEmoji.
+  ///
+  /// In en, this message translates to:
+  /// **'Search emoji…'**
+  String get searchEmoji;
+
+  /// No description provided for @syncCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync completed'**
+  String get syncCompleted;
+
+  /// No description provided for @syncCompletedWithErrors.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync completed with errors'**
+  String get syncCompletedWithErrors;
+
+  /// No description provided for @receivingFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Receiving files...'**
+  String get receivingFiles;
+
+  /// No description provided for @syncFromUser.
+  ///
+  /// In en, this message translates to:
+  /// **'from {sender}'**
+  String syncFromUser(String sender);
+
+  /// No description provided for @aboutServer.
+  ///
+  /// In en, this message translates to:
+  /// **'SERVER'**
+  String get aboutServer;
+
+  /// No description provided for @aboutWhatsNew.
+  ///
+  /// In en, this message translates to:
+  /// **'WHAT\'S NEW'**
+  String get aboutWhatsNew;
+
+  /// No description provided for @aboutConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get aboutConnected;
+
+  /// No description provided for @aboutConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting...'**
+  String get aboutConnecting;
+
+  /// No description provided for @aboutLoadingLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading...'**
+  String get aboutLoadingLocation;
+
+  /// No description provided for @aboutNoReleaseNotes.
+  ///
+  /// In en, this message translates to:
+  /// **'No release notes available.'**
+  String get aboutNoReleaseNotes;
+
+  /// No description provided for @aboutCheckForUpdates.
+  ///
+  /// In en, this message translates to:
+  /// **'Check for updates'**
+  String get aboutCheckForUpdates;
+
+  /// No description provided for @aboutChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking...'**
+  String get aboutChecking;
+
+  /// No description provided for @aboutUpToDate.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'re up to date!'**
+  String get aboutUpToDate;
+
+  /// No description provided for @aboutUpdateAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Update available: {v}'**
+  String aboutUpdateAvailable(String v);
+
+  /// No description provided for @downloadUpdateTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Download Update'**
+  String get downloadUpdateTitle;
+
+  /// No description provided for @downloadUpdateVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version'**
+  String get downloadUpdateVersion;
+
+  /// No description provided for @downloadUpdateWhatsNew.
+  ///
+  /// In en, this message translates to:
+  /// **'WHAT\'S NEW'**
+  String get downloadUpdateWhatsNew;
+
+  /// No description provided for @downloadUpdateReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Ready to download'**
+  String get downloadUpdateReady;
+
+  /// No description provided for @downloadUpdateDownloading.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading...'**
+  String get downloadUpdateDownloading;
+
+  /// No description provided for @downloadUpdateComplete.
+  ///
+  /// In en, this message translates to:
+  /// **'Download complete!'**
+  String get downloadUpdateComplete;
+
+  /// No description provided for @downloadUpdateNoPlatform.
+  ///
+  /// In en, this message translates to:
+  /// **'No download available for this platform'**
+  String get downloadUpdateNoPlatform;
+
+  /// No description provided for @downloadUpdateInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Download & Install'**
+  String get downloadUpdateInstall;
+
+  /// No description provided for @downloadUpdateOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get downloadUpdateOpen;
+
+  /// No description provided for @downloadUpdateRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get downloadUpdateRetry;
+
+  /// No description provided for @downloadUpdateCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel download'**
+  String get downloadUpdateCancel;
+
+  /// No description provided for @editChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit chat'**
+  String get editChat;
+
+  /// No description provided for @chatNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat name'**
+  String get chatNameLabel;
+
+  /// No description provided for @editFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit folder'**
+  String get editFolder;
+
+  /// No description provided for @folderNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Folder name'**
+  String get folderNameLabel;
+
+  /// No description provided for @createChat.
+  ///
+  /// In en, this message translates to:
+  /// **'New chat'**
+  String get createChat;
+
+  /// No description provided for @profileMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Message'**
+  String get profileMessage;
+
+  /// No description provided for @tapAvatarHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap avatar to change • Long-press to remove'**
+  String get tapAvatarHint;
+
+  /// No description provided for @tapAvatarLongRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to change • Long-press to remove'**
+  String get tapAvatarLongRemove;
+
+  /// No description provided for @e2eeWarnTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Not end-to-end encrypted'**
+  String get e2eeWarnTitle;
+
+  /// No description provided for @e2eeWarnUnderstand.
+  ///
+  /// In en, this message translates to:
+  /// **'I understand'**
+  String get e2eeWarnUnderstand;
+
+  /// No description provided for @e2eeWarnDoNotShare.
+  ///
+  /// In en, this message translates to:
+  /// **'Do not share passwords, private files or sensitive information here.'**
+  String get e2eeWarnDoNotShare;
+
+  /// No description provided for @e2eeWarnGroupBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages in this group are not protected by end-to-end encryption — the server can read them.'**
+  String get e2eeWarnGroupBody;
+
+  /// No description provided for @e2eeWarnGroupMedia.
+  ///
+  /// In en, this message translates to:
+  /// **'Attached media is uploaded to a public host (catbox.moe) and is reachable by anyone who has the link.'**
+  String get e2eeWarnGroupMedia;
+
+  /// No description provided for @e2eeWarnExtBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages in this group are not protected by end-to-end encryption — the group owner\'s server can read them.'**
+  String get e2eeWarnExtBody;
+
+  /// No description provided for @e2eeWarnExtMedia.
+  ///
+  /// In en, this message translates to:
+  /// **'Attached media is uploaded to and stored on the owner\'s own server, not on ONYX.'**
+  String get e2eeWarnExtMedia;
+
+  /// No description provided for @e2eeWarnExtOnyxUnrelated.
+  ///
+  /// In en, this message translates to:
+  /// **'ONYX has nothing to do with this group and cannot moderate or protect its content.'**
+  String get e2eeWarnExtOnyxUnrelated;
+
+  /// No description provided for @securityLevelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Device trust level'**
+  String get securityLevelTitle;
+
+  /// No description provided for @securityLevelEasy.
+  ///
+  /// In en, this message translates to:
+  /// **'Easy'**
+  String get securityLevelEasy;
+
+  /// No description provided for @securityLevelEasyDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'A new device is trusted immediately after login. Least friction, but the password is your only line of defense.'**
+  String get securityLevelEasyDesc;
+
+  /// No description provided for @securityLevelBalanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Balanced'**
+  String get securityLevelBalanced;
+
+  /// No description provided for @securityLevelBalancedDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Any already-trusted device can approve a new one. Recommended for most people.'**
+  String get securityLevelBalancedDesc;
+
+  /// No description provided for @securityLevelStrict.
+  ///
+  /// In en, this message translates to:
+  /// **'Strict'**
+  String get securityLevelStrict;
+
+  /// No description provided for @securityLevelStrictDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'A new device needs approval from two separate trusted devices.'**
+  String get securityLevelStrictDesc;
+
+  /// No description provided for @securityLevelLowerRequiresTrusted.
+  ///
+  /// In en, this message translates to:
+  /// **'Lowering the security level requires a trusted device.'**
+  String get securityLevelLowerRequiresTrusted;
+
+  /// No description provided for @securityLevelUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Security level updated'**
+  String get securityLevelUpdated;
+
+  /// No description provided for @sessionTtlTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Session lifetime'**
+  String get sessionTtlTitle;
+
+  /// No description provided for @sessionTtlSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'How long before this device asks for your password again'**
+  String get sessionTtlSubtitle;
+
+  /// No description provided for @sessionTtlRecommended.
+  ///
+  /// In en, this message translates to:
+  /// **'recommended'**
+  String get sessionTtlRecommended;
+
+  /// No description provided for @sessionTtlDays.
+  ///
+  /// In en, this message translates to:
+  /// **'{days} days'**
+  String sessionTtlDays(int days);
+
+  /// No description provided for @sessionTtlNever.
+  ///
+  /// In en, this message translates to:
+  /// **'Never'**
+  String get sessionTtlNever;
+
+  /// No description provided for @sessionTtlUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Session lifetime updated'**
+  String get sessionTtlUpdated;
+
+  /// No description provided for @approvalsProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Approved'**
+  String get approvalsProgress;
+
+  /// No description provided for @pendingDeviceTitleSingle.
+  ///
+  /// In en, this message translates to:
+  /// **'New device'**
+  String get pendingDeviceTitleSingle;
+
+  /// No description provided for @pendingDeviceTitleMulti.
+  ///
+  /// In en, this message translates to:
+  /// **'New devices ({count})'**
+  String pendingDeviceTitleMulti(int count);
+
+  /// No description provided for @pendingDeviceApprove.
+  ///
+  /// In en, this message translates to:
+  /// **'Approve'**
+  String get pendingDeviceApprove;
+
+  /// No description provided for @pendingDeviceDeny.
+  ///
+  /// In en, this message translates to:
+  /// **'Deny'**
+  String get pendingDeviceDeny;
+
+  /// No description provided for @recoveryTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Account recovery'**
+  String get recoveryTitle;
+
+  /// No description provided for @recoveryBannerText.
+  ///
+  /// In en, this message translates to:
+  /// **'This device isn\'t approved yet. If no trusted device is reachable, you can recover access with your password and recovery phrase.'**
+  String get recoveryBannerText;
+
+  /// No description provided for @recoveryBannerButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Recover access'**
+  String get recoveryBannerButton;
+
+  /// No description provided for @recoveryIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter your password and the 12-word recovery phrase shown to you at registration. The request won\'t take effect immediately — your trusted devices get a window to cancel it if this isn\'t you.'**
+  String get recoveryIntro;
+
+  /// No description provided for @recoveryPasswordLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Password'**
+  String get recoveryPasswordLabel;
+
+  /// No description provided for @recoveryPassphraseLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery phrase (12 words)'**
+  String get recoveryPassphraseLabel;
+
+  /// No description provided for @recoverySubmit.
+  ///
+  /// In en, this message translates to:
+  /// **'Submit request'**
+  String get recoverySubmit;
+
+  /// No description provided for @recoveryInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid password or recovery phrase'**
+  String get recoveryInvalid;
+
+  /// No description provided for @recoveryAlreadyPending.
+  ///
+  /// In en, this message translates to:
+  /// **'A request is already pending'**
+  String get recoveryAlreadyPending;
+
+  /// No description provided for @recoveryPendingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Request submitted'**
+  String get recoveryPendingTitle;
+
+  /// No description provided for @recoveryPendingBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Access will be restored {when} unless a trusted device cancels the request.'**
+  String recoveryPendingBody(String when);
+
+  /// No description provided for @recoveryCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery request cancelled'**
+  String get recoveryCancelled;
+
+  /// No description provided for @recoveryExecuted.
+  ///
+  /// In en, this message translates to:
+  /// **'Access restored. Please re-login to apply the change.'**
+  String get recoveryExecuted;
+
+  /// No description provided for @recoveryCancelRequiresTrusted.
+  ///
+  /// In en, this message translates to:
+  /// **'Only a trusted device can cancel this. Approve this device in Active Devices first.'**
+  String get recoveryCancelRequiresTrusted;
+
+  /// No description provided for @recoveryAlertRequestedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone requested account recovery'**
+  String get recoveryAlertRequestedTitle;
+
+  /// No description provided for @recoveryAlertRequestedBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Device \"{deviceName}\" requested account recovery. If this wasn\'t you, cancel it now. Otherwise it takes effect {when}.'**
+  String recoveryAlertRequestedBody(String deviceName, String when);
+
+  /// No description provided for @recoveryAlertCancelButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get recoveryAlertCancelButton;
+
+  /// No description provided for @recoveryAlertIgnoreButton.
+  ///
+  /// In en, this message translates to:
+  /// **'It\'s me, ignore'**
+  String get recoveryAlertIgnoreButton;
+
+  /// No description provided for @recoveryAlertFailedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed recovery attempt'**
+  String get recoveryAlertFailedTitle;
+
+  /// No description provided for @recoveryAlertFailedBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone tried to recover access to your account but entered the wrong password or recovery phrase.'**
+  String get recoveryAlertFailedBody;
+
+  /// No description provided for @recoveryAlertExecutedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery completed'**
+  String get recoveryAlertExecutedTitle;
+
+  /// No description provided for @recoveryAlertExecutedBody.
+  ///
+  /// In en, this message translates to:
+  /// **'The recovery request has taken effect — the account has a new primary device. If this wasn\'t you, revoke the unfamiliar session in Active Devices immediately.'**
+  String get recoveryAlertExecutedBody;
+
+  /// No description provided for @wardLinkSyncSettingsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync Settings'**
+  String get wardLinkSyncSettingsTitle;
+
+  /// No description provided for @wardLinkSyncSettingsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'File size limit and bubble notifications'**
+  String get wardLinkSyncSettingsSubtitle;
+
+  /// No description provided for @wardLinkPairedDevicesSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Add and manage paired devices'**
+  String get wardLinkPairedDevicesSubtitle;
+
+  /// No description provided for @notifGeneralTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'General'**
+  String get notifGeneralTitle;
+
+  /// No description provided for @notifGeneralSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable notifications and content visibility'**
+  String get notifGeneralSubtitle;
+
+  /// No description provided for @notifSoundSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Notification sound and audio file'**
+  String get notifSoundSubtitle;
+
+  /// No description provided for @notifAdvancedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced'**
+  String get notifAdvancedTitle;
+
+  /// No description provided for @notifAdvancedSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Startup behavior and popup position'**
+  String get notifAdvancedSubtitle;
+
+  /// No description provided for @securityPrivacyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy'**
+  String get securityPrivacyTitle;
+
+  /// No description provided for @securityPrivacySubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Visibility and search settings'**
+  String get securityPrivacySubtitle;
+
+  /// No description provided for @cacheStorageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage'**
+  String get cacheStorageTitle;
+
+  /// No description provided for @cacheStorageSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Media cache and unused file cleanup'**
+  String get cacheStorageSubtitle;
+
+  /// No description provided for @connectionServerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Server Connection'**
+  String get connectionServerTitle;
+
+  /// No description provided for @connectionServerSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect or disconnect from the WebSocket server'**
+  String get connectionServerSubtitle;
+
+  /// No description provided for @interactPerformanceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Performance'**
+  String get interactPerformanceTitle;
+
+  /// No description provided for @interactPerformanceSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Scroll buffer and image preload window'**
+  String get interactPerformanceSubtitle;
+
+  /// No description provided for @interactFilesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Files & Storage'**
+  String get interactFilesTitle;
+
+  /// No description provided for @interactFilesSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Download folder and app data management'**
+  String get interactFilesSubtitle;
+
+  /// No description provided for @appearanceChatDisplayTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat Display'**
+  String get appearanceChatDisplayTitle;
+
+  /// No description provided for @appearanceChatDisplaySubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Alignment, avatars and animations'**
+  String get appearanceChatDisplaySubtitle;
+
+  /// No description provided for @appearanceLayoutTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Layout'**
+  String get appearanceLayoutTitle;
+
+  /// No description provided for @appearanceLayoutSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Navigation, graph and tab swiping'**
+  String get appearanceLayoutSubtitle;
+
+  /// No description provided for @appearanceLiquidGlassTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Liquid Glass Effects'**
+  String get appearanceLiquidGlassTitle;
+
+  /// No description provided for @trashChatsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Deleted Chats'**
+  String get trashChatsTitle;
+
+  /// No description provided for @trashChatsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore or permanently delete chats'**
+  String get trashChatsSubtitle;
+
+  /// No description provided for @trashMessagesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Deleted Messages'**
+  String get trashMessagesTitle;
+
+  /// No description provided for @trashMessagesSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore or permanently delete messages'**
+  String get trashMessagesSubtitle;
+
+  /// No description provided for @download.
+  ///
+  /// In en, this message translates to:
+  /// **'Download'**
+  String get download;
+
+  /// No description provided for @retry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get retry;
+
+  /// No description provided for @refresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get refresh;
+
+  /// No description provided for @revoke.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke'**
+  String get revoke;
+
+  /// No description provided for @setup.
+  ///
+  /// In en, this message translates to:
+  /// **'Setup'**
+  String get setup;
+
+  /// No description provided for @current.
+  ///
+  /// In en, this message translates to:
+  /// **'Current'**
+  String get current;
+
+  /// No description provided for @select.
+  ///
+  /// In en, this message translates to:
+  /// **'Select'**
+  String get select;
+
+  /// No description provided for @token.
+  ///
+  /// In en, this message translates to:
+  /// **'Token'**
+  String get token;
+
+  /// No description provided for @always.
+  ///
+  /// In en, this message translates to:
+  /// **'Always'**
+  String get always;
+
+  /// No description provided for @favRemoveFromFolderNamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove from \"{folderName}\"'**
+  String favRemoveFromFolderNamed(String folderName);
+
+  /// No description provided for @favMoveToFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Move to folder'**
+  String get favMoveToFolder;
+
+  /// No description provided for @favRemoveFromFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove from folder'**
+  String get favRemoveFromFolder;
+
+  /// No description provided for @favUnlock.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock'**
+  String get favUnlock;
+
+  /// No description provided for @favLock.
+  ///
+  /// In en, this message translates to:
+  /// **'Lock'**
+  String get favLock;
+
+  /// No description provided for @favUnlockFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock folder'**
+  String get favUnlockFolder;
+
+  /// No description provided for @favLockFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Lock folder'**
+  String get favLockFolder;
+
+  /// No description provided for @favChatsCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{n} chats'**
+  String favChatsCount(int n);
+
+  /// No description provided for @favNewFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'New folder'**
+  String get favNewFolder;
+
+  /// No description provided for @favChatsMovedToTopLevel.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats will be moved to top level'**
+  String get favChatsMovedToTopLevel;
+
+  /// No description provided for @favDeleteChatQuestion.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete chat?'**
+  String get favDeleteChatQuestion;
+
+  /// No description provided for @favRemoveAvatarQuestion.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove avatar?'**
+  String get favRemoveAvatarQuestion;
+
+  /// No description provided for @favSelectedRemovedFromFavorites.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected messages will be removed from favorites.'**
+  String get favSelectedRemovedFromFavorites;
+
+  /// No description provided for @favDeleteMessageQuestion.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete message?'**
+  String get favDeleteMessageQuestion;
+
+  /// No description provided for @favMessageRemovedFromFavorites.
+  ///
+  /// In en, this message translates to:
+  /// **'This message will be removed from favorites.'**
+  String get favMessageRemovedFromFavorites;
+
+  /// No description provided for @favDeleteAvatarQuestion.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete avatar?'**
+  String get favDeleteAvatarQuestion;
+
+  /// No description provided for @favRemoveAvatarConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'This will remove this favorite avatar.'**
+  String get favRemoveAvatarConfirm;
+
+  /// No description provided for @sendAlbum.
+  ///
+  /// In en, this message translates to:
+  /// **'Send Album'**
+  String get sendAlbum;
+
+  /// No description provided for @sendAlbums.
+  ///
+  /// In en, this message translates to:
+  /// **'Send Albums'**
+  String get sendAlbums;
+
+  /// No description provided for @sendAllMedia.
+  ///
+  /// In en, this message translates to:
+  /// **'Send All'**
+  String get sendAllMedia;
+
+  /// No description provided for @setAsWallpaper.
+  ///
+  /// In en, this message translates to:
+  /// **'Set as wallpaper'**
+  String get setAsWallpaper;
+
+  /// No description provided for @sendVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Send Voice'**
+  String get sendVoice;
+
+  /// No description provided for @cropAndUpload.
+  ///
+  /// In en, this message translates to:
+  /// **'Crop & Upload'**
+  String get cropAndUpload;
+
+  /// No description provided for @deleteMessagesQuestion.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete messages?'**
+  String get deleteMessagesQuestion;
+
+  /// No description provided for @connectionDiagnostics.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection Diagnostics'**
+  String get connectionDiagnostics;
+
+  /// No description provided for @voiceChannels.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice channels'**
+  String get voiceChannels;
+
+  /// No description provided for @forwardMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward message'**
+  String get forwardMessage;
+
+  /// No description provided for @noChats.
+  ///
+  /// In en, this message translates to:
+  /// **'No chats'**
+  String get noChats;
+
+  /// No description provided for @noGroups.
+  ///
+  /// In en, this message translates to:
+  /// **'No groups'**
+  String get noGroups;
+
+  /// No description provided for @noFavorites.
+  ///
+  /// In en, this message translates to:
+  /// **'No favorites'**
+  String get noFavorites;
+
+  /// No description provided for @wifiOnlyOption.
+  ///
+  /// In en, this message translates to:
+  /// **'Wi-Fi only'**
+  String get wifiOnlyOption;
+
+  /// No description provided for @emptyTrash.
+  ///
+  /// In en, this message translates to:
+  /// **'Empty Trash'**
+  String get emptyTrash;
+
+  /// No description provided for @performanceReport.
+  ///
+  /// In en, this message translates to:
+  /// **'Performance Report'**
+  String get performanceReport;
+
+  /// No description provided for @revokeSessionQuestion.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke session?'**
+  String get revokeSessionQuestion;
+
+  /// No description provided for @revokeSessionConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'This device will be immediately logged out.'**
+  String get revokeSessionConfirm;
+
+  /// No description provided for @failedToRevokeSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to revoke session'**
+  String get failedToRevokeSession;
+
+  /// No description provided for @failedToApproveDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to approve device'**
+  String get failedToApproveDevice;
+
+  /// No description provided for @noActiveSessionsFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No active sessions found'**
+  String get noActiveSessionsFound;
+
+  /// No description provided for @quotaExceeded.
+  ///
+  /// In en, this message translates to:
+  /// **'Quota exceeded'**
+  String get quotaExceeded;
+
+  /// No description provided for @openSettingsAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Settings'**
+  String get openSettingsAction;
+
+  /// No description provided for @trashIsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Trash is empty'**
+  String get trashIsEmpty;
+
+  /// No description provided for @languageEnglish.
+  ///
+  /// In en, this message translates to:
+  /// **'English'**
+  String get languageEnglish;
+
+  /// No description provided for @languageRussian.
+  ///
+  /// In en, this message translates to:
+  /// **'Русский'**
+  String get languageRussian;
+
+  /// No description provided for @deviceAuthTabQr.
+  ///
+  /// In en, this message translates to:
+  /// **'QR'**
+  String get deviceAuthTabQr;
+
+  /// No description provided for @meshTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Mesh'**
+  String get meshTitle;
+
+  /// No description provided for @meshMenuModeWifi.
+  ///
+  /// In en, this message translates to:
+  /// **'Wi-Fi'**
+  String get meshMenuModeWifi;
+
+  /// No description provided for @meshMenuModeBluetooth.
+  ///
+  /// In en, this message translates to:
+  /// **'Bluetooth'**
+  String get meshMenuModeBluetooth;
+
+  /// No description provided for @mediaCachesCleared.
+  ///
+  /// In en, this message translates to:
+  /// **'{n, plural, one{ Cleared {n} media cache} other{ Cleared {n} media caches}}'**
+  String mediaCachesCleared(int n);
+
+  /// No description provided for @leaveGroupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave {isChannel, select, true{channel} other{group}}?'**
+  String leaveGroupTitle(String isChannel);
+
+  /// No description provided for @cacheFilesDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'{n, plural, one{Deleted {n} file} other{Deleted {n} files}}'**
+  String cacheFilesDeleted(int n);
+
+  /// No description provided for @orphanedCleanupDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'{files, plural, one{Deleted {files} unused file} other{Deleted {files} unused files}} ({freedMb} MB freed)'**
+  String orphanedCleanupDeleted(int files, String freedMb);
+
+  /// No description provided for @deletedLogsCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{n, plural, one{Deleted {n} log file.} other{Deleted {n} log files.}}'**
+  String deletedLogsCount(int n);
+
+  /// No description provided for @notifEnabledSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{enabled, select, true{You will be alerted for new messages} other{All notifications are silenced}}'**
+  String notifEnabledSubtitle(String enabled);
+
+  /// No description provided for @notifHideContentSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{hidden, select, true{Notifications without message text} other{Show message text in notifications}}'**
+  String notifHideContentSubtitle(String hidden);
+
+  /// No description provided for @notifSoundEnabledSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{enabled, select, true{Sound enabled} other{Sound disabled}}'**
+  String notifSoundEnabledSubtitle(String enabled);
+
+  /// No description provided for @sessionExpiresInDays.
+  ///
+  /// In en, this message translates to:
+  /// **'{n, plural, one{Session expires in {n} day} other{Session expires in {n} days}}'**
+  String sessionExpiresInDays(int n);
+
+  /// No description provided for @sessionExpiresInHours.
+  ///
+  /// In en, this message translates to:
+  /// **'{n, plural, one{Session expires in {n} hour} other{Session expires in {n} hours}}'**
+  String sessionExpiresInHours(int n);
+
+  /// No description provided for @sessionActiveForDays.
+  ///
+  /// In en, this message translates to:
+  /// **'{n, plural, one{Session valid for {n} more day} other{Session valid for {n} more days}}'**
+  String sessionActiveForDays(int n);
+
+  /// No description provided for @meshRadarFound.
+  ///
+  /// In en, this message translates to:
+  /// **'{n, plural, one{{n} device in range} other{{n} devices in range}}'**
+  String meshRadarFound(int n);
+
+  /// No description provided for @trashSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'{chats, plural, one{{chats} chat} other{{chats} chats}}, {messages, plural, one{{messages} message} other{{messages} messages}}'**
+  String trashSummary(int chats, int messages);
 }
 
 class _AppLocalizationsDelegate
@@ -1611,15 +6766,44 @@ class _AppLocalizationsDelegate
   const _AppLocalizationsDelegate();
 
   @override
-  bool isSupported(Locale locale) =>
-      ['en', 'ru'].contains(locale.languageCode);
+  Future<AppLocalizations> load(Locale locale) {
+    return SynchronousFuture<AppLocalizations>(lookupAppLocalizations(locale));
+  }
 
   @override
-  Future<AppLocalizations> load(Locale locale) async =>
-      AppLocalizations(locale);
+  bool isSupported(Locale locale) => <String>[
+        'de',
+        'en',
+        'es',
+        'fr',
+        'pt',
+        'ru'
+      ].contains(locale.languageCode);
 
   @override
   bool shouldReload(_AppLocalizationsDelegate old) => false;
 }
 
-typedef AppL10n = AppLocalizations;
+AppLocalizations lookupAppLocalizations(Locale locale) {
+  // Lookup logic when only language code is specified.
+  switch (locale.languageCode) {
+    case 'de':
+      return AppLocalizationsDe();
+    case 'en':
+      return AppLocalizationsEn();
+    case 'es':
+      return AppLocalizationsEs();
+    case 'fr':
+      return AppLocalizationsFr();
+    case 'pt':
+      return AppLocalizationsPt();
+    case 'ru':
+      return AppLocalizationsRu();
+  }
+
+  throw FlutterError(
+      'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
+      'an issue with the localizations generation tool. Please file an issue '
+      'on GitHub with a reproducible sample app and the gen-l10n configuration '
+      'that was used.');
+}

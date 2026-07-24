@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 
 import '../managers/settings_manager.dart';
+import '../l10n/app_localizations.dart';
 
 Future<Uint8List?> showAvatarCropScreen(
     BuildContext context, Uint8List bytes) async {
@@ -238,6 +239,7 @@ class _AvatarCropScreenState extends State<_AvatarCropScreen> {
   }
 
   Widget _buildToolbar(Color surfaceColor, ColorScheme colorScheme) {
+    final l = AppLocalizations.of(context);
     return Container(
       decoration: BoxDecoration(
         color: surfaceColor,
@@ -253,7 +255,7 @@ class _AvatarCropScreenState extends State<_AvatarCropScreen> {
         children: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(null),
-            child: const Text('Cancel'),
+            child: Text(l.cancel),
           ),
           const Spacer(),
           IconButton(
@@ -264,7 +266,7 @@ class _AvatarCropScreenState extends State<_AvatarCropScreen> {
           const Spacer(),
           FilledButton(
             onPressed: _confirm,
-            child: const Text('Setup'),
+            child: Text(l.setup),
           ),
         ],
       ),

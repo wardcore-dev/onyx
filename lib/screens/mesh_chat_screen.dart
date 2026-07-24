@@ -10,6 +10,7 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
+import '../widgets/onyx_dialog.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -44,6 +45,8 @@ import '../widgets/media_picker_sheet.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/swipeable_message_wrapper.dart';
 import '../widgets/voice_confirm_dialog.dart';
+import '../widgets/onyx_reminder_picker.dart';
+import '../services/reminder_service.dart';
 
 class MeshChatScreen extends StatefulWidget {
   const MeshChatScreen({
@@ -132,6 +135,45 @@ class _MeshChatScreenState extends State<MeshChatScreen>
 
   String get _pinPrefsKey => 'pinned_mesh_$_chatId';
 
+  // Live cache of "chatId|messageId" keys with an active reminder.
+  Set<String> _reminderKeys = {};
+  StreamSubscription? _reminderKeysSub;
+
+  void _subscribeReminders() {
+    if (widget.myUsername.isEmpty) return;
+    _reminderKeysSub =
+        ReminderService.watchActiveReminders(widget.myUsername).listen((rows) {
+      if (!mounted) return;
+      setState(() {
+        _reminderKeys = rows.map((r) => '${r.chatId}|${r.messageId}').toSet();
+      });
+    });
+  }
+
+  bool _hasReminderSync(ChatMessage msg) {
+    final messageId = msg.serverMessageId?.toString() ?? msg.id;
+    return _reminderKeys.contains('$_chatId|$messageId');
+  }
+
+  /// If a reminder/search tap asked to land on a specific message in this
+  /// mesh chat (see [setPendingMessageScrollTarget]), scroll to and
+  /// highlight it once the message list is laid out.
+  void _consumePendingMeshScrollTarget() {
+    final pendingId = consumePendingMessageScrollTarget(_chatId);
+    if (pendingId == null) return;
+    void attempt([int retries = 6]) {
+      if (!mounted) return;
+      if (_scrollCtrl.hasClients) {
+        _scrollToMessageById(int.tryParse(pendingId), localId: pendingId);
+      } else if (retries > 0) {
+        WidgetsBinding.instance
+            .addPostFrameCallback((_) => attempt(retries - 1));
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => attempt());
+  }
+
   Future<void> _loadPinnedMessage() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_pinPrefsKey);
@@ -202,6 +244,8 @@ class _MeshChatScreenState extends State<MeshChatScreen>
     );
     _checkInputAnimationState();
     _loadPinnedMessage();
+    _consumePendingMeshScrollTarget();
+    _subscribeReminders();
 
     // Pre-seed seen IDs so existing messages don't animate in on open
     for (final m in _meshMessages) {
@@ -469,7 +513,13 @@ class _MeshChatScreenState extends State<MeshChatScreen>
     ];
   }
 
-  void _showMeshMessageMenu(ChatMessage msg) {
+  void _showMeshMessageMenu(ChatMessage msg) async {
+    final reminderChatId = _chatId;
+    final reminderMsgId = msg.serverMessageId?.toString() ?? msg.id;
+    final hasReminder = await ReminderService.hasActiveReminder(
+        widget.myUsername, reminderChatId, reminderMsgId);
+    if (!mounted) return;
+
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -477,6 +527,16 @@ class _MeshChatScreenState extends State<MeshChatScreen>
       builder: (ctx) => _MeshMessageActionsSheet(
         msg: msg,
         isPinned: _isMsgPinned(msg),
+        hasReminder: hasReminder,
+        onReminderToggle: () {
+          Navigator.of(ctx).pop();
+          _handleMeshReminderToggle(
+            msg: msg,
+            hasReminder: hasReminder,
+            chatId: reminderChatId,
+            messageId: reminderMsgId,
+          );
+        },
         onReply: () {
           Navigator.of(ctx).pop();
           _startReplyingToMeshMessage(msg);
@@ -491,6 +551,36 @@ class _MeshChatScreenState extends State<MeshChatScreen>
         },
       ),
     );
+  }
+
+  Future<void> _handleMeshReminderToggle({
+    required ChatMessage msg,
+    required bool hasReminder,
+    required String chatId,
+    required String messageId,
+  }) async {
+    final l = AppLocalizations.of(context);
+    if (hasReminder) {
+      await ReminderService.cancelReminder(
+          widget.myUsername, chatId, messageId);
+      rootScreenKey.currentState?.showSnack(l.reminderCancelled);
+      return;
+    }
+    final accentColorArgb = Theme.of(context).colorScheme.primary.toARGB32();
+    final picked = await showOnyxReminderPicker(context);
+    if (picked == null) return;
+    await ReminderService.scheduleReminder(
+      accountId: widget.myUsername,
+      messageId: messageId,
+      accentColorArgb: accentColorArgb,
+      chatType: 'mesh',
+      chatId: chatId,
+      chatTitle: widget.otherUsername,
+      messagePreview: getPreviewText(msg.content),
+      otherUsername: widget.otherUsername,
+      scheduledAt: picked,
+    );
+    rootScreenKey.currentState?.showSnack(l.reminderSet);
   }
 
   void _toggleMessageSelection(ChatMessage msg) {
@@ -630,21 +720,26 @@ class _MeshChatScreenState extends State<MeshChatScreen>
     return bestId;
   }
 
+  // Map insertion order (`.values`) reflects selection/drag-recompute order,
+  // not chronological order — always re-sort by `time` first.
+  List<ChatMessage> get _selectedMessagesChronological =>
+      _selectionNotifier.value.selected.values.toList()
+        ..sort((a, b) => a.time.compareTo(b.time));
+
   void _copySelected() {
-    final texts = _selectionNotifier.value.selected.values
-        .map((m) => m.content)
-        .join('\n\n');
+    final texts =
+        _selectedMessagesChronological.map((m) => m.content).join('\n\n');
     if (texts.isNotEmpty) {
       Clipboard.setData(ClipboardData(text: texts));
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).msgCopied);
+          lookupAppLocalizations(SettingsManager.appLocale.value).msgCopied);
     }
     _exitSelectionMode();
   }
 
   void _forwardSelected() {
     final contents =
-        _selectionNotifier.value.selected.values.map((m) => m.content).toList();
+        _selectedMessagesChronological.map((m) => m.content).toList();
     if (contents.isEmpty) return;
     _exitSelectionMode();
     ForwardScreen.show(context, contents);
@@ -653,22 +748,14 @@ class _MeshChatScreenState extends State<MeshChatScreen>
   Future<void> _confirmDeleteSelected() async {
     final toDelete = _selectionNotifier.value.selected.values.toList();
     if (toDelete.isEmpty) return;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete messages?'),
-        content: Text(
-            'Delete ${toDelete.length} message${toDelete.length > 1 ? 's' : ''}?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text('Delete',
-                  style: TextStyle(color: Theme.of(ctx).colorScheme.error))),
-        ],
-      ),
+      title: AppLocalizations.of(context).deleteMessagesQuestion,
+      message:
+          'Delete ${toDelete.length} message${toDelete.length > 1 ? 's' : ''}?',
+      confirmLabel: 'Delete',
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
     if (confirmed != true) return;
     rootScreenKey.currentState
@@ -864,7 +951,7 @@ class _MeshChatScreenState extends State<MeshChatScreen>
         MeshManager.instance.neighbors.neighborByUsername(widget.otherUsername);
     if (neighbor == null) {
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value)
+          lookupAppLocalizations(SettingsManager.appLocale.value)
               .meshErrorOutOfRange(widget.otherUsername));
       return;
     }
@@ -1044,6 +1131,7 @@ class _MeshChatScreenState extends State<MeshChatScreen>
   @override
   void dispose() {
     rootScreenKey.currentState?.setActiveMeshChat(null);
+    _reminderKeysSub?.cancel();
     _chatVersionNotifier.removeListener(_onChatVersionChanged);
     _incomingSub?.cancel();
     _deliverySub?.cancel();
@@ -1174,8 +1262,8 @@ class _MeshChatScreenState extends State<MeshChatScreen>
                                   height: btnSize,
                                   decoration: BoxDecoration(
                                     color: baseColor.withValues(
-                                        alpha:
-                                            SettingsManager.elementOpacity.value),
+                                        alpha: SettingsManager
+                                            .elementOpacity.value),
                                     shape: BoxShape.circle,
                                     border: Border.all(
                                       color: cs.outlineVariant
@@ -2006,6 +2094,7 @@ class _MeshChatScreenState extends State<MeshChatScreen>
                     replyToId: msg.replyToId,
                     replyToUsername: msg.replyToSender,
                     replyToContent: msg.replyToContent,
+                    hasReminder: _hasReminderSync(msg),
                     onReplyTap: msg.replyToId != null
                         ? () => _scrollToMessageById(msg.replyToId)
                         : null,
@@ -2472,26 +2561,14 @@ class _MeshChatScreenState extends State<MeshChatScreen>
     // Couldn't prompt the OS directly (iOS/macOS/desktop, or the Android
     // prompt failed) — send the user to system settings instead.
     final l = AppLocalizations.of(context);
-    showDialog(
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.meshBluetoothOffTitle),
-        content: Text(l.meshBluetoothOffContent),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(l.cancel),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              openAppSettings();
-            },
-            child: Text(l.meshOpenSystemSettings),
-          ),
-        ],
-      ),
+      title: l.meshBluetoothOffTitle,
+      message: l.meshBluetoothOffContent,
+      confirmLabel: l.meshOpenSystemSettings,
+      icon: Icons.bluetooth_disabled_rounded,
     );
+    if (confirmed == true) openAppSettings();
   }
 
   // ── Diagnostics ────────────────────────────────────────────────────────────
@@ -2510,7 +2587,7 @@ class _MeshChatScreenState extends State<MeshChatScreen>
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Connection Diagnostics'),
+        title: Text(AppLocalizations.of(ctx).connectionDiagnostics),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2737,6 +2814,8 @@ class _MeshMessageActionsSheet extends StatelessWidget {
     this.onPin,
     this.isPinned = false,
     this.onDelete,
+    this.onReminderToggle,
+    this.hasReminder = false,
   });
 
   final ChatMessage msg;
@@ -2744,6 +2823,8 @@ class _MeshMessageActionsSheet extends StatelessWidget {
   final VoidCallback? onPin;
   final bool isPinned;
   final VoidCallback? onDelete;
+  final VoidCallback? onReminderToggle;
+  final bool hasReminder;
 
   @override
   Widget build(BuildContext context) {
@@ -2802,6 +2883,13 @@ class _MeshMessageActionsSheet extends StatelessWidget {
                   isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
                   isPinned ? l.unpin : l.pin,
                   onPin,
+                ),
+                tile(
+                  hasReminder
+                      ? Icons.alarm_off_rounded
+                      : Icons.alarm_add_rounded,
+                  hasReminder ? l.cancelReminder : l.setReminder,
+                  onReminderToggle,
                 ),
                 if (onDelete != null)
                   tile(Icons.delete_outline_rounded, l.delete, onDelete,

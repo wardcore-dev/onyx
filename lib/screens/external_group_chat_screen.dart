@@ -1,6 +1,7 @@
 // lib/screens/external_group_chat_screen.dart
 import '../widgets/marquee_text.dart';
 import '../widgets/empty_chat_placeholder.dart';
+import '../widgets/onyx_dialog.dart';
 import '../utils/chat_image_preloader.dart';
 import '../utils/gallery_extractor.dart';
 import 'media_gallery_screen.dart';
@@ -9,6 +10,7 @@ import '../enums/liquid_glass_quality.dart';
 import 'package:ONYX/screens/forward_screen.dart';
 import 'package:ONYX/managers/settings_manager.dart';
 import '../l10n/app_localizations.dart';
+import '../l10n/app_localizations_extra.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, compute;
@@ -50,6 +52,8 @@ import '../widgets/voice_channel_popup.dart';
 import '../voice/voice_channel_manager.dart';
 import '../widgets/message_reaction_bar.dart';
 import '../widgets/swipeable_message_wrapper.dart';
+import '../widgets/onyx_reminder_picker.dart';
+import '../services/reminder_service.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/adaptive_glass_icon_button.dart';
@@ -337,8 +341,14 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     _dragAutoScrollTimer = null;
   }
 
+  // Map insertion order (`.values`) reflects selection/drag-recompute order,
+  // not chronological order — always re-sort by message time first.
+  List<Map<String, dynamic>> get _selectedExtMessagesChronological =>
+      _selectedExtMessages.values.toList()
+        ..sort((a, b) => _getExtMsgTime(a).compareTo(_getExtMsgTime(b)));
+
   void _copySelectedExtMessages() {
-    final texts = _selectedExtMessages.values
+    final texts = _selectedExtMessagesChronological
         .where(_isExtTextMessage)
         .map((m) => m['content']?.toString() ?? '')
         .where((t) => t.isNotEmpty)
@@ -346,13 +356,13 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     if (texts.isNotEmpty) {
       Clipboard.setData(ClipboardData(text: texts));
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).msgCopied);
+          lookupAppLocalizations(SettingsManager.appLocale.value).msgCopied);
     }
     _exitExtSelectionMode();
   }
 
   void _forwardSelectedExtMessages() {
-    final contents = _selectedExtMessages.values
+    final contents = _selectedExtMessagesChronological
         .map((m) => m['content']?.toString() ?? '')
         .where((t) => t.isNotEmpty)
         .toList();
@@ -408,6 +418,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     _loadPinnedMessage();
     _maybeShowE2eeWarning();
     _fetchGroupInfo();
+    _subscribeReminders();
 
     _loadHistoryFromCache();
 
@@ -505,6 +516,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
     _wsFlushTimer?.cancel();
     _cacheSaveTimer?.cancel();
+    _reminderKeysSub?.cancel();
     _wsIncomingBuffer.clear();
     _textCtrl.dispose();
     _focusNode.dispose();
@@ -770,7 +782,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       if (mounted) {
         setState(() => _isConnecting = false);
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .failedToConnect(e.toString()));
       }
     }
@@ -877,7 +889,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         });
 
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .roleChanged(newRole));
       }
       return;
@@ -1049,29 +1061,14 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
     if (!mounted) return;
 
-    await showDialog(
+    await showOnyxInfoDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.block, color: Theme.of(dialogContext).colorScheme.error),
-            const SizedBox(width: 8),
-            Text(AppLocalizations.of(context).youHaveBeenBanned),
-          ],
-        ),
-        content: Text(
-          reason != null && reason.isNotEmpty
-              ? AppLocalizations.of(context).bannedReason(reason)
-              : AppLocalizations.of(context).bannedFromGroup,
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(AppLocalizations.of(context).ok),
-          ),
-        ],
-      ),
+      title: AppLocalizations.of(context).youHaveBeenBanned,
+      message: reason != null && reason.isNotEmpty
+          ? AppLocalizations.of(context).bannedReason(reason)
+          : AppLocalizations.of(context).bannedFromGroup,
+      isError: true,
+      icon: Icons.block,
     );
 
     if (!mounted) return;
@@ -1099,7 +1096,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     if (!mounted) return;
 
     rootScreenKey.currentState?.showSnack(
-        AppLocalizations(SettingsManager.appLocale.value).unbannedReconnecting);
+        lookupAppLocalizations(SettingsManager.appLocale.value)
+            .unbannedReconnecting);
 
     final isConnected =
         ExternalServerManager.isServerConnected(widget.server.id);
@@ -1457,7 +1455,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
     if (!_canPost) {
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).onlyModsCanPost);
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .onlyModsCanPost);
       return;
     }
 
@@ -1535,7 +1534,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           _allMessageIds.remove(tempId);
         });
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .failedSendMessage);
       }
     } catch (e) {
@@ -1546,7 +1545,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           _allMessageIds.remove(tempId);
         });
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).sendFailed);
+            lookupAppLocalizations(SettingsManager.appLocale.value).sendFailed);
       }
     }
   }
@@ -1666,12 +1665,12 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         _saveHistoryToCache(_messages);
       } else if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).failedEdit);
+            lookupAppLocalizations(SettingsManager.appLocale.value).failedEdit);
       }
     } catch (e) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).failedEdit);
+            lookupAppLocalizations(SettingsManager.appLocale.value).failedEdit);
       }
     }
   }
@@ -1687,8 +1686,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
   // Scoped per account (current ONYX username) so every account that opens the
   // group sees the notice once — switching accounts re-shows it.
-  String get _e2eeWarnPrefsKey =>
-      'e2ee_warn_shown_ext_group_'
+  String get _e2eeWarnPrefsKey => 'e2ee_warn_shown_ext_group_'
       '${rootScreenKey.currentState?.currentUsername ?? ''}_'
       '${widget.group.id}_${widget.server.id}';
 
@@ -1795,8 +1793,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                     children: [
                       FilledButton(
                         onPressed: () async {
-                          final prefs =
-                              await SharedPreferences.getInstance();
+                          final prefs = await SharedPreferences.getInstance();
                           await prefs.setBool(_e2eeWarnPrefsKey, true);
                           if (dialogContext.mounted) {
                             Navigator.of(dialogContext).pop();
@@ -1871,6 +1868,58 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       });
     }
     _savePinnedMessage();
+  }
+
+  // Live cache of "chatId|messageId" keys with an active reminder.
+  Set<String> _reminderKeys = {};
+  StreamSubscription? _reminderKeysSub;
+
+  void _subscribeReminders() {
+    final accountId = widget.server.username;
+    if (accountId.isEmpty) return;
+    _reminderKeysSub =
+        ReminderService.watchActiveReminders(accountId).listen((rows) {
+      if (!mounted) return;
+      setState(() {
+        _reminderKeys = rows.map((r) => '${r.chatId}|${r.messageId}').toSet();
+      });
+    });
+  }
+
+  bool _hasReminderSync(String? msgId) {
+    if (msgId == null || msgId.isEmpty) return false;
+    final chatId = 'external_group_${widget.server.id}_${widget.group.id}';
+    return _reminderKeys.contains('$chatId|$msgId');
+  }
+
+  Future<void> _handleExtReminderToggle({
+    required Map<String, dynamic> msg,
+    required bool hasReminder,
+    required String chatId,
+    required String messageId,
+  }) async {
+    final l = AppLocalizations.of(context);
+    if (hasReminder) {
+      await ReminderService.cancelReminder(
+          widget.server.username, chatId, messageId);
+      rootScreenKey.currentState?.showSnack(l.reminderCancelled);
+      return;
+    }
+    final accentColorArgb = Theme.of(context).colorScheme.primary.toARGB32();
+    final picked = await showOnyxReminderPicker(context);
+    if (picked == null) return;
+    await ReminderService.scheduleReminder(
+      accountId: widget.server.username,
+      messageId: messageId,
+      accentColorArgb: accentColorArgb,
+      chatType: 'extgroup',
+      chatId: chatId,
+      chatTitle: widget.group.name,
+      messagePreview: getPreviewText(msg['content']?.toString() ?? ''),
+      externalServerId: widget.server.id,
+      scheduledAt: picked,
+    );
+    rootScreenKey.currentState?.showSnack(l.reminderSet);
   }
 
   String? _scrollHighlightId;
@@ -2083,7 +2132,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     );
   }
 
-  void _showExternalMessageMenu(Map<String, dynamic> msg) {
+  void _showExternalMessageMenu(Map<String, dynamic> msg) async {
     _focusNode.unfocus();
     final content = msg['content']?.toString() ?? '';
     final isImage = content.startsWith('IMAGEv1:');
@@ -2115,6 +2164,16 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                 content.contains('file.io') ||
                 content.contains('cdn.')));
     final colorScheme = Theme.of(context).colorScheme;
+
+    final reminderChatId =
+        'external_group_${widget.server.id}_${widget.group.id}';
+    final reminderMsgId = msg['id']?.toString() ?? '';
+    var hasReminder = false;
+    if (reminderMsgId.isNotEmpty) {
+      hasReminder = await ReminderService.hasActiveReminder(
+          widget.server.username, reminderChatId, reminderMsgId);
+    }
+    if (!mounted) return;
 
     Widget actionTile(IconData icon, String label, VoidCallback? onTap,
         {Color? color}) {
@@ -2188,17 +2247,39 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                       _toggleExtPin(msg);
                     },
                   ),
+                  if (reminderMsgId.isNotEmpty)
+                    actionTile(
+                      hasReminder
+                          ? Icons.alarm_off_rounded
+                          : Icons.alarm_add_rounded,
+                      hasReminder
+                          ? AppLocalizations.of(context).cancelReminder
+                          : AppLocalizations.of(context).setReminder,
+                      () {
+                        Navigator.pop(ctx);
+                        _handleExtReminderToggle(
+                          msg: msg,
+                          hasReminder: hasReminder,
+                          chatId: reminderChatId,
+                          messageId: reminderMsgId,
+                        );
+                      },
+                    ),
                   if (isSaveable)
-                    actionTile(Icons.save_alt_rounded, 'Save', () {
+                    actionTile(Icons.save_alt_rounded,
+                        AppLocalizations.of(context).save, () {
                       Navigator.pop(ctx);
                       _saveMediaFromMessage(content);
                     }),
                   if (!isMedia)
-                    actionTile(Icons.copy_rounded, 'Copy', () {
+                    actionTile(
+                        Icons.copy_rounded, AppLocalizations.of(context).copy,
+                        () {
                       Navigator.pop(ctx);
                       Clipboard.setData(ClipboardData(text: content));
                       rootScreenKey.currentState?.showSnack(
-                          AppLocalizations(SettingsManager.appLocale.value)
+                          lookupAppLocalizations(
+                                  SettingsManager.appLocale.value)
                               .msgCopied);
                     }),
                   const SizedBox(height: 4),
@@ -2776,7 +2857,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       debugPrint('[ext-media] server upload error: $e');
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .uploadFailedConnectionAborted);
       }
       return null;
@@ -2843,7 +2924,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           _allMessageIds.remove(tempId);
         });
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).failedSendMedia);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .failedSendMedia);
       }
     } catch (e) {
       debugPrint('[ext-chat] media send error: $e');
@@ -2853,7 +2935,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           _allMessageIds.remove(tempId);
         });
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).sendFailed);
+            lookupAppLocalizations(SettingsManager.appLocale.value).sendFailed);
       }
     }
   }
@@ -2870,7 +2952,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       if (res.statusCode == 200) {
         if (mounted) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value).joinedGroup);
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .joinedGroup);
 
           setState(() {
             _myRole = 'member';
@@ -2879,14 +2962,15 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       } else {
         if (mounted) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .failedJoinGroup);
         }
       }
     } catch (e) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).networkError);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .networkError);
       }
     }
   }
@@ -2937,7 +3021,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
             _pendingUploads.remove(task);
           });
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value).uploadFailed);
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .uploadFailed);
         }
         return;
       }
@@ -2996,7 +3081,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     if (kIsWeb) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .mediaUploadNotSupportedWeb);
       }
       return;
@@ -3047,7 +3132,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     if (!FileTypeDetector.isAllowed(path)) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .unsupportedFileType(p.extension(path)));
       }
       return;
@@ -3062,7 +3147,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           onSend: () => _processAndUploadFile(path),
           onCancel: () {
             rootScreenKey.currentState?.showSnack(
-                AppLocalizations(SettingsManager.appLocale.value).cancelled);
+                lookupAppLocalizations(SettingsManager.appLocale.value)
+                    .cancelled);
           },
           onPasteExtra: isImage ? _pasteImageForAlbum : null,
           onSendAlbum: isImage ? (ps) => _processAndUploadAlbum(ps) : null,
@@ -3129,7 +3215,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     if (items.isEmpty) {
       if (mounted)
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .albumUploadFailed);
       return;
     }
@@ -3176,7 +3262,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     if (link == null) {
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .voiceUploadFailed);
       }
       return;
@@ -3216,7 +3302,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                 onCancel: () {
                   if (mounted) {
                     rootScreenKey.currentState?.showSnack(
-                        AppLocalizations(SettingsManager.appLocale.value)
+                        lookupAppLocalizations(SettingsManager.appLocale.value)
                             .voiceCancelled);
                   }
                 },
@@ -3239,7 +3325,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         existing.add(fp);
       } else {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .fileNotFound);
       }
     }
     if (existing.isEmpty) return;
@@ -3256,7 +3343,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           onSend: () => _processAndUploadFile(filePath),
           onCancel: () {
             rootScreenKey.currentState?.showSnack(
-                AppLocalizations(SettingsManager.appLocale.value)
+                lookupAppLocalizations(SettingsManager.appLocale.value)
                     .fileCancelled);
           },
           onPasteExtra: isImage ? _pasteImageForAlbum : null,
@@ -3442,7 +3529,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                 onSend: () => _processAndUploadFile(filePath),
                 onCancel: () {
                   rootScreenKey.currentState?.showSnack(
-                      AppLocalizations(SettingsManager.appLocale.value)
+                      lookupAppLocalizations(SettingsManager.appLocale.value)
                           .fileCancelled);
                 },
                 onPasteExtra: isImage ? _pasteImageForAlbum : null,
@@ -3831,7 +3918,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                       removeAvatar = true;
                     });
                     rootScreenKey.currentState?.showSnack(
-                        AppLocalizations(SettingsManager.appLocale.value)
+                        lookupAppLocalizations(SettingsManager.appLocale.value)
                             .avatarWillBeDeleted);
                   },
                   child: CircleAvatar(
@@ -3870,7 +3957,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                     Clipboard.setData(ClipboardData(
                         text: '${widget.server.host}:${widget.server.port}'));
                     rootScreenKey.currentState?.showSnack(
-                        AppLocalizations(SettingsManager.appLocale.value)
+                        lookupAppLocalizations(SettingsManager.appLocale.value)
                             .ipCopied);
                   },
                   child: Container(
@@ -3938,7 +4025,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                 final newName = nameController.text.trim();
                 if (newName.isEmpty) {
                   rootScreenKey.currentState?.showSnack(
-                      AppLocalizations(SettingsManager.appLocale.value)
+                      lookupAppLocalizations(SettingsManager.appLocale.value)
                           .nameCannotBeEmpty);
                   return;
                 }
@@ -3992,7 +4079,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
               final newName = controller.text.trim();
               if (newName.isEmpty) {
                 rootScreenKey.currentState?.showSnack(
-                    AppLocalizations(SettingsManager.appLocale.value)
+                    lookupAppLocalizations(SettingsManager.appLocale.value)
                         .nameCannotBeEmpty);
                 return;
               }
@@ -4027,7 +4114,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
       if (response.statusCode == 200) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).groupRenamed);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .groupRenamed);
 
         if (mounted) {
           setState(() {
@@ -4063,18 +4151,18 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           final error =
               jsonDecode(response.body)['error'] ?? 'Failed to rename';
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(error.toString()));
         } catch (e) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(response.body));
         }
       }
     } catch (e) {
       debugPrint('[rename] Exception: $e');
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).failedRename);
+          lookupAppLocalizations(SettingsManager.appLocale.value).failedRename);
     }
   }
 
@@ -4090,18 +4178,21 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       final file = result.files.first;
       if (file.bytes == null) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).failedReadFile);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .failedReadFile);
         return;
       }
 
       if (file.bytes!.length > 5 * 1024 * 1024) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).imageTooLarge);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .imageTooLarge);
         return;
       }
 
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).uploadingAvatar);
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .uploadingAvatar);
 
       final url = '${widget.server.baseUrl}/groups/${widget.group.id}/avatar';
       debugPrint('[avatar] POST $url');
@@ -4157,31 +4248,33 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         }
         debugPrint('[avatar] Local _avatarVersion updated to: $_avatarVersion');
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .avatarUpdatedSuccessfully);
       } else {
         try {
           final error = jsonDecode(responseBody)['error'] ?? 'Failed to upload';
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(error.toString()));
         } catch (e) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(responseBody));
         }
       }
     } catch (e) {
       debugPrint('[avatar] Exception: $e');
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).failedUploadAvatar);
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .failedUploadAvatar);
     }
   }
 
   Future<void> _uploadGroupAvatar(Uint8List bytes) async {
     try {
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).uploadingAvatar);
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .uploadingAvatar);
 
       final url = '${widget.server.baseUrl}/groups/${widget.group.id}/avatar';
       debugPrint('[avatar] POST $url');
@@ -4223,7 +4316,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         }
         debugPrint('[avatar] Local _avatarVersion updated to: $_avatarVersion');
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .avatarUpdatedSuccessfully);
 
         final currentGroups = ExternalServerManager.externalGroups.value;
@@ -4249,25 +4342,27 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         try {
           final error = jsonDecode(responseBody)['error'] ?? 'Failed to upload';
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(error.toString()));
         } catch (e) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(responseBody));
         }
       }
     } catch (e) {
       debugPrint('[avatar] Exception: $e');
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).failedUploadAvatar);
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .failedUploadAvatar);
     }
   }
 
   Future<void> _deleteGroupAvatar() async {
     try {
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).deletingAvatar);
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .deletingAvatar);
 
       final url = '${widget.server.baseUrl}/groups/${widget.group.id}/avatar';
       debugPrint('[avatar] DELETE $url');
@@ -4303,7 +4398,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         debugPrint(
             '[avatar] Local _avatarVersion updated to: $_avatarVersion (deleted)');
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .avatarDeletedSuccessfully);
 
         final currentGroups = ExternalServerManager.externalGroups.value;
@@ -4331,18 +4426,19 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           final error =
               jsonDecode(response.body)['error'] ?? 'Failed to delete';
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(error.toString()));
         } catch (e) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(response.body));
         }
       }
     } catch (e) {
       debugPrint('[avatar] Exception: $e');
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).failedDeleteAvatar);
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .failedDeleteAvatar);
     }
   }
 
@@ -4806,7 +4902,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                           Icon(Icons.headset_mic_rounded,
                                               size: 18, color: csA.primary),
                                           const SizedBox(width: 10),
-                                          const Text('Voice channels'),
+                                          Text(AppLocalizations.of(context)
+                                              .voiceChannels),
                                         ]),
                                       ),
                                     PopupMenuItem<String>(
@@ -5114,6 +5211,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                               outgoing: isMe,
                               rawPreview: null,
                               serverMessageId: null,
+                              hasReminder:
+                                  _hasReminderSync(msg['id']?.toString()),
                               time: (msg['timestamp_ms'] != null &&
                                       msg['timestamp_ms'] is int &&
                                       (msg['timestamp_ms'] as int) > 0)
@@ -5932,25 +6031,25 @@ class _MembersManagementDialogState extends State<_MembersManagementDialog> {
 
       if (response.statusCode == 200) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .userBanned(username));
         _loadMembers();
       } else {
         try {
           final error = jsonDecode(response.body)['error'] ?? 'Failed to ban';
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(error.toString()));
         } catch (e) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(response.body));
         }
       }
     } catch (e) {
       debugPrint('[ban] Exception: $e');
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).failedBan);
+          lookupAppLocalizations(SettingsManager.appLocale.value).failedBan);
     }
   }
 
@@ -6052,7 +6151,7 @@ class _MembersManagementDialogState extends State<_MembersManagementDialog> {
 
       if (response.statusCode == 200) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .roleUpdated(newRole));
         _loadMembers();
       } else {
@@ -6060,18 +6159,19 @@ class _MembersManagementDialogState extends State<_MembersManagementDialog> {
           final error =
               jsonDecode(response.body)['error'] ?? 'Failed to change role';
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(error.toString()));
         } catch (e) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(response.body));
         }
       }
     } catch (e) {
       debugPrint('[role] Exception: $e');
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).failedChangeRole);
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .failedChangeRole);
     }
   }
 
@@ -6214,22 +6314,12 @@ class _BannedUsersDialogState extends State<_BannedUsersDialog> {
   }
 
   Future<void> _unbanUser(String username) async {
-    final confirm = await showDialog<bool>(
+    final confirm = await showOnyxConfirmDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppLocalizations.of(context).unbanUserTitle),
-        content: Text(AppLocalizations.of(context).unbanConfirm(username)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(AppLocalizations.of(context).cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(AppLocalizations.of(context).unban),
-          ),
-        ],
-      ),
+      title: AppLocalizations.of(context).unbanUserTitle,
+      message: AppLocalizations.of(context).unbanConfirm(username),
+      confirmLabel: AppLocalizations.of(context).unban,
+      icon: Icons.lock_open_rounded,
     );
 
     if (confirm != true) return;
@@ -6249,25 +6339,25 @@ class _BannedUsersDialogState extends State<_BannedUsersDialog> {
 
       if (response.statusCode == 200) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .userUnbanned(username));
         _loadBans();
       } else {
         try {
           final error = jsonDecode(response.body)['error'] ?? 'Failed to unban';
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(error.toString()));
         } catch (e) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value)
+              lookupAppLocalizations(SettingsManager.appLocale.value)
                   .errorMsg(response.body));
         }
       }
     } catch (e) {
       debugPrint('[unban] Exception: $e');
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).failedUnban);
+          lookupAppLocalizations(SettingsManager.appLocale.value).failedUnban);
     }
   }
 

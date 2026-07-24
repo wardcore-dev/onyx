@@ -1,6 +1,7 @@
 // lib/widgets/debug_console.dart
 import 'package:flutter/material.dart';
 import 'package:ONYX/utils/performance_monitor.dart';
+import '../l10n/app_localizations.dart';
 
 class DebugConsole extends StatefulWidget {
   final bool initialShow;
@@ -55,10 +56,11 @@ class _DebugConsoleState extends State<DebugConsole> {
 
   void _exportLogs() {
     final text = _monitor.exportAsText();
+    final l = AppLocalizations.of(context);
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Performance Report'),
+        title: Text(l.performanceReport),
         content: SingleChildScrollView(
           child: Text(
             text,
@@ -68,7 +70,7 @@ class _DebugConsoleState extends State<DebugConsole> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('Close'),
+            child: Text(l.close),
           ),
         ],
       ),

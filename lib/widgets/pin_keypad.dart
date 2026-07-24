@@ -170,17 +170,11 @@ class _PinRevealSlotState extends State<PinRevealSlot>
           // controller reaches t=1.
           final e = _staggered(_enter.value,
               perItemDelay: 0.025, growth: 0.6, curve: Curves.easeOutBack);
-          final x = _staggered(_exit.value,
-              perItemDelay: 0.02, growth: 0.7, curve: Curves.easeIn);
 
-          final scale = (e < 0 ? 0.0 : e) * (1 - 0.1 * x);
-          final opacity = (e.clamp(0.0, 1.0)) * (1 - x);
-          final flyUp = x * 140;
+          final scale = (e < 0 ? 0.0 : e);
+          final opacity = e.clamp(0.0, 1.0);
 
-          Widget content = Transform.translate(
-            offset: Offset(0, -flyUp),
-            child: Transform.scale(scale: scale, child: child),
-          );
+          Widget content = Transform.scale(scale: scale, child: child);
 
           // Opacity forces its own offscreen compositing layer — the classic
           // Flutter jank source when many are animating simultaneously. Skip

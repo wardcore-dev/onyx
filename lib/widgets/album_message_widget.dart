@@ -14,6 +14,7 @@ import 'blur_placeholder.dart';
 import '../utils/blurhash_cache.dart';
 import '../utils/wallpaper_util.dart';
 import '../utils/font_utils.dart';
+import '../l10n/app_localizations.dart';
 
 enum _MenuAction { download, setWallpaper }
 
@@ -22,6 +23,7 @@ class AlbumItem {
   final String orig;
   final String? owner;
   final String? mediaKeyB64;
+
   /// BlurHash for a blurred preview while the image downloads (null if absent).
   final String? blurHash;
 
@@ -47,11 +49,16 @@ class AlbumMessageWidget extends StatelessWidget {
   final String peerUsername;
   final bool isOutgoing;
 
+  /// Scales the grid's displayed dimensions to match the app-wide "message
+  /// size" setting, same as the text/timestamp scaling.
+  final double fontSizeMultiplier;
+
   const AlbumMessageWidget({
     Key? key,
     required this.items,
     required this.peerUsername,
     this.isOutgoing = false,
+    this.fontSizeMultiplier = 1.0,
   }) : super(key: key);
 
   static const double _totalWidth = 280.0;
@@ -64,7 +71,7 @@ class AlbumMessageWidget extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(10),
       child: SizedBox(
-        width: _totalWidth,
+        width: _totalWidth * fontSizeMultiplier,
         child: _buildGrid(context, clipped),
       ),
     );
@@ -72,28 +79,29 @@ class AlbumMessageWidget extends StatelessWidget {
 
   Widget _buildGrid(BuildContext context, List<AlbumItem> list) {
     final n = list.length;
-    const w = _totalWidth;
-    const g = _gap;
+    final w = _totalWidth * fontSizeMultiplier;
+    final g = _gap * fontSizeMultiplier;
+    final m = fontSizeMultiplier;
 
     if (n == 1) {
-      return _t(context, list, 0, w: w, h: 280);
+      return _t(context, list, 0, w: w, h: 280 * m);
     }
 
     if (n == 2) {
       final cw = (w - g) / 2;
       return _row([
-        _t(context, list, 0, w: cw, h: 140),
-        _t(context, list, 1, w: cw, h: 140),
+        _t(context, list, 0, w: cw, h: 140 * m),
+        _t(context, list, 1, w: cw, h: 140 * m),
       ]);
     }
 
     if (n == 3) {
       final cw = (w - g) / 2;
       return _col([
-        _t(context, list, 0, w: w, h: 160),
+        _t(context, list, 0, w: w, h: 160 * m),
         _row([
-          _t(context, list, 1, w: cw, h: 120),
-          _t(context, list, 2, w: cw, h: 120),
+          _t(context, list, 1, w: cw, h: 120 * m),
+          _t(context, list, 2, w: cw, h: 120 * m),
         ]),
       ]);
     }
@@ -102,12 +110,12 @@ class AlbumMessageWidget extends StatelessWidget {
       final cw = (w - g) / 2;
       return _col([
         _row([
-          _t(context, list, 0, w: cw, h: 120),
-          _t(context, list, 1, w: cw, h: 120),
+          _t(context, list, 0, w: cw, h: 120 * m),
+          _t(context, list, 1, w: cw, h: 120 * m),
         ]),
         _row([
-          _t(context, list, 2, w: cw, h: 120),
-          _t(context, list, 3, w: cw, h: 120),
+          _t(context, list, 2, w: cw, h: 120 * m),
+          _t(context, list, 3, w: cw, h: 120 * m),
         ]),
       ]);
     }
@@ -117,13 +125,13 @@ class AlbumMessageWidget extends StatelessWidget {
       final cw3 = (w - 2 * g) / 3;
       return _col([
         _row([
-          _t(context, list, 0, w: cw2, h: 120),
-          _t(context, list, 1, w: cw2, h: 120),
+          _t(context, list, 0, w: cw2, h: 120 * m),
+          _t(context, list, 1, w: cw2, h: 120 * m),
         ]),
         _row([
-          _t(context, list, 2, w: cw3, h: 100),
-          _t(context, list, 3, w: cw3, h: 100),
-          _t(context, list, 4, w: cw3, h: 100),
+          _t(context, list, 2, w: cw3, h: 100 * m),
+          _t(context, list, 3, w: cw3, h: 100 * m),
+          _t(context, list, 4, w: cw3, h: 100 * m),
         ]),
       ]);
     }
@@ -132,20 +140,20 @@ class AlbumMessageWidget extends StatelessWidget {
       final cw = (w - 2 * g) / 3;
       return _col([
         _row([
-          _t(context, list, 0, w: cw, h: 120),
-          _t(context, list, 1, w: cw, h: 120),
-          _t(context, list, 2, w: cw, h: 120),
+          _t(context, list, 0, w: cw, h: 120 * m),
+          _t(context, list, 1, w: cw, h: 120 * m),
+          _t(context, list, 2, w: cw, h: 120 * m),
         ]),
         _row([
-          _t(context, list, 3, w: cw, h: 120),
-          _t(context, list, 4, w: cw, h: 120),
-          _t(context, list, 5, w: cw, h: 120),
+          _t(context, list, 3, w: cw, h: 120 * m),
+          _t(context, list, 4, w: cw, h: 120 * m),
+          _t(context, list, 5, w: cw, h: 120 * m),
         ]),
       ]);
     }
 
     final cw = (w - 2 * g) / 3;
-    const ch = 90.0;
+    final ch = 90.0 * m;
     final rows = <Widget>[];
     for (int i = 0; i < n; i += 3) {
       final end = (i + 3 < n) ? i + 3 : n;
@@ -153,7 +161,7 @@ class AlbumMessageWidget extends StatelessWidget {
       for (int j = i; j < end; j++) {
         rowChildren.add(_t(context, list, j, w: cw, h: ch));
       }
-      
+
       while (rowChildren.length < 3) {
         rowChildren.add(SizedBox(width: cw, height: ch));
       }
@@ -164,12 +172,14 @@ class AlbumMessageWidget extends StatelessWidget {
 
   Widget _row(List<Widget> children) => Row(
         mainAxisSize: MainAxisSize.min,
-        children: _intersperse(children, const SizedBox(width: _gap)),
+        children:
+            _intersperse(children, SizedBox(width: _gap * fontSizeMultiplier)),
       );
 
   Widget _col(List<Widget> children) => Column(
         mainAxisSize: MainAxisSize.min,
-        children: _intersperse(children, const SizedBox(height: _gap)),
+        children:
+            _intersperse(children, SizedBox(height: _gap * fontSizeMultiplier)),
       );
 
   List<Widget> _intersperse(List<Widget> list, Widget sep) {
@@ -360,7 +370,8 @@ class _AlbumThumbState extends State<_AlbumThumb> {
     int initialIdx;
 
     if (scope != null && scope.allImages.isNotEmpty) {
-      final idx = scope.allImages.indexWhere((i) => i.filename == widget.item.filename);
+      final idx =
+          scope.allImages.indexWhere((i) => i.filename == widget.item.filename);
       if (idx >= 0) {
         galleryItems = scope.allImages;
         initialIdx = idx;
@@ -455,7 +466,8 @@ Route<T> buildGalleryRoute<T>(Widget page) {
     reverseTransitionDuration: const Duration(milliseconds: 200),
     pageBuilder: (_, __, ___) => page,
     transitionsBuilder: (_, animation, __, child) {
-      final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+      final curved =
+          CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
       return FadeTransition(
         opacity: curved,
         child: ScaleTransition(
@@ -502,7 +514,8 @@ class _AlbumGalleryState extends State<AlbumGallery> {
     _current = widget.initialIndex;
     _ctrl = PageController(initialPage: widget.initialIndex);
     _stripCtrl = ScrollController();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToThumbnail(widget.initialIndex, animate: false));
+    WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToThumbnail(widget.initialIndex, animate: false));
   }
 
   @override
@@ -515,10 +528,12 @@ class _AlbumGalleryState extends State<AlbumGallery> {
   void _scrollToThumbnail(int index, {bool animate = true}) {
     if (!_stripCtrl.hasClients) return;
     final totalItem = _thumbSize + _thumbGap;
-    final offset = index * totalItem - (_stripCtrl.position.viewportDimension / 2 - _thumbSize / 2);
+    final offset = index * totalItem -
+        (_stripCtrl.position.viewportDimension / 2 - _thumbSize / 2);
     final clamped = offset.clamp(0.0, _stripCtrl.position.maxScrollExtent);
     if (animate) {
-      _stripCtrl.animateTo(clamped, duration: const Duration(milliseconds: 200), curve: Curves.easeInOut);
+      _stripCtrl.animateTo(clamped,
+          duration: const Duration(milliseconds: 200), curve: Curves.easeInOut);
     } else {
       _stripCtrl.jumpTo(clamped);
     }
@@ -526,13 +541,15 @@ class _AlbumGalleryState extends State<AlbumGallery> {
 
   void _prevPage() {
     if (_current > 0) {
-      _ctrl.previousPage(duration: const Duration(milliseconds: 200), curve: Curves.easeInOut);
+      _ctrl.previousPage(
+          duration: const Duration(milliseconds: 200), curve: Curves.easeInOut);
     }
   }
 
   void _nextPage() {
     if (_current < widget.allItems.length - 1) {
-      _ctrl.nextPage(duration: const Duration(milliseconds: 200), curve: Curves.easeInOut);
+      _ctrl.nextPage(
+          duration: const Duration(milliseconds: 200), curve: Curves.easeInOut);
     }
   }
 
@@ -547,7 +564,8 @@ class _AlbumGalleryState extends State<AlbumGallery> {
       child: Container(
         width: _thumbSize,
         height: _thumbSize,
-        margin: EdgeInsets.only(right: i < widget.allItems.length - 1 ? _thumbGap : 0),
+        margin: EdgeInsets.only(
+            right: i < widget.allItems.length - 1 ? _thumbGap : 0),
         decoration: BoxDecoration(
           border: Border.all(
             color: isActive ? Colors.white : Colors.white24,
@@ -602,16 +620,19 @@ class _AlbumGalleryState extends State<AlbumGallery> {
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
     return Focus(
       autofocus: true,
       onKeyEvent: (_, event) {
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
         final key = event.logicalKey;
-        if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyA) {
+        if (key == LogicalKeyboardKey.arrowLeft ||
+            key == LogicalKeyboardKey.keyA) {
           _prevPage();
           return KeyEventResult.handled;
         }
-        if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyD) {
+        if (key == LogicalKeyboardKey.arrowRight ||
+            key == LogicalKeyboardKey.keyD) {
           _nextPage();
           return KeyEventResult.handled;
         }
@@ -650,19 +671,19 @@ class _AlbumGalleryState extends State<AlbumGallery> {
                     break;
                 }
               },
-              itemBuilder: (_) => const [
+              itemBuilder: (_) => [
                 PopupMenuItem(
                   value: _MenuAction.download,
                   child: ListTile(
-                    leading: Icon(Icons.download_rounded),
-                    title: Text('Download'),
+                    leading: const Icon(Icons.download_rounded),
+                    title: Text(l.download),
                   ),
                 ),
                 PopupMenuItem(
                   value: _MenuAction.setWallpaper,
                   child: ListTile(
-                    leading: Icon(Icons.wallpaper_rounded),
-                    title: Text('Set as wallpaper'),
+                    leading: const Icon(Icons.wallpaper_rounded),
+                    title: Text(l.setAsWallpaper),
                   ),
                 ),
               ],
@@ -679,7 +700,8 @@ class _AlbumGalleryState extends State<AlbumGallery> {
                     itemCount: widget.allItems.length,
                     onPageChanged: (i) {
                       setState(() => _current = i);
-                      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToThumbnail(i));
+                      WidgetsBinding.instance
+                          .addPostFrameCallback((_) => _scrollToThumbnail(i));
                     },
                     itemBuilder: (_, i) => _GalleryPage(
                       item: widget.allItems[i],
@@ -687,20 +709,29 @@ class _AlbumGalleryState extends State<AlbumGallery> {
                       isOutgoing: widget.isOutgoing,
                     ),
                   ),
-                  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) ...[
+                  if (!kIsWeb &&
+                      (Platform.isWindows ||
+                          Platform.isLinux ||
+                          Platform.isMacOS)) ...[
                     if (_current > 0)
                       Positioned(
                         left: 12,
                         top: 0,
                         bottom: 0,
-                        child: Center(child: _NavArrow(icon: Icons.arrow_back_ios_rounded, onTap: _prevPage)),
+                        child: Center(
+                            child: _NavArrow(
+                                icon: Icons.arrow_back_ios_rounded,
+                                onTap: _prevPage)),
                       ),
                     if (_current < widget.allItems.length - 1)
                       Positioned(
                         right: 12,
                         top: 0,
                         bottom: 0,
-                        child: Center(child: _NavArrow(icon: Icons.arrow_forward_ios_rounded, onTap: _nextPage)),
+                        child: Center(
+                            child: _NavArrow(
+                                icon: Icons.arrow_forward_ios_rounded,
+                                onTap: _nextPage)),
                       ),
                   ],
                 ],
@@ -714,6 +745,7 @@ class _AlbumGalleryState extends State<AlbumGallery> {
   }
 
   Future<void> _showSaveDialog() async {
+    final l = AppLocalizations.of(context);
     final isAlbum = (widget.albumItems?.length ?? 0) > 1;
     if (!isAlbum) {
       await _saveCurrentImage();
@@ -731,11 +763,11 @@ class _AlbumGalleryState extends State<AlbumGallery> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, _SaveChoice.cancel),
-            child: const Text('Cancel'),
+            child: Text(l.cancel),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, _SaveChoice.current),
-            child: const Text('Current'),
+            child: Text(l.current),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, _SaveChoice.all),
@@ -779,7 +811,6 @@ class _AlbumGalleryState extends State<AlbumGallery> {
       }
 
       if (Platform.isAndroid || Platform.isIOS) {
-        
         final saved = await saveImageToGallery(file.path);
         rootScreenKey.currentState?.showSnack(
             saved == true ? 'Saved to gallery' : 'Failed to save to gallery');
@@ -821,7 +852,8 @@ class _AlbumGalleryState extends State<AlbumGallery> {
         return;
       }
 
-      rootScreenKey.currentState?.showSnack('Save not supported on this platform');
+      rootScreenKey.currentState
+          ?.showSnack('Save not supported on this platform');
     } catch (e) {
       rootScreenKey.currentState?.showSnack('Save failed: $e');
     }
@@ -840,14 +872,25 @@ class _AlbumGalleryState extends State<AlbumGallery> {
     if (Platform.isAndroid || Platform.isIOS) {
       for (final item in items) {
         final cached = imageFileCache[item.filename];
-        if (cached == null) { failed++; continue; }
+        if (cached == null) {
+          failed++;
+          continue;
+        }
         try {
           final result = await saveImageToGallery(cached.file.path);
-          if (result == true) { saved++; } else { failed++; }
-        } catch (_) { failed++; }
+          if (result == true) {
+            saved++;
+          } else {
+            failed++;
+          }
+        } catch (_) {
+          failed++;
+        }
       }
       rootScreenKey.currentState?.showSnack(
-        failed == 0 ? 'All $saved images saved to gallery' : '$saved saved, $failed failed',
+        failed == 0
+            ? 'All $saved images saved to gallery'
+            : '$saved saved, $failed failed',
       );
       return;
     }
@@ -862,20 +905,29 @@ class _AlbumGalleryState extends State<AlbumGallery> {
       }
       for (final item in items) {
         final cached = imageFileCache[item.filename];
-        if (cached == null) { failed++; continue; }
+        if (cached == null) {
+          failed++;
+          continue;
+        }
         try {
-          final orig = item.orig.isNotEmpty ? item.orig : p.basename(item.filename);
+          final orig =
+              item.orig.isNotEmpty ? item.orig : p.basename(item.filename);
           await cached.file.copy(p.join(dirPath, orig));
           saved++;
-        } catch (_) { failed++; }
+        } catch (_) {
+          failed++;
+        }
       }
       rootScreenKey.currentState?.showSnack(
-        failed == 0 ? 'All $saved images saved to: $dirPath' : '$saved saved, $failed failed',
+        failed == 0
+            ? 'All $saved images saved to: $dirPath'
+            : '$saved saved, $failed failed',
       );
       return;
     }
 
-    rootScreenKey.currentState?.showSnack('Save not supported on this platform');
+    rootScreenKey.currentState
+        ?.showSnack('Save not supported on this platform');
   }
 }
 
@@ -1027,7 +1079,7 @@ class _GalleryPageState extends State<_GalleryPage> {
         child: Center(child: Image.file(_file!, fit: BoxFit.contain)),
       );
     }
-    
+
     return _AlbumThumb(
       item: widget.item,
       allItems: [widget.item],

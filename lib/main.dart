@@ -45,6 +45,7 @@ import 'widgets/pending_device_bubble.dart';
 import 'widgets/vinyl_player_button.dart';
 import 'utils/global_audio_controller.dart';
 import 'widgets/voice_channel_bar.dart';
+import 'widgets/custom_title_bar.dart';
 import 'voice/voice_channel_manager.dart';
 import 'screens/call_overlay.dart';
 import 'utils/fps_booster.dart';
@@ -720,7 +721,7 @@ class _ElegantMessengerState extends State<ElegantMessenger> with WindowListener
           scrollBehavior: const _BouncingScrollBehavior(),
           title: 'ONYX Messenger',
           locale: appLocale,
-          supportedLocales: const [Locale('en'), Locale('ru')],
+          supportedLocales: AppLocalizations.supportedLocales,
           localizationsDelegates: const [
             AppLocalizations.delegate,
             GlobalMaterialLocalizations.delegate,
@@ -747,6 +748,13 @@ class _ElegantMessengerState extends State<ElegantMessenger> with WindowListener
               child: Stack(
                 children: [
                   child ?? const SizedBox.shrink(),
+                  if (isDesktop)
+                    const Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: SizedBox(height: 42, child: CustomTitleBar()),
+                    ),
                   const CallOverlay(),
                   const VinylPlayerButton(),
                   const WardLinkBubble(),
@@ -802,10 +810,11 @@ class _PinGateWidgetState extends State<_PinGateWidget>
     // Also show the PIN screen when FallbackStorage is v3-locked even if
     // pin_lock_enabled was lost from SharedPreferences (e.g. old data folder deleted).
     _unlocked = !SettingsManager.pinEnabled.value && !FallbackStorage.main.isLocked;
+    appLockActive.value = !_unlocked;
     DecoyManager.onLockRequest = _lockApp;
     WidgetsBinding.instance.addObserver(this);
     if (!_unlocked && SettingsManager.biometricEnabled.value) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _tryBiometric());
+      WidgetsBinding.instance.addPostFrameCallback((_) => _tryBiometric(auto: true));
     }
   }
 
@@ -849,6 +858,25 @@ class _PinGateWidgetState extends State<_PinGateWidget>
         if (mounted && !_showCover) setState(() => _showCover = true);
       }
     } else if (state == AppLifecycleState.resumed) {
+      // A notification tap that resumed the app may have been handled by
+      // flutter_local_notifications' background isolate rather than this
+      // one — its openChatStream/openReminderStream events never reached
+      // RootScreen's listeners. Recover any such stashed tap on every
+      // resume; RootScreen's listeners already wait out the PIN/lock screen
+      // below before actually navigating, so it's safe to fire unconditionally.
+      unawaited(NotificationService.consumePendingTap());
+      // Some Android OEMs destroy and recreate the Activity while this
+      // process/isolate stays alive underneath (e.g. kept running by the
+      // background keep-alive foreground service) — confirmed via field
+      // logs on a Samsung device showing AppLifecycleState.detached between
+      // paused and resumed. init()'s one-time launch-details check only
+      // covers the Activity instance that existed at process start, so a
+      // notification tapped while the Activity was in that
+      // destroyed-and-recreated state never reached any tap callback at
+      // all. Re-checking here covers that fresh Activity's own launch
+      // Intent; see checkNotificationLaunchDetails' doc for why repeat
+      // calls are safe (deduped against the last one actually handled).
+      unawaited(NotificationService.checkNotificationLaunchDetails());
       if (_wasInBackground &&
           !_isAuthenticating &&
           _unlocked &&
@@ -873,12 +901,25 @@ class _PinGateWidgetState extends State<_PinGateWidget>
 
   bool _resumeLockShown = false;
   bool _isAuthenticating = false;
+  bool _autoBiometricRetried = false;
+  bool _autoBiometricResumeRetried = false;
 
   void _pushResumeLockScreen() {
     if (_resumeLockShown) return;
     final nav = navigatorKey.currentState;
     if (nav == null) return;
+    appLog('[lock] _pushResumeLockScreen: pushing PIN screen');
     _resumeLockShown = true;
+    // Set synchronously, in the same lifecycle callback that decided a lock
+    // screen is coming, so notification-tap navigation (which awaits
+    // waitForAppUnlock() before pushing a chat route onto this same
+    // Navigator) sees it before racing ahead and getting buried underneath.
+    appLockActive.value = true;
+    // Was latched true by the previous resume cycle's retry and never reset,
+    // so only the very first resume-lock in the app's lifetime ever got the
+    // 300ms focus-race retry — every later resume silently skipped it and
+    // required a manual "Use biometric" tap. Reset it for each new cycle.
+    _autoBiometricResumeRetried = false;
 
     // Captured before either PIN path runs, so we know whether the running
     // RootScreen needs to be switched into/out of decoy mode, or whether the
@@ -888,6 +929,7 @@ class _PinGateWidgetState extends State<_PinGateWidget>
     void onUnlocked() {
       _wasInBackground = false;
       _resumeLockShown = false;
+      appLockActive.value = false;
       if (nav.canPop()) nav.pop();
       if (mounted) setState(() => _showCover = false);
     }
@@ -896,11 +938,23 @@ class _PinGateWidgetState extends State<_PinGateWidget>
     // account before backgrounding, switch the still-alive RootScreen back
     // to the real account instead of just hiding the lock cover over it.
     void onRealUnlocked() {
+      appLog('[lock] onRealUnlocked: PIN/biometric succeeded, unlocking');
       onUnlocked();
       if (wasDecoy) {
         final state = rootScreenKey.currentState;
         if (state != null) unawaited(state.exitDecoyMode());
       }
+      // Fire any chat navigation a notification tap stashed while this PIN
+      // screen was up — real unlock only, not the fake-PIN/decoy path below.
+      unawaited(runPendingUnlockNavigation());
+      // Belt-and-suspenders recovery for a tap that arrived via a
+      // background isolate (WorkManager, or onDidReceiveBackgroundNotifi-
+      // cationResponse) and only ever made it as far as SharedPreferences —
+      // RootScreen's listener has been live throughout this resume-lock
+      // cycle (it's never unmounted here, just covered), so this is
+      // normally a no-op, but it closes the gap if some earlier
+      // consumePendingTap() call raced ahead of the persist and missed it.
+      unawaited(NotificationService.consumePendingTap());
     }
 
     nav.push<void>(
@@ -931,7 +985,7 @@ class _PinGateWidgetState extends State<_PinGateWidget>
 
     if (SettingsManager.biometricEnabled.value) {
       WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _tryBiometricResume(nav, onUnlocked),
+        (_) => _tryBiometricResume(nav, onRealUnlocked, auto: true),
       );
     }
   }
@@ -955,9 +1009,14 @@ class _PinGateWidgetState extends State<_PinGateWidget>
         .timeout(_biometricTimeout, onTimeout: () => false);
   }
 
-  Future<void> _tryBiometricResume(NavigatorState nav, VoidCallback onUnlocked) async {
+  Future<void> _tryBiometricResume(
+    NavigatorState nav,
+    VoidCallback onUnlocked, {
+    bool auto = false,
+  }) async {
     if (_isAuthenticating) return;
     _isAuthenticating = true;
+    var needsRetry = false;
     try {
       final supported = await _localAuth.isDeviceSupported();
       if (!supported) return;
@@ -967,20 +1026,41 @@ class _PinGateWidgetState extends State<_PinGateWidget>
         final pin = await SettingsManager.getBiometricPin();
         if (pin == null || pin.isEmpty) return;
         final didAuth = await _authenticateBiometric();
-        if (didAuth) onUnlocked();
+        if (didAuth) {
+          onUnlocked();
+        } else if (auto && !_autoBiometricResumeRetried) {
+          needsRetry = true;
+        }
         return;
       }
       final didAuth = await _authenticateBiometric();
-      if (didAuth) onUnlocked();
+      if (didAuth) {
+        onUnlocked();
+      } else if (auto && !_autoBiometricResumeRetried) {
+        needsRetry = true;
+      }
     } catch (_) {
+      if (auto && !_autoBiometricResumeRetried) needsRetry = true;
     } finally {
       _isAuthenticating = false;
     }
+    // The auto-triggered attempt can silently fail if it races the native
+    // window/Activity gaining focus (BiometricPrompt requires focus to show).
+    // A manual button tap always succeeds because focus has settled by then —
+    // so retry once, shortly after, before giving up automatically.
+    if (needsRetry) {
+      _autoBiometricResumeRetried = true;
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (mounted && _resumeLockShown) {
+        unawaited(_tryBiometricResume(nav, onUnlocked, auto: true));
+      }
+    }
   }
 
-  Future<void> _tryBiometric() async {
+  Future<void> _tryBiometric({bool auto = false}) async {
     if (_isAuthenticating) return;
     _isAuthenticating = true;
+    var needsRetry = false;
     try {
       final supported = await _localAuth.isDeviceSupported();
       final canCheck = await _localAuth.canCheckBiometrics;
@@ -1008,7 +1088,10 @@ class _PinGateWidgetState extends State<_PinGateWidget>
           }
           final didAuth = await _authenticateBiometric();
           appLog('[biometric] authenticate returned $didAuth');
-          if (!didAuth) return;
+          if (!didAuth) {
+            if (auto && !_autoBiometricRetried) needsRetry = true;
+            return;
+          }
           final unlocked = await FallbackStorage.main.unlockWithPin(pin);
           appLog('[biometric] unlockWithPin -> $unlocked');
           if (unlocked && mounted) {
@@ -1020,11 +1103,28 @@ class _PinGateWidgetState extends State<_PinGateWidget>
 
       final didAuth = await _authenticateBiometric();
       appLog('[biometric] authenticate returned $didAuth');
-      if (didAuth && mounted) _completeUnlock();
+      if (didAuth && mounted) {
+        _completeUnlock();
+      } else if (!didAuth && auto && !_autoBiometricRetried) {
+        needsRetry = true;
+      }
     } catch (e, st) {
       appLog('[biometric] auth error: $e\n$st');
+      if (auto && !_autoBiometricRetried) needsRetry = true;
     } finally {
       _isAuthenticating = false;
+    }
+    // The auto-triggered (post-frame) attempt can silently fail if it races
+    // the native window/Activity gaining focus — BiometricPrompt requires
+    // focus to actually show. A manual button tap always succeeds because
+    // focus has settled by then, which is why users have to fall back to it.
+    // Retry once, shortly after, before giving up on the automatic path.
+    if (needsRetry) {
+      _autoBiometricRetried = true;
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (mounted && !_unlocked) {
+        unawaited(_tryBiometric(auto: true));
+      }
     }
   }
 
@@ -1035,11 +1135,19 @@ class _PinGateWidgetState extends State<_PinGateWidget>
   void _completeUnlock() {
     _wasInBackground = false;
     MediaCache.instance.reset();
+    appLockActive.value = false;
     setState(() { _unlocked = true; _showCover = false; });
     // FallbackStorage is now readable — restore pin_lock_enabled if SharedPrefs lost it.
     SettingsManager.restorePinEnabledIfLost();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       rootScreenKey.currentState?.reloadAfterUnlock();
+      // Cold-start/initial-lock equivalent of onRealUnlocked's trigger above —
+      // fires a notification-tap chat navigation stashed while locked.
+      unawaited(runPendingUnlockNavigation());
+      // Belt-and-suspenders recovery for a tap stuck in SharedPreferences —
+      // see the matching call in onRealUnlocked above for why this is
+      // normally a no-op but worth having anyway.
+      unawaited(NotificationService.consumePendingTap());
     });
   }
 
@@ -1049,6 +1157,11 @@ class _PinGateWidgetState extends State<_PinGateWidget>
     FallbackStorage.main.lock();
     FallbackStorage.decoy.lock();
     MediaCache.instance.reset();
+    // Same one-shot-forever bug as _autoBiometricResumeRetried above: reset
+    // it whenever the gate re-locks so the next _tryBiometric(auto: true)
+    // cycle gets its focus-race retry instead of silently having none.
+    _autoBiometricRetried = false;
+    appLockActive.value = true;
     if (mounted) setState(() => _unlocked = false);
   }
 

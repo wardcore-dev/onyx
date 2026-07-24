@@ -12,6 +12,7 @@ import '../l10n/app_localizations.dart';
 import '../managers/settings_manager.dart';
 import '../utils/media_cache.dart';
 import '../widgets/apple_segmented_tabs.dart';
+import '../widgets/onyx_dialog.dart';
 
 // ─── Data models ──────────────────────────────────────────────────────────────
 
@@ -560,24 +561,15 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
 
   Future<bool> _confirm(String title, String content) async {
     final l = AppLocalizations.of(context);
-    return await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: Text(title),
-            content: Text(content),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(false),
-                  child: Text(l.cancel)),
-              FilledButton(
-                onPressed: () => Navigator.of(ctx).pop(true),
-                style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                child: Text(l.clearAll),
-              ),
-            ],
-          ),
-        ) ??
-        false;
+    final confirmed = await showOnyxConfirmDialog(
+      context: context,
+      title: title,
+      message: content,
+      confirmLabel: l.clearAll,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
+    );
+    return confirmed ?? false;
   }
 
   void _showSnack(String text) {
@@ -1141,7 +1133,7 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.grey)),
           const SizedBox(height: 14),
-          FilledButton.tonal(onPressed: _loadServer, child: const Text('Retry')),
+          FilledButton.tonal(onPressed: _loadServer, child: Text(l.retry)),
         ]),
       );
     }

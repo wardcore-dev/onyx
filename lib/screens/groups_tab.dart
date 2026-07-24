@@ -24,6 +24,7 @@ import '../managers/lock_manager.dart';
 import '../dialogs/pin_lock_dialog.dart';
 import '../utils/onyx_base_dir.dart' show getOnyxSupportDirectory, getOnyxDocumentsDirectory;
 import '../managers/trash_manager.dart';
+import '../widgets/onyx_dialog.dart';
 
 /// Reads and scans group-history JSON files for a content match — run via
 /// `compute` so the (potentially large) `jsonDecode` doesn't block the UI
@@ -435,7 +436,7 @@ class _GroupsTabState extends State<GroupsTab>
           deletedAt: DateTime.now(),
         ));
         if (mounted) {
-          final l = AppLocalizations(SettingsManager.appLocale.value);
+          final l = lookupAppLocalizations(SettingsManager.appLocale.value);
           rootScreenKey.currentState?.showSnack(l.leftGroup);
           setState(() {
             _groups.removeWhere((g) => g.id == group.id);
@@ -448,13 +449,13 @@ class _GroupsTabState extends State<GroupsTab>
         }
       } else {
         if (mounted) {
-          final l = AppLocalizations(SettingsManager.appLocale.value);
+          final l = lookupAppLocalizations(SettingsManager.appLocale.value);
           rootScreenKey.currentState?.showSnack(l.failedLeaveGroup);
         }
       }
     } catch (e) {
       if (mounted) {
-        final l = AppLocalizations(SettingsManager.appLocale.value);
+        final l = lookupAppLocalizations(SettingsManager.appLocale.value);
         rootScreenKey.currentState?.showSnack(l.networkError);
       }
     }
@@ -697,8 +698,7 @@ class _GroupsTabState extends State<GroupsTab>
                                 if (res.statusCode == 200) {
                                   _loadGroupsFromNetwork();
                                 } else {
-                                  final l = AppLocalizations(
-                                      SettingsManager.appLocale.value);
+                                  final l = lookupAppLocalizations(SettingsManager.appLocale.value);
                                   rootScreenKey.currentState
                                       ?.showSnack(l.failedCreateGroup);
                                 }
@@ -860,8 +860,7 @@ class _GroupsTabState extends State<GroupsTab>
                               }
                               inviteToken = inviteToken.trim();
                               if (inviteToken.isEmpty) {
-                                final l = AppLocalizations(
-                                    SettingsManager.appLocale.value);
+                                final l = lookupAppLocalizations(SettingsManager.appLocale.value);
                                 rootScreenKey.currentState
                                     ?.showSnack(l.invalidInviteLinkFormat);
                                 return;
@@ -873,8 +872,7 @@ class _GroupsTabState extends State<GroupsTab>
                               if (userToken == null) {
                                 Navigator.of(ctx).pop();
                                 rootScreenKey.currentState?.showSnack(
-                                    AppLocalizations(
-                                            SettingsManager.appLocale.value)
+                                    lookupAppLocalizations(SettingsManager.appLocale.value)
                                         .notLoggedIn);
                                 return;
                               }
@@ -887,8 +885,7 @@ class _GroupsTabState extends State<GroupsTab>
                                   },
                                 );
                                 Navigator.of(ctx).pop();
-                                final l = AppLocalizations(
-                                    SettingsManager.appLocale.value);
+                                final l = lookupAppLocalizations(SettingsManager.appLocale.value);
                                 if (res.statusCode == 200) {
                                   rootScreenKey.currentState
                                       ?.showSnack(l.groupAddedForViewing);
@@ -901,8 +898,7 @@ class _GroupsTabState extends State<GroupsTab>
                                   );
                                 }
                               } catch (e) {
-                                final l = AppLocalizations(
-                                    SettingsManager.appLocale.value);
+                                final l = lookupAppLocalizations(SettingsManager.appLocale.value);
                                 rootScreenKey.currentState
                                     ?.showSnack(l.networkError);
                               }
@@ -1220,79 +1216,54 @@ class _GroupsTabState extends State<GroupsTab>
     });
   }
 
-  void _showLeaveGroupConfirmation(BuildContext context, Group group) {
-    showDialog(
+  void _showLeaveGroupConfirmation(BuildContext context, Group group) async {
+    final l = AppLocalizations.of(context);
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title:
-            Text(AppLocalizations.of(context).leaveGroupTitle(group.isChannel)),
-        content:
-            Text(AppLocalizations.of(context).leaveGroupContent(group.name)),
-        actions: [
-          TextButton(
-            onPressed: Navigator.of(context).pop,
-            child: Text(AppLocalizations.of(context).cancel),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              LockManager.removeLock('ng_${group.id}');
-              _leaveGroup(group);
-            },
-            child: Text(
-              AppLocalizations.of(context).leave,
-              style: const TextStyle(color: Colors.red),
-            ),
-          ),
-        ],
-      ),
+      title: l.leaveGroupTitle(group.isChannel.toString()),
+      message: l.leaveGroupContent(group.name),
+      confirmLabel: l.leave,
+      isDestructive: true,
+      icon: Icons.logout_rounded,
     );
+    if (confirmed == true) {
+      LockManager.removeLock('ng_${group.id}');
+      _leaveGroup(group);
+    }
   }
 
   void _showRemoveExternalServerConfirmation(
-      BuildContext context, Group group) {
+      BuildContext context, Group group) async {
     final server = ExternalServerManager.servers.value
         .where((s) => s.id == group.externalServerId)
         .firstOrNull;
     final serverName = server?.name ?? 'Unknown Server';
 
-    showDialog(
+    final l = AppLocalizations.of(context);
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppLocalizations.of(context).removeExternalServerTitle),
-        content: Text(AppLocalizations.of(context)
-            .removeExternalServerContent(serverName)),
-        actions: [
-          TextButton(
-            onPressed: Navigator.of(context).pop,
-            child: Text(AppLocalizations.of(context).cancel),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.of(context).pop();
-              if (group.externalServerId != null) {
-                for (final g in _groups.where(
-                    (g) => g.externalServerId == group.externalServerId)) {
-                  LockManager.removeLock('eg_${g.externalServerId}_${g.id}');
-                }
-                await ExternalServerManager.removeServer(
-                    group.externalServerId!);
-                if (mounted) {
-                  final l = AppLocalizations(SettingsManager.appLocale.value);
-                  rootScreenKey.currentState
-                      ?.showSnack(l.serverRemoved(serverName));
-                  setState(() {});
-                }
-              }
-            },
-            child: Text(
-              AppLocalizations.of(context).remove,
-              style: const TextStyle(color: Colors.red),
-            ),
-          ),
-        ],
-      ),
+      title: l.removeExternalServerTitle,
+      message: l.removeExternalServerContent(serverName),
+      confirmLabel: l.remove,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
+    if (confirmed == true) {
+      if (group.externalServerId != null) {
+        for (final g in _groups.where(
+            (g) => g.externalServerId == group.externalServerId)) {
+          LockManager.removeLock('eg_${g.externalServerId}_${g.id}');
+        }
+        await ExternalServerManager.removeServer(
+            group.externalServerId!);
+        if (mounted) {
+          final l2 = lookupAppLocalizations(SettingsManager.appLocale.value);
+          rootScreenKey.currentState
+              ?.showSnack(l2.serverRemoved(serverName));
+          setState(() {});
+        }
+      }
+    }
   }
 
   @override
@@ -1321,7 +1292,7 @@ class _GroupsTabState extends State<GroupsTab>
                         child: Builder(builder: (context) {
                           final colorScheme = Theme.of(context).colorScheme;
                           return AdaptiveGlassCard(
-                            borderRadius: 14,
+                            borderRadius: 22,
                             padding: EdgeInsets.zero,
                             onTap: _showAddGroupSheet,
                             child: Container(
@@ -1329,7 +1300,7 @@ class _GroupsTabState extends State<GroupsTab>
                               alignment: Alignment.center,
                               decoration: BoxDecoration(
                                 color: colorScheme.primary.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(14),
+                                borderRadius: BorderRadius.circular(22),
                               ),
                               child: Icon(
                                 Icons.add,
@@ -1383,7 +1354,7 @@ class _GroupsTabState extends State<GroupsTab>
                               child: Builder(builder: (context) {
                                 final colorScheme = Theme.of(context).colorScheme;
                                 return AdaptiveGlassCard(
-                                  borderRadius: 14,
+                                  borderRadius: 22,
                                   padding: EdgeInsets.zero,
                                   onTap: _showAddGroupSheet,
                                   child: Container(
@@ -1391,7 +1362,7 @@ class _GroupsTabState extends State<GroupsTab>
                                     alignment: Alignment.center,
                                     decoration: BoxDecoration(
                                       color: colorScheme.primary.withValues(alpha: 0.12),
-                                      borderRadius: BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(22),
                                     ),
                                     child: Icon(
                                       Icons.add,

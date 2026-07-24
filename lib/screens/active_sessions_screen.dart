@@ -1,10 +1,13 @@
 // lib/screens/active_sessions_screen.dart
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../managers/account_manager.dart';
 import '../managers/settings_manager.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/onyx_dialog.dart';
+import '../widgets/security_level_dialog.dart';
 import 'recovery_screen.dart';
 
 // Shared with SecurityLevelSection so every card on this screen (device
@@ -56,11 +59,16 @@ void showStyledSnack(BuildContext context, String text) {
 class ActiveDevicesPanel extends StatefulWidget {
   final String serverBase;
   final String? username;
+  // Hidden on a device that isn't primary/trusted yet — the security level
+  // it would show reflects the account's real setting, not something this
+  // device is allowed to see or change until it recovers trust.
+  final bool showSecurityLevel;
 
   const ActiveDevicesPanel({
     super.key,
     required this.serverBase,
     this.username,
+    this.showSecurityLevel = true,
   });
 
   @override
@@ -72,6 +80,11 @@ class _ActiveDevicesPanelState extends State<ActiveDevicesPanel> {
   bool _loading = true;
   String? _error;
   String? _token;
+  // Tracked separately from _sessions: a pending account-recovery request
+  // isn't tied to this device's own trust state, so once this device gets
+  // approved the RecoveryBanner must keep showing (it's the only entry point
+  // to cancel it) instead of disappearing along with the "untrusted" badge.
+  bool _hasPendingRecovery = false;
 
   @override
   void initState() {
@@ -113,6 +126,7 @@ class _ActiveDevicesPanelState extends State<ActiveDevicesPanel> {
           _sessions = list.cast<Map<String, dynamic>>();
           _loading = false;
         });
+        unawaited(_loadRecoveryStatus());
       } else {
         setState(() { _error = 'Failed to load sessions (${res.statusCode})'; _loading = false; });
       }
@@ -122,24 +136,27 @@ class _ActiveDevicesPanelState extends State<ActiveDevicesPanel> {
     }
   }
 
+  Future<void> _loadRecoveryStatus() async {
+    try {
+      final res = await http.get(
+        Uri.parse('${widget.serverBase}/auth/recover-primary/status'),
+        headers: {'Authorization': 'Bearer $_token'},
+      );
+      if (!mounted || res.statusCode != 200) return;
+      final data = jsonDecode(res.body);
+      setState(() => _hasPendingRecovery = data['status'] == 'pending');
+    } catch (_) {}
+  }
+
   Future<void> _revokeSession(int id) async {
-    final confirmed = await showDialog<bool>(
+    final l = AppLocalizations.of(context);
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Revoke session?'),
-        content: const Text('This device will be immediately logged out.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Revoke', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+      title: l.revokeSessionQuestion,
+      message: l.revokeSessionConfirm,
+      confirmLabel: l.revoke,
+      isDestructive: true,
+      icon: Icons.logout,
     );
     if (confirmed != true) return;
     try {
@@ -152,7 +169,7 @@ class _ActiveDevicesPanelState extends State<ActiveDevicesPanel> {
       } else {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to revoke session')),
+          SnackBar(content: Text(AppLocalizations.of(context).failedToRevokeSession)),
         );
       }
     } catch (e) {
@@ -172,7 +189,7 @@ class _ActiveDevicesPanelState extends State<ActiveDevicesPanel> {
       } else {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to approve device')),
+          SnackBar(content: Text(AppLocalizations.of(context).failedToApproveDevice)),
         );
       }
     } catch (e) {
@@ -219,7 +236,7 @@ class _ActiveDevicesPanelState extends State<ActiveDevicesPanel> {
           child: IconButton(
             icon: const Icon(Icons.refresh, size: 20),
             onPressed: _loading ? null : _loadSessions,
-            tooltip: 'Refresh',
+            tooltip: AppLocalizations.of(context).refresh,
             visualDensity: VisualDensity.compact,
           ),
         ),
@@ -235,14 +252,16 @@ class _ActiveDevicesPanelState extends State<ActiveDevicesPanel> {
               children: [
                 Text(_error!, style: const TextStyle(color: Colors.red)),
                 const SizedBox(height: 12),
-                FilledButton(onPressed: _loadSessions, child: const Text('Retry')),
+                FilledButton(onPressed: _loadSessions, child: Text(AppLocalizations.of(context).retry)),
               ],
             ),
           )
         else ...[
           if (_token != null) ...[
-            SecurityLevelSection(serverBase: widget.serverBase, token: _token!),
-            if (_sessions.any((s) => s['is_current'] == true && s['e2e_trusted'] != true))
+            if (widget.showSecurityLevel)
+              SecurityLevelSection(serverBase: widget.serverBase, token: _token!),
+            if (_hasPendingRecovery ||
+                _sessions.any((s) => s['is_current'] == true && s['e2e_trusted'] != true))
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: RecoveryBanner(serverBase: widget.serverBase, token: _token!),
@@ -250,9 +269,9 @@ class _ActiveDevicesPanelState extends State<ActiveDevicesPanel> {
             const SizedBox(height: 12),
           ],
           if (_sessions.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 8, bottom: 8),
-              child: Center(child: Text('No active sessions found')),
+            Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 8),
+              child: Center(child: Text(AppLocalizations.of(context).noActiveSessionsFound)),
             )
           else
             for (final s in _sessions) ...[
@@ -424,9 +443,7 @@ class RecoveryBanner extends StatelessWidget {
             alignment: Alignment.centerRight,
             child: FilledButton.tonal(
               onPressed: () {
-                Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => RecoveryScreen(serverBase: serverBase, token: token),
-                ));
+                showRecoveryDialog(context, serverBase: serverBase, token: token);
               },
               child: Text(l10n.recoveryBannerButton),
             ),
@@ -435,13 +452,6 @@ class RecoveryBanner extends StatelessWidget {
       ),
     );
   }
-}
-
-// Box for the TTL bottom sheet's result: lets `null` days ("Never") be told
-// apart from a dismissed sheet (which also resolves the future to `null`).
-class _TtlPick {
-  final int? days;
-  const _TtlPick(this.days);
 }
 
 // --- Device-trust settings: security level (easy/balanced/strict) and
@@ -462,10 +472,7 @@ class SecurityLevelSection extends StatefulWidget {
 }
 
 class _SecurityLevelSectionState extends State<SecurityLevelSection> {
-  static const List<int?> _ttlOptions = [14, 30, 90, 180, 365, 730, null];
-
   bool _loading = true;
-  bool _saving = false;
   String _level = 'balanced';
   int? _ttlDays = 30;
   int? _recommendedTtl;
@@ -499,68 +506,23 @@ class _SecurityLevelSectionState extends State<SecurityLevelSection> {
     }
   }
 
-  Future<void> _save(Map<String, dynamic> body, {required VoidCallback onSuccess, required VoidCallback onRevert}) async {
-    setState(() => _saving = true);
-    try {
-      final res = await http.put(
-        Uri.parse('${widget.serverBase}/me/security-settings'),
-        headers: {
-          'Authorization': 'Bearer ${widget.token}',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(body),
-      );
-      if (!mounted) return;
-      setState(() => _saving = false);
-      if (res.statusCode == 200) {
-        onSuccess();
-      } else {
-        onRevert();
-        final l10n = AppLocalizations.of(context);
-        String message = l10n.error;
-        if (res.statusCode == 403) {
-          message = l10n.securityLevelLowerRequiresTrusted;
-        }
-        showStyledSnack(context, message);
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _saving = false);
-      onRevert();
-      showStyledSnack(context, '$e');
-    }
-  }
-
-  void _onLevelChanged(String? newLevel) {
-    if (newLevel == null || newLevel == _level) return;
-    final previous = _level;
-    setState(() => _level = newLevel);
-    _save(
-      {'security_level': newLevel},
-      onSuccess: () {
-        final l10n = AppLocalizations.of(context);
-        setState(() => _recommendedTtl = {
-              'easy': 90,
-              'balanced': 30,
-              'strict': 14,
-            }[newLevel]);
-        showStyledSnack(context, l10n.securityLevelUpdated);
-      },
-      onRevert: () => setState(() => _level = previous),
-    );
-  }
-
-  void _onTtlChanged(int? newTtl) {
-    if (newTtl == _ttlDays) return;
-    final previous = _ttlDays;
-    setState(() => _ttlDays = newTtl);
-    _save(
-      {'session_ttl_days': newTtl},
-      onSuccess: () {
-        final l10n = AppLocalizations.of(context);
-        showStyledSnack(context, l10n.sessionTtlUpdated);
-      },
-      onRevert: () => setState(() => _ttlDays = previous),
+  void _openDialog() {
+    showSecurityLevelDialog(
+      context,
+      serverBase: widget.serverBase,
+      token: widget.token,
+      level: _level,
+      ttlDays: _ttlDays,
+      recommendedTtl: _recommendedTtl,
+      onLevelChanged: (newLevel) => setState(() {
+        _level = newLevel;
+        _recommendedTtl = const {
+          'easy': 90,
+          'balanced': 30,
+          'strict': 14,
+        }[newLevel];
+      }),
+      onTtlChanged: (newTtl) => setState(() => _ttlDays = newTtl),
     );
   }
 
@@ -572,111 +534,8 @@ class _SecurityLevelSectionState extends State<SecurityLevelSection> {
     }
   }
 
-  String _levelDesc(AppLocalizations l10n, String level) {
-    switch (level) {
-      case 'easy': return l10n.securityLevelEasyDesc;
-      case 'strict': return l10n.securityLevelStrictDesc;
-      default: return l10n.securityLevelBalancedDesc;
-    }
-  }
-
   String _ttlLabel(AppLocalizations l10n, int? days) =>
       days == null ? l10n.sessionTtlNever : l10n.sessionTtlDays(days);
-
-  Future<void> _openTtlPicker() async {
-    final l10n = AppLocalizations.of(context);
-    final cs = Theme.of(context).colorScheme;
-    // Wrapped in a box so a dismissed sheet (Navigator pop with no result,
-    // e.g. tap-outside or swipe-down) is distinguishable from the user
-    // explicitly picking "Never" (opt == null) — both would otherwise read
-    // as `null` and silently set the session lifetime to Never.
-    final selectedBox = await showModalBottomSheet<_TtlPick>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        decoration: BoxDecoration(
-          color: glassSurfaceColor(cs),
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 36, height: 4,
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(color: cs.onSurfaceVariant.withValues(alpha: 0.3), borderRadius: BorderRadius.circular(2)),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(l10n.sessionTtlTitle, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-                ),
-              ),
-              const SizedBox(height: 6),
-              ..._ttlOptions.map((opt) {
-                final isRecommended = opt == _recommendedTtl;
-                final isSelected = opt == _ttlDays;
-                return ListTile(
-                  onTap: () => Navigator.of(ctx).pop(_TtlPick(opt)),
-                  title: Text(_ttlLabel(l10n, opt), style: TextStyle(fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400)),
-                  trailing: isSelected
-                      ? Icon(Icons.check_rounded, color: cs.primary)
-                      : isRecommended
-                          ? Text(l10n.sessionTtlRecommended, style: TextStyle(fontSize: 11, color: cs.primary))
-                          : null,
-                );
-              }),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (selectedBox != null && selectedBox.days != _ttlDays) {
-      _onTtlChanged(selectedBox.days);
-    }
-  }
-
-  Widget _levelRow(AppLocalizations l10n, ColorScheme cs, String level) {
-    final selected = level == _level;
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: _saving ? null : () => _onLevelChanged(level),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: selected ? cs.primary.withValues(alpha: 0.12) : Colors.transparent,
-          border: Border.all(color: selected ? cs.primary.withValues(alpha: 0.5) : cs.outlineVariant.withValues(alpha: 0.25)),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-              size: 18,
-              color: selected ? cs.primary : cs.onSurfaceVariant,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(_levelLabel(l10n, level), style: const TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 2),
-                  Text(_levelDesc(l10n, level), style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -690,23 +549,31 @@ class _SecurityLevelSectionState extends State<SecurityLevelSection> {
       );
     }
 
+    final summary = _ttlDays == _recommendedTtl
+        ? '${_levelLabel(l10n, _level)} · ${_ttlLabel(l10n, _ttlDays)} — ${l10n.sessionTtlRecommended}'
+        : '${_levelLabel(l10n, _level)} · ${_ttlLabel(l10n, _ttlDays)}';
+
     // No independent expand/collapse of its own: this section already lives
     // inside the "Active Devices" accordion in Settings, so a second nested
     // collapse control here was both redundant and, being a second AnimatedSize
     // stacked inside the outer one, the source of the visible jank when
-    // opening/closing the outer section.
+    // opening/closing the outer section. Editing now happens in a dialog
+    // (showSecurityLevelDialog) instead of inline, since the level cards'
+    // full descriptions became unreadable once squeezed into this panel's
+    // narrow width — the dialog gets a fixed, comfortable width instead.
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: glassSurfaceColor(cs),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.25)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: _openDialog,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(Icons.shield_outlined, size: 18, color: cs.primary),
@@ -720,63 +587,18 @@ class _SecurityLevelSectionState extends State<SecurityLevelSection> {
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 2),
-                    if (_saving)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 2),
-                        child: SizedBox(height: 12, width: 12, child: CircularProgressIndicator(strokeWidth: 2)),
-                      )
-                    else
-                      Text(
-                        _levelLabel(l10n, _level),
-                        style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant, fontWeight: FontWeight.w600),
-                      ),
+                    Text(
+                      summary,
+                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant, fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ],
                 ),
               ),
+              Icon(Icons.chevron_right_rounded, size: 20, color: cs.onSurfaceVariant),
             ],
           ),
-          const SizedBox(height: 12),
-          ...['easy', 'balanced', 'strict'].map((level) => _levelRow(l10n, cs, level)),
-          const SizedBox(height: 4),
-          Container(height: 1, color: cs.outlineVariant.withValues(alpha: 0.2)),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Icon(Icons.timer_outlined, size: 16, color: cs.primary),
-              const SizedBox(width: 8),
-              Text(l10n.sessionTtlTitle, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(l10n.sessionTtlSubtitle, style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
-          const SizedBox(height: 10),
-          InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: _saving ? null : _openTtlPicker,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.4)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _ttlOptions.contains(_ttlDays)
-                          ? (_ttlDays == _recommendedTtl
-                              ? '${_ttlLabel(l10n, _ttlDays)} — ${l10n.sessionTtlRecommended}'
-                              : _ttlLabel(l10n, _ttlDays))
-                          : _ttlLabel(l10n, _ttlDays),
-                      style: const TextStyle(fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                  Icon(Icons.unfold_more_rounded, size: 18, color: cs.onSurfaceVariant),
-                ],
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

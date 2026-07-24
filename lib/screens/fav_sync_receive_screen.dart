@@ -396,7 +396,7 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
               FilledButton.icon(
                 onPressed: () => Navigator.of(context).pop(),
                 icon: const Icon(Icons.close),
-                label: const Text('Close'),
+                label: Text(AppLocalizations.of(context).close),
               ),
             ],
           ),
@@ -727,7 +727,7 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
         const SizedBox(height: 8),
         OutlinedButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
+          child: Text(AppLocalizations.of(context).close),
         ),
       ],
     );

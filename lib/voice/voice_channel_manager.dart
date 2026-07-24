@@ -13,6 +13,7 @@ import 'package:media_kit/media_kit.dart' as mk;
 
 import '../managers/external_server_manager.dart';
 import '../managers/settings_manager.dart';
+import '../widgets/onyx_dialog.dart';
 import '../globals.dart' show navigatorKey;
 
 // ── Audio quality settings received from the server ──────────────────────────
@@ -585,34 +586,13 @@ class VoiceChannelManager {
   void _showVoiceError(String title, String body) {
     final ctx = navigatorKey.currentState?.overlay?.context;
     if (ctx == null) return;
-    final scheme = Theme.of(ctx).colorScheme;
-    showDialog<void>(
+    showOnyxInfoDialog(
       context: ctx,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: scheme.surfaceContainerHighest,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(children: [
-          Icon(Icons.mic_off_rounded, color: scheme.error, size: 22),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(title,
-                style: TextStyle(
-                    color: scheme.onSurface,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600)),
-          ),
-        ]),
-        content: Text(body,
-            style: TextStyle(
-                color: scheme.onSurface.withValues(alpha: 0.75), fontSize: 14)),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(),
-            style: FilledButton.styleFrom(backgroundColor: scheme.primary),
-            child: const Text('Понятно'),
-          ),
-        ],
-      ),
+      title: title,
+      message: body,
+      buttonLabel: 'Понятно',
+      isError: true,
+      icon: Icons.mic_off_rounded,
     );
   }
 

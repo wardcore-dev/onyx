@@ -6,7 +6,8 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
+import '../utils/onyx_base_dir.dart'
+    show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:file_picker/file_picker.dart';
 import '../globals.dart';
@@ -18,6 +19,7 @@ import '../utils/image_size_cache.dart';
 import '../utils/image_file_cache.dart';
 import '../utils/blurhash_cache.dart';
 import '../utils/wallpaper_util.dart';
+import '../l10n/app_localizations.dart';
 
 enum _ImageMenuAction { download, setWallpaper }
 
@@ -38,12 +40,15 @@ class ImageMessageWidget extends StatefulWidget {
   final String peerUsername;
   final bool isOutgoing;
   final String? mediaKeyB64;
+
   /// BlurHash from the message metadata — shows a blurred preview while the
   /// full image is still downloading. Null for images sent before this feature.
   final String? blurHash;
+
   /// Aspect ratio embedded in the message metadata, used to size the placeholder
   /// correctly before the real image dimensions are known.
   final double? initialAspectRatio;
+
   /// Decode width passed to [Image.file]'s `cacheWidth`. Defaults to 280
   /// (chat-bubble size). Callers that render this widget much smaller (e.g.
   /// a gallery grid tile shrunk via FittedBox) should pass the actual
@@ -51,6 +56,10 @@ class ImageMessageWidget extends StatefulWidget {
   /// to immediately downscale it wastes CPU and is the main cause of laggy
   /// thumbnails when scrolling a dense grid.
   final int? cacheWidth;
+
+  /// Scales the bubble's displayed max dimensions to match the app-wide
+  /// "message size" setting, same as the text/timestamp scaling.
+  final double fontSizeMultiplier;
 
   const ImageMessageWidget({
     Key? key,
@@ -62,6 +71,7 @@ class ImageMessageWidget extends StatefulWidget {
     this.blurHash,
     this.initialAspectRatio,
     this.cacheWidth,
+    this.fontSizeMultiplier = 1.0,
   }) : super(key: key);
 
   @override
@@ -74,11 +84,10 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
   String? _error;
   double? _aspectRatio;
 
-
   @override
   void initState() {
     super.initState();
-    
+
     final cached = imageFileCache[widget.filename];
     if (cached != null && cached.file.existsSync()) {
       _imageFile = cached.file;
@@ -96,7 +105,6 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.filename != widget.filename ||
         oldWidget.isOutgoing != widget.isOutgoing) {
-      
       final cached = imageFileCache[widget.filename];
       if (cached != null && cached.file.existsSync()) {
         BlurHashCache.instance.ensureFor(widget.filename, cached.file);
@@ -119,7 +127,8 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
 
   Future<void> _loadImageFile() async {
     try {
-      debugPrint('[ImageWidget] Loading image: "${widget.filename}" (isOutgoing: ${widget.isOutgoing})');
+      debugPrint(
+          '[ImageWidget] Loading image: "${widget.filename}" (isOutgoing: ${widget.isOutgoing})');
 
       final cacheDirPath = await _getImageDirPath();
 
@@ -147,14 +156,12 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
           throw Exception('Favorites file not found: $favFilename');
         }
       } else if (widget.filename.startsWith('http')) {
-        
         var url = widget.filename;
         final safeName = _sanitizeFilename(Uri.parse(url).pathSegments.last);
         final ext = _guessExtension(url) ?? '.jpg';
         cachedFile = File('${cacheDirPath}/$safeName$ext');
 
         if (!(await cachedFile.exists())) {
-          
           final uri = Uri.parse(url);
 
           if (!url.contains('?token=') && !url.contains('&token=')) {
@@ -178,7 +185,6 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
           }
         }
       } else {
-        
         final cachedPath = '${cacheDirPath}/${widget.filename}';
         cachedFile = File(cachedPath);
         if (!(await cachedFile.exists())) {
@@ -196,8 +202,8 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
       }
 
       if (mounted && cachedFile != null) {
-        
-        final aspectRatio = await ImageSizeCache().getOrComputeAspectRatio(cachedFile);
+        final aspectRatio =
+            await ImageSizeCache().getOrComputeAspectRatio(cachedFile);
         final fileSize = cachedFile.lengthSync();
 
         imageFileCache[widget.filename] = (
@@ -265,7 +271,8 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
     final filename = _suggestFilename(widget.filename);
     try {
       if (kIsWeb) {
-        rootScreenKey.currentState?.showSnack('Save not supported on web — open the image and save');
+        rootScreenKey.currentState
+            ?.showSnack('Save not supported on web — open the image and save');
         return;
       }
 
@@ -274,11 +281,13 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
         File? tempJpg;
         if (p.extension(file.path).toLowerCase() == '.jfif') {
           final tmp = await getTemporaryDirectory();
-          tempJpg = File('${tmp.path}/${p.basenameWithoutExtension(file.path)}.jpg');
+          tempJpg =
+              File('${tmp.path}/${p.basenameWithoutExtension(file.path)}.jpg');
           await file.copy(tempJpg.path);
           saveFile = tempJpg;
         }
-        final saved = await GallerySaver.saveImage(saveFile.path, albumName: 'ONYX');
+        final saved =
+            await GallerySaver.saveImage(saveFile.path, albumName: 'ONYX');
         await tempJpg?.delete().catchError((_) => File(''));
         if (saved == true) {
           rootScreenKey.currentState?.showSnack('Saved to gallery');
@@ -308,7 +317,7 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
             rootScreenKey.currentState?.showSnack('Save cancelled');
             return;
           }
-          
+
           final directoryPath = await FilePicker.platform.getDirectoryPath(
             dialogTitle: 'Choose folder to save image',
           );
@@ -325,7 +334,8 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
         return;
       }
 
-      rootScreenKey.currentState?.showSnack('Save not supported on this platform');
+      rootScreenKey.currentState
+          ?.showSnack('Save not supported on this platform');
     } catch (e) {
       rootScreenKey.currentState?.showSnack(' Save failed: $e');
     }
@@ -343,11 +353,13 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
   }
 
   void _showFullscreen(File file) {
+    final l = AppLocalizations.of(context);
     FocusScope.of(context).unfocus(disposition: UnfocusDisposition.scope);
 
     final scope = ChatImagesScope.maybeOf(context);
     if (scope != null && scope.allImages.isNotEmpty) {
-      final idx = scope.allImages.indexWhere((i) => i.filename == widget.filename);
+      final idx =
+          scope.allImages.indexWhere((i) => i.filename == widget.filename);
       if (idx >= 0) {
         Navigator.of(context).push(buildGalleryRoute(AlbumGallery(
           allItems: scope.allImages,
@@ -394,7 +406,8 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
                         child: Material(
                           color: Colors.black45,
                           child: PopupMenuButton<_ImageMenuAction>(
-                            icon: const Icon(Icons.more_vert, size: 20, color: Colors.white),
+                            icon: const Icon(Icons.more_vert,
+                                size: 20, color: Colors.white),
                             tooltip: 'More',
                             useRootNavigator: true,
                             onSelected: (action) {
@@ -407,19 +420,19 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
                                   break;
                               }
                             },
-                            itemBuilder: (_) => const [
+                            itemBuilder: (_) => [
                               PopupMenuItem(
                                 value: _ImageMenuAction.download,
                                 child: ListTile(
-                                  leading: Icon(Icons.download_rounded),
-                                  title: Text('Download'),
+                                  leading: const Icon(Icons.download_rounded),
+                                  title: Text(l.download),
                                 ),
                               ),
                               PopupMenuItem(
                                 value: _ImageMenuAction.setWallpaper,
                                 child: ListTile(
-                                  leading: Icon(Icons.wallpaper_rounded),
-                                  title: Text('Set as wallpaper'),
+                                  leading: const Icon(Icons.wallpaper_rounded),
+                                  title: Text(l.setAsWallpaper),
                                 ),
                               ),
                             ],
@@ -436,7 +449,8 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
                         child: Material(
                           color: Colors.black45,
                           child: IconButton(
-                            icon: const Icon(Icons.close, size: 20, color: Colors.white),
+                            icon: const Icon(Icons.close,
+                                size: 20, color: Colors.white),
                             onPressed: () => Navigator.of(dialogCtx).pop(),
                             tooltip: 'Close',
                           ),
@@ -459,14 +473,17 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
       {required IconData icon, VoidCallback? onTap, bool loading = false}) {
     final aspectRatio = _aspectRatio ?? widget.initialAspectRatio ?? 4 / 3;
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 280, maxHeight: 400),
+      constraints: BoxConstraints(
+        maxWidth: 280 * widget.fontSizeMultiplier,
+        maxHeight: 400 * widget.fontSizeMultiplier,
+      ),
       child: AspectRatio(
         aspectRatio: aspectRatio,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(16),
           child: BlurPlaceholder(
-            blurHash: widget.blurHash ??
-                BlurHashCache.instance.get(widget.filename),
+            blurHash:
+                widget.blurHash ?? BlurHashCache.instance.get(widget.filename),
             icon: icon,
             onTap: onTap,
             loading: loading,
@@ -500,9 +517,9 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
         child: GestureDetector(
           onTap: () => _showFullscreen(_imageFile!),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: 280,
-              maxHeight: 400,
+            constraints: BoxConstraints(
+              maxWidth: 280 * widget.fontSizeMultiplier,
+              maxHeight: 400 * widget.fontSizeMultiplier,
             ),
             child: AspectRatio(
               aspectRatio: aspectRatio,
@@ -523,7 +540,8 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
                     _imageFile!,
                     fit: BoxFit.cover,
                     gaplessPlayback: true,
-                    cacheWidth: widget.cacheWidth ?? 560,
+                    cacheWidth: widget.cacheWidth ??
+                        (560 * widget.fontSizeMultiplier).round(),
                     filterQuality: FilterQuality.medium,
                   ),
                 ),

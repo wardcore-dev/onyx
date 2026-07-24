@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import '../globals.dart';
 import '../managers/settings_manager.dart';
+import '../l10n/app_localizations.dart';
 
 class ProxyShieldBadge extends StatelessWidget {
   const ProxyShieldBadge({Key? key}) : super(key: key);
@@ -69,6 +70,7 @@ class ProxyShieldBadge extends StatelessWidget {
   }
 
   void _showProxyDialog(BuildContext context) {
+    final l = AppLocalizations.of(context);
     final colorScheme = Theme.of(context).colorScheme;
     final host = SettingsManager.proxyHost.value.trim();
     final port = SettingsManager.proxyPort.value.trim();
@@ -156,7 +158,7 @@ class ProxyShieldBadge extends StatelessWidget {
                   alignment: Alignment.centerRight,
                   child: TextButton(
                     onPressed: () => Navigator.pop(ctx),
-                    child: const Text('Close'),
+                    child: Text(l.close),
                   ),
                 ),
               ],

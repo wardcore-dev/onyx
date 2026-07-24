@@ -1,5 +1,6 @@
 // lib/screens/accounts_tab.dart
 import 'dart:async';
+import '../widgets/onyx_dialog.dart';
 import 'package:ONYX/managers/settings_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1208,22 +1209,16 @@ class _AccountsTabState extends State<AccountsTab>
                                 color: Colors.red,
                               ),
                               onPressed: () async {
-                                final confirmed = await showDialog<bool>(
+                                final confirmed = await showOnyxConfirmDialog(
                                   context: context,
-                                  builder: (ctx) => AlertDialog(
-                                    title: Text(AppLocalizations.of(ctx).deleteFromRecentTitle),
-                                    content: Text(AppLocalizations.of(ctx).deleteFromRecentContent(acc)),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.of(ctx).pop(false),
-                                        child: Text(AppLocalizations.of(ctx).cancel),
-                                      ),
-                                      FilledButton(
-                                        onPressed: () => Navigator.of(ctx).pop(true),
-                                        child: Text(AppLocalizations.of(ctx).delete),
-                                      ),
-                                    ],
-                                  ),
+                                  title: AppLocalizations.of(context)
+                                      .deleteFromRecentTitle,
+                                  message: AppLocalizations.of(context)
+                                      .deleteFromRecentContent(acc),
+                                  confirmLabel:
+                                      AppLocalizations.of(context).delete,
+                                  isDestructive: true,
+                                  icon: Icons.delete_outline_rounded,
                                 );
                                 if (confirmed == true) {
                                   await widget.onDeleteAccount(acc);

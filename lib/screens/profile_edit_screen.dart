@@ -4,6 +4,7 @@ import 'dart:convert';
 import '../globals.dart';
 import '../managers/account_manager.dart';
 import '../managers/settings_manager.dart';
+import '../l10n/app_localizations.dart';
 
 class ProfileEditScreen extends StatefulWidget {
   final String currentUsername;
@@ -97,7 +98,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             );
             return Scaffold(
               appBar: AppBar(
-                title: const Text('Edit Profile'),
+                title: Text(AppLocalizations.of(context).editProfile),
                 backgroundColor: Colors.transparent,
                 elevation: 0,
               ),

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 
 import '../managers/settings_manager.dart';
+import '../l10n/app_localizations.dart';
 
 Future<Uint8List?> showImageCropDialog(BuildContext context, Uint8List bytes) async {
   try {
@@ -42,6 +43,7 @@ Future<Uint8List?> showImageCropDialog(BuildContext context, Uint8List bytes) as
       context: context,
       barrierDismissible: true,
       builder: (ctx) {
+        final l = AppLocalizations.of(ctx);
         return ValueListenableBuilder<double>(
           valueListenable: SettingsManager.elementBrightness,
           builder: (_, brightness, __) {
@@ -107,7 +109,7 @@ Future<Uint8List?> showImageCropDialog(BuildContext context, Uint8List bytes) as
                       children: [
                         TextButton(
                           onPressed: () => Navigator.of(ctx).pop(null),
-                          child: const Text('Cancel'),
+                          child: Text(l.cancel),
                         ),
                         const Spacer(),
                         FilledButton(
@@ -154,7 +156,7 @@ Future<Uint8List?> showImageCropDialog(BuildContext context, Uint8List bytes) as
                               Navigator.of(ctx).pop(null);
                             }
                           },
-                          child: const Text('Crop & Upload'),
+                          child: Text(l.cropAndUpload),
                         ),
                       ],
                     ),

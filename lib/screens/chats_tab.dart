@@ -11,6 +11,7 @@ import '../globals.dart';
 import '../widgets/avatar_widget.dart';
 import '../managers/user_cache.dart';
 import '../l10n/app_localizations.dart';
+import '../l10n/app_localizations_extra.dart';
 import '../managers/blocklist_manager.dart';
 import '../managers/mute_manager.dart';
 import '../managers/lock_manager.dart';
@@ -22,6 +23,7 @@ import '../widgets/inline_search_bar.dart';
 import '../utils/dialog_utils.dart';
 import '../enums/delivery_mode.dart';
 import '../services/mesh/mesh_manager.dart';
+import '../widgets/onyx_dialog.dart';
 
 String _getFileTypeLabel(String filename) {
   final ext = filename.toLowerCase();
@@ -249,6 +251,77 @@ class _UnreadBadge extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Wraps a chat row with a soft highlight ring while [pendingHighlightChat]
+/// points at [username] — surfaces the target of a notification tap even
+/// when the forced auto-navigation into ChatScreen never fires (lost race
+/// with the PIN lock screen, or the OS never redelivers the tap). Fades out
+/// on its own after a few seconds so it doesn't linger if the user ignores
+/// it, and clears immediately once the chat is actually opened (see
+/// _openChatWithLockCheck).
+class _ChatHighlightRing extends StatefulWidget {
+  final String username;
+  final Widget child;
+  const _ChatHighlightRing({required this.username, required this.child});
+
+  @override
+  State<_ChatHighlightRing> createState() => _ChatHighlightRingState();
+}
+
+class _ChatHighlightRingState extends State<_ChatHighlightRing> {
+  Timer? _autoClearTimer;
+
+  @override
+  void dispose() {
+    _autoClearTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleAutoClear() {
+    _autoClearTimer?.cancel();
+    _autoClearTimer = Timer(const Duration(seconds: 6), () {
+      if (pendingHighlightChat.value == widget.username) {
+        pendingHighlightChat.value = null;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<String?>(
+      valueListenable: pendingHighlightChat,
+      builder: (context, highlighted, child) {
+        final isHighlighted = highlighted == widget.username;
+        if (isHighlighted) {
+          _scheduleAutoClear();
+        } else {
+          _autoClearTimer?.cancel();
+        }
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOut,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: isHighlighted
+                ? [
+                    BoxShadow(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withValues(alpha: 0.55),
+                      blurRadius: 14,
+                      spreadRadius: 1,
+                    ),
+                  ]
+                : const [],
+          ),
+          child: child,
+        );
+      },
+      child: widget.child,
     );
   }
 }
@@ -529,80 +602,49 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
       defaultTargetPlatform == TargetPlatform.macOS ||
       defaultTargetPlatform == TargetPlatform.linux;
 
-  void _showDeleteConfirmationDialog(BuildContext context, _ChatSumm summary) {
-    showDialog(
+  void _showDeleteConfirmationDialog(BuildContext context, _ChatSumm summary) async {
+    final l = AppLocalizations.of(context);
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppLocalizations.of(context).deleteChatTitle),
-        content: Text(AppLocalizations.of(context).deleteChatContent(summary.displayName)),
-        actions: [
-          TextButton(
-            onPressed: Navigator.of(context).pop,
-            child: Text(AppLocalizations.of(context).cancel),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              LockManager.removeLock('dm_${summary.otherUsername}');
-              widget.onDeleteChat(summary.chatId, summary.displayName);
-            },
-            child: Text(
-              AppLocalizations.of(context).delete,
-              style: const TextStyle(color: Colors.red),
-            ),
-          ),
-        ],
-      ),
+      title: l.deleteChatTitle,
+      message: l.deleteChatContent(summary.displayName),
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
+    if (confirmed == true) {
+      LockManager.removeLock('dm_${summary.otherUsername}');
+      widget.onDeleteChat(summary.chatId, summary.displayName);
+    }
   }
 
-  void _showBlockConfirmationDialog(BuildContext context, _ChatSumm summary) {
-    showDialog(
+  void _showBlockConfirmationDialog(BuildContext context, _ChatSumm summary) async {
+    final l = AppLocalizations.of(context);
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(AppLocalizations.of(context).blockUserLabel),
-        content: Text(AppLocalizations.of(context).blockUserConfirmContent(summary.displayName)),
-        actions: [
-          TextButton(
-            onPressed: Navigator.of(ctx).pop,
-            child: Text(AppLocalizations.of(context).cancel),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              widget.onBlockUser(summary.otherUsername, summary.displayName);
-            },
-            child: Text(
-              AppLocalizations.of(context).blockUserLabel,
-              style: const TextStyle(color: Colors.red),
-            ),
-          ),
-        ],
-      ),
+      title: l.blockUserLabel,
+      message: l.blockUserConfirmContent(summary.displayName),
+      confirmLabel: l.blockUserLabel,
+      isDestructive: true,
+      icon: Icons.block_rounded,
     );
+    if (confirmed == true) {
+      widget.onBlockUser(summary.otherUsername, summary.displayName);
+    }
   }
 
-  void _showUnblockConfirmationDialog(BuildContext context, _ChatSumm summary) {
-    showDialog(
+  void _showUnblockConfirmationDialog(BuildContext context, _ChatSumm summary) async {
+    final l = AppLocalizations.of(context);
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(AppLocalizations.of(context).unblockUserLabel),
-        content: Text(AppLocalizations.of(context).unblockUserConfirmContent(summary.displayName)),
-        actions: [
-          TextButton(
-            onPressed: Navigator.of(ctx).pop,
-            child: Text(AppLocalizations.of(context).cancel),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              widget.onUnblockUser(summary.otherUsername);
-            },
-            child: Text(AppLocalizations.of(context).unblockUserLabel),
-          ),
-        ],
-      ),
+      title: l.unblockUserLabel,
+      message: l.unblockUserConfirmContent(summary.displayName),
+      confirmLabel: l.unblockUserLabel,
+      icon: Icons.lock_open_rounded,
     );
+    if (confirmed == true) {
+      widget.onUnblockUser(summary.otherUsername);
+    }
   }
 
   Widget Function(BuildContext, double) _chatAvatarBuilder(_ChatSumm summ) {
@@ -674,6 +716,9 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
   }
 
   Future<void> _openChatWithLockCheck(BuildContext ctx, String username) async {
+    // Clears a notification-tap highlight regardless of how the user got
+    // here — manually opening the chat makes the highlight moot.
+    if (pendingHighlightChat.value == username) pendingHighlightChat.value = null;
     final lockId = 'dm_$username';
     if (!LockManager.isLocked(lockId) || LockManager.isSessionUnlocked(lockId)) {
       widget.onOpenChat(username);
@@ -1240,7 +1285,9 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
         physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
         separatorHeight: 6,
         itemBuilder: (context, it, i) {
-          return RepaintBoundary(
+          return _ChatHighlightRing(
+            username: it.otherUsername,
+            child: RepaintBoundary(
             child: GestureDetector(
               onSecondaryTapUp: _isDesktop
                   ? (details) => _showDesktopContextMenu(context, details.globalPosition, it)
@@ -1443,6 +1490,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                 ),
               ),
             ),
+          ),
           ),
           ),
         );

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../managers/settings_manager.dart';
+import '../l10n/app_localizations.dart';
 
 class VoiceConfirmDialog extends StatelessWidget {
   final Duration duration;
@@ -23,6 +24,7 @@ class VoiceConfirmDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final l = AppLocalizations.of(context);
 
     return ValueListenableBuilder<double>(
       valueListenable: SettingsManager.elementOpacity,
@@ -207,7 +209,7 @@ class VoiceConfirmDialog extends StatelessWidget {
                           Navigator.pop(context);
                           onCancel();
                         },
-                        child: const Text('Cancel'),
+                        child: Text(l.cancel),
                       ),
                       const SizedBox(width: 12),
                       FilledButton.tonal(
@@ -215,7 +217,7 @@ class VoiceConfirmDialog extends StatelessWidget {
                           Navigator.pop(context);
                           onSend();
                         },
-                        child: const Text('Send Voice'),
+                        child: Text(l.sendVoice),
                       ),
                     ],
                   ),

@@ -14,7 +14,8 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  
+  intl: ^0.20.2
+
   uuid: ^4.0.0
   
   permission_handler: ^11.3.1
@@ -113,12 +114,14 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
+  generate: true
   assets:
     - assets/onyx_icon.png
     - assets/onyx-512.png
     - assets/notification0.wav
     - assets/notification1.wav
     - assets/notification2.wav
+    - assets/onyxringtone0.wav
     - assets/tray_icon.png
     - assets/tray_icon.ico
     - assets/certs/

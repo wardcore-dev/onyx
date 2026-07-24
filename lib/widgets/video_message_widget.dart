@@ -2,10 +2,12 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show SystemChrome, SystemUiMode, SystemUiOverlay;
+import 'package:flutter/services.dart'
+    show SystemChrome, SystemUiMode, SystemUiOverlay;
 import 'dart:io' show File, Directory, Platform;
 import 'package:http/http.dart' as http;
-import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
+import '../utils/onyx_base_dir.dart'
+    show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
 import 'package:path/path.dart' as p;
 import '../utils/file_utils.dart' show getOnyxSaveDirectory;
 import 'package:file_picker/file_picker.dart';
@@ -59,14 +61,20 @@ class VideoMessageWidget extends StatefulWidget {
   final String? owner;
   final String peerUsername;
   final String? mediaKeyB64;
+
   /// BlurHash poster from the message metadata — shows a blurred preview behind
   /// the play button while the video is unloaded. Null for videos sent without
   /// one; in that case a poster is captured from the first frame after the
   /// video is opened once and reused on later views (BlurHashCache).
   final String? blurHash;
+
   /// Aspect ratio embedded in the message metadata at send time. Used to size
   /// the bubble correctly before the video is ever played. Falls back to 16/9.
   final double? initialAspectRatio;
+
+  /// Scales the bubble's displayed max dimensions to match the app-wide
+  /// "message size" setting, same as the text/timestamp scaling.
+  final double fontSizeMultiplier;
 
   const VideoMessageWidget({
     super.key,
@@ -76,6 +84,7 @@ class VideoMessageWidget extends StatefulWidget {
     this.mediaKeyB64,
     this.blurHash,
     this.initialAspectRatio,
+    this.fontSizeMultiplier = 1.0,
   });
 
   @override
@@ -282,8 +291,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
         }
       } else if (widget.filename.startsWith('http')) {
         var url = widget.filename;
-        final safeName =
-            _sanitizeFilename(Uri.parse(url).pathSegments.last);
+        final safeName = _sanitizeFilename(Uri.parse(url).pathSegments.last);
         final ext = _guessExtension(url) ?? '.mp4';
         cachedFile = File('${cacheDir.path}/$safeName$ext');
 
@@ -295,8 +303,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
                 .where((s) => s.host == uri.host && s.port == uri.port)
                 .toList();
             if (matching.isNotEmpty) {
-              url =
-                  '$url?token=${Uri.encodeComponent(matching.first.token)}';
+              url = '$url?token=${Uri.encodeComponent(matching.first.token)}';
             }
           }
           final client = http.Client();
@@ -340,16 +347,13 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
         cachedFile = File(cachedPath);
 
         if (!(await cachedFile.exists())) {
-          final currentUsername =
-              rootScreenKey.currentState?.currentUsername;
-          final token =
-              await AccountManager.getToken(currentUsername ?? '');
+          final currentUsername = rootScreenKey.currentState?.currentUsername;
+          final token = await AccountManager.getToken(currentUsername ?? '');
           if (token == null) throw Exception('Not logged in');
 
-          final videoUrl =
-              (widget.owner != null && widget.owner!.isNotEmpty)
-                  ? '$serverBase/video/${widget.owner}/${widget.filename}'
-                  : '$serverBase/video/${widget.filename}';
+          final videoUrl = (widget.owner != null && widget.owner!.isNotEmpty)
+              ? '$serverBase/video/${widget.owner}/${widget.filename}'
+              : '$serverBase/video/${widget.filename}';
           final client = http.Client();
           final Uint8List encryptedBytes;
           try {
@@ -438,8 +442,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
       final origName = widget.filename.startsWith('http')
           ? Uri.parse(widget.filename).pathSegments.last
           : widget.filename;
-      final ext =
-          p.extension(origName) == '' ? '.mp4' : p.extension(origName);
+      final ext = p.extension(origName) == '' ? '.mp4' : p.extension(origName);
       final safeName = _sanitizeFilename(origName);
 
       if (!kIsWeb &&
@@ -472,8 +475,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
         }
         final savedFile = File(destPath);
         await _cachedFile!.copy(savedFile.path);
-        rootScreenKey.currentState
-            ?.showSnack('Saved to: ${savedFile.path}');
+        rootScreenKey.currentState?.showSnack('Saved to: ${savedFile.path}');
         return;
       }
 
@@ -567,8 +569,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
       }
 
       if (kIsWeb) {
-        rootScreenKey.currentState
-            ?.showSnack('Save not supported on web');
+        rootScreenKey.currentState?.showSnack('Save not supported on web');
         return;
       }
 
@@ -731,33 +732,33 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
                 gaplessPlayback: true,
               ),
             Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_downloadProgress != null) ...[
-                SizedBox(
-                  width: 120,
-                  child: LinearProgressIndicator(
-                    value: _downloadProgress,
-                    backgroundColor: Colors.white24,
-                    color: Colors.white,
-                    minHeight: 3,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '${(_downloadProgress! * 100).toStringAsFixed(0)}%',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ] else
-                const CircularProgressIndicator(color: Colors.white),
-            ],
-          ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_downloadProgress != null) ...[
+                    SizedBox(
+                      width: 120,
+                      child: LinearProgressIndicator(
+                        value: _downloadProgress,
+                        backgroundColor: Colors.white24,
+                        color: Colors.white,
+                        minHeight: 3,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${(_downloadProgress! * 100).toStringAsFixed(0)}%',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ] else
+                    const CircularProgressIndicator(color: Colors.white),
+                ],
+              ),
             ),
           ],
         ),
@@ -788,7 +789,10 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 300, maxHeight: 460),
+        constraints: BoxConstraints(
+          maxWidth: 300 * widget.fontSizeMultiplier,
+          maxHeight: 460 * widget.fontSizeMultiplier,
+        ),
         child: AspectRatio(
           aspectRatio: _aspectRatio.clamp(0.4, 2.0),
           child: Container(color: color, child: child),
@@ -846,38 +850,38 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
 
   Widget _errorBox(BuildContext context) {
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 300),
+      constraints: BoxConstraints(maxWidth: 300 * widget.fontSizeMultiplier),
       child: Container(
-      padding: const EdgeInsets.all(12),
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(' Failed to load video',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          if (_errorDetails != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              _errorDetails!,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: Theme.of(context).colorScheme.error, fontSize: 12),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
+        padding: const EdgeInsets.all(12),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(' Failed to load video',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            if (_errorDetails != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                _errorDetails!,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.error, fontSize: 12),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _resetAndRetry,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Retry', style: TextStyle(fontSize: 13)),
             ),
           ],
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: _resetAndRetry,
-            icon: const Icon(Icons.refresh, size: 16),
-            label: const Text('Retry', style: TextStyle(fontSize: 13)),
-          ),
-        ],
-      ),
+        ),
       ),
     );
   }
@@ -969,7 +973,10 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 300, maxHeight: 460),
+          constraints: BoxConstraints(
+            maxWidth: 300 * widget.fontSizeMultiplier,
+            maxHeight: 460 * widget.fontSizeMultiplier,
+          ),
           child: AspectRatio(
             aspectRatio: _aspectRatio.clamp(0.4, 2.0),
             child: Stack(

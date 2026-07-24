@@ -1,6 +1,7 @@
 // lib/screens/favorites_screen.dart
 import '../widgets/marquee_text.dart';
 import '../widgets/empty_chat_placeholder.dart';
+import '../widgets/onyx_dialog.dart';
 import '../utils/chat_image_preloader.dart';
 import '../utils/gallery_extractor.dart';
 import 'media_gallery_screen.dart';
@@ -12,6 +13,7 @@ import '../enums/liquid_glass_quality.dart';
 import 'package:ONYX/screens/chats_tab.dart' show getPreviewText;
 import 'package:ONYX/screens/forward_screen.dart';
 import '../l10n/app_localizations.dart';
+import '../l10n/app_localizations_extra.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -53,6 +55,8 @@ import '../widgets/chat_search_bar.dart';
 import '../widgets/animated_message_bubble.dart';
 import '../widgets/message_reaction_bar.dart';
 import '../widgets/swipeable_message_wrapper.dart';
+import '../widgets/onyx_reminder_picker.dart';
+import '../services/reminder_service.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/adaptive_glass_icon_button.dart';
@@ -263,6 +267,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     _scroll.addListener(_onScroll);
     _loadPinnedMessage();
     _consumePendingFavScrollTarget();
+    _subscribeReminders();
 
     _inputEntryController = AnimationController(
       duration: const Duration(milliseconds: 400),
@@ -356,6 +361,31 @@ class _FavoritesScreenState extends State<FavoritesScreen>
 
   Map<String, dynamic>? _replyingToMessage;
   Map<String, dynamic>? _pinnedMessage;
+
+  // Live cache of "chatId|messageId" keys with an active reminder — kept
+  // in sync via a stream so the desktop right-click menu (built
+  // synchronously on every message, on every rebuild) can check reminder
+  // state without a DB round-trip per render.
+  Set<String> _reminderKeys = {};
+  StreamSubscription? _reminderKeysSub;
+
+  void _subscribeReminders() {
+    final accountId = rootScreenKey.currentState?.currentUsername;
+    if (accountId == null) return;
+    _reminderKeysSub =
+        ReminderService.watchActiveReminders(accountId).listen((rows) {
+      if (!mounted) return;
+      setState(() {
+        _reminderKeys = rows.map((r) => '${r.chatId}|${r.messageId}').toSet();
+      });
+    });
+  }
+
+  bool _hasReminderSync(ChatMessage msg) {
+    final chatId = 'fav:${widget.favoriteId}';
+    final messageId = msg.serverMessageId?.toString() ?? msg.id;
+    return _reminderKeys.contains('$chatId|$messageId');
+  }
 
   ChatMessage? _editingMessage;
 
@@ -573,6 +603,39 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     );
   }
 
+  Future<void> _handleReminderToggle({
+    required ChatMessage msg,
+    required bool hasReminder,
+    required String chatId,
+    required String messageId,
+    required String chatTitle,
+  }) async {
+    final myAccountId = rootScreenKey.currentState?.currentUsername;
+    if (myAccountId == null) return;
+    final l = AppLocalizations.of(context);
+
+    if (hasReminder) {
+      await ReminderService.cancelReminder(myAccountId, chatId, messageId);
+      rootScreenKey.currentState?.showSnack(l.reminderCancelled);
+      return;
+    }
+
+    final accentColorArgb = Theme.of(context).colorScheme.primary.toARGB32();
+    final picked = await showOnyxReminderPicker(context);
+    if (picked == null) return;
+    await ReminderService.scheduleReminder(
+      accountId: myAccountId,
+      messageId: messageId,
+      chatType: 'fav',
+      chatId: chatId,
+      chatTitle: chatTitle,
+      messagePreview: getPreviewText(msg.content),
+      accentColorArgb: accentColorArgb,
+      scheduledAt: picked,
+    );
+    rootScreenKey.currentState?.showSnack(l.reminderSet);
+  }
+
   void _startEditingMessage(ChatMessage msg) {
     setState(() => _editingMessage = msg);
     _textCtrl.text = msg.content;
@@ -766,20 +829,28 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     _dragAutoScrollTimer = null;
   }
 
+  // Map insertion order (`.values`) reflects selection/drag-recompute order,
+  // not chronological order — always re-sort by `time` first.
+  List<ChatMessage> get _selectedFavMessagesChronological =>
+      _selectedFavMessages.values.toList()
+        ..sort((a, b) => a.time.compareTo(b.time));
+
   void _copySelectedFavMessages() {
-    final texts = _selectedFavMessages.values
+    final texts = _selectedFavMessagesChronological
         .where((m) => _isFavTextMessage(m))
         .map((m) => m.content)
-        .join('\n');
+        .join('\n\n');
     if (texts.isNotEmpty) {
       Clipboard.setData(ClipboardData(text: texts));
-      rootScreenKey.currentState?.showSnack('Copied');
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value).msgCopied);
     }
     _exitFavSelectionMode();
   }
 
   void _forwardSelectedFavMessages() {
-    final contents = _selectedFavMessages.values.map((m) => m.content).toList();
+    final contents =
+        _selectedFavMessagesChronological.map((m) => m.content).toList();
     if (contents.isEmpty) return;
     _exitFavSelectionMode();
     ForwardScreen.show(context, contents);
@@ -788,25 +859,15 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   Future<void> _confirmDeleteSelectedFav() async {
     final toDelete = _selectedFavMessages.values.toList();
     if (toDelete.isEmpty) return;
-    final confirmed = await showDialog<bool>(
+    final l = AppLocalizations.of(context);
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(
-            'Delete ${toDelete.length} message${toDelete.length == 1 ? '' : 's'}?'),
-        content:
-            const Text('Selected messages will be removed from favorites.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+      title:
+          'Delete ${toDelete.length} message${toDelete.length == 1 ? '' : 's'}?',
+      message: l.favSelectedRemovedFromFavorites,
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
     if (confirmed == true) {
       for (final msg in toDelete) {
@@ -856,6 +917,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
 
   @override
   void dispose() {
+    _reminderKeysSub?.cancel();
     _selectionNotifier.dispose();
     _textCtrl.dispose();
     _scroll.removeListener(_onScroll);
@@ -1064,7 +1126,8 @@ class _FavoritesScreenState extends State<FavoritesScreen>
       final filePath = filePaths.first;
       if (!await File(filePath).exists()) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .fileNotFound);
         return;
       }
       final basename = p.basename(filePath);
@@ -1096,7 +1159,8 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         existing.add(fp);
       } else {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .fileNotFound);
       }
     }
     if (existing.isEmpty) return;
@@ -1537,7 +1601,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     }
   }
 
-  void _onLongPress(ChatMessage msg) {
+  void _onLongPress(ChatMessage msg) async {
     _focusNode.unfocus();
     final text = msg.content;
     final isImage = text.startsWith('IMAGEv1:');
@@ -1551,6 +1615,16 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     _shouldPreserveExternalFocus = true;
     final colorScheme = Theme.of(context).colorScheme;
     final l = AppLocalizations.of(context);
+
+    final reminderChatId = 'fav:${widget.favoriteId}';
+    final reminderMsgId = msg.serverMessageId?.toString() ?? msg.id;
+    final myAccountId = rootScreenKey.currentState?.currentUsername;
+    var hasReminder = false;
+    if (myAccountId != null) {
+      hasReminder = await ReminderService.hasActiveReminder(
+          myAccountId, reminderChatId, reminderMsgId);
+    }
+    if (!mounted) return;
 
     Widget actionTile(IconData icon, String label, VoidCallback? onTap,
         {Color? color}) {
@@ -1628,6 +1702,22 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                       _toggleFavPin(msg);
                     },
                   ),
+                  actionTile(
+                    hasReminder
+                        ? Icons.alarm_off_rounded
+                        : Icons.alarm_add_rounded,
+                    hasReminder ? l.cancelReminder : l.setReminder,
+                    () {
+                      Navigator.pop(ctx);
+                      _handleReminderToggle(
+                        msg: msg,
+                        hasReminder: hasReminder,
+                        chatId: reminderChatId,
+                        messageId: reminderMsgId,
+                        chatTitle: widget.title,
+                      );
+                    },
+                  ),
                   if (isSaveable)
                     actionTile(Icons.save_alt_rounded, l.save, () {
                       Navigator.pop(ctx);
@@ -1650,25 +1740,13 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                     () {
                       Navigator.pop(ctx);
                       () async {
-                        final confirmed = await showDialog<bool>(
+                        final confirmed = await showOnyxConfirmDialog(
                           context: context,
-                          builder: (ctx2) => AlertDialog(
-                            title: Text(l.deleteMessageTitle),
-                            content: Text(l.deleteFavMessageContent),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx2, false),
-                                child: Text(l.cancel),
-                              ),
-                              FilledButton(
-                                style: FilledButton.styleFrom(
-                                    backgroundColor: Colors.red.shade700),
-                                onPressed: () => Navigator.pop(ctx2, true),
-                                child: Text(l.delete,
-                                    style: const TextStyle(color: Colors.white)),
-                              ),
-                            ],
-                          ),
+                          title: l.deleteMessageTitle,
+                          message: l.deleteFavMessageContent,
+                          confirmLabel: l.delete,
+                          isDestructive: true,
+                          icon: Icons.delete_outline_rounded,
                         );
                         if (confirmed == true) {
                           _deleteMessage(msg);
@@ -1732,6 +1810,19 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         label: _isFavMsgPinned(msg) ? l.unpin : l.pin,
         onPressed: () => _toggleFavPin(msg),
       ),
+      DesktopMenuItem(
+        icon: _hasReminderSync(msg)
+            ? Icons.alarm_off_rounded
+            : Icons.alarm_add_rounded,
+        label: _hasReminderSync(msg) ? l.cancelReminder : l.setReminder,
+        onPressed: () => _handleReminderToggle(
+          msg: msg,
+          hasReminder: _hasReminderSync(msg),
+          chatId: 'fav:${widget.favoriteId}',
+          messageId: msg.serverMessageId?.toString() ?? msg.id,
+          chatTitle: widget.title,
+        ),
+      ),
       if (isSaveable)
         DesktopMenuItem(
           icon: Icons.save_alt_rounded,
@@ -1752,7 +1843,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           type: ContextMenuButtonType.copy,
           onPressed: () {
             Clipboard.setData(ClipboardData(text: text));
-            rootScreenKey.currentState?.showSnack(l.copied);
+            rootScreenKey.currentState?.showSnack(l.msgCopied);
           },
         ),
       if (!isMedia)
@@ -1981,23 +2072,14 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   }
 
   Future<void> _desktopDeleteFavorite(ChatMessage msg) async {
-    final confirmed = await showDialog<bool>(
+    final l = AppLocalizations.of(context);
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx2) => AlertDialog(
-        title: const Text('Delete message?'),
-        content: const Text('This message will be removed from favorites.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx2, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
-            onPressed: () => Navigator.pop(ctx2, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+      title: l.favDeleteMessageQuestion,
+      message: l.favMessageRemovedFromFavorites,
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
     if (confirmed == true) _deleteMessage(msg);
   }
@@ -2107,6 +2189,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     bool appliedOptimisticChange = false;
     final controller = TextEditingController(text: currentTitle);
     bool isUploading = false;
+    final l = AppLocalizations.of(context);
 
     Future<void> changeAvatarInDialog(StateSetter setDialogState) async {
       final picker = ImagePicker();
@@ -2153,20 +2236,13 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     }
 
     void removeAvatarInDialog(StateSetter setDialogState) async {
-      final confirmed = await showDialog<bool>(
+      final confirmed = await showOnyxConfirmDialog(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Delete avatar?'),
-          content: const Text('This will remove this favorite avatar.'),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('Cancel')),
-            FilledButton.tonal(
-                onPressed: () => Navigator.of(ctx).pop(true),
-                child: const Text('Delete')),
-          ],
-        ),
+        title: l.favDeleteAvatarQuestion,
+        message: l.favRemoveAvatarConfirm,
+        confirmLabel: l.delete,
+        isDestructive: true,
+        icon: Icons.delete_outline_rounded,
       );
       if (confirmed == true) {
         setDialogState(() {
@@ -2224,10 +2300,10 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                   size: 18, color: cs.primary),
                             ),
                             const SizedBox(width: 12),
-                            const Expanded(
+                            Expanded(
                               child: Text(
-                                'Edit chat',
-                                style: TextStyle(
+                                l.editChat,
+                                style: const TextStyle(
                                   fontSize: 17,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -2345,7 +2421,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                   autofocus: true,
                                   maxLength: 50,
                                   decoration: InputDecoration(
-                                    labelText: 'Chat name',
+                                    labelText: l.chatNameLabel,
                                     hintText: 'Enter chat name',
                                     counterText: '',
                                     filled: true,
@@ -2384,7 +2460,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                             Radius.circular(50)),
                                       ),
                                     ),
-                                    child: const Text('Cancel'),
+                                    child: Text(l.cancel),
                                   ),
                                 ),
                                 const SizedBox(width: 12),
@@ -2420,7 +2496,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                             Radius.circular(50)),
                                       ),
                                     ),
-                                    child: const Text('Save'),
+                                    child: Text(l.save),
                                   ),
                                 ),
                               ],
@@ -3225,6 +3301,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                       replyToId: msg.replyToId,
                                       replyToUsername: msg.replyToSender,
                                       replyToContent: msg.replyToContent,
+                                      hasReminder: _hasReminderSync(msg),
                                       desktopMenuItems:
                                           _buildDesktopMenuItems(msg),
                                       highlighted:

@@ -80,8 +80,13 @@ class _ChatPinScreenState extends State<_ChatPinScreen>
     if (!mounted) return;
     setState(() => _biometricsAvailable = ok);
     if (ok) {
-      await Future.delayed(const Duration(milliseconds: 300));
-      if (mounted) _tryBiometrics();
+      // Fire right after this frame paints — matches the main lock screen's
+      // addPostFrameCallback approach (main.dart _tryBiometric) instead of an
+      // extra fixed sleep on top of the route's own fade-in, which made the
+      // OS prompt feel noticeably slower to appear here than on the main lock.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _tryBiometrics();
+      });
     }
   }
 

@@ -3,7 +3,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import '../utils/file_utils.dart' show getOnyxSaveDirectory;
-import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
+import '../utils/onyx_base_dir.dart'
+    show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
 import 'package:file_picker/file_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:http/http.dart' as http;
@@ -15,8 +16,12 @@ class FileMessageWidget extends StatefulWidget {
   final String peerUsername;
   final bool isOutgoing;
   final String? senderUsername;
-  final String? directUrl; 
+  final String? directUrl;
   final String? mediaKeyB64;
+
+  /// Scales the icon/text to match the app-wide "message size" setting,
+  /// same as the text/timestamp scaling.
+  final double fontSizeMultiplier;
 
   const FileMessageWidget(
       {Key? key,
@@ -26,7 +31,8 @@ class FileMessageWidget extends StatefulWidget {
       required this.isOutgoing,
       this.senderUsername,
       this.directUrl,
-      this.mediaKeyB64})
+      this.mediaKeyB64,
+      this.fontSizeMultiplier = 1.0})
       : super(key: key);
 
   @override
@@ -36,7 +42,7 @@ class FileMessageWidget extends StatefulWidget {
 class _FileMessageWidgetState extends State<FileMessageWidget> {
   bool _isLoading = false;
   String? _lastEnsureError;
-  double? _downloadProgress; 
+  double? _downloadProgress;
   File? _cachedFile;
   http.Client? _activeClient;
   bool _cancelRequested = false;
@@ -45,7 +51,11 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
     _cancelRequested = true;
     _activeClient?.close();
     _activeClient = null;
-    if (mounted) setState(() { _isLoading = false; _downloadProgress = null; });
+    if (mounted)
+      setState(() {
+        _isLoading = false;
+        _downloadProgress = null;
+      });
   }
 
   String get filename => widget.filename;
@@ -94,7 +104,8 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
         if (await favFile.exists()) {
           return favFile;
         } else {
-          debugPrint('FileMessageWidget: Favorites file not found: $favFilename');
+          debugPrint(
+              'FileMessageWidget: Favorites file not found: $favFilename');
           return null;
         }
       }
@@ -117,13 +128,16 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
         debugPrint('FileMessageWidget: root screen state is null');
         return null;
       }
-      
+
       final username =
           senderUsername?.isNotEmpty == true ? senderUsername! : peerUsername;
       debugPrint(
           'FileMessageWidget: downloading/caching file $filename from peer $username');
       final cached = await root.downloadFileToCache(filename,
-          peerUsername: username, owner: widget.owner, mediaKeyB64: widget.mediaKeyB64, onProgress: onProgress);
+          peerUsername: username,
+          owner: widget.owner,
+          mediaKeyB64: widget.mediaKeyB64,
+          onProgress: onProgress);
       if (cached != null) {
         debugPrint(
             'FileMessageWidget: file cached successfully at ${cached.path}');
@@ -142,7 +156,8 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
     try {
       final basename = p.basename(f.path);
 
-      if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+      if (!kIsWeb &&
+          (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
         final onyxDir = await getOnyxSaveDirectory();
         if (onyxDir == null) {
           rootScreenKey.currentState
@@ -156,8 +171,8 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
       }
 
       if (kIsWeb) {
-        rootScreenKey.currentState?.showSnack(
-            'Save not supported on web — open the file and save');
+        rootScreenKey.currentState
+            ?.showSnack('Save not supported on web — open the file and save');
         return null;
       }
 
@@ -298,7 +313,6 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
   }
 
   Future<void> _downloadThenRun(Future<void> Function(File) action) async {
-    
     if (_cachedFile != null && await _cachedFile!.exists()) {
       await action(_cachedFile!);
       return;
@@ -311,20 +325,19 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
     });
     _lastEnsureError = null;
     try {
-      final cached = await _ensureCached(
-          onProgress: (prog) {
-            if (mounted) setState(() => _downloadProgress = prog);
-          });
+      final cached = await _ensureCached(onProgress: (prog) {
+        if (mounted) setState(() => _downloadProgress = prog);
+      });
       if (cached == null) {
-        if (_cancelRequested) return; 
+        if (_cancelRequested) return;
         if (mounted) {
           final raw = _lastEnsureError ?? '';
-          final msg = (raw.contains('404') ||
-                  raw.toLowerCase().contains('not found'))
-              ? 'File not found on server'
-              : raw.isNotEmpty
-                  ? 'Download failed: $raw'
-                  : 'Download failed';
+          final msg =
+              (raw.contains('404') || raw.toLowerCase().contains('not found'))
+                  ? 'File not found on server'
+                  : raw.isNotEmpty
+                      ? 'Download failed: $raw'
+                      : 'Download failed';
           rootScreenKey.currentState?.showSnack(msg);
         }
         return;
@@ -334,7 +347,11 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
       if (!mounted) return;
       await action(cached);
     } finally {
-      if (mounted) setState(() { _isLoading = false; _downloadProgress = null; });
+      if (mounted)
+        setState(() {
+          _isLoading = false;
+          _downloadProgress = null;
+        });
     }
   }
 
@@ -349,96 +366,105 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color:
-              Theme.of(context).colorScheme.surfaceContainer.withValues(alpha: 0.3),
+          color: Theme.of(context)
+              .colorScheme
+              .surfaceContainer
+              .withValues(alpha: 0.3),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 32, color: Theme.of(context).colorScheme.primary),
+            Icon(icon,
+                size: 32 * widget.fontSizeMultiplier,
+                color: Theme.of(context).colorScheme.primary),
             const SizedBox(width: 12),
             Flexible(
               child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  filename,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-
-                if (showProgress) ...[
-                  const SizedBox(height: 6),
-                  LinearProgressIndicator(
-                    value: _downloadProgress,
-                    minHeight: 3,
-                    borderRadius: BorderRadius.circular(2),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    filename,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14 * widget.fontSizeMultiplier),
                   ),
-                  const SizedBox(height: 2),
+                  if (showProgress) ...[
+                    const SizedBox(height: 6),
+                    LinearProgressIndicator(
+                      value: _downloadProgress,
+                      minHeight: 3,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '${(_downloadProgress! * 100).toInt()}%',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          onTap: _cancelDownload,
+                          child: Icon(Icons.close,
+                              size: 14,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 6),
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        '${(_downloadProgress! * 100).toInt()}%',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: _cancelDownload,
-                        child: Icon(Icons.close, size: 14,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      ElevatedButton.icon(
+                        onPressed: _isLoading
+                            ? null
+                            : () async {
+                                await _downloadThenRun((cached) async {
+                                  if (mounted) {
+                                    setState(() => _downloadProgress = null);
+                                  }
+                                  final saved =
+                                      await _saveWithDialog(cached, context);
+                                  if (mounted) {
+                                    if (saved != null) {
+                                      rootScreenKey.currentState
+                                          ?.showSnack('Saved to $saved');
+                                    } else {
+                                      rootScreenKey.currentState
+                                          ?.showSnack('Failed to save file');
+                                    }
+                                  }
+                                });
+                              },
+                        icon: (_isLoading && _downloadProgress == null)
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.save_as, size: 16),
+                        label: Text(_isLoading
+                            ? (_downloadProgress != null
+                                ? 'Downloading...'
+                                : 'Saving...')
+                            : 'Save As'),
+                        style: ElevatedButton.styleFrom(
+                            minimumSize: const Size(100, 36)),
                       ),
                     ],
                   ),
                 ],
-                const SizedBox(height: 6),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: _isLoading
-                          ? null
-                          : () async {
-                              await _downloadThenRun((cached) async {
-                                
-                                if (mounted) {
-                                  setState(() => _downloadProgress = null);
-                                }
-                                final saved =
-                                    await _saveWithDialog(cached, context);
-                                if (mounted) {
-                                  if (saved != null) {
-                                    rootScreenKey.currentState
-                                        ?.showSnack('Saved to $saved');
-                                  } else {
-                                    rootScreenKey.currentState
-                                        ?.showSnack('Failed to save file');
-                                  }
-                                }
-                              });
-                            },
-                      icon: (_isLoading && _downloadProgress == null)
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.save_as, size: 16),
-                      label: Text(_isLoading
-                          ? (_downloadProgress != null
-                              ? 'Downloading...'
-                              : 'Saving...')
-                          : 'Save As'),
-                      style: ElevatedButton.styleFrom(
-                          minimumSize: const Size(100, 36)),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+              ),
             ), // Flexible
           ],
         ),

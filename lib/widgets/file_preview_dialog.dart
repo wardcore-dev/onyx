@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import '../managers/settings_manager.dart';
+import '../l10n/app_localizations.dart';
 
 class FilePreviewDialog extends StatefulWidget {
   final String filePath;
@@ -343,6 +344,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final count = _albumPaths.length;
+    final l = AppLocalizations.of(context);
 
     return ValueListenableBuilder<double>(
       valueListenable: SettingsManager.elementOpacity,
@@ -587,7 +589,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
                                 Navigator.pop(context);
                                 widget.onCancel();
                               },
-                              child: const Text('Cancel'),
+                              child: Text(l.cancel),
                             ),
                             const SizedBox(width: 12),
                             FilledButton.tonal(

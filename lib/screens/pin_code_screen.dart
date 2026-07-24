@@ -370,13 +370,17 @@ class _PinCodeScreenState extends State<PinCodeScreen>
                       exit: _success,
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 220),
-                        child: Text(
-                          _title,
-                          key: ValueKey(_title),
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w600,
-                            color: cs.onSurface,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: Text(
+                            _title,
+                            key: ValueKey(_title),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w600,
+                              color: cs.onSurface,
+                            ),
                           ),
                         ),
                       ),

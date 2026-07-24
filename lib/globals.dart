@@ -1,7 +1,8 @@
 // lib/globals.dart
+import 'dart:async';
 import 'package:ONYX/screens/favorites_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'dart:io' show Platform;
 import 'package:flutter/widgets.dart';
 import 'models/chat_message.dart';
@@ -54,6 +55,60 @@ final ValueNotifier<bool> wsConnectedNotifier = ValueNotifier<bool>(false);
 final ValueNotifier<bool> sessionExpiredNotifier = ValueNotifier<bool>(false);
 
 final ValueNotifier<bool> proxyActiveNotifier = ValueNotifier<bool>(false);
+
+/// True while the PIN/biometric lock gate is blocking the UI — either the
+/// initial app-launch lock screen, or the resume-lock screen main.dart pushes
+/// onto [navigatorKey] after the app comes back from the background with
+/// "lock on resume" enabled. Notification-driven navigation (RootScreen's
+/// openChatStream/openReminderStream listeners) awaits [waitForAppUnlock]
+/// before pushing a chat route, since both routes share the same Navigator
+/// and pushing the chat first just gets it buried under the lock screen
+/// pushed moments later by the independent app-lifecycle callback.
+final ValueNotifier<bool> appLockActive = ValueNotifier<bool>(false);
+
+/// Resolves immediately if the app isn't currently lock-gated, otherwise
+/// waits for [appLockActive] to clear (bounded so a stuck/unexpected lock
+/// state can't strand a notification tap forever).
+Future<void> waitForAppUnlock() {
+  if (!appLockActive.value) return Future.value();
+  final completer = Completer<void>();
+  void listener() {
+    if (!appLockActive.value) {
+      appLockActive.removeListener(listener);
+      if (!completer.isCompleted) completer.complete();
+    }
+  }
+  appLockActive.addListener(listener);
+  return completer.future.timeout(const Duration(seconds: 30), onTimeout: () {
+    appLockActive.removeListener(listener);
+  });
+}
+
+/// A notification-tap navigation stashed by RootScreen because the app was
+/// (or was about to be) PIN-locked when the tap arrived. main.dart's PinGate
+/// runs and clears this the instant the user successfully unlocks — so the
+/// chat opens right after PIN entry instead of depending on [waitForAppUnlock]
+/// alone to win its race against the lock screen being pushed.
+Future<void> Function()? pendingUnlockNavigation;
+
+/// Username of the DM a notification tap most recently targeted. Set the
+/// instant the tap is observed (regardless of lock state) so ChatsTab can
+/// surface that conversation with a highlight — a fallback that still lands
+/// the user somewhere useful if the forced auto-navigation into ChatScreen
+/// (via [pendingUnlockNavigation]) loses its race with the PIN lock screen
+/// or an unreliable OS-level notification-tap delivery. Cleared once the
+/// target chat is actually opened, by whichever path got there first.
+final ValueNotifier<String?> pendingHighlightChat = ValueNotifier<String?>(null);
+
+/// Runs and clears [pendingUnlockNavigation], if one was stashed. Safe to
+/// call unconditionally after every successful unlock.
+Future<void> runPendingUnlockNavigation() async {
+  final action = pendingUnlockNavigation;
+  pendingUnlockNavigation = null;
+  debugPrint('[lock] runPendingUnlockNavigation: '
+      '${action != null ? "firing stashed navigation" : "nothing stashed"}');
+  if (action != null) await action();
+}
 
 /// True while a tab's "pull to search" panel (TabPullSearchOverlay) is open
 /// and focused — used to hide the floating bottom nav bar so it doesn't end
@@ -156,7 +211,7 @@ const String serverBase = 'https://api-onyx.wardcore.com';
 const String wsUrl = 'wss://api-onyx.wardcore.com/ws';
 const String publicIpApi = 'https://api.ipify.org';
 
-const String kAppVersion = 'v1.8-beta';
+const String kAppVersion = 'v1.9-beta';
 
 bool get isDesktop {
   if (kIsWeb) return false;

@@ -37,6 +37,8 @@ import '../widgets/chat_images_scope.dart';
 import '../widgets/album_message_widget.dart' show AlbumItem;
 import '../widgets/video_message_widget.dart';
 import '../widgets/avatar_widget.dart';
+import '../widgets/avatar_fullscreen_viewer.dart';
+import '../widgets/onyx_dialog.dart';
 import '../call/call_manager.dart';
 import '../screens/call_overlay.dart';
 import '../managers/user_cache.dart';
@@ -58,9 +60,12 @@ import '../enums/delivery_mode.dart';
 import '../services/mesh/mesh_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../l10n/app_localizations.dart';
+import '../l10n/app_localizations_extra.dart';
 import '../managers/blocklist_manager.dart';
 import '../widgets/message_reaction_bar.dart';
 import '../widgets/swipeable_message_wrapper.dart';
+import '../widgets/onyx_reminder_picker.dart';
+import '../services/reminder_service.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/adaptive_glass_icon_button.dart';
@@ -320,6 +325,62 @@ class ChatScreenState extends State<ChatScreen>
     return ids.join(':');
   }
 
+  // Live cache of "chatId|messageId" keys with an active reminder — kept
+  // in sync via a stream so the desktop right-click menu (built
+  // synchronously on every message, on every rebuild) can check reminder
+  // state without a DB round-trip per render.
+  Set<String> _reminderKeys = {};
+  StreamSubscription? _reminderKeysSub;
+
+  void _subscribeReminders() {
+    if (widget.myUsername.isEmpty) return;
+    _reminderKeysSub =
+        ReminderService.watchActiveReminders(widget.myUsername).listen((rows) {
+      if (!mounted) return;
+      setState(() {
+        _reminderKeys = rows.map((r) => '${r.chatId}|${r.messageId}').toSet();
+      });
+    });
+  }
+
+  bool _hasReminderSync(ChatMessage msg) {
+    final chatId =
+        rootScreenKey.currentState?.chatIdForUser(widget.otherUsername) ??
+            widget.otherUsername;
+    final messageId = msg.serverMessageId?.toString() ?? msg.id;
+    return _reminderKeys.contains('$chatId|$messageId');
+  }
+
+  Future<void> _handleReminderToggle({
+    required ChatMessage msg,
+    required bool hasReminder,
+    required String chatId,
+    required String messageId,
+  }) async {
+    final l = AppLocalizations.of(context);
+    if (hasReminder) {
+      await ReminderService.cancelReminder(
+          widget.myUsername, chatId, messageId);
+      rootScreenKey.currentState?.showSnack(l.reminderCancelled);
+      return;
+    }
+    final accentColorArgb = Theme.of(context).colorScheme.primary.toARGB32();
+    final picked = await showOnyxReminderPicker(context);
+    if (picked == null) return;
+    await ReminderService.scheduleReminder(
+      accountId: widget.myUsername,
+      messageId: messageId,
+      chatType: 'dm',
+      chatId: chatId,
+      chatTitle: widget.otherUsername,
+      messagePreview: getPreviewText(msg.content),
+      otherUsername: widget.otherUsername,
+      accentColorArgb: accentColorArgb,
+      scheduledAt: picked,
+    );
+    rootScreenKey.currentState?.showSnack(l.reminderSet);
+  }
+
   String? _scrollHighlightId;
   Timer? _highlightTimer;
   final GlobalKey _scrollTargetKey = GlobalKey();
@@ -398,16 +459,17 @@ class ChatScreenState extends State<ChatScreen>
     _flashHighlight(foundId);
   }
 
-  /// If a search-result tap asked to land on a specific message in this chat
-  /// (see [setPendingMessageScrollTarget]), scroll to and highlight it once
-  /// the message list is laid out — instead of opening at the bottom.
+  /// If a search-result tap or a fired reminder asked to land on a specific
+  /// message in this chat (see [setPendingMessageScrollTarget]), scroll to
+  /// and highlight it once the message list is laid out — instead of
+  /// opening at the bottom.
   void _consumePendingScrollTarget() {
     final pendingId = consumePendingMessageScrollTarget(_chatId);
     if (pendingId == null) return;
     void attempt([int retries = 6]) {
       if (!mounted) return;
       if (_scroll.hasClients) {
-        _scrollToMessageById(int.tryParse(pendingId), localId: pendingId);
+        unawaited(_seekAndScrollToMessage(pendingId));
       } else if (retries > 0) {
         WidgetsBinding.instance
             .addPostFrameCallback((_) => attempt(retries - 1));
@@ -415,6 +477,49 @@ class ChatScreenState extends State<ChatScreen>
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) => attempt());
+  }
+
+  bool _messageIsLoaded(String pendingId) {
+    final rootState = rootScreenKey.currentState;
+    if (rootState == null) return false;
+    final targetInt = int.tryParse(pendingId);
+    final msgs = <ChatMessage>[
+      ...(rootState.chats[_chatId] ?? const []),
+      ..._olderMessages,
+    ];
+    for (final m in msgs) {
+      if (targetInt != null && m.serverMessageId == targetInt) return true;
+      if (m.id == pendingId) return true;
+    }
+    return false;
+  }
+
+  /// The target message a reminder points at can be arbitrarily far back in
+  /// history — only the most recent page is loaded when the chat opens, and
+  /// older ones are normally only fetched as the user scrolls near the
+  /// bottom of the list (see [_loadMoreMessages]/[_onScroll]). Without this,
+  /// a reminder on an older message would silently open the chat at the
+  /// bottom with no scroll/highlight at all, since [_scrollToMessageById]
+  /// only searches what's already in memory. Keeps requesting older pages
+  /// (bounded, so a stale/garbage id can't spin forever) until the target
+  /// turns up or the chat runs out of history.
+  Future<void> _seekAndScrollToMessage(String pendingId,
+      {int maxPages = 40}) async {
+    if (_messageIsLoaded(pendingId)) {
+      _scrollToMessageById(int.tryParse(pendingId), localId: pendingId);
+      return;
+    }
+    var pages = 0;
+    while (
+        !_messageIsLoaded(pendingId) && _hasMoreMessages && pages < maxPages) {
+      if (!mounted) return;
+      await _loadMoreMessages();
+      pages++;
+    }
+    if (!mounted) return;
+    if (_messageIsLoaded(pendingId)) {
+      _scrollToMessageById(int.tryParse(pendingId), localId: pendingId);
+    }
   }
 
   Widget _buildPinnedBanner(BuildContext context) {
@@ -670,21 +775,31 @@ class ChatScreenState extends State<ChatScreen>
     _dragAutoScrollTimer = null;
   }
 
+  // Map insertion order (used by `.values`) reflects the order messages
+  // were added to the selection — e.g. tap order, or drag-range recompute
+  // order — not their chronological order in the chat. Always re-sort by
+  // `time` before turning a selection into ordered text/content so multi-
+  // select copy/forward can't scramble the message order.
+  List<ChatMessage> get _selectedMessagesChronological =>
+      _selectedMessages.values.toList()
+        ..sort((a, b) => a.time.compareTo(b.time));
+
   void _copySelectedMessages() {
-    final texts = _selectedMessages.values
+    final texts = _selectedMessagesChronological
         .where(_isTextMessage)
         .map((m) => m.content)
         .join('\n\n');
     if (texts.isNotEmpty) {
       Clipboard.setData(ClipboardData(text: texts));
       rootScreenKey.currentState?.showSnack(
-          AppLocalizations(SettingsManager.appLocale.value).msgCopied);
+          lookupAppLocalizations(SettingsManager.appLocale.value).msgCopied);
     }
     _exitSelectionMode();
   }
 
   void _forwardSelectedMessages() {
-    final contents = _selectedMessages.values.map((m) => m.content).toList();
+    final contents =
+        _selectedMessagesChronological.map((m) => m.content).toList();
     if (contents.isEmpty) return;
     _exitSelectionMode();
     ForwardScreen.show(context, contents);
@@ -699,25 +814,15 @@ class ChatScreenState extends State<ChatScreen>
         .toList();
     if (toDelete.isEmpty) return;
     final l = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.deleteMessageTitle),
-        content: Text(toDelete.length == 1
-            ? l.deleteMessageContent
-            : 'Delete ${toDelete.length} messages?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(l.cancel),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(l.delete, style: const TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+      title: l.deleteMessageTitle,
+      message: toDelete.length == 1
+          ? l.deleteMessageContent
+          : 'Delete ${toDelete.length} messages?',
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
     if (confirmed == true) {
       final snapshot = List<ChatMessage>.from(toDelete);
@@ -733,12 +838,23 @@ class ChatScreenState extends State<ChatScreen>
     }
   }
 
-  void _showMessageMenu(ChatMessage msg) {
+  void _showMessageMenu(ChatMessage msg) async {
     _focusNode.unfocus();
     final text = msg.content;
     final l = AppLocalizations.of(context);
 
     if (text.startsWith('[cannot-decrypt')) return;
+
+    final reminderChatId =
+        rootScreenKey.currentState?.chatIdForUser(widget.otherUsername) ??
+            widget.otherUsername;
+    final reminderMsgId = msg.serverMessageId?.toString() ?? msg.id;
+    var hasReminder = false;
+    if (widget.myUsername.isNotEmpty) {
+      hasReminder = await ReminderService.hasActiveReminder(
+          widget.myUsername, reminderChatId, reminderMsgId);
+    }
+    if (!mounted) return;
 
     final isImage = text.startsWith('IMAGEv1:');
     final isAlbum = text.startsWith('ALBUMv1:');
@@ -794,6 +910,16 @@ class ChatScreenState extends State<ChatScreen>
         onPin: () {
           Navigator.pop(ctx);
           _togglePin(msg);
+        },
+        hasReminder: hasReminder,
+        onReminderToggle: () {
+          Navigator.pop(ctx);
+          _handleReminderToggle(
+            msg: msg,
+            hasReminder: hasReminder,
+            chatId: reminderChatId,
+            messageId: reminderMsgId,
+          );
         },
         onDelete: () {
           Navigator.pop(ctx);
@@ -900,6 +1026,20 @@ class ChatScreenState extends State<ChatScreen>
             : Icons.push_pin_rounded,
         label: _isMsgPinned(msg) ? l.unpin : l.pin,
         onPressed: () => _togglePin(msg),
+      ),
+      DesktopMenuItem(
+        icon: _hasReminderSync(msg)
+            ? Icons.alarm_off_rounded
+            : Icons.alarm_add_rounded,
+        label: _hasReminderSync(msg) ? l.cancelReminder : l.setReminder,
+        onPressed: () => _handleReminderToggle(
+          msg: msg,
+          hasReminder: _hasReminderSync(msg),
+          chatId:
+              rootScreenKey.currentState?.chatIdForUser(widget.otherUsername) ??
+                  widget.otherUsername,
+          messageId: msg.serverMessageId?.toString() ?? msg.id,
+        ),
       ),
       DesktopMenuItem(
         icon: Icons.delete_outline_rounded,
@@ -1170,23 +1310,13 @@ class ChatScreenState extends State<ChatScreen>
       rootScreenKey.currentState?.showSnack(l.cannotDeleteMsg);
       return;
     }
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx2) => AlertDialog(
-        title: Text(l.deleteMessageTitle),
-        content: Text(l.deleteMessageContent),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx2, false),
-            child: Text(l.cancel),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
-            onPressed: () => Navigator.pop(ctx2, true),
-            child: Text(l.delete, style: const TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+      title: l.deleteMessageTitle,
+      message: l.deleteMessageContent,
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
     if (confirmed == true) {
       if (msg.content.startsWith('ALBUMv1:')) {
@@ -1204,23 +1334,13 @@ class ChatScreenState extends State<ChatScreen>
   /// finished syncing yet can still be hidden locally).
   Future<void> _deleteMessageForMe(ChatMessage msg) async {
     final l = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx2) => AlertDialog(
-        title: Text(l.deleteForMeTitle),
-        content: Text(l.deleteForMeContent),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx2, false),
-            child: Text(l.cancel),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
-            onPressed: () => Navigator.pop(ctx2, true),
-            child: Text(l.delete, style: const TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+      title: l.deleteForMeTitle,
+      message: l.deleteForMeContent,
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
     if (confirmed != true) return;
     if (msg.content.startsWith('ALBUMv1:')) {
@@ -1240,6 +1360,7 @@ class ChatScreenState extends State<ChatScreen>
     super.initState();
     _loadPinnedMessage();
     _loadPrivateReactions();
+    _subscribeReminders();
     HardwareKeyboard.instance.addHandler(_handleGlobalKey);
     rootScreenKey.currentState?.subscribeToPrivateReactions(
         widget.otherUsername, _onPrivateReactionUpdate);
@@ -1353,9 +1474,12 @@ class ChatScreenState extends State<ChatScreen>
     await unfocusAndSettle(context);
     if (!mounted) return;
 
-    final cached = UserCache.getSync(username);
-    final dp = (cached != null) ? cached.displayName : username;
-    final desc = cached?.description ?? '';
+    final cached = await UserCache.get(username);
+    if (!mounted) return;
+    final dp = cached.displayName;
+    final desc = cached.description;
+    final uin = cached.uin;
+    final heroTag = 'avatar-hero-$username';
 
     await showGeneralDialog<void>(
       context: context,
@@ -1413,12 +1537,22 @@ class ChatScreenState extends State<ChatScreen>
                         children: [
                           Column(
                             children: [
-                              AvatarWidget(
-                                username: username,
-                                tokenProvider: avatarTokenProvider,
-                                avatarBaseUrl: serverBase,
-                                size: 80.0,
-                                editable: false,
+                              GestureDetector(
+                                onTap: () => pushAvatarFullscreen(
+                                  ctx,
+                                  username: username,
+                                  heroTag: heroTag,
+                                ),
+                                child: Hero(
+                                  tag: heroTag,
+                                  child: AvatarWidget(
+                                    username: username,
+                                    tokenProvider: avatarTokenProvider,
+                                    avatarBaseUrl: serverBase,
+                                    size: 80.0,
+                                    editable: false,
+                                  ),
+                                ),
                               ),
                               const SizedBox(height: 12),
                               Text(
@@ -1448,6 +1582,35 @@ class ChatScreenState extends State<ChatScreen>
                                   ),
                                 ),
                               ),
+                              if (uin != null && uin.isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                GestureDetector(
+                                  onTap: () {
+                                    Clipboard.setData(ClipboardData(text: uin));
+                                    rootScreenKey.currentState
+                                        ?.showSnack('${l.uinCopied}: $uin');
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: colorScheme.primary
+                                          .withValues(alpha: 0.10),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Text(
+                                      '#$uin',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: colorScheme.primary
+                                            .withValues(alpha: 0.85),
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                               if (desc.isNotEmpty) ...[
                                 const SizedBox(height: 8),
                                 Padding(
@@ -1683,6 +1846,7 @@ class ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    _reminderKeysSub?.cancel();
     _selectionNotifier.dispose();
     _textCtrl.dispose();
     _scroll.removeListener(_onScroll);
@@ -1983,7 +2147,8 @@ class ChatScreenState extends State<ChatScreen>
       final sent = await _lanManager.sendMessage(message, widget.otherUsername);
       if (!sent) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).failedSendLan);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .failedSendLan);
         return;
       }
 
@@ -2241,7 +2406,7 @@ class ChatScreenState extends State<ChatScreen>
       if (value == 'copy') {
         Clipboard.setData(ClipboardData(text: text));
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).msgCopied);
+            lookupAppLocalizations(SettingsManager.appLocale.value).msgCopied);
       }
       Future.delayed(const Duration(milliseconds: 300), () {
         _shouldPreserveExternalFocus = false;
@@ -3053,60 +3218,170 @@ class ChatScreenState extends State<ChatScreen>
                                             ],
                                             onSelected: (value) async {
                                               if (value == 'call') {
+                                                final l = AppLocalizations.of(
+                                                    context);
                                                 final confirmed =
-                                                    await showDialog<bool>(
+                                                    await showOnyxDialog<bool>(
                                                   context: context,
-                                                  builder: (dCtx) =>
-                                                      AlertDialog(
-                                                    title: Text(
-                                                        AppLocalizations.of(
-                                                                context)
-                                                            .voiceCallsTitle),
-                                                    content: Text(
-                                                        AppLocalizations.of(
-                                                                context)
-                                                            .voiceCallsContent),
-                                                    actions: [
-                                                      TextButton(
-                                                        onPressed: () =>
-                                                            Navigator.of(dCtx)
-                                                                .pop(false),
-                                                        child: Text(
-                                                            AppLocalizations.of(
-                                                                    context)
-                                                                .cancel),
+                                                  barrierLabel:
+                                                      l.voiceCallsTitle,
+                                                  builder: (dCtx) {
+                                                    final colorScheme =
+                                                        Theme.of(dCtx)
+                                                            .colorScheme;
+                                                    return OnyxDialogShell(
+                                                      maxWidth: 380,
+                                                      child: Column(
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .stretch,
+                                                        children: [
+                                                          OnyxDialogHeader(
+                                                            leading: Container(
+                                                              width: 40,
+                                                              height: 40,
+                                                              decoration:
+                                                                  BoxDecoration(
+                                                                color: colorScheme
+                                                                    .primary
+                                                                    .withValues(
+                                                                        alpha:
+                                                                            0.12),
+                                                                shape: BoxShape
+                                                                    .circle,
+                                                              ),
+                                                              child: Icon(
+                                                                  Icons
+                                                                      .call_rounded,
+                                                                  size: 20,
+                                                                  color: colorScheme
+                                                                      .primary),
+                                                            ),
+                                                            title: Text(
+                                                              l.voiceCallsTitle,
+                                                              style: TextStyle(
+                                                                fontSize: 16,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                                color: colorScheme
+                                                                    .onSurface,
+                                                              ),
+                                                            ),
+                                                            onClose: () =>
+                                                                Navigator.of(
+                                                                        dCtx)
+                                                                    .pop(false),
+                                                          ),
+                                                          Padding(
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .fromLTRB(
+                                                                    20,
+                                                                    16,
+                                                                    20,
+                                                                    4),
+                                                            child: Text(
+                                                              l.voiceCallsContent,
+                                                              style: TextStyle(
+                                                                fontSize: 14,
+                                                                height: 1.4,
+                                                                color: colorScheme
+                                                                    .onSurface
+                                                                    .withValues(
+                                                                        alpha:
+                                                                            0.65),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                          Padding(
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .fromLTRB(
+                                                                    20,
+                                                                    16,
+                                                                    20,
+                                                                    20),
+                                                            child: Column(
+                                                              crossAxisAlignment:
+                                                                  CrossAxisAlignment
+                                                                      .stretch,
+                                                              children: [
+                                                                FilledButton(
+                                                                  onPressed: () =>
+                                                                      Navigator.of(
+                                                                              dCtx)
+                                                                          .pop(
+                                                                              true),
+                                                                  style: FilledButton
+                                                                      .styleFrom(
+                                                                    padding:
+                                                                        kOnyxDialogButtonPadding,
+                                                                    shape:
+                                                                        kOnyxDialogButtonShape,
+                                                                  ),
+                                                                  child: Text(
+                                                                      l.call),
+                                                                ),
+                                                                const SizedBox(
+                                                                    height: 8),
+                                                                OutlinedButton(
+                                                                  onPressed:
+                                                                      () {
+                                                                    Navigator.of(
+                                                                            dCtx)
+                                                                        .pop(
+                                                                            false);
+                                                                    showModalBottomSheet(
+                                                                      context:
+                                                                          context,
+                                                                      isScrollControlled:
+                                                                          true,
+                                                                      backgroundColor:
+                                                                          Colors
+                                                                              .transparent,
+                                                                      builder:
+                                                                          (_) =>
+                                                                              const SupportSheet(),
+                                                                    );
+                                                                  },
+                                                                  style: OutlinedButton
+                                                                      .styleFrom(
+                                                                    padding:
+                                                                        kOnyxDialogButtonPadding,
+                                                                    shape:
+                                                                        kOnyxDialogButtonShape,
+                                                                  ),
+                                                                  child: Text(l
+                                                                      .supportOnyxBtn),
+                                                                ),
+                                                                const SizedBox(
+                                                                    height: 8),
+                                                                OutlinedButton(
+                                                                  onPressed: () =>
+                                                                      Navigator.of(
+                                                                              dCtx)
+                                                                          .pop(
+                                                                              false),
+                                                                  style: OutlinedButton
+                                                                      .styleFrom(
+                                                                    padding:
+                                                                        kOnyxDialogButtonPadding,
+                                                                    shape:
+                                                                        kOnyxDialogButtonShape,
+                                                                  ),
+                                                                  child: Text(
+                                                                      l.cancel),
+                                                                ),
+                                                              ],
+                                                            ),
+                                                          ),
+                                                        ],
                                                       ),
-                                                      TextButton(
-                                                        onPressed: () {
-                                                          Navigator.of(dCtx)
-                                                              .pop(false);
-                                                          showModalBottomSheet(
-                                                            context: context,
-                                                            isScrollControlled:
-                                                                true,
-                                                            backgroundColor:
-                                                                Colors
-                                                                    .transparent,
-                                                            builder: (_) =>
-                                                                const SupportSheet(),
-                                                          );
-                                                        },
-                                                        child: Text(
-                                                            AppLocalizations.of(
-                                                                    context)
-                                                                .supportOnyxBtn),
-                                                      ),
-                                                      TextButton(
-                                                        onPressed: () =>
-                                                            Navigator.of(dCtx)
-                                                                .pop(true),
-                                                        child: Text(
-                                                            AppLocalizations.of(
-                                                                    context)
-                                                                .call),
-                                                      ),
-                                                    ],
-                                                  ),
+                                                    );
+                                                  },
                                                 );
                                                 if (confirmed == true) {
                                                   callManager.startCall(
@@ -3185,39 +3460,20 @@ class ChatScreenState extends State<ChatScreen>
                                                 final other =
                                                     widget.otherUsername ?? '';
                                                 final confirmed =
-                                                    await showDialog<bool>(
+                                                    await showOnyxConfirmDialog(
                                                   context: context,
-                                                  builder: (dCtx) =>
-                                                      AlertDialog(
-                                                    title: Text(
-                                                        AppLocalizations.of(
-                                                                context)
-                                                            .unblockUserLabel),
-                                                    content: Text(AppLocalizations
-                                                            .of(context)
-                                                        .unblockUserConfirmContent(
-                                                            other)),
-                                                    actions: [
-                                                      TextButton(
-                                                        onPressed: () =>
-                                                            Navigator.of(dCtx)
-                                                                .pop(false),
-                                                        child: Text(
-                                                            AppLocalizations.of(
-                                                                    context)
-                                                                .cancel),
-                                                      ),
-                                                      TextButton(
-                                                        onPressed: () =>
-                                                            Navigator.of(dCtx)
-                                                                .pop(true),
-                                                        child: Text(
-                                                            AppLocalizations.of(
-                                                                    context)
-                                                                .unblockUserLabel),
-                                                      ),
-                                                    ],
-                                                  ),
+                                                  title: AppLocalizations.of(
+                                                          context)
+                                                      .unblockUserLabel,
+                                                  message: AppLocalizations.of(
+                                                          context)
+                                                      .unblockUserConfirmContent(
+                                                          other),
+                                                  confirmLabel:
+                                                      AppLocalizations.of(
+                                                              context)
+                                                          .unblockUserLabel,
+                                                  icon: Icons.lock_open_rounded,
                                                 );
                                                 if (confirmed != true) return;
                                                 await BlocklistManager.unblock(
@@ -3292,17 +3548,18 @@ class ChatScreenState extends State<ChatScreen>
                                                 }
                                               } catch (e) {
                                                 rootScreenKey.currentState
-                                                    ?.showSnack(AppLocalizations(
-                                                            SettingsManager
-                                                                .appLocale
-                                                                .value)
-                                                        .failedToFetchPubkey);
+                                                    ?.showSnack(
+                                                        lookupAppLocalizations(
+                                                                SettingsManager
+                                                                    .appLocale
+                                                                    .value)
+                                                            .failedToFetchPubkey);
                                                 return;
                                               }
                                               if (theirPubB64 == null) {
                                                 rootScreenKey.currentState
                                                     ?.showSnack(
-                                                        AppLocalizations(
+                                                        lookupAppLocalizations(
                                                                 SettingsManager
                                                                     .appLocale
                                                                     .value)
@@ -3312,7 +3569,7 @@ class ChatScreenState extends State<ChatScreen>
                                               if (myPubB64 == null) {
                                                 rootScreenKey.currentState
                                                     ?.showSnack(
-                                                        AppLocalizations(
+                                                        lookupAppLocalizations(
                                                                 SettingsManager
                                                                     .appLocale
                                                                     .value)
@@ -4175,6 +4432,7 @@ class ChatScreenState extends State<ChatScreen>
                                               widget.onRequestResend(id),
                                           desktopMenuItems:
                                               _buildDesktopMenuItems(msg),
+                                          hasReminder: _hasReminderSync(msg),
                                           peerUsername: widget.otherUsername,
                                           chatMessage: msg,
                                           replyToId: msg.replyToId,
@@ -4592,8 +4850,7 @@ class ChatScreenState extends State<ChatScreen>
                                         Theme.of(context)
                                             .colorScheme
                                             .surfaceContainerHighest,
-                                        SettingsManager
-                                            .elementBrightness.value,
+                                        SettingsManager.elementBrightness.value,
                                       );
                                       return IconButton(
                                         splashRadius: btnSize / 2 + 4,
@@ -5188,7 +5445,8 @@ class ChatScreenState extends State<ChatScreen>
       final file = File(filePath);
       if (!await file.exists()) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .fileNotFound);
         return;
       }
       final basename = p.basename(filePath);
@@ -5218,7 +5476,8 @@ class ChatScreenState extends State<ChatScreen>
         existing.add(fp);
       } else {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .fileNotFound);
       }
     }
     if (existing.isEmpty) return;
@@ -5411,7 +5670,7 @@ class ChatScreenState extends State<ChatScreen>
           onSend: () => _sendFile(filePath, basename, ext, fileType),
           onCancel: () {
             rootScreenKey.currentState?.showSnack(
-                AppLocalizations(SettingsManager.appLocale.value)
+                lookupAppLocalizations(SettingsManager.appLocale.value)
                     .fileCancelled);
           },
           onPasteExtra: fileType == 'IMAGE' ? _pasteImageForAlbum : null,
@@ -5713,19 +5972,22 @@ class ChatScreenState extends State<ChatScreen>
             rootScreenKey.currentState?.currentUsername ?? '');
         if (token == null) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .notLoggedIn);
           return;
         }
 
         final localFile = File(filePath);
         if (!await localFile.exists()) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .fileNotFound);
           return;
         }
         if (await localFile.length() == 0) {
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value).fileEmpty);
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .fileEmpty);
           return;
         }
 
@@ -5781,7 +6043,8 @@ class ChatScreenState extends State<ChatScreen>
             });
           if (mounted)
             rootScreenKey.currentState?.showSnack(
-                AppLocalizations(SettingsManager.appLocale.value).fileSent);
+                lookupAppLocalizations(SettingsManager.appLocale.value)
+                    .fileSent);
         };
 
         final filename = await _presignUploadWithProgress(
@@ -5819,7 +6082,8 @@ class ChatScreenState extends State<ChatScreen>
       if (!await file.exists()) {
         debugPrint('[LAN SEND] ERROR: Source file not found');
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .fileNotFound);
         return;
       }
 
@@ -5870,7 +6134,8 @@ class ChatScreenState extends State<ChatScreen>
 
       if (!sent) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).failedSendLan);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .failedSendLan);
         return;
       }
 
@@ -5914,7 +6179,8 @@ class ChatScreenState extends State<ChatScreen>
           _replyingToMessage = null;
         });
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).fileSentLan);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .fileSentLan);
       }
     } catch (e) {
       if (mounted) {
@@ -5939,7 +6205,8 @@ class ChatScreenState extends State<ChatScreen>
           rootScreenKey.currentState?.currentUsername ?? '');
       if (token == null) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .notLoggedIn);
         return;
       }
 
@@ -5951,7 +6218,8 @@ class ChatScreenState extends State<ChatScreen>
       final localFile = File(filePath);
       if (!await localFile.exists()) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .fileNotFound);
         return;
       }
       if (await localFile.length() == 0) {
@@ -6024,7 +6292,8 @@ class ChatScreenState extends State<ChatScreen>
           });
         if (mounted)
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value).imageSent);
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .imageSent);
       };
 
       final filename = await _presignUploadWithProgress(
@@ -6153,7 +6422,8 @@ class ChatScreenState extends State<ChatScreen>
           rootScreenKey.currentState?.currentUsername ?? '');
       if (token == null) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .notLoggedIn);
         return;
       }
 
@@ -6241,7 +6511,7 @@ class ChatScreenState extends State<ChatScreen>
 
       if (albumItems.isEmpty) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .albumUploadFailed);
         return;
       }
@@ -6258,7 +6528,7 @@ class ChatScreenState extends State<ChatScreen>
 
       if (mounted) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value)
+            lookupAppLocalizations(SettingsManager.appLocale.value)
                 .albumSent(albumItems.length));
       }
     } catch (e) {
@@ -6292,7 +6562,8 @@ class ChatScreenState extends State<ChatScreen>
           rootScreenKey.currentState?.currentUsername ?? '');
       if (token == null) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).notLoggedIn);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .notLoggedIn);
         return;
       }
 
@@ -6304,7 +6575,8 @@ class ChatScreenState extends State<ChatScreen>
       final localFile = File(filePath);
       if (!await localFile.exists()) {
         rootScreenKey.currentState?.showSnack(
-            AppLocalizations(SettingsManager.appLocale.value).fileNotFound);
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .fileNotFound);
         return;
       }
       if (await localFile.length() == 0) {
@@ -6365,7 +6637,8 @@ class ChatScreenState extends State<ChatScreen>
           });
         if (mounted)
           rootScreenKey.currentState?.showSnack(
-              AppLocalizations(SettingsManager.appLocale.value).videoSent);
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .videoSent);
       };
 
       final filename = await _presignUploadWithProgress(
@@ -6407,6 +6680,8 @@ class _MessageActionsSheet extends StatefulWidget {
   final VoidCallback? onPin;
   final bool isPinned;
   final VoidCallback? onReact;
+  final VoidCallback? onReminderToggle;
+  final bool hasReminder;
 
   const _MessageActionsSheet({
     required this.msg,
@@ -6421,6 +6696,8 @@ class _MessageActionsSheet extends StatefulWidget {
     this.onPin,
     this.isPinned = false,
     this.onReact,
+    this.onReminderToggle,
+    this.hasReminder = false,
   });
 
   @override
@@ -6533,6 +6810,13 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
                       : Icons.push_pin_rounded,
                   widget.isPinned ? l.unpin : l.pin,
                   widget.onPin,
+                ),
+                actionTile(
+                  widget.hasReminder
+                      ? Icons.alarm_off_rounded
+                      : Icons.alarm_add_rounded,
+                  widget.hasReminder ? l.cancelReminder : l.setReminder,
+                  widget.onReminderToggle,
                 ),
                 if (widget.onSave != null)
                   actionTile(Icons.save_alt_rounded, l.save, widget.onSave),

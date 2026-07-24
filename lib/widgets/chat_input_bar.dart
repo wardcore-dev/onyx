@@ -143,6 +143,12 @@ class _ChatInputBarState extends State<ChatInputBar>
   // that, only a smaller measurement updates the baseline, since the true
   // single-line height is always the minimum the row will ever report.
   bool _hasMeasuredRowHeight = false;
+  // Latest measured height of the input area, tracked separately from
+  // _collapsedRowHeight (which only ever shrinks toward the single-line
+  // minimum). Comparing the two tells us whether the field currently spans
+  // more than one line, so the pill can stay detached on blur instead of
+  // snapping back to the joined shape while multi-line text is showing.
+  double _currentFieldHeight = 50.0;
 
   // Envelope-followed mic level driving the recording glow: attacks fast
   // (snaps up right as speech starts) and releases slowly (eases back down
@@ -197,13 +203,16 @@ class _ChatInputBarState extends State<ChatInputBar>
     super.dispose();
   }
 
-  // Only (re)starts the joined/detached animation when isFocused actually
-  // flips — called from build() on every rebuild, but a no-op on the
-  // keystroke-triggered rebuilds where it hasn't changed.
-  void _syncFocusAnimation(bool isFocused) {
-    if (isFocused == _wasFocused) return;
-    _wasFocused = isFocused;
-    final target = isFocused ? 1.0 : 0.0;
+  // Only (re)starts the joined/detached animation when the target state
+  // actually flips — called from build() on every rebuild, but a no-op on
+  // the keystroke-triggered rebuilds where it hasn't changed. `shouldDetach`
+  // is true while focused OR while the field spans more than one line, so a
+  // multi-line field stays detached through a blur instead of snapping back
+  // to the joined pill shape (which read as a layout glitch).
+  void _syncFocusAnimation(bool shouldDetach) {
+    if (shouldDetach == _wasFocused) return;
+    _wasFocused = shouldDetach;
+    final target = shouldDetach ? 1.0 : 0.0;
     _focusController.animateWith(
       SpringSimulation(_focusSpring, _focusController.value, target, 0),
     );
@@ -279,8 +288,19 @@ class _ChatInputBarState extends State<ChatInputBar>
       listenable: Listenable.merge([widget.textFocusNode, widget.controller]),
       builder: (context, _) {
         final isFocused = widget.textFocusNode.hasFocus;
+        // A small epsilon avoids treating sub-pixel rounding noise around
+        // the single-line baseline as "multi-line".
+        final isMultiline =
+            _currentFieldHeight > _collapsedRowHeight + 0.5;
         final hasText = widget.controller.text.isNotEmpty;
         const double minHeight = 50.0;
+        // Lets the field keep growing with the message instead of capping at
+        // a fixed line count and forcing an internal scroll almost
+        // immediately — only caps out once it would otherwise eat most of
+        // the screen (matches the cap other chat apps use), at which point
+        // the TextField's own internal scrolling (built into `maxLines:
+        // null` once its parent gives it a bounded height) takes over.
+        final maxFieldHeight = MediaQuery.sizeOf(context).height * 0.35;
         // Deliberately a bit larger than minHeight / 2 (25.0): the box's
         // *actual* rendered height at a single line runs a few px past
         // minHeight once font metrics/text scale are applied, so a radius
@@ -309,7 +329,7 @@ class _ChatInputBarState extends State<ChatInputBar>
         final bgColor =
             widget.backgroundColor.withValues(alpha: widget.opacity);
 
-        _syncFocusAnimation(isFocused);
+        _syncFocusAnimation(isFocused || isMultiline);
 
         return AnimatedBuilder(
           animation: Listenable.merge(
@@ -565,18 +585,28 @@ class _ChatInputBarState extends State<ChatInputBar>
                           onChange: (size) {
                             if (!mounted) return;
                             final isFirstMeasurement = !_hasMeasuredRowHeight;
+                            final isNewMinimum =
+                                size.height < _collapsedRowHeight;
+                            final heightChanged =
+                                size.height != _currentFieldHeight;
                             if (isFirstMeasurement ||
-                                size.height < _collapsedRowHeight) {
+                                isNewMinimum ||
+                                heightChanged) {
                               setState(() {
-                                _hasMeasuredRowHeight = true;
-                                _collapsedRowHeight = size.height;
+                                _currentFieldHeight = size.height;
+                                if (isFirstMeasurement || isNewMinimum) {
+                                  _hasMeasuredRowHeight = true;
+                                  _collapsedRowHeight = size.height;
+                                }
                               });
                             }
                           },
                           child: Container(
                             key: widget.inputAreaKey,
-                            constraints:
-                                const BoxConstraints(minHeight: minHeight),
+                            constraints: BoxConstraints(
+                              minHeight: minHeight,
+                              maxHeight: maxFieldHeight,
+                            ),
                             decoration: BoxDecoration(
                               // In meshMode this is the only piece (no + button),
                               // so it always paints itself. Otherwise it's
@@ -626,7 +656,7 @@ class _ChatInputBarState extends State<ChatInputBar>
                                           focusNode: widget.textFocusNode,
                                           controller: widget.controller,
                                           minLines: 1,
-                                          maxLines: 5,
+                                          maxLines: null,
                                           readOnly: widget.readOnly,
                                           style: widget.textStyle ??
                                               TextStyle(

@@ -112,6 +112,8 @@ class SettingsManager {
   static const _notifSoundEnabledKey = 'notif_sound_enabled';
   static const _notifSoundKey = 'notif_sound';
   static const _notifHideContentKey = 'notif_hide_content';
+  static const _backgroundServiceEnabledKey = 'background_service_enabled';
+  static const _backgroundServiceTextKey = 'background_service_text';
   static const _proxyEnabledKey = 'proxy_enabled';
   static const _proxyTypeKey = 'proxy_type';
   static const _proxyHostKey = 'proxy_host';
@@ -355,6 +357,20 @@ class SettingsManager {
   static final ValueNotifier<bool> notifHideContent =
       ValueNotifier<bool>(true);
 
+  // Android/iOS background keep-alive: a persistent foreground service that
+  // keeps the process (and its WebSocket) alive while the app is minimized,
+  // so messages still arrive without the OS killing it. On by default —
+  // most users would rather see a low-priority ongoing notification than
+  // silently miss messages. notificationText is what's shown as the
+  // notification's title while the service is running; empty means "use
+  // the localized AppLocalizations.backgroundServiceDefaultText" — that
+  // string lives in the ARB files (not here) since SettingsManager has no
+  // BuildContext to localize with.
+  static final ValueNotifier<bool> backgroundServiceEnabled =
+      ValueNotifier<bool>(true);
+  static final ValueNotifier<String> backgroundServiceNotificationText =
+      ValueNotifier<String>('');
+
   static final ValueNotifier<bool> proxyEnabled = ValueNotifier<bool>(false);
   static final ValueNotifier<String> proxyType = ValueNotifier<String>('http');
   static final ValueNotifier<String> proxyHost = ValueNotifier<String>('');
@@ -530,6 +546,10 @@ class SettingsManager {
         prefs.getString(_notifSoundKey) ?? 'notification0';
     final notifHideContent_ =
         prefs.getBool(_notifHideContentKey) ?? true;
+    final backgroundServiceEnabled_ =
+        prefs.getBool(_backgroundServiceEnabledKey) ?? true;
+    final backgroundServiceText_ =
+        prefs.getString(_backgroundServiceTextKey) ?? '';
 
     final proxyEnabled_ = prefs.getBool(_proxyEnabledKey) ?? false;
     final proxyType_ = prefs.getString(_proxyTypeKey) ?? 'http';
@@ -654,6 +674,9 @@ class SettingsManager {
     SettingsManager.notifSoundEnabled.value = notifSoundEnabled_;
     SettingsManager.notifSound.value = notifSound_;
     SettingsManager.notifHideContent.value = notifHideContent_;
+    SettingsManager.backgroundServiceEnabled.value = backgroundServiceEnabled_;
+    SettingsManager.backgroundServiceNotificationText.value =
+        backgroundServiceText_;
     SettingsManager.proxyEnabled.value = proxyEnabled_;
     SettingsManager.proxyType.value = proxyType_;
     SettingsManager.proxyHost.value = proxyHost_;
@@ -1346,6 +1369,18 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setBool(_notifHideContentKey, val);
     notifHideContent.value = val;
+  }
+
+  static Future<void> setBackgroundServiceEnabled(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_backgroundServiceEnabledKey, val);
+    backgroundServiceEnabled.value = val;
+  }
+
+  static Future<void> setBackgroundServiceNotificationText(String val) async {
+    final prefs = await _getPrefs();
+    await prefs.setString(_backgroundServiceTextKey, val);
+    backgroundServiceNotificationText.value = val;
   }
 
   static Future<void> setProxyEnabled(bool val) async {

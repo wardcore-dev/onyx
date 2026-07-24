@@ -329,7 +329,7 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final l = AppLocalizations(SettingsManager.appLocale.value);
+    final l = lookupAppLocalizations(SettingsManager.appLocale.value);
     final cs = Theme.of(context).colorScheme;
 
     return Dialog(

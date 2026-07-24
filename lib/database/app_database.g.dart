@@ -2314,6 +2314,798 @@ class FavoriteChatsCompanion extends UpdateCompanion<FavoriteChatRow> {
   }
 }
 
+class $MessageRemindersTable extends MessageReminders
+    with TableInfo<$MessageRemindersTable, MessageReminderRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MessageRemindersTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _reminderIdMeta =
+      const VerificationMeta('reminderId');
+  @override
+  late final GeneratedColumn<String> reminderId = GeneratedColumn<String>(
+      'reminder_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _accountIdMeta =
+      const VerificationMeta('accountId');
+  @override
+  late final GeneratedColumn<String> accountId = GeneratedColumn<String>(
+      'account_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _serverHostMeta =
+      const VerificationMeta('serverHost');
+  @override
+  late final GeneratedColumn<String> serverHost = GeneratedColumn<String>(
+      'server_host', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _messageIdMeta =
+      const VerificationMeta('messageId');
+  @override
+  late final GeneratedColumn<String> messageId = GeneratedColumn<String>(
+      'message_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _chatIdMeta = const VerificationMeta('chatId');
+  @override
+  late final GeneratedColumn<String> chatId = GeneratedColumn<String>(
+      'chat_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _chatTypeMeta =
+      const VerificationMeta('chatType');
+  @override
+  late final GeneratedColumn<String> chatType = GeneratedColumn<String>(
+      'chat_type', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _chatTitleMeta =
+      const VerificationMeta('chatTitle');
+  @override
+  late final GeneratedColumn<String> chatTitle = GeneratedColumn<String>(
+      'chat_title', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _messagePreviewMeta =
+      const VerificationMeta('messagePreview');
+  @override
+  late final GeneratedColumn<String> messagePreview = GeneratedColumn<String>(
+      'message_preview', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _avatarPathMeta =
+      const VerificationMeta('avatarPath');
+  @override
+  late final GeneratedColumn<String> avatarPath = GeneratedColumn<String>(
+      'avatar_path', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _externalServerIdMeta =
+      const VerificationMeta('externalServerId');
+  @override
+  late final GeneratedColumn<String> externalServerId = GeneratedColumn<String>(
+      'external_server_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _otherUsernameMeta =
+      const VerificationMeta('otherUsername');
+  @override
+  late final GeneratedColumn<String> otherUsername = GeneratedColumn<String>(
+      'other_username', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _accentColorArgbMeta =
+      const VerificationMeta('accentColorArgb');
+  @override
+  late final GeneratedColumn<int> accentColorArgb = GeneratedColumn<int>(
+      'accent_color_argb', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _scheduledAtMsMeta =
+      const VerificationMeta('scheduledAtMs');
+  @override
+  late final GeneratedColumn<int> scheduledAtMs = GeneratedColumn<int>(
+      'scheduled_at_ms', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _createdAtMsMeta =
+      const VerificationMeta('createdAtMs');
+  @override
+  late final GeneratedColumn<int> createdAtMs = GeneratedColumn<int>(
+      'created_at_ms', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _firedMeta = const VerificationMeta('fired');
+  @override
+  late final GeneratedColumn<bool> fired = GeneratedColumn<bool>(
+      'fired', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("fired" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _cancelledMeta =
+      const VerificationMeta('cancelled');
+  @override
+  late final GeneratedColumn<bool> cancelled = GeneratedColumn<bool>(
+      'cancelled', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("cancelled" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  @override
+  List<GeneratedColumn> get $columns => [
+        reminderId,
+        accountId,
+        serverHost,
+        messageId,
+        chatId,
+        chatType,
+        chatTitle,
+        messagePreview,
+        avatarPath,
+        externalServerId,
+        otherUsername,
+        accentColorArgb,
+        scheduledAtMs,
+        createdAtMs,
+        fired,
+        cancelled
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'message_reminders';
+  @override
+  VerificationContext validateIntegrity(Insertable<MessageReminderRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('reminder_id')) {
+      context.handle(
+          _reminderIdMeta,
+          reminderId.isAcceptableOrUnknown(
+              data['reminder_id']!, _reminderIdMeta));
+    } else if (isInserting) {
+      context.missing(_reminderIdMeta);
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(_accountIdMeta,
+          accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta));
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('server_host')) {
+      context.handle(
+          _serverHostMeta,
+          serverHost.isAcceptableOrUnknown(
+              data['server_host']!, _serverHostMeta));
+    } else if (isInserting) {
+      context.missing(_serverHostMeta);
+    }
+    if (data.containsKey('message_id')) {
+      context.handle(_messageIdMeta,
+          messageId.isAcceptableOrUnknown(data['message_id']!, _messageIdMeta));
+    } else if (isInserting) {
+      context.missing(_messageIdMeta);
+    }
+    if (data.containsKey('chat_id')) {
+      context.handle(_chatIdMeta,
+          chatId.isAcceptableOrUnknown(data['chat_id']!, _chatIdMeta));
+    } else if (isInserting) {
+      context.missing(_chatIdMeta);
+    }
+    if (data.containsKey('chat_type')) {
+      context.handle(_chatTypeMeta,
+          chatType.isAcceptableOrUnknown(data['chat_type']!, _chatTypeMeta));
+    } else if (isInserting) {
+      context.missing(_chatTypeMeta);
+    }
+    if (data.containsKey('chat_title')) {
+      context.handle(_chatTitleMeta,
+          chatTitle.isAcceptableOrUnknown(data['chat_title']!, _chatTitleMeta));
+    } else if (isInserting) {
+      context.missing(_chatTitleMeta);
+    }
+    if (data.containsKey('message_preview')) {
+      context.handle(
+          _messagePreviewMeta,
+          messagePreview.isAcceptableOrUnknown(
+              data['message_preview']!, _messagePreviewMeta));
+    } else if (isInserting) {
+      context.missing(_messagePreviewMeta);
+    }
+    if (data.containsKey('avatar_path')) {
+      context.handle(
+          _avatarPathMeta,
+          avatarPath.isAcceptableOrUnknown(
+              data['avatar_path']!, _avatarPathMeta));
+    }
+    if (data.containsKey('external_server_id')) {
+      context.handle(
+          _externalServerIdMeta,
+          externalServerId.isAcceptableOrUnknown(
+              data['external_server_id']!, _externalServerIdMeta));
+    }
+    if (data.containsKey('other_username')) {
+      context.handle(
+          _otherUsernameMeta,
+          otherUsername.isAcceptableOrUnknown(
+              data['other_username']!, _otherUsernameMeta));
+    }
+    if (data.containsKey('accent_color_argb')) {
+      context.handle(
+          _accentColorArgbMeta,
+          accentColorArgb.isAcceptableOrUnknown(
+              data['accent_color_argb']!, _accentColorArgbMeta));
+    }
+    if (data.containsKey('scheduled_at_ms')) {
+      context.handle(
+          _scheduledAtMsMeta,
+          scheduledAtMs.isAcceptableOrUnknown(
+              data['scheduled_at_ms']!, _scheduledAtMsMeta));
+    } else if (isInserting) {
+      context.missing(_scheduledAtMsMeta);
+    }
+    if (data.containsKey('created_at_ms')) {
+      context.handle(
+          _createdAtMsMeta,
+          createdAtMs.isAcceptableOrUnknown(
+              data['created_at_ms']!, _createdAtMsMeta));
+    } else if (isInserting) {
+      context.missing(_createdAtMsMeta);
+    }
+    if (data.containsKey('fired')) {
+      context.handle(
+          _firedMeta, fired.isAcceptableOrUnknown(data['fired']!, _firedMeta));
+    }
+    if (data.containsKey('cancelled')) {
+      context.handle(_cancelledMeta,
+          cancelled.isAcceptableOrUnknown(data['cancelled']!, _cancelledMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {reminderId, accountId, serverHost};
+  @override
+  MessageReminderRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return MessageReminderRow(
+      reminderId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}reminder_id'])!,
+      accountId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}account_id'])!,
+      serverHost: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}server_host'])!,
+      messageId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}message_id'])!,
+      chatId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}chat_id'])!,
+      chatType: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}chat_type'])!,
+      chatTitle: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}chat_title'])!,
+      messagePreview: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}message_preview'])!,
+      avatarPath: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}avatar_path']),
+      externalServerId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}external_server_id']),
+      otherUsername: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}other_username']),
+      accentColorArgb: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}accent_color_argb']),
+      scheduledAtMs: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}scheduled_at_ms'])!,
+      createdAtMs: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}created_at_ms'])!,
+      fired: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}fired'])!,
+      cancelled: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}cancelled'])!,
+    );
+  }
+
+  @override
+  $MessageRemindersTable createAlias(String alias) {
+    return $MessageRemindersTable(attachedDatabase, alias);
+  }
+}
+
+class MessageReminderRow extends DataClass
+    implements Insertable<MessageReminderRow> {
+  final String reminderId;
+  final String accountId;
+  final String serverHost;
+  final String messageId;
+  final String chatId;
+  final String chatType;
+  final String chatTitle;
+  final String messagePreview;
+  final String? avatarPath;
+  final String? externalServerId;
+  final String? otherUsername;
+  final int? accentColorArgb;
+  final int scheduledAtMs;
+  final int createdAtMs;
+  final bool fired;
+  final bool cancelled;
+  const MessageReminderRow(
+      {required this.reminderId,
+      required this.accountId,
+      required this.serverHost,
+      required this.messageId,
+      required this.chatId,
+      required this.chatType,
+      required this.chatTitle,
+      required this.messagePreview,
+      this.avatarPath,
+      this.externalServerId,
+      this.otherUsername,
+      this.accentColorArgb,
+      required this.scheduledAtMs,
+      required this.createdAtMs,
+      required this.fired,
+      required this.cancelled});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['reminder_id'] = Variable<String>(reminderId);
+    map['account_id'] = Variable<String>(accountId);
+    map['server_host'] = Variable<String>(serverHost);
+    map['message_id'] = Variable<String>(messageId);
+    map['chat_id'] = Variable<String>(chatId);
+    map['chat_type'] = Variable<String>(chatType);
+    map['chat_title'] = Variable<String>(chatTitle);
+    map['message_preview'] = Variable<String>(messagePreview);
+    if (!nullToAbsent || avatarPath != null) {
+      map['avatar_path'] = Variable<String>(avatarPath);
+    }
+    if (!nullToAbsent || externalServerId != null) {
+      map['external_server_id'] = Variable<String>(externalServerId);
+    }
+    if (!nullToAbsent || otherUsername != null) {
+      map['other_username'] = Variable<String>(otherUsername);
+    }
+    if (!nullToAbsent || accentColorArgb != null) {
+      map['accent_color_argb'] = Variable<int>(accentColorArgb);
+    }
+    map['scheduled_at_ms'] = Variable<int>(scheduledAtMs);
+    map['created_at_ms'] = Variable<int>(createdAtMs);
+    map['fired'] = Variable<bool>(fired);
+    map['cancelled'] = Variable<bool>(cancelled);
+    return map;
+  }
+
+  MessageRemindersCompanion toCompanion(bool nullToAbsent) {
+    return MessageRemindersCompanion(
+      reminderId: Value(reminderId),
+      accountId: Value(accountId),
+      serverHost: Value(serverHost),
+      messageId: Value(messageId),
+      chatId: Value(chatId),
+      chatType: Value(chatType),
+      chatTitle: Value(chatTitle),
+      messagePreview: Value(messagePreview),
+      avatarPath: avatarPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(avatarPath),
+      externalServerId: externalServerId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(externalServerId),
+      otherUsername: otherUsername == null && nullToAbsent
+          ? const Value.absent()
+          : Value(otherUsername),
+      accentColorArgb: accentColorArgb == null && nullToAbsent
+          ? const Value.absent()
+          : Value(accentColorArgb),
+      scheduledAtMs: Value(scheduledAtMs),
+      createdAtMs: Value(createdAtMs),
+      fired: Value(fired),
+      cancelled: Value(cancelled),
+    );
+  }
+
+  factory MessageReminderRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return MessageReminderRow(
+      reminderId: serializer.fromJson<String>(json['reminderId']),
+      accountId: serializer.fromJson<String>(json['accountId']),
+      serverHost: serializer.fromJson<String>(json['serverHost']),
+      messageId: serializer.fromJson<String>(json['messageId']),
+      chatId: serializer.fromJson<String>(json['chatId']),
+      chatType: serializer.fromJson<String>(json['chatType']),
+      chatTitle: serializer.fromJson<String>(json['chatTitle']),
+      messagePreview: serializer.fromJson<String>(json['messagePreview']),
+      avatarPath: serializer.fromJson<String?>(json['avatarPath']),
+      externalServerId: serializer.fromJson<String?>(json['externalServerId']),
+      otherUsername: serializer.fromJson<String?>(json['otherUsername']),
+      accentColorArgb: serializer.fromJson<int?>(json['accentColorArgb']),
+      scheduledAtMs: serializer.fromJson<int>(json['scheduledAtMs']),
+      createdAtMs: serializer.fromJson<int>(json['createdAtMs']),
+      fired: serializer.fromJson<bool>(json['fired']),
+      cancelled: serializer.fromJson<bool>(json['cancelled']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'reminderId': serializer.toJson<String>(reminderId),
+      'accountId': serializer.toJson<String>(accountId),
+      'serverHost': serializer.toJson<String>(serverHost),
+      'messageId': serializer.toJson<String>(messageId),
+      'chatId': serializer.toJson<String>(chatId),
+      'chatType': serializer.toJson<String>(chatType),
+      'chatTitle': serializer.toJson<String>(chatTitle),
+      'messagePreview': serializer.toJson<String>(messagePreview),
+      'avatarPath': serializer.toJson<String?>(avatarPath),
+      'externalServerId': serializer.toJson<String?>(externalServerId),
+      'otherUsername': serializer.toJson<String?>(otherUsername),
+      'accentColorArgb': serializer.toJson<int?>(accentColorArgb),
+      'scheduledAtMs': serializer.toJson<int>(scheduledAtMs),
+      'createdAtMs': serializer.toJson<int>(createdAtMs),
+      'fired': serializer.toJson<bool>(fired),
+      'cancelled': serializer.toJson<bool>(cancelled),
+    };
+  }
+
+  MessageReminderRow copyWith(
+          {String? reminderId,
+          String? accountId,
+          String? serverHost,
+          String? messageId,
+          String? chatId,
+          String? chatType,
+          String? chatTitle,
+          String? messagePreview,
+          Value<String?> avatarPath = const Value.absent(),
+          Value<String?> externalServerId = const Value.absent(),
+          Value<String?> otherUsername = const Value.absent(),
+          Value<int?> accentColorArgb = const Value.absent(),
+          int? scheduledAtMs,
+          int? createdAtMs,
+          bool? fired,
+          bool? cancelled}) =>
+      MessageReminderRow(
+        reminderId: reminderId ?? this.reminderId,
+        accountId: accountId ?? this.accountId,
+        serverHost: serverHost ?? this.serverHost,
+        messageId: messageId ?? this.messageId,
+        chatId: chatId ?? this.chatId,
+        chatType: chatType ?? this.chatType,
+        chatTitle: chatTitle ?? this.chatTitle,
+        messagePreview: messagePreview ?? this.messagePreview,
+        avatarPath: avatarPath.present ? avatarPath.value : this.avatarPath,
+        externalServerId: externalServerId.present
+            ? externalServerId.value
+            : this.externalServerId,
+        otherUsername:
+            otherUsername.present ? otherUsername.value : this.otherUsername,
+        accentColorArgb: accentColorArgb.present
+            ? accentColorArgb.value
+            : this.accentColorArgb,
+        scheduledAtMs: scheduledAtMs ?? this.scheduledAtMs,
+        createdAtMs: createdAtMs ?? this.createdAtMs,
+        fired: fired ?? this.fired,
+        cancelled: cancelled ?? this.cancelled,
+      );
+  MessageReminderRow copyWithCompanion(MessageRemindersCompanion data) {
+    return MessageReminderRow(
+      reminderId:
+          data.reminderId.present ? data.reminderId.value : this.reminderId,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      serverHost:
+          data.serverHost.present ? data.serverHost.value : this.serverHost,
+      messageId: data.messageId.present ? data.messageId.value : this.messageId,
+      chatId: data.chatId.present ? data.chatId.value : this.chatId,
+      chatType: data.chatType.present ? data.chatType.value : this.chatType,
+      chatTitle: data.chatTitle.present ? data.chatTitle.value : this.chatTitle,
+      messagePreview: data.messagePreview.present
+          ? data.messagePreview.value
+          : this.messagePreview,
+      avatarPath:
+          data.avatarPath.present ? data.avatarPath.value : this.avatarPath,
+      externalServerId: data.externalServerId.present
+          ? data.externalServerId.value
+          : this.externalServerId,
+      otherUsername: data.otherUsername.present
+          ? data.otherUsername.value
+          : this.otherUsername,
+      accentColorArgb: data.accentColorArgb.present
+          ? data.accentColorArgb.value
+          : this.accentColorArgb,
+      scheduledAtMs: data.scheduledAtMs.present
+          ? data.scheduledAtMs.value
+          : this.scheduledAtMs,
+      createdAtMs:
+          data.createdAtMs.present ? data.createdAtMs.value : this.createdAtMs,
+      fired: data.fired.present ? data.fired.value : this.fired,
+      cancelled: data.cancelled.present ? data.cancelled.value : this.cancelled,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MessageReminderRow(')
+          ..write('reminderId: $reminderId, ')
+          ..write('accountId: $accountId, ')
+          ..write('serverHost: $serverHost, ')
+          ..write('messageId: $messageId, ')
+          ..write('chatId: $chatId, ')
+          ..write('chatType: $chatType, ')
+          ..write('chatTitle: $chatTitle, ')
+          ..write('messagePreview: $messagePreview, ')
+          ..write('avatarPath: $avatarPath, ')
+          ..write('externalServerId: $externalServerId, ')
+          ..write('otherUsername: $otherUsername, ')
+          ..write('accentColorArgb: $accentColorArgb, ')
+          ..write('scheduledAtMs: $scheduledAtMs, ')
+          ..write('createdAtMs: $createdAtMs, ')
+          ..write('fired: $fired, ')
+          ..write('cancelled: $cancelled')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      reminderId,
+      accountId,
+      serverHost,
+      messageId,
+      chatId,
+      chatType,
+      chatTitle,
+      messagePreview,
+      avatarPath,
+      externalServerId,
+      otherUsername,
+      accentColorArgb,
+      scheduledAtMs,
+      createdAtMs,
+      fired,
+      cancelled);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is MessageReminderRow &&
+          other.reminderId == this.reminderId &&
+          other.accountId == this.accountId &&
+          other.serverHost == this.serverHost &&
+          other.messageId == this.messageId &&
+          other.chatId == this.chatId &&
+          other.chatType == this.chatType &&
+          other.chatTitle == this.chatTitle &&
+          other.messagePreview == this.messagePreview &&
+          other.avatarPath == this.avatarPath &&
+          other.externalServerId == this.externalServerId &&
+          other.otherUsername == this.otherUsername &&
+          other.accentColorArgb == this.accentColorArgb &&
+          other.scheduledAtMs == this.scheduledAtMs &&
+          other.createdAtMs == this.createdAtMs &&
+          other.fired == this.fired &&
+          other.cancelled == this.cancelled);
+}
+
+class MessageRemindersCompanion extends UpdateCompanion<MessageReminderRow> {
+  final Value<String> reminderId;
+  final Value<String> accountId;
+  final Value<String> serverHost;
+  final Value<String> messageId;
+  final Value<String> chatId;
+  final Value<String> chatType;
+  final Value<String> chatTitle;
+  final Value<String> messagePreview;
+  final Value<String?> avatarPath;
+  final Value<String?> externalServerId;
+  final Value<String?> otherUsername;
+  final Value<int?> accentColorArgb;
+  final Value<int> scheduledAtMs;
+  final Value<int> createdAtMs;
+  final Value<bool> fired;
+  final Value<bool> cancelled;
+  final Value<int> rowid;
+  const MessageRemindersCompanion({
+    this.reminderId = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.serverHost = const Value.absent(),
+    this.messageId = const Value.absent(),
+    this.chatId = const Value.absent(),
+    this.chatType = const Value.absent(),
+    this.chatTitle = const Value.absent(),
+    this.messagePreview = const Value.absent(),
+    this.avatarPath = const Value.absent(),
+    this.externalServerId = const Value.absent(),
+    this.otherUsername = const Value.absent(),
+    this.accentColorArgb = const Value.absent(),
+    this.scheduledAtMs = const Value.absent(),
+    this.createdAtMs = const Value.absent(),
+    this.fired = const Value.absent(),
+    this.cancelled = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  MessageRemindersCompanion.insert({
+    required String reminderId,
+    required String accountId,
+    required String serverHost,
+    required String messageId,
+    required String chatId,
+    required String chatType,
+    required String chatTitle,
+    required String messagePreview,
+    this.avatarPath = const Value.absent(),
+    this.externalServerId = const Value.absent(),
+    this.otherUsername = const Value.absent(),
+    this.accentColorArgb = const Value.absent(),
+    required int scheduledAtMs,
+    required int createdAtMs,
+    this.fired = const Value.absent(),
+    this.cancelled = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : reminderId = Value(reminderId),
+        accountId = Value(accountId),
+        serverHost = Value(serverHost),
+        messageId = Value(messageId),
+        chatId = Value(chatId),
+        chatType = Value(chatType),
+        chatTitle = Value(chatTitle),
+        messagePreview = Value(messagePreview),
+        scheduledAtMs = Value(scheduledAtMs),
+        createdAtMs = Value(createdAtMs);
+  static Insertable<MessageReminderRow> custom({
+    Expression<String>? reminderId,
+    Expression<String>? accountId,
+    Expression<String>? serverHost,
+    Expression<String>? messageId,
+    Expression<String>? chatId,
+    Expression<String>? chatType,
+    Expression<String>? chatTitle,
+    Expression<String>? messagePreview,
+    Expression<String>? avatarPath,
+    Expression<String>? externalServerId,
+    Expression<String>? otherUsername,
+    Expression<int>? accentColorArgb,
+    Expression<int>? scheduledAtMs,
+    Expression<int>? createdAtMs,
+    Expression<bool>? fired,
+    Expression<bool>? cancelled,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (reminderId != null) 'reminder_id': reminderId,
+      if (accountId != null) 'account_id': accountId,
+      if (serverHost != null) 'server_host': serverHost,
+      if (messageId != null) 'message_id': messageId,
+      if (chatId != null) 'chat_id': chatId,
+      if (chatType != null) 'chat_type': chatType,
+      if (chatTitle != null) 'chat_title': chatTitle,
+      if (messagePreview != null) 'message_preview': messagePreview,
+      if (avatarPath != null) 'avatar_path': avatarPath,
+      if (externalServerId != null) 'external_server_id': externalServerId,
+      if (otherUsername != null) 'other_username': otherUsername,
+      if (accentColorArgb != null) 'accent_color_argb': accentColorArgb,
+      if (scheduledAtMs != null) 'scheduled_at_ms': scheduledAtMs,
+      if (createdAtMs != null) 'created_at_ms': createdAtMs,
+      if (fired != null) 'fired': fired,
+      if (cancelled != null) 'cancelled': cancelled,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  MessageRemindersCompanion copyWith(
+      {Value<String>? reminderId,
+      Value<String>? accountId,
+      Value<String>? serverHost,
+      Value<String>? messageId,
+      Value<String>? chatId,
+      Value<String>? chatType,
+      Value<String>? chatTitle,
+      Value<String>? messagePreview,
+      Value<String?>? avatarPath,
+      Value<String?>? externalServerId,
+      Value<String?>? otherUsername,
+      Value<int?>? accentColorArgb,
+      Value<int>? scheduledAtMs,
+      Value<int>? createdAtMs,
+      Value<bool>? fired,
+      Value<bool>? cancelled,
+      Value<int>? rowid}) {
+    return MessageRemindersCompanion(
+      reminderId: reminderId ?? this.reminderId,
+      accountId: accountId ?? this.accountId,
+      serverHost: serverHost ?? this.serverHost,
+      messageId: messageId ?? this.messageId,
+      chatId: chatId ?? this.chatId,
+      chatType: chatType ?? this.chatType,
+      chatTitle: chatTitle ?? this.chatTitle,
+      messagePreview: messagePreview ?? this.messagePreview,
+      avatarPath: avatarPath ?? this.avatarPath,
+      externalServerId: externalServerId ?? this.externalServerId,
+      otherUsername: otherUsername ?? this.otherUsername,
+      accentColorArgb: accentColorArgb ?? this.accentColorArgb,
+      scheduledAtMs: scheduledAtMs ?? this.scheduledAtMs,
+      createdAtMs: createdAtMs ?? this.createdAtMs,
+      fired: fired ?? this.fired,
+      cancelled: cancelled ?? this.cancelled,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (reminderId.present) {
+      map['reminder_id'] = Variable<String>(reminderId.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<String>(accountId.value);
+    }
+    if (serverHost.present) {
+      map['server_host'] = Variable<String>(serverHost.value);
+    }
+    if (messageId.present) {
+      map['message_id'] = Variable<String>(messageId.value);
+    }
+    if (chatId.present) {
+      map['chat_id'] = Variable<String>(chatId.value);
+    }
+    if (chatType.present) {
+      map['chat_type'] = Variable<String>(chatType.value);
+    }
+    if (chatTitle.present) {
+      map['chat_title'] = Variable<String>(chatTitle.value);
+    }
+    if (messagePreview.present) {
+      map['message_preview'] = Variable<String>(messagePreview.value);
+    }
+    if (avatarPath.present) {
+      map['avatar_path'] = Variable<String>(avatarPath.value);
+    }
+    if (externalServerId.present) {
+      map['external_server_id'] = Variable<String>(externalServerId.value);
+    }
+    if (otherUsername.present) {
+      map['other_username'] = Variable<String>(otherUsername.value);
+    }
+    if (accentColorArgb.present) {
+      map['accent_color_argb'] = Variable<int>(accentColorArgb.value);
+    }
+    if (scheduledAtMs.present) {
+      map['scheduled_at_ms'] = Variable<int>(scheduledAtMs.value);
+    }
+    if (createdAtMs.present) {
+      map['created_at_ms'] = Variable<int>(createdAtMs.value);
+    }
+    if (fired.present) {
+      map['fired'] = Variable<bool>(fired.value);
+    }
+    if (cancelled.present) {
+      map['cancelled'] = Variable<bool>(cancelled.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MessageRemindersCompanion(')
+          ..write('reminderId: $reminderId, ')
+          ..write('accountId: $accountId, ')
+          ..write('serverHost: $serverHost, ')
+          ..write('messageId: $messageId, ')
+          ..write('chatId: $chatId, ')
+          ..write('chatType: $chatType, ')
+          ..write('chatTitle: $chatTitle, ')
+          ..write('messagePreview: $messagePreview, ')
+          ..write('avatarPath: $avatarPath, ')
+          ..write('externalServerId: $externalServerId, ')
+          ..write('otherUsername: $otherUsername, ')
+          ..write('accentColorArgb: $accentColorArgb, ')
+          ..write('scheduledAtMs: $scheduledAtMs, ')
+          ..write('createdAtMs: $createdAtMs, ')
+          ..write('fired: $fired, ')
+          ..write('cancelled: $cancelled, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -2321,18 +3113,22 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $GroupsTable groups = $GroupsTable(this);
   late final $GroupMessagesTable groupMessages = $GroupMessagesTable(this);
   late final $FavoriteChatsTable favoriteChats = $FavoriteChatsTable(this);
+  late final $MessageRemindersTable messageReminders =
+      $MessageRemindersTable(this);
   late final MessageDao messageDao = MessageDao(this as AppDatabase);
   late final GroupDao groupDao = GroupDao(this as AppDatabase);
   late final GroupMessageDao groupMessageDao =
       GroupMessageDao(this as AppDatabase);
   late final FavoriteChatDao favoriteChatDao =
       FavoriteChatDao(this as AppDatabase);
+  late final MessageReminderDao messageReminderDao =
+      MessageReminderDao(this as AppDatabase);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
   List<DatabaseSchemaEntity> get allSchemaEntities =>
-      [messages, groups, groupMessages, favoriteChats];
+      [messages, groups, groupMessages, favoriteChats, messageReminders];
 }
 
 typedef $$MessagesTableCreateCompanionBuilder = MessagesCompanion Function({
@@ -3396,6 +4192,353 @@ typedef $$FavoriteChatsTableProcessedTableManager = ProcessedTableManager<
     ),
     FavoriteChatRow,
     PrefetchHooks Function()>;
+typedef $$MessageRemindersTableCreateCompanionBuilder
+    = MessageRemindersCompanion Function({
+  required String reminderId,
+  required String accountId,
+  required String serverHost,
+  required String messageId,
+  required String chatId,
+  required String chatType,
+  required String chatTitle,
+  required String messagePreview,
+  Value<String?> avatarPath,
+  Value<String?> externalServerId,
+  Value<String?> otherUsername,
+  Value<int?> accentColorArgb,
+  required int scheduledAtMs,
+  required int createdAtMs,
+  Value<bool> fired,
+  Value<bool> cancelled,
+  Value<int> rowid,
+});
+typedef $$MessageRemindersTableUpdateCompanionBuilder
+    = MessageRemindersCompanion Function({
+  Value<String> reminderId,
+  Value<String> accountId,
+  Value<String> serverHost,
+  Value<String> messageId,
+  Value<String> chatId,
+  Value<String> chatType,
+  Value<String> chatTitle,
+  Value<String> messagePreview,
+  Value<String?> avatarPath,
+  Value<String?> externalServerId,
+  Value<String?> otherUsername,
+  Value<int?> accentColorArgb,
+  Value<int> scheduledAtMs,
+  Value<int> createdAtMs,
+  Value<bool> fired,
+  Value<bool> cancelled,
+  Value<int> rowid,
+});
+
+class $$MessageRemindersTableFilterComposer
+    extends Composer<_$AppDatabase, $MessageRemindersTable> {
+  $$MessageRemindersTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get reminderId => $composableBuilder(
+      column: $table.reminderId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get accountId => $composableBuilder(
+      column: $table.accountId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get serverHost => $composableBuilder(
+      column: $table.serverHost, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get messageId => $composableBuilder(
+      column: $table.messageId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get chatId => $composableBuilder(
+      column: $table.chatId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get chatType => $composableBuilder(
+      column: $table.chatType, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get chatTitle => $composableBuilder(
+      column: $table.chatTitle, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get messagePreview => $composableBuilder(
+      column: $table.messagePreview,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get avatarPath => $composableBuilder(
+      column: $table.avatarPath, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get externalServerId => $composableBuilder(
+      column: $table.externalServerId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get otherUsername => $composableBuilder(
+      column: $table.otherUsername, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get accentColorArgb => $composableBuilder(
+      column: $table.accentColorArgb,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get scheduledAtMs => $composableBuilder(
+      column: $table.scheduledAtMs, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get createdAtMs => $composableBuilder(
+      column: $table.createdAtMs, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get fired => $composableBuilder(
+      column: $table.fired, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get cancelled => $composableBuilder(
+      column: $table.cancelled, builder: (column) => ColumnFilters(column));
+}
+
+class $$MessageRemindersTableOrderingComposer
+    extends Composer<_$AppDatabase, $MessageRemindersTable> {
+  $$MessageRemindersTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get reminderId => $composableBuilder(
+      column: $table.reminderId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get accountId => $composableBuilder(
+      column: $table.accountId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get serverHost => $composableBuilder(
+      column: $table.serverHost, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get messageId => $composableBuilder(
+      column: $table.messageId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get chatId => $composableBuilder(
+      column: $table.chatId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get chatType => $composableBuilder(
+      column: $table.chatType, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get chatTitle => $composableBuilder(
+      column: $table.chatTitle, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get messagePreview => $composableBuilder(
+      column: $table.messagePreview,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get avatarPath => $composableBuilder(
+      column: $table.avatarPath, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get externalServerId => $composableBuilder(
+      column: $table.externalServerId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get otherUsername => $composableBuilder(
+      column: $table.otherUsername,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get accentColorArgb => $composableBuilder(
+      column: $table.accentColorArgb,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get scheduledAtMs => $composableBuilder(
+      column: $table.scheduledAtMs,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get createdAtMs => $composableBuilder(
+      column: $table.createdAtMs, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get fired => $composableBuilder(
+      column: $table.fired, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get cancelled => $composableBuilder(
+      column: $table.cancelled, builder: (column) => ColumnOrderings(column));
+}
+
+class $$MessageRemindersTableAnnotationComposer
+    extends Composer<_$AppDatabase, $MessageRemindersTable> {
+  $$MessageRemindersTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get reminderId => $composableBuilder(
+      column: $table.reminderId, builder: (column) => column);
+
+  GeneratedColumn<String> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<String> get serverHost => $composableBuilder(
+      column: $table.serverHost, builder: (column) => column);
+
+  GeneratedColumn<String> get messageId =>
+      $composableBuilder(column: $table.messageId, builder: (column) => column);
+
+  GeneratedColumn<String> get chatId =>
+      $composableBuilder(column: $table.chatId, builder: (column) => column);
+
+  GeneratedColumn<String> get chatType =>
+      $composableBuilder(column: $table.chatType, builder: (column) => column);
+
+  GeneratedColumn<String> get chatTitle =>
+      $composableBuilder(column: $table.chatTitle, builder: (column) => column);
+
+  GeneratedColumn<String> get messagePreview => $composableBuilder(
+      column: $table.messagePreview, builder: (column) => column);
+
+  GeneratedColumn<String> get avatarPath => $composableBuilder(
+      column: $table.avatarPath, builder: (column) => column);
+
+  GeneratedColumn<String> get externalServerId => $composableBuilder(
+      column: $table.externalServerId, builder: (column) => column);
+
+  GeneratedColumn<String> get otherUsername => $composableBuilder(
+      column: $table.otherUsername, builder: (column) => column);
+
+  GeneratedColumn<int> get accentColorArgb => $composableBuilder(
+      column: $table.accentColorArgb, builder: (column) => column);
+
+  GeneratedColumn<int> get scheduledAtMs => $composableBuilder(
+      column: $table.scheduledAtMs, builder: (column) => column);
+
+  GeneratedColumn<int> get createdAtMs => $composableBuilder(
+      column: $table.createdAtMs, builder: (column) => column);
+
+  GeneratedColumn<bool> get fired =>
+      $composableBuilder(column: $table.fired, builder: (column) => column);
+
+  GeneratedColumn<bool> get cancelled =>
+      $composableBuilder(column: $table.cancelled, builder: (column) => column);
+}
+
+class $$MessageRemindersTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $MessageRemindersTable,
+    MessageReminderRow,
+    $$MessageRemindersTableFilterComposer,
+    $$MessageRemindersTableOrderingComposer,
+    $$MessageRemindersTableAnnotationComposer,
+    $$MessageRemindersTableCreateCompanionBuilder,
+    $$MessageRemindersTableUpdateCompanionBuilder,
+    (
+      MessageReminderRow,
+      BaseReferences<_$AppDatabase, $MessageRemindersTable, MessageReminderRow>
+    ),
+    MessageReminderRow,
+    PrefetchHooks Function()> {
+  $$MessageRemindersTableTableManager(
+      _$AppDatabase db, $MessageRemindersTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$MessageRemindersTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$MessageRemindersTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$MessageRemindersTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> reminderId = const Value.absent(),
+            Value<String> accountId = const Value.absent(),
+            Value<String> serverHost = const Value.absent(),
+            Value<String> messageId = const Value.absent(),
+            Value<String> chatId = const Value.absent(),
+            Value<String> chatType = const Value.absent(),
+            Value<String> chatTitle = const Value.absent(),
+            Value<String> messagePreview = const Value.absent(),
+            Value<String?> avatarPath = const Value.absent(),
+            Value<String?> externalServerId = const Value.absent(),
+            Value<String?> otherUsername = const Value.absent(),
+            Value<int?> accentColorArgb = const Value.absent(),
+            Value<int> scheduledAtMs = const Value.absent(),
+            Value<int> createdAtMs = const Value.absent(),
+            Value<bool> fired = const Value.absent(),
+            Value<bool> cancelled = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              MessageRemindersCompanion(
+            reminderId: reminderId,
+            accountId: accountId,
+            serverHost: serverHost,
+            messageId: messageId,
+            chatId: chatId,
+            chatType: chatType,
+            chatTitle: chatTitle,
+            messagePreview: messagePreview,
+            avatarPath: avatarPath,
+            externalServerId: externalServerId,
+            otherUsername: otherUsername,
+            accentColorArgb: accentColorArgb,
+            scheduledAtMs: scheduledAtMs,
+            createdAtMs: createdAtMs,
+            fired: fired,
+            cancelled: cancelled,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String reminderId,
+            required String accountId,
+            required String serverHost,
+            required String messageId,
+            required String chatId,
+            required String chatType,
+            required String chatTitle,
+            required String messagePreview,
+            Value<String?> avatarPath = const Value.absent(),
+            Value<String?> externalServerId = const Value.absent(),
+            Value<String?> otherUsername = const Value.absent(),
+            Value<int?> accentColorArgb = const Value.absent(),
+            required int scheduledAtMs,
+            required int createdAtMs,
+            Value<bool> fired = const Value.absent(),
+            Value<bool> cancelled = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              MessageRemindersCompanion.insert(
+            reminderId: reminderId,
+            accountId: accountId,
+            serverHost: serverHost,
+            messageId: messageId,
+            chatId: chatId,
+            chatType: chatType,
+            chatTitle: chatTitle,
+            messagePreview: messagePreview,
+            avatarPath: avatarPath,
+            externalServerId: externalServerId,
+            otherUsername: otherUsername,
+            accentColorArgb: accentColorArgb,
+            scheduledAtMs: scheduledAtMs,
+            createdAtMs: createdAtMs,
+            fired: fired,
+            cancelled: cancelled,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$MessageRemindersTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $MessageRemindersTable,
+    MessageReminderRow,
+    $$MessageRemindersTableFilterComposer,
+    $$MessageRemindersTableOrderingComposer,
+    $$MessageRemindersTableAnnotationComposer,
+    $$MessageRemindersTableCreateCompanionBuilder,
+    $$MessageRemindersTableUpdateCompanionBuilder,
+    (
+      MessageReminderRow,
+      BaseReferences<_$AppDatabase, $MessageRemindersTable, MessageReminderRow>
+    ),
+    MessageReminderRow,
+    PrefetchHooks Function()>;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -3408,4 +4551,6 @@ class $AppDatabaseManager {
       $$GroupMessagesTableTableManager(_db, _db.groupMessages);
   $$FavoriteChatsTableTableManager get favoriteChats =>
       $$FavoriteChatsTableTableManager(_db, _db.favoriteChats);
+  $$MessageRemindersTableTableManager get messageReminders =>
+      $$MessageRemindersTableTableManager(_db, _db.messageReminders);
 }

@@ -6,6 +6,7 @@ import '../managers/settings_manager.dart';
 import '../models/external_server.dart';
 import '../models/group.dart';
 import '../widgets/security_warning_card.dart';
+import '../l10n/app_localizations.dart';
 
 class ExternalServerJoinScreen extends StatefulWidget {
   const ExternalServerJoinScreen({super.key});
@@ -150,10 +151,11 @@ class _ExternalServerJoinScreenState extends State<ExternalServerJoinScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Join External Server'),
+        title: Text(l.joinExternalServer),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -272,7 +274,7 @@ class _ExternalServerJoinScreenState extends State<ExternalServerJoinScreen> {
                           _serverInfo = null;
                         });
                       },
-                      child: const Text('Back'),
+                      child: Text(l.back),
                     ),
                   ),
                   const SizedBox(width: 12),

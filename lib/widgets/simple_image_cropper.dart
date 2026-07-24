@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:image/image.dart' as img;
 import '../managers/settings_manager.dart';
+import '../l10n/app_localizations.dart';
 
 Future<Uint8List?> showImageCropperDialog(BuildContext context, Uint8List bytes) async {
   final srcImg = img.decodeImage(bytes);
@@ -156,6 +157,7 @@ class _SimpleCropperDialogState extends State<_SimpleCropperDialog> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
 
     return ValueListenableBuilder<double>(
       valueListenable: SettingsManager.elementBrightness,
@@ -250,12 +252,12 @@ class _SimpleCropperDialogState extends State<_SimpleCropperDialog> {
                 children: [
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(null),
-                    child: const Text('Cancel'),
+                    child: Text(l.cancel),
                   ),
                   const Spacer(),
                   FilledButton(
                     onPressed: _cropAndSave,
-                    child: const Text('Crop & Upload'),
+                    child: Text(l.cropAndUpload),
                   ),
                 ],
               ),

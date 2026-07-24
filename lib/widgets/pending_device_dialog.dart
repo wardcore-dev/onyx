@@ -203,10 +203,11 @@ class _PendingDeviceApprovalsDialogState extends State<PendingDeviceApprovalsDia
                                 Row(
                                   children: [
                                     Expanded(
-                                      child: OutlinedButton.icon(
+                                      child: FilledButton.icon(
                                         onPressed: isBusy ? null : () => _deny(item.id),
-                                        icon: Icon(Icons.logout, size: 16, color: Colors.red.shade400),
-                                        label: Text(l10n.pendingDeviceDeny, style: TextStyle(color: Colors.red.shade400)),
+                                        style: FilledButton.styleFrom(backgroundColor: Colors.red.shade600),
+                                        icon: const Icon(Icons.logout, size: 16, color: Colors.white),
+                                        label: Text(l10n.pendingDeviceDeny, style: const TextStyle(color: Colors.white)),
                                       ),
                                     ),
                                     const SizedBox(width: 8),

@@ -20,6 +20,7 @@ import '../globals.dart';
 import '../managers/settings_manager.dart';
 import '../managers/account_manager.dart';
 import '../utils/lazy_image_cache.dart';
+import 'onyx_dialog.dart';
 
 final Map<String, String> _globalAvatarPathCache = {};
 
@@ -713,22 +714,12 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
 
   Future<bool?> _confirmDialog(String title, String text) async {
     if (!mounted) return false;
-    return showDialog<bool>(
+    return showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(text),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Yes'),
-          ),
-        ],
-      ),
+      title: title,
+      message: text,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
   }
 }

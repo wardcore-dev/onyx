@@ -1,9 +1,11 @@
-﻿// lib/screens/settings_tab.dart
+// lib/screens/settings_tab.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show compute, ValueListenable, kIsWeb;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
-import 'package:path_provider/path_provider.dart' show getApplicationSupportDirectory;
+import 'package:path_provider/path_provider.dart'
+    show getApplicationSupportDirectory;
 import '../utils/onyx_base_dir.dart';
+import '../widgets/onyx_dialog.dart';
 import '../utils/settings_backup.dart';
 import '../services/backup/backup_service.dart';
 import '../services/wardlink/wardlink_tombstones.dart';
@@ -26,6 +28,7 @@ import '../enums/liquid_glass_quality.dart';
 import '../enums/media_preload_mode.dart';
 import '../enums/scroll_down_button_position.dart';
 import '../l10n/app_localizations.dart';
+import '../l10n/app_localizations_extra.dart';
 import '../utils/proxy_manager.dart';
 import 'pin_code_screen.dart';
 import 'decoy_setup_screen.dart';
@@ -40,7 +43,8 @@ import '../models/font_family.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../utils/autostart_manager.dart';
 import '../managers/blocklist_manager.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart' show MediaDeviceInfo, navigator;
+import 'package:flutter_webrtc/flutter_webrtc.dart'
+    show MediaDeviceInfo, navigator;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import '../widgets/media_picker_sheet.dart';
@@ -51,8 +55,10 @@ import 'mesh_graph_screen.dart' show showMeshRadarSheet;
 import 'package:permission_handler/permission_handler.dart';
 import '../managers/trash_manager.dart';
 import '../widgets/inline_search_bar.dart';
+import '../widgets/message_bubble.dart';
 
-void _showStyledSnack(BuildContext context, String text, {Duration duration = const Duration(seconds: 2)}) {
+void _showStyledSnack(BuildContext context, String text,
+    {Duration duration = const Duration(seconds: 2)}) {
   final colorScheme = Theme.of(context).colorScheme;
   final brightness = SettingsManager.elementBrightness.value;
   final opacity = SettingsManager.elementOpacity.value;
@@ -66,7 +72,10 @@ void _showStyledSnack(BuildContext context, String text, {Duration duration = co
     SnackBar(
       content: Text(
         text,
-        style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14, fontWeight: FontWeight.w500),
+        style: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontSize: 14,
+            fontWeight: FontWeight.w500),
         textAlign: TextAlign.center,
       ),
       backgroundColor: backgroundColor,
@@ -87,26 +96,55 @@ class _Coin {
   final Color color;
   final List<String> pros;
   final List<String> cons;
-  const _Coin({required this.name, required this.symbol, required this.address, required this.color, required this.pros, required this.cons});
+  const _Coin(
+      {required this.name,
+      required this.symbol,
+      required this.address,
+      required this.color,
+      required this.pros,
+      required this.cons});
 }
 
 const _kCoins = [
   _Coin(
-    name: 'Bitcoin', symbol: 'BTC', color: Color(0xFFF7931A),
+    name: 'Bitcoin',
+    symbol: 'BTC',
+    color: Color(0xFFF7931A),
     address: 'bc1qpw2amf3j7w4swunx8mdfvk703uq3uadg9748tm',
-    pros: ['Most widely accepted', 'Available on any exchange', 'Maximum liquidity'],
-    cons: ['High transaction fees', 'Transactions are public', 'Slow confirmation (~10 min)'],
+    pros: [
+      'Most widely accepted',
+      'Available on any exchange',
+      'Maximum liquidity'
+    ],
+    cons: [
+      'High transaction fees',
+      'Transactions are public',
+      'Slow confirmation (~10 min)'
+    ],
   ),
   _Coin(
-    name: 'Litecoin', symbol: 'LTC', color: Color(0xFF345D9D),
+    name: 'Litecoin',
+    symbol: 'LTC',
+    color: Color(0xFF345D9D),
     address: 'ltc1qx37f0k2mckxp2je3cplkfvg7473nq8udpk4kg9',
-    pros: ['Low fees', 'Fast confirmation (~2.5 min)', 'Available on most exchanges'],
+    pros: [
+      'Low fees',
+      'Fast confirmation (~2.5 min)',
+      'Available on most exchanges'
+    ],
     cons: ['Transactions are public', 'Less popular than BTC'],
   ),
   _Coin(
-    name: 'Monero', symbol: 'XMR', color: Color(0xFFFF6600),
-    address: '88R9RYWEL38Aj7As8KnT9bia7HyQkPf7AC9XK8HuDofaevudWAkLw9sjMhkQ4aNvzVdjdgdWSpvTw8RyHePcuHov6cwBTT2',
-    pros: ['Fully anonymous by default', 'Untraceable transactions', 'Best fit for a privacy app'],
+    name: 'Monero',
+    symbol: 'XMR',
+    color: Color(0xFFFF6600),
+    address:
+        '88R9RYWEL38Aj7As8KnT9bia7HyQkPf7AC9XK8HuDofaevudWAkLw9sjMhkQ4aNvzVdjdgdWSpvTw8RyHePcuHov6cwBTT2',
+    pros: [
+      'Fully anonymous by default',
+      'Untraceable transactions',
+      'Best fit for a privacy app'
+    ],
     cons: ['Harder to buy (limited exchanges)', 'Longer sync time in wallet'],
   ),
 ];
@@ -130,11 +168,11 @@ class _SupportSheetState extends State<SupportSheet> {
         color: cs.surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      padding: EdgeInsets.fromLTRB(24, 12, 24, 24 + MediaQuery.paddingOf(context).bottom),
+      padding: EdgeInsets.fromLTRB(
+          24, 12, 24, 24 + MediaQuery.paddingOf(context).bottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          
           Container(
             width: 40,
             height: 4,
@@ -144,12 +182,16 @@ class _SupportSheetState extends State<SupportSheet> {
             ),
           ),
           const SizedBox(height: 20),
-
-          Text(AppLocalizations.of(context).supportOnyx, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cs.onSurface)),
+          Text(AppLocalizations.of(context).supportOnyx,
+              style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: cs.onSurface)),
           const SizedBox(height: 4),
-          Text(AppLocalizations.of(context).chooseCrypto, style: TextStyle(fontSize: 13, color: cs.onSurface.withValues(alpha: 0.5))),
+          Text(AppLocalizations.of(context).chooseCrypto,
+              style: TextStyle(
+                  fontSize: 13, color: cs.onSurface.withValues(alpha: 0.5))),
           const SizedBox(height: 20),
-
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(_kCoins.length, (i) {
@@ -161,15 +203,27 @@ class _SupportSheetState extends State<SupportSheet> {
                   onTap: () => setState(() => _selected = i),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
                     decoration: BoxDecoration(
-                      color: active ? c.color.withValues(alpha: 0.15) : cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                      color: active
+                          ? c.color.withValues(alpha: 0.15)
+                          : cs.surfaceContainerHighest.withValues(alpha: 0.5),
                       borderRadius: BorderRadius.circular(50),
-                      border: Border.all(color: active ? c.color : cs.outlineVariant.withValues(alpha: 0.3), width: active ? 1.5 : 0.8),
+                      border: Border.all(
+                          color: active
+                              ? c.color
+                              : cs.outlineVariant.withValues(alpha: 0.3),
+                          width: active ? 1.5 : 0.8),
                     ),
                     child: Text(
                       c.symbol,
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: active ? c.color : cs.onSurface.withValues(alpha: 0.6)),
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: active
+                              ? c.color
+                              : cs.onSurface.withValues(alpha: 0.6)),
                     ),
                   ),
                 ),
@@ -177,7 +231,6 @@ class _SupportSheetState extends State<SupportSheet> {
             }),
           ),
           const SizedBox(height: 16),
-
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 200),
             child: Container(
@@ -193,28 +246,43 @@ class _SupportSheetState extends State<SupportSheet> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   ...coin.pros.map((p) => Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Row(children: [
-                      Icon(Icons.add_circle_outline_rounded, size: 14, color: Colors.green.shade400),
-                      const SizedBox(width: 6),
-                      Expanded(child: Text(AppLocalizations.of(context).localizeDonateText(p), style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.85)))),
-                    ]),
-                  )),
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Row(children: [
+                          Icon(Icons.add_circle_outline_rounded,
+                              size: 14, color: Colors.green.shade400),
+                          const SizedBox(width: 6),
+                          Expanded(
+                              child: Text(
+                                  AppLocalizations.of(context)
+                                      .localizeDonateText(p),
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: cs.onSurface
+                                          .withValues(alpha: 0.85)))),
+                        ]),
+                      )),
                   if (coin.cons.isNotEmpty) const SizedBox(height: 4),
                   ...coin.cons.map((c) => Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Row(children: [
-                      Icon(Icons.remove_circle_outline_rounded, size: 14, color: Colors.red.shade300),
-                      const SizedBox(width: 6),
-                      Expanded(child: Text(AppLocalizations.of(context).localizeDonateText(c), style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.85)))),
-                    ]),
-                  )),
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Row(children: [
+                          Icon(Icons.remove_circle_outline_rounded,
+                              size: 14, color: Colors.red.shade300),
+                          const SizedBox(width: 6),
+                          Expanded(
+                              child: Text(
+                                  AppLocalizations.of(context)
+                                      .localizeDonateText(c),
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: cs.onSurface
+                                          .withValues(alpha: 0.85)))),
+                        ]),
+                      )),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 20),
-
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -225,25 +293,31 @@ class _SupportSheetState extends State<SupportSheet> {
               data: coin.address,
               version: QrVersions.auto,
               size: 180,
-              eyeStyle: QrEyeStyle(eyeShape: QrEyeShape.square, color: Colors.black),
-              dataModuleStyle: QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: Colors.black),
+              eyeStyle:
+                  QrEyeStyle(eyeShape: QrEyeShape.square, color: Colors.black),
+              dataModuleStyle: QrDataModuleStyle(
+                  dataModuleShape: QrDataModuleShape.square,
+                  color: Colors.black),
             ),
           ),
           const SizedBox(height: 20),
-
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
               color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.2)),
+              border:
+                  Border.all(color: cs.outlineVariant.withValues(alpha: 0.2)),
             ),
             child: Row(
               children: [
                 Expanded(
                   child: Text(
                     coin.address,
-                    style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: cs.onSurface.withValues(alpha: 0.8)),
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        color: cs.onSurface.withValues(alpha: 0.8)),
                     maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -252,7 +326,9 @@ class _SupportSheetState extends State<SupportSheet> {
                 GestureDetector(
                   onTap: () {
                     Clipboard.setData(ClipboardData(text: coin.address));
-                    _showStyledSnack(context, '${coin.symbol} ${AppLocalizations.of(context).addressCopied}', duration: const Duration(seconds: 1));
+                    _showStyledSnack(context,
+                        '${coin.symbol} ${AppLocalizations.of(context).addressCopied}',
+                        duration: const Duration(seconds: 1));
                   },
                   child: Icon(Icons.copy_rounded, size: 18, color: cs.primary),
                 ),
@@ -298,20 +374,22 @@ class SettingsTab extends StatefulWidget {
   final Future<void> Function(AppTheme theme, bool isDark) onThemeChanged;
   final Future<void> Function() onGenerateIdentity;
   final Future<bool> Function() onUploadPubkey;
-  
+
   final Future<void> Function() onRotateKey;
-  
+
   final Future<void> Function() onFullSessionReset;
   final VoidCallback onConnectWs;
   final VoidCallback onDisconnectWs;
   final Future<void> Function() onLogout;
   final List<String> logs;
-  
+
   final bool isPrimaryDevice;
   // Server now allows any trusted device (not just primary) to manage keys —
   // see requireTrustedDevice on the backend. Client gating follows that.
   final bool isE2eTrustedDevice;
-  final Future<void> Function(String passphrase, String oldPassword, String newPassword) onChangePassword;
+  final Future<void> Function(
+          String passphrase, String oldPassword, String newPassword)
+      onChangePassword;
   final void Function(String username) onOpenChat;
   // Whether this tab is the one currently shown to the user. The PageView
   // hosting all bottom-nav tabs keeps every page mounted even when off-screen
@@ -347,7 +425,6 @@ class SettingsTab extends StatefulWidget {
 
 class _SettingsTabState extends State<SettingsTab>
     with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
-  
   @override
   bool get wantKeepAlive => true;
   double? _cacheSizeMb;
@@ -378,7 +455,7 @@ class _SettingsTabState extends State<SettingsTab>
 
   late TextEditingController _statusOnlineController;
   late TextEditingController _statusOfflineController;
-  
+
   bool _isUpdatingControllers = false;
 
   late TextEditingController _proxyHostController;
@@ -391,7 +468,7 @@ class _SettingsTabState extends State<SettingsTab>
 
   // Cached future for old-folder check — avoids redoing filesystem I/O on every rebuild.
   Future<({String path, bool hasUserData})>? _oldFolderInfoFuture;
-  
+
   late String _localStatusVisibility;
   bool _localHideFromSearch = false;
 
@@ -444,7 +521,7 @@ class _SettingsTabState extends State<SettingsTab>
       if (mounted) {
         setState(() => _isVisible = true);
         _fadeController.forward();
-        
+
         _loadTotalCacheSize();
         _loadOrphanedSize();
       }
@@ -457,7 +534,9 @@ class _SettingsTabState extends State<SettingsTab>
     // Leaving the tab (swipe or bottom-nav tap both flow through the same
     // isActive flag) clears whatever the user typed in the search box, so it
     // doesn't linger stale next time they open Settings.
-    if (oldWidget.isActive && !widget.isActive && _settingsSearchQuery.isNotEmpty) {
+    if (oldWidget.isActive &&
+        !widget.isActive &&
+        _settingsSearchQuery.isNotEmpty) {
       _settingsSearchCtrl.clear();
       setState(() => _settingsSearchQuery = '');
     }
@@ -479,7 +558,8 @@ class _SettingsTabState extends State<SettingsTab>
     super.dispose();
   }
 
-  bool _sectionVisible(String title, String subtitle, [List<String> keywords = const []]) {
+  bool _sectionVisible(String title, String subtitle,
+      [List<String> keywords = const []]) {
     if (_settingsSearchQuery.isEmpty) return true;
     final q = _settingsSearchQuery.toLowerCase().trim();
     if (q.isEmpty) return true;
@@ -489,13 +569,13 @@ class _SettingsTabState extends State<SettingsTab>
     // scattered across unrelated keywords (e.g. "chat" in one key, "display" in another).
     for (final item in [title, subtitle, ...keywords]) {
       final lower = item.toLowerCase();
-      if (lower.contains(q) || words.every((w) => lower.contains(w))) return true;
+      if (lower.contains(q) || words.every((w) => lower.contains(w)))
+        return true;
     }
     return false;
   }
 
   void _updateStatusOnlineController() {
-    
     if (_isUpdatingControllers) return;
     if (_statusOnlineController.text != SettingsManager.statusOnline.value) {
       _statusOnlineController.text = SettingsManager.statusOnline.value;
@@ -503,7 +583,6 @@ class _SettingsTabState extends State<SettingsTab>
   }
 
   void _updateStatusOfflineController() {
-    
     if (_isUpdatingControllers) return;
     if (_statusOfflineController.text != SettingsManager.statusOffline.value) {
       _statusOfflineController.text = SettingsManager.statusOffline.value;
@@ -511,7 +590,6 @@ class _SettingsTabState extends State<SettingsTab>
   }
 
   void _updateLocalStatusVisibility() {
-    
     _localStatusVisibility = SettingsManager.statusVisibility.value;
   }
 
@@ -557,7 +635,8 @@ class _SettingsTabState extends State<SettingsTab>
   Future<void> _openCacheManager() async {
     final username = await AccountManager.getCurrentAccount();
     if (!mounted) return;
-    final token = username != null ? await AccountManager.getToken(username) : null;
+    final token =
+        username != null ? await AccountManager.getToken(username) : null;
     if (!mounted) return;
 
     await showCacheManagerSheet(context, token: token);
@@ -607,7 +686,7 @@ class _SettingsTabState extends State<SettingsTab>
     if (!mounted) return;
     final l = AppLocalizations.of(context);
     final resettingMsg = l.resetting;
-    
+
     final result = await showDialog<({bool deleteAccount, bool deleteLocal})>(
       context: context,
       builder: (ctx) {
@@ -673,7 +752,10 @@ class _SettingsTabState extends State<SettingsTab>
                   ),
                   onPressed: (deleteAccount || deleteLocal)
                       ? () => Navigator.of(ctx).pop(
-                            (deleteAccount: deleteAccount, deleteLocal: deleteLocal),
+                            (
+                              deleteAccount: deleteAccount,
+                              deleteLocal: deleteLocal
+                            ),
                           )
                       : null,
                   child: Text(l.reset),
@@ -698,14 +780,14 @@ class _SettingsTabState extends State<SettingsTab>
             headers: {'Authorization': 'Bearer $token'},
           );
           if (res.statusCode != 200) {
-            throw Exception('Server returned ${res.statusCode} while deleting account');
+            throw Exception(
+                'Server returned ${res.statusCode} while deleting account');
           }
         }
         debugPrint(' Account deleted from server');
       }
 
       if (result.deleteLocal) {
-        
         final prefs = await SharedPreferences.getInstance();
         await prefs.clear();
         debugPrint(' Cleared SharedPreferences');
@@ -739,20 +821,22 @@ class _SettingsTabState extends State<SettingsTab>
         final root = rootScreenKey.currentState;
         if (root != null) {
           root.chats.clear();
-          
         }
         debugPrint(' Cleared local data');
       }
 
       if (mounted) {
-        rootScreenKey.currentState?.showSnack(AppLocalizations(SettingsManager.appLocale.value).doneRestarting);
+        rootScreenKey.currentState?.showSnack(
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .doneRestarting);
         await Future.delayed(const Duration(seconds: 2));
         await widget.onLogout();
       }
     } catch (e, st) {
       debugPrint(' _factoryReset error: $e\n$st');
       if (mounted) {
-        _showStyledSnack(context, '${AppLocalizations(SettingsManager.appLocale.value).resetFailed}: $e',
+        _showStyledSnack(context,
+            '${lookupAppLocalizations(SettingsManager.appLocale.value).resetFailed}: $e',
             duration: const Duration(seconds: 4));
       }
     }
@@ -763,8 +847,10 @@ class _SettingsTabState extends State<SettingsTab>
     final savedOkMsg = l.statusSavedOk;
     final savedFailMsg = l.statusSavedFail;
     String localVisibility = _localStatusVisibility;
-    final onlineCtrl = TextEditingController(text: SettingsManager.statusOnline.value);
-    final offlineCtrl = TextEditingController(text: SettingsManager.statusOffline.value);
+    final onlineCtrl =
+        TextEditingController(text: SettingsManager.statusOnline.value);
+    final offlineCtrl =
+        TextEditingController(text: SettingsManager.statusOffline.value);
 
     await showGeneralDialog(
       context: context,
@@ -846,14 +932,13 @@ class _SettingsTabState extends State<SettingsTab>
                                   width: 32,
                                   height: 32,
                                   decoration: BoxDecoration(
-                                    color:
-                                        cs.onSurface.withValues(alpha: 0.07),
+                                    color: cs.onSurface.withValues(alpha: 0.07),
                                     borderRadius: BorderRadius.circular(10),
                                   ),
                                   child: Icon(Icons.close_rounded,
                                       size: 18,
-                                      color: cs.onSurface
-                                          .withValues(alpha: 0.55)),
+                                      color:
+                                          cs.onSurface.withValues(alpha: 0.55)),
                                 ),
                               ),
                             ],
@@ -861,8 +946,7 @@ class _SettingsTabState extends State<SettingsTab>
                         ),
                         // ── Content ─────────────────────────────────────
                         Padding(
-                          padding:
-                              const EdgeInsets.fromLTRB(20, 20, 20, 24),
+                          padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
@@ -895,8 +979,8 @@ class _SettingsTabState extends State<SettingsTab>
                                         onTap: () => setDialogState(
                                             () => localVisibility = opt),
                                         child: AnimatedContainer(
-                                          duration: const Duration(
-                                              milliseconds: 150),
+                                          duration:
+                                              const Duration(milliseconds: 150),
                                           padding: const EdgeInsets.symmetric(
                                               vertical: 10),
                                           decoration: BoxDecoration(
@@ -909,8 +993,8 @@ class _SettingsTabState extends State<SettingsTab>
                                                 BorderRadius.circular(12),
                                             border: Border.all(
                                               color: selected
-                                                  ? cs.primary.withValues(
-                                                      alpha: 0.4)
+                                                  ? cs.primary
+                                                      .withValues(alpha: 0.4)
                                                   : cs.outlineVariant
                                                       .withValues(alpha: 0.3),
                                               width: selected ? 1.2 : 0.8,
@@ -935,9 +1019,8 @@ class _SettingsTabState extends State<SettingsTab>
                                                   fontWeight: FontWeight.w600,
                                                   color: selected
                                                       ? cs.primary
-                                                      : cs.onSurface
-                                                          .withValues(
-                                                              alpha: 0.7),
+                                                      : cs.onSurface.withValues(
+                                                          alpha: 0.7),
                                                 ),
                                               ),
                                             ],
@@ -974,8 +1057,7 @@ class _SettingsTabState extends State<SettingsTab>
                                   fillColor: cs.surfaceContainerHighest
                                       .withValues(alpha: 0.4),
                                   border: OutlineInputBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(14)),
+                                      borderRadius: BorderRadius.circular(14)),
                                   enabledBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
                                     borderSide: BorderSide(
@@ -999,8 +1081,7 @@ class _SettingsTabState extends State<SettingsTab>
                                   fillColor: cs.surfaceContainerHighest
                                       .withValues(alpha: 0.4),
                                   border: OutlineInputBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(14)),
+                                      borderRadius: BorderRadius.circular(14)),
                                   enabledBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
                                     borderSide: BorderSide(
@@ -1029,12 +1110,12 @@ class _SettingsTabState extends State<SettingsTab>
                                           ? 'offline'
                                           : offlineCtrl.text.trim();
                                   _isUpdatingControllers = true;
-                                  await SettingsManager
-                                      .setStatusVisibility(localVisibility);
-                                  await SettingsManager
-                                      .setStatusOnline(onlineText);
-                                  await SettingsManager
-                                      .setStatusOffline(offlineText);
+                                  await SettingsManager.setStatusVisibility(
+                                      localVisibility);
+                                  await SettingsManager.setStatusOnline(
+                                      onlineText);
+                                  await SettingsManager.setStatusOffline(
+                                      offlineText);
                                   _isUpdatingControllers = false;
                                   setState(() =>
                                       _localStatusVisibility = localVisibility);
@@ -1092,27 +1173,30 @@ class _SettingsTabState extends State<SettingsTab>
         if (username != null) {
           final statuses = Map<String, String>.from(userStatusNotifier.value);
 
-          final vis = Map<String, String>.from(userStatusVisibilityNotifier.value);
+          final vis =
+              Map<String, String>.from(userStatusVisibilityNotifier.value);
 
           if (SettingsManager.statusVisibility.value == 'hide') {
-            
             statuses.remove(username);
             userStatusNotifier.value = statuses;
-            final s = Set<String>.from(onlineUsersNotifier.value)..remove(username);
+            final s = Set<String>.from(onlineUsersNotifier.value)
+              ..remove(username);
             onlineUsersNotifier.value = s;
             vis[username] = 'hide';
             userStatusVisibilityNotifier.value = vis;
           } else {
-            
             statuses[username] = SettingsManager.statusOnline.value;
             userStatusNotifier.value = statuses;
-            final s = Set<String>.from(onlineUsersNotifier.value)..add(username);
+            final s = Set<String>.from(onlineUsersNotifier.value)
+              ..add(username);
             onlineUsersNotifier.value = s;
             vis[username] = 'show';
             userStatusVisibilityNotifier.value = vis;
             try {
               rootScreenKey.currentState?.sendPresence('online');
-            } catch (e) { debugPrint('[err] $e'); }
+            } catch (e) {
+              debugPrint('[err] $e');
+            }
           }
         }
 
@@ -1156,22 +1240,13 @@ class _SettingsTabState extends State<SettingsTab>
   Future<void> _deleteAllLogs() async {
     final l = AppLocalizations.of(context);
     final noLogsMsg = l.noLogsFound;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.deleteAllLogsTitle),
-        content: Text(l.deleteAllLogsContent),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(l.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(l.delete),
-          ),
-        ],
-      ),
+      title: l.deleteAllLogsTitle,
+      message: l.deleteAllLogsContent,
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
     );
     if (confirmed != true) return;
 
@@ -1205,7 +1280,8 @@ class _SettingsTabState extends State<SettingsTab>
       }
 
       _showSnack(deleted > 0
-          ? AppLocalizations(SettingsManager.appLocale.value).deletedLogsCount(deleted)
+          ? lookupAppLocalizations(SettingsManager.appLocale.value)
+              .deletedLogsCount(deleted)
           : noLogsMsg);
     } catch (e) {
       _showSnack(' $e');
@@ -1226,8 +1302,21 @@ class _SettingsTabState extends State<SettingsTab>
         final result = await FilePicker.platform.pickFiles(
           type: FileType.custom,
           allowedExtensions: [
-            'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif',
-            'mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'm4v',
+            'jpg',
+            'jpeg',
+            'png',
+            'gif',
+            'webp',
+            'bmp',
+            'heic',
+            'heif',
+            'mp4',
+            'mov',
+            'avi',
+            'mkv',
+            'webm',
+            'flv',
+            'm4v',
           ],
         );
         pickedPath = result?.files.single.path;
@@ -1235,7 +1324,15 @@ class _SettingsTabState extends State<SettingsTab>
       if (pickedPath == null) return;
 
       final ext = p.extension(pickedPath).toLowerCase();
-      const videoExts = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.m4v'};
+      const videoExts = {
+        '.mp4',
+        '.mov',
+        '.avi',
+        '.mkv',
+        '.webm',
+        '.flv',
+        '.m4v'
+      };
       final isVideo = videoExts.contains(ext);
 
       final dir = await getOnyxSupportDirectory();
@@ -1248,12 +1345,19 @@ class _SettingsTabState extends State<SettingsTab>
           final files = bgDir.listSync().whereType<File>().toList();
           for (final f in files) {
             if (p.basename(f.path).startsWith('chat_video_bg')) {
-              try { await f.delete(); } catch (e) { debugPrint('[err] $e'); }
+              try {
+                await f.delete();
+              } catch (e) {
+                debugPrint('[err] $e');
+              }
             }
           }
-        } catch (e) { debugPrint('[err] $e'); }
+        } catch (e) {
+          debugPrint('[err] $e');
+        }
 
-        final dest = '${bgDir.path}/chat_video_bg_${DateTime.now().millisecondsSinceEpoch}$ext';
+        final dest =
+            '${bgDir.path}/chat_video_bg_${DateTime.now().millisecondsSinceEpoch}$ext';
         await File(pickedPath).copy(dest);
         await SettingsManager.setChatVideoBackground(dest);
         await SettingsManager.setChatBackground(null);
@@ -1264,24 +1368,35 @@ class _SettingsTabState extends State<SettingsTab>
           final files = bgDir.listSync().whereType<File>().toList();
           for (final f in files) {
             final name = p.basename(f.path);
-            if (name.startsWith('chat_bg') && !name.startsWith('chat_video_bg')) {
-              try { await f.delete(); } catch (e) { debugPrint('[err] $e'); }
+            if (name.startsWith('chat_bg') &&
+                !name.startsWith('chat_video_bg')) {
+              try {
+                await f.delete();
+              } catch (e) {
+                debugPrint('[err] $e');
+              }
             }
           }
-        } catch (e) { debugPrint('[err] $e'); }
+        } catch (e) {
+          debugPrint('[err] $e');
+        }
 
-        final dest = '${bgDir.path}/chat_bg_${DateTime.now().millisecondsSinceEpoch}$ext';
+        final dest =
+            '${bgDir.path}/chat_bg_${DateTime.now().millisecondsSinceEpoch}$ext';
         await File(pickedPath).copy(dest);
 
         try {
           final prev = SettingsManager.chatBackground.value;
           if (prev != null) await FileImage(File(prev)).evict();
           await FileImage(File(dest)).evict();
-        } catch (e) { debugPrint('[err] $e'); }
+        } catch (e) {
+          debugPrint('[err] $e');
+        }
 
         await SettingsManager.setChatBackground(dest);
         await SettingsManager.setChatVideoBackground(null);
-        _showSnack(AppLocalizations(SettingsManager.appLocale.value).chatBgSet);
+        _showSnack(
+            lookupAppLocalizations(SettingsManager.appLocale.value).chatBgSet);
       }
     } catch (e) {
       _showSnack('$e');
@@ -1291,20 +1406,12 @@ class _SettingsTabState extends State<SettingsTab>
   Future<void> _clearChatBackground() async {
     final l = AppLocalizations.of(context);
     final clearedMsg = l.chatBgCleared;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.clearBgTitle),
-        content: Text(l.clearBgContent),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text(l.cancel)),
-          FilledButton.tonal(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: Text(l.clear)),
-        ],
-      ),
+      title: l.clearBgTitle,
+      message: l.clearBgContent,
+      confirmLabel: l.clear,
+      icon: Icons.image_not_supported_outlined,
     );
     if (confirmed != true) return;
 
@@ -1318,21 +1425,26 @@ class _SettingsTabState extends State<SettingsTab>
           if (name.startsWith('chat_bg')) {
             try {
               await f.delete();
-            } catch (e) { debugPrint('[err] $e'); }
+            } catch (e) {
+              debugPrint('[err] $e');
+            }
           }
         }
       }
-    } catch (e) { debugPrint('[err] $e'); }
+    } catch (e) {
+      debugPrint('[err] $e');
+    }
 
     try {
       final cur = SettingsManager.chatBackground.value;
       if (cur != null) await FileImage(File(cur)).evict();
-    } catch (e) { debugPrint('[err] $e'); }
+    } catch (e) {
+      debugPrint('[err] $e');
+    }
 
     await SettingsManager.setChatBackground(null);
     _showSnack(clearedMsg);
   }
-
 
   Future<void> _clearChatVideoBackground() async {
     try {
@@ -1341,11 +1453,17 @@ class _SettingsTabState extends State<SettingsTab>
       if (await bgDir.exists()) {
         for (final f in bgDir.listSync().whereType<File>()) {
           if (p.basename(f.path).startsWith('chat_video_bg')) {
-            try { await f.delete(); } catch (e) { debugPrint('[err] $e'); }
+            try {
+              await f.delete();
+            } catch (e) {
+              debugPrint('[err] $e');
+            }
           }
         }
       }
-    } catch (e) { debugPrint('[err] $e'); }
+    } catch (e) {
+      debugPrint('[err] $e');
+    }
     await SettingsManager.setChatVideoBackground(null);
     _showSnack('Video wallpaper cleared');
   }
@@ -1371,8 +1489,10 @@ class _SettingsTabState extends State<SettingsTab>
     return FadeTransition(
       opacity: _isVisible ? _fadeAnimation : const AlwaysStoppedAnimation(0),
       child: ListView(
-        padding: EdgeInsets.fromLTRB(16, 16, 16, 8 + MediaQuery.paddingOf(context).bottom),
-        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        padding: EdgeInsets.fromLTRB(
+            16, 16, 16, 8 + MediaQuery.paddingOf(context).bottom),
+        physics: const AlwaysScrollableScrollPhysics(
+            parent: BouncingScrollPhysics()),
         children: [
           GestureDetector(
             onTap: () => showModalBottomSheet(
@@ -1395,14 +1515,19 @@ class _SettingsTabState extends State<SettingsTab>
                       ],
                     ),
                     borderRadius: BorderRadius.circular(50),
-                    border: Border.all(color: themeColor.withValues(alpha: 0.35), width: 1),
+                    border: Border.all(
+                        color: themeColor.withValues(alpha: 0.35), width: 1),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(Icons.favorite_rounded, size: 17, color: themeColor),
                       const SizedBox(width: 8),
-                      Text(AppLocalizations.of(context).supportOnyx, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: themeColor)),
+                      Text(AppLocalizations.of(context).supportOnyx,
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: themeColor)),
                     ],
                   ),
                 );
@@ -1423,57 +1548,116 @@ class _SettingsTabState extends State<SettingsTab>
             padding: const EdgeInsets.symmetric(vertical: 6),
           ),
           const SizedBox(height: 16),
-
-          if (_sectionVisible(l.securityTitle, l.securitySubtitle,
-              [l.statusSettings, l.showDisplayNameInGroups, l.showDisplayNameSubtitle, l.pinLock, l.enablePinLock, l.enablePinSubtitle, l.useBiometrics, l.useBiometricsSubtitle, l.lockOnResume, l.lockOnResumeSubtitle, l.hideFromSearch, l.hideFromSearchSubtitle, l.statusVisibility, l.statusShowStatus, l.statusHideStatus, l.statusCustomText, l.statusWhenOnline, l.statusWhenOffline, l.fakePinTitle, l.fakePinSubtitle, l.fakePinDescription, l.decoyAccountSection, l.decoyAccountSubtitle, l.decoyContactsSection, l.decoyContactsSubtitle, l.activeDevices, l.changePassword, l.keyMgmtDescription, 'Privacy', 'Visibility and search settings', 'PIN, biometrics and lock behavior'])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.security_rounded,
-            iconHue: 1,
-            title: AppLocalizations.of(context).securityTitle,
-            subtitle: AppLocalizations.of(context).securitySubtitle,
-            section: SectionType.security,
-            expandedContentBuilder: _buildSecurityContent,
-          ),
-          const SizedBox(height: 16),
+          if (_sectionVisible(l.securityTitle, l.securitySubtitle, [
+            l.statusSettings,
+            l.showDisplayNameInGroups,
+            l.showDisplayNameSubtitle,
+            l.pinLock,
+            l.enablePinLock,
+            l.enablePinSubtitle,
+            l.useBiometrics,
+            l.useBiometricsSubtitle,
+            l.lockOnResume,
+            l.lockOnResumeSubtitle,
+            l.hideFromSearch,
+            l.hideFromSearchSubtitle,
+            l.statusVisibility,
+            l.statusShowStatus,
+            l.statusHideStatus,
+            l.statusCustomText,
+            l.statusWhenOnline,
+            l.statusWhenOffline,
+            l.fakePinTitle,
+            l.fakePinSubtitle,
+            l.fakePinDescription,
+            l.decoyAccountSection,
+            l.decoyAccountSubtitle,
+            l.decoyContactsSection,
+            l.decoyContactsSubtitle,
+            l.activeDevices,
+            l.changePassword,
+            l.keyMgmtDescription,
+            'Privacy',
+            'Visibility and search settings',
+            'PIN, biometrics and lock behavior'
+          ])) ...[
+            _buildLiquidGlassSection(
+              icon: Icons.security_rounded,
+              iconHue: 1,
+              title: AppLocalizations.of(context).securityTitle,
+              subtitle: AppLocalizations.of(context).securitySubtitle,
+              section: SectionType.security,
+              expandedContentBuilder: _buildSecurityContent,
+            ),
+            const SizedBox(height: 16),
           ],
-          if (_sectionVisible(l.wardLinkTitle, l.wardLinkSubtitle,
-              [l.wardLinkEnable, l.wardLinkEnableDesc, l.wardLinkPairedDevices, l.wardLinkAddDevice, l.wardLinkMaxFileSize, l.wardLinkBubbleVisibility, l.wardLinkBubbleSize, l.wardLinkFavoritesOnlyNote, l.wardLinkSyncFromBeginning, l.wardLinkSyncFromBeginningDesc, l.wardLinkE2E, l.wardLinkHoldForLog, l.wardLinkLog, 'Sync Settings', 'File size limit and bubble notifications', 'Add and manage paired devices'])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.sync_rounded,
-            iconHue: 1,
-            title: AppLocalizations.of(context).wardLinkTitle,
-            subtitle: AppLocalizations.of(context).wardLinkSubtitle,
-            section: SectionType.wardLink,
-            expandedContentBuilder: _buildWardLinkContent,
-          ),
-          const SizedBox(height: 16),
+          if (_sectionVisible(l.wardLinkTitle, l.wardLinkSubtitle, [
+            l.wardLinkEnable,
+            l.wardLinkEnableDesc,
+            l.wardLinkPairedDevices,
+            l.wardLinkAddDevice,
+            l.wardLinkMaxFileSize,
+            l.wardLinkBubbleVisibility,
+            l.wardLinkBubbleSize,
+            l.wardLinkFavoritesOnlyNote,
+            l.wardLinkSyncFromBeginning,
+            l.wardLinkSyncFromBeginningDesc,
+            l.wardLinkE2E,
+            l.wardLinkHoldForLog,
+            l.wardLinkLog,
+            'Sync Settings',
+            'File size limit and bubble notifications',
+            'Add and manage paired devices'
+          ])) ...[
+            _buildLiquidGlassSection(
+              icon: Icons.sync_rounded,
+              iconHue: 1,
+              title: AppLocalizations.of(context).wardLinkTitle,
+              subtitle: AppLocalizations.of(context).wardLinkSubtitle,
+              section: SectionType.wardLink,
+              expandedContentBuilder: _buildWardLinkContent,
+            ),
+            const SizedBox(height: 16),
           ],
-          if (_sectionVisible(l.meshTitle, l.meshSubtitle, ['Mesh', 'Bluetooth', 'BLE', 'Radar', 'mesh', 'radar'])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.radar_rounded,
-            iconHue: 1,
-            title: l.meshTitle,
-            subtitle: l.meshSubtitle,
-            section: SectionType.mesh,
-            expandedContentBuilder: _buildMeshContent,
-          ),
-          const SizedBox(height: 16),
+          if (_sectionVisible(l.meshTitle, l.meshSubtitle,
+              ['Mesh', 'Bluetooth', 'BLE', 'Radar', 'mesh', 'radar'])) ...[
+            _buildLiquidGlassSection(
+              icon: Icons.radar_rounded,
+              iconHue: 1,
+              title: l.meshTitle,
+              subtitle: l.meshSubtitle,
+              section: SectionType.mesh,
+              expandedContentBuilder: _buildMeshContent,
+            ),
+            const SizedBox(height: 16),
           ],
-          if (_sectionVisible(l.backupTitle, l.backupSubtitle,
-              [l.backupExport, l.backupRestore, l.backupScope, l.backupFavorites, l.backupPersonal, l.backupIncludeMedia, l.backupSchedule, l.backupFolder, l.backupMediaImages, l.backupMediaVideos, l.backupMediaVoice, l.backupMediaOther])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.save_rounded,
-            iconHue: 1,
-            title: AppLocalizations.of(context).backupTitle,
-            subtitle: AppLocalizations.of(context).backupSubtitle,
-            section: SectionType.backup,
-            expandedContentBuilder: () => const _BackupSection(),
-          ),
-          const SizedBox(height: 16),
+          if (_sectionVisible(l.backupTitle, l.backupSubtitle, [
+            l.backupExport,
+            l.backupRestore,
+            l.backupScope,
+            l.backupFavorites,
+            l.backupPersonal,
+            l.backupIncludeMedia,
+            l.backupSchedule,
+            l.backupFolder,
+            l.backupMediaImages,
+            l.backupMediaVideos,
+            l.backupMediaVoice,
+            l.backupMediaOther
+          ])) ...[
+            _buildLiquidGlassSection(
+              icon: Icons.save_rounded,
+              iconHue: 1,
+              title: AppLocalizations.of(context).backupTitle,
+              subtitle: AppLocalizations.of(context).backupSubtitle,
+              section: SectionType.backup,
+              expandedContentBuilder: () => const _BackupSection(),
+            ),
+            const SizedBox(height: 16),
           ],
           if ((Platform.isWindows || Platform.isMacOS || Platform.isLinux) &&
               _sectionVisible(l.audioTitle, l.audioSubtitle,
-              [l.audioTitle, l.audioSubtitle])) ...[
+                  [l.audioTitle, l.audioSubtitle])) ...[
             _buildLiquidGlassSection(
               icon: Icons.headset_mic_rounded,
               iconHue: 1,
@@ -1484,112 +1668,253 @@ class _SettingsTabState extends State<SettingsTab>
             ),
             const SizedBox(height: 16),
           ],
-          if (_sectionVisible(l.notificationsTitle, l.notificationsSubtitle,
-              [l.notifEnableLabel, l.notifHideContentLabel, l.notifSoundEnableLabel, l.notifSoundChooseLabel, l.notifPopupPosition, l.notifPopupPositionSubtitle, l.launchAtStartupLabel, l.launchAtStartupSubtitle, l.notificationsEnabled, l.notificationsEnabledSubtitle, 'General', 'Enable notifications and content visibility', 'Notification sound and audio file', 'Advanced', 'Startup behavior and popup position'])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.notifications_rounded,
-            iconHue: 1,
-            title: AppLocalizations.of(context).notificationsTitle,
-            subtitle: AppLocalizations.of(context).notificationsSubtitle,
-            section: SectionType.notifications,
-            expandedContentBuilder: _buildNotificationsContent,
-          ),
-          const SizedBox(height: 16),
+          if (_sectionVisible(l.notificationsTitle, l.notificationsSubtitle, [
+            l.notifEnableLabel,
+            l.notifHideContentLabel,
+            l.notifSoundEnableLabel,
+            l.notifSoundChooseLabel,
+            l.notifPopupPosition,
+            l.notifPopupPositionSubtitle,
+            l.launchAtStartupLabel,
+            l.launchAtStartupSubtitle,
+            l.notificationsEnabled,
+            l.notificationsEnabledSubtitle,
+            'General',
+            'Enable notifications and content visibility',
+            'Notification sound and audio file',
+            'Advanced',
+            'Startup behavior and popup position'
+          ])) ...[
+            _buildLiquidGlassSection(
+              icon: Icons.notifications_rounded,
+              iconHue: 1,
+              title: AppLocalizations.of(context).notificationsTitle,
+              subtitle: AppLocalizations.of(context).notificationsSubtitle,
+              section: SectionType.notifications,
+              expandedContentBuilder: _buildNotificationsContent,
+            ),
+            const SizedBox(height: 16),
           ],
-          if (_sectionVisible(l.appearanceTitle, l.appearanceSubtitle,
-              [l.selectTheme, l.darkMode, l.fontAndTextSize, l.fontFamily, l.messageSize, l.chatBackground, l.chatBgSubtitle, l.applyGlobally, l.applyGloballySubtitle, l.blurBackground, l.elementOpacity, l.elementBrightness, l.uiLayout, l.navBarPosition, l.inputBarMaxWidth, l.minimizeBottomNav, l.minimizeBottomNavSubtitle, l.swipeTabs, l.swipeTabsSubtitle, l.smoothScroll, l.performanceOptimizations, l.showAvatarInChats, l.showAvatarSubtitle, l.showAccountIndicator, l.showAccountIndicatorSubtitle, l.liquidGlassSubtitle, l.liquidGlassNavBarLabel, l.liquidGlassNavBarDesc, l.liquidGlassCardsLabel, l.liquidGlassCardsDesc, l.liquidGlassInputLabel, l.liquidGlassInputDesc, l.liquidGlassSearchLabel, l.liquidGlassSearchDesc, l.macOsWindowStyle, l.macOsWindowStyleSubtitle, l.messageAnimations, l.chatListMoveAnimations, l.smoothScrollDown, l.showSnackbars, l.tabSwiping, l.tabSwipingSubtitle, l.navPanelPosition, l.showAvatarsInChats, l.loadOlderMessagesOnScroll, l.ownMessagesRight, l.ownMessagesLeft, l.alignAllRight, l.alignAllRightSubtitle, l.presetsBackground, 'Chat Display', 'Alignment, avatars and animations', 'Wallpaper, blur and opacity', 'Layout', 'Navigation, graph and tab swiping', 'Liquid Glass Effects'])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.palette_rounded,
-            iconHue: 1,
-            title: AppLocalizations.of(context).appearanceTitle,
-            subtitle: AppLocalizations.of(context).appearanceSubtitle,
-            section: SectionType.appearance,
-            expandedContentBuilder: _buildAppearanceContent,
-          ),
-          const SizedBox(height: 16),
+          if (_sectionVisible(l.appearanceTitle, l.appearanceSubtitle, [
+            l.selectTheme,
+            l.darkMode,
+            l.fontAndTextSize,
+            l.fontFamily,
+            l.messageSize,
+            l.chatBackground,
+            l.chatBgSubtitle,
+            l.applyGlobally,
+            l.applyGloballySubtitle,
+            l.blurBackground,
+            l.elementOpacity,
+            l.elementBrightness,
+            l.uiLayout,
+            l.navBarPosition,
+            l.inputBarMaxWidth,
+            l.minimizeBottomNav,
+            l.minimizeBottomNavSubtitle,
+            l.swipeTabs,
+            l.swipeTabsSubtitle,
+            l.smoothScroll,
+            l.performanceOptimizations,
+            l.showAvatarInChats,
+            l.showAvatarSubtitle,
+            l.showAccountIndicator,
+            l.showAccountIndicatorSubtitle,
+            l.liquidGlassSubtitle,
+            l.liquidGlassNavBarLabel,
+            l.liquidGlassNavBarDesc,
+            l.liquidGlassCardsLabel,
+            l.liquidGlassCardsDesc,
+            l.liquidGlassInputLabel,
+            l.liquidGlassInputDesc,
+            l.liquidGlassSearchLabel,
+            l.liquidGlassSearchDesc,
+            l.macOsWindowStyle,
+            l.macOsWindowStyleSubtitle,
+            l.messageAnimations,
+            l.chatListMoveAnimations,
+            l.smoothScrollDown,
+            l.showSnackbars,
+            l.tabSwiping,
+            l.tabSwipingSubtitle,
+            l.navPanelPosition,
+            l.showAvatarsInChats,
+            l.loadOlderMessagesOnScroll,
+            l.ownMessagesRight,
+            l.ownMessagesLeft,
+            l.alignAllRight,
+            l.alignAllRightSubtitle,
+            l.presetsBackground,
+            'Chat Display',
+            'Alignment, avatars and animations',
+            'Wallpaper, blur and opacity',
+            'Layout',
+            'Navigation, graph and tab swiping',
+            'Liquid Glass Effects'
+          ])) ...[
+            _buildLiquidGlassSection(
+              icon: Icons.palette_rounded,
+              iconHue: 1,
+              title: AppLocalizations.of(context).appearanceTitle,
+              subtitle: AppLocalizations.of(context).appearanceSubtitle,
+              section: SectionType.appearance,
+              expandedContentBuilder: _buildAppearanceContent,
+            ),
+            const SizedBox(height: 16),
           ],
           if (_sectionVisible(l.languageTitle, l.languageSubtitle,
               [l.languageEnglish, l.languageRussian])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.translate_rounded,
-            iconHue: 1,
-            title: AppLocalizations.of(context).languageTitle,
-            subtitle: AppLocalizations.of(context).languageSubtitle,
-            section: SectionType.language,
-            expandedContentBuilder: _buildLanguageContent,
-          ),
-          const SizedBox(height: 16),
+            _buildLiquidGlassSection(
+              icon: Icons.translate_rounded,
+              iconHue: 1,
+              title: AppLocalizations.of(context).languageTitle,
+              subtitle: AppLocalizations.of(context).languageSubtitle,
+              section: SectionType.language,
+              expandedContentBuilder: _buildLanguageContent,
+            ),
+            const SizedBox(height: 16),
           ],
-          if (_sectionVisible(l.cacheTitle, l.cacheSubtitle,
-              [l.mediaCacheSize, l.clearLocalCache, l.serverMediaCache, l.serverMediaCacheSubtitle, l.clearServerCache, l.dangerZone, l.dangerZoneSubtitle, l.factoryReset, l.factoryResetHint, l.resetDeleteAccount, l.resetDeleteLocal, l.resetDeleteLocalSubtitle, l.manageCacheTitle, l.manageCacheButton, l.cleanUnusedFiles, 'Storage', 'Media cache and unused file cleanup'])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.cleaning_services_rounded,
-            iconHue: 1,
-            title: AppLocalizations.of(context).cacheTitle,
-            subtitle: AppLocalizations.of(context).cacheSubtitle,
-            section: SectionType.cache,
-            expandedContentBuilder: _buildCacheContent,
-          ),
-          const SizedBox(height: 16),
+          if (_sectionVisible(l.cacheTitle, l.cacheSubtitle, [
+            l.mediaCacheSize,
+            l.clearLocalCache,
+            l.serverMediaCache,
+            l.serverMediaCacheSubtitle,
+            l.clearServerCache,
+            l.dangerZone,
+            l.dangerZoneSubtitle,
+            l.factoryReset,
+            l.factoryResetHint,
+            l.resetDeleteAccount,
+            l.resetDeleteLocal,
+            l.resetDeleteLocalSubtitle,
+            l.manageCacheTitle,
+            l.manageCacheButton,
+            l.cleanUnusedFiles,
+            'Storage',
+            'Media cache and unused file cleanup'
+          ])) ...[
+            _buildLiquidGlassSection(
+              icon: Icons.cleaning_services_rounded,
+              iconHue: 1,
+              title: AppLocalizations.of(context).cacheTitle,
+              subtitle: AppLocalizations.of(context).cacheSubtitle,
+              section: SectionType.cache,
+              expandedContentBuilder: _buildCacheContent,
+            ),
+            const SizedBox(height: 16),
           ],
-          if (_sectionVisible(l.connectionTitle, l.connectionSubtitle,
-              [l.connect, l.disconnect, 'Server Connection', 'Connect or disconnect from the WebSocket server',
-               l.proxyTitle, l.proxySubtitle, l.enableProxy, l.proxyType, l.proxyHost, l.proxyPort, l.proxyUsername, l.proxyPassword, l.testProxy, l.proxyApplyReconnect, l.useProxy, l.proxyDirectConnection, l.proxyRouted])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.cell_tower_rounded,
-            iconHue: 1,
-            title: AppLocalizations.of(context).connectionTitle,
-            subtitle: AppLocalizations.of(context).connectionSubtitle,
-            section: SectionType.connection,
-            expandedContentBuilder: _buildConnectionContent,
-          ),
-          const SizedBox(height: 16),
+          if (_sectionVisible(l.connectionTitle, l.connectionSubtitle, [
+            l.connect,
+            l.disconnect,
+            'Server Connection',
+            'Connect or disconnect from the WebSocket server',
+            l.proxyTitle,
+            l.proxySubtitle,
+            l.enableProxy,
+            l.proxyType,
+            l.proxyHost,
+            l.proxyPort,
+            l.proxyUsername,
+            l.proxyPassword,
+            l.testProxy,
+            l.proxyApplyReconnect,
+            l.useProxy,
+            l.proxyDirectConnection,
+            l.proxyRouted
+          ])) ...[
+            _buildLiquidGlassSection(
+              icon: Icons.cell_tower_rounded,
+              iconHue: 1,
+              title: AppLocalizations.of(context).connectionTitle,
+              subtitle: AppLocalizations.of(context).connectionSubtitle,
+              section: SectionType.connection,
+              expandedContentBuilder: _buildConnectionContent,
+            ),
+            const SizedBox(height: 16),
           ],
-          if (_sectionVisible(l.interactTitle, l.interactSubtitle,
-              [l.confirmFileUpload, l.confirmFileUploadSubtitle, l.confirmVoiceMessage, l.confirmVoiceSubtitle, l.downloadFolder, l.downloadFolderSubtitle, l.autoLoadVideos, l.autoLoadVideosSubtitle, 'Media & Uploads', 'Confirmations, auto-load and image preloading', 'Performance', 'Scroll buffer and image preload window', 'Files & Storage', 'Download folder and app data management',
-               l.debugTitle, l.debugSubtitle, l.debugMode, l.debugModeSubtitle, l.enableFileLogging, l.enableFileLoggingSubtitle, l.deleteAllLogs,
-               l.blockedUsersTitle, l.blockedUsersSubtitle, l.blockedUsersEmpty, l.unblockAction, l.blockUserLabel, l.unblockUserLabel])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.tune_rounded,
-            iconHue: 1,
-            title: AppLocalizations.of(context).interactTitle,
-            subtitle: AppLocalizations.of(context).interactSubtitle,
-            section: SectionType.interact,
-            expandedContentBuilder: _buildInteractContent,
-          ),
-          const SizedBox(height: 16),
+          if (_sectionVisible(l.interactTitle, l.interactSubtitle, [
+            l.confirmFileUpload,
+            l.confirmFileUploadSubtitle,
+            l.confirmVoiceMessage,
+            l.confirmVoiceSubtitle,
+            l.downloadFolder,
+            l.downloadFolderSubtitle,
+            l.autoLoadVideos,
+            l.autoLoadVideosSubtitle,
+            'Media & Uploads',
+            'Confirmations, auto-load and image preloading',
+            'Performance',
+            'Scroll buffer and image preload window',
+            'Files & Storage',
+            'Download folder and app data management',
+            l.debugTitle,
+            l.debugSubtitle,
+            l.debugMode,
+            l.debugModeSubtitle,
+            l.enableFileLogging,
+            l.enableFileLoggingSubtitle,
+            l.deleteAllLogs,
+            l.blockedUsersTitle,
+            l.blockedUsersSubtitle,
+            l.blockedUsersEmpty,
+            l.unblockAction,
+            l.blockUserLabel,
+            l.unblockUserLabel
+          ])) ...[
+            _buildLiquidGlassSection(
+              icon: Icons.tune_rounded,
+              iconHue: 1,
+              title: AppLocalizations.of(context).interactTitle,
+              subtitle: AppLocalizations.of(context).interactSubtitle,
+              section: SectionType.interact,
+              expandedContentBuilder: _buildInteractContent,
+            ),
+            const SizedBox(height: 16),
           ],
-          if (_sectionVisible(l.contactTitle, l.contactSubtitle,
-              [l.contactWebsite, l.contactRepository, l.contactRepositoryServer, l.contactEmail, l.supportOnyx])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.info_outline_rounded,
-            iconHue: 1,
-            title: AppLocalizations.of(context).contactTitle,
-            subtitle: AppLocalizations.of(context).contactSubtitle,
-            section: SectionType.contact,
-            expandedContentBuilder: _buildContactContent,
-          ),
-          const SizedBox(height: 16),
+          if (_sectionVisible(l.contactTitle, l.contactSubtitle, [
+            l.contactWebsite,
+            l.contactRepository,
+            l.contactRepositoryServer,
+            l.contactEmail,
+            l.supportOnyx
+          ])) ...[
+            _buildLiquidGlassSection(
+              icon: Icons.info_outline_rounded,
+              iconHue: 1,
+              title: AppLocalizations.of(context).contactTitle,
+              subtitle: AppLocalizations.of(context).contactSubtitle,
+              section: SectionType.contact,
+              expandedContentBuilder: _buildContactContent,
+            ),
+            const SizedBox(height: 16),
           ],
-          if (_sectionVisible(l.recycleBinTitle, l.recycleBinSubtitle,
-              [l.recycleBinPendingTitle, l.recycleBinNoPending, l.recycleBinResetTitle, l.recycleBinResetDesc, l.recycleBinResetButton])) ...[
-          _buildLiquidGlassSection(
-            icon: Icons.delete_sweep_rounded,
-            iconHue: 1,
-            title: AppLocalizations.of(context).recycleBinTitle,
-            subtitle: AppLocalizations.of(context).recycleBinSubtitle,
-            section: SectionType.recycleBin,
-            expandedContentBuilder: () => const _RecycleBinSection(),
-          ),
+          if (_sectionVisible(l.recycleBinTitle, l.recycleBinSubtitle, [
+            l.recycleBinPendingTitle,
+            l.recycleBinNoPending,
+            l.recycleBinResetTitle,
+            l.recycleBinResetDesc,
+            l.recycleBinResetButton
+          ])) ...[
+            _buildLiquidGlassSection(
+              icon: Icons.delete_sweep_rounded,
+              iconHue: 1,
+              title: AppLocalizations.of(context).recycleBinTitle,
+              subtitle: AppLocalizations.of(context).recycleBinSubtitle,
+              section: SectionType.recycleBin,
+              expandedContentBuilder: () => const _RecycleBinSection(),
+            ),
           ],
           const SizedBox(height: 20),
-          
-          Center( 
+          Center(
             child: Text(
-              'open-beta 1.8',
+              'open-beta 1.9',
               style: TextStyle(
                 fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurfaceVariant
+                    .withValues(alpha: 0.55),
                 letterSpacing: 0.4,
               ),
             ),
@@ -1600,7 +1925,10 @@ class _SettingsTabState extends State<SettingsTab>
               '\u00a9 2026 WARDCORE',
               style: TextStyle(
                 fontSize: 11,
-                color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurfaceVariant
+                    .withValues(alpha: 0.4),
                 letterSpacing: 0.3,
               ),
             ),
@@ -1641,13 +1969,21 @@ class _SettingsTabState extends State<SettingsTab>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: colorScheme.onSurface)),
+                    Text(label,
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: colorScheme.onSurface)),
                     const SizedBox(height: 2),
-                    Text(value, style: TextStyle(fontSize: 12, color: colorScheme.primary)),
+                    Text(value,
+                        style: TextStyle(
+                            fontSize: 12, color: colorScheme.primary)),
                   ],
                 ),
               ),
-              Icon(Icons.open_in_new_rounded, size: 16, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+              Icon(Icons.open_in_new_rounded,
+                  size: 16,
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
             ],
           ),
         ),
@@ -1662,21 +1998,30 @@ class _SettingsTabState extends State<SettingsTab>
           value: 'onyx.wardcore.com',
           onTap: () => openUrl('https://onyx.wardcore.com/'),
         ),
-        Divider(height: 1, indent: 50, color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+        Divider(
+            height: 1,
+            indent: 50,
+            color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
         contactItem(
           icon: Icons.code_rounded,
           label: l.contactRepository,
           value: 'github.com/wardcore-dev/onyx',
           onTap: () => openUrl('https://github.com/wardcore-dev/onyx'),
         ),
-        Divider(height: 1, indent: 50, color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+        Divider(
+            height: 1,
+            indent: 50,
+            color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
         contactItem(
           icon: Icons.dns_rounded,
           label: l.contactRepositoryServer,
           value: 'github.com/wardcore-dev/onyx-server',
           onTap: () => openUrl('https://github.com/wardcore-dev/onyx-server'),
         ),
-        Divider(height: 1, indent: 50, color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+        Divider(
+            height: 1,
+            indent: 50,
+            color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
         contactItem(
           icon: Icons.mail_outline_rounded,
           label: l.contactEmail,
@@ -1686,7 +2031,6 @@ class _SettingsTabState extends State<SettingsTab>
       ],
     );
   }
-
 
   Widget _buildBlockedUsersContent() {
     final l = AppLocalizations.of(context);
@@ -1700,7 +2044,8 @@ class _SettingsTabState extends State<SettingsTab>
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Row(
               children: [
-                Icon(Icons.check_circle_outline_rounded, size: 18,
+                Icon(Icons.check_circle_outline_rounded,
+                    size: 18,
                     color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
                 const SizedBox(width: 10),
                 Text(
@@ -1734,14 +2079,16 @@ class _SettingsTabState extends State<SettingsTab>
                   ),
                   IconButton(
                     onPressed: () => widget.onOpenChat(username),
-                    icon: const Icon(Icons.chat_bubble_outline_rounded, size: 20),
+                    icon:
+                        const Icon(Icons.chat_bubble_outline_rounded, size: 20),
                     tooltip: l.writeMessage,
                     visualDensity: VisualDensity.compact,
                     padding: EdgeInsets.zero,
                   ),
                   IconButton(
                     onPressed: () async {
-                      final username0 = await AccountManager.getCurrentAccount();
+                      final username0 =
+                          await AccountManager.getCurrentAccount();
                       if (username0 == null) return;
                       final token = await AccountManager.getToken(username0);
                       if (token == null) return;
@@ -1751,7 +2098,8 @@ class _SettingsTabState extends State<SettingsTab>
                       );
                       await BlocklistManager.unblock(username);
                     },
-                    icon: Icon(Icons.lock_open_rounded, size: 20, color: colorScheme.primary),
+                    icon: Icon(Icons.lock_open_rounded,
+                        size: 20, color: colorScheme.primary),
                     tooltip: l.unblockAction,
                     visualDensity: VisualDensity.compact,
                     padding: EdgeInsets.zero,
@@ -1787,27 +2135,21 @@ class _SettingsTabState extends State<SettingsTab>
         return;
       }
       if (!mounted) return;
-      await showDialog<void>(
+      await showOnyxDialog<void>(
         context: context,
+        barrierLabel: l.wardLinkPairTitle,
         builder: (_) => const _WardLinkQrDialog(),
       );
     }
 
     Future<void> removeDevice(PairedDevice d) async {
-      final ok = await showDialog<bool>(
+      final ok = await showOnyxConfirmDialog(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(d.name),
-          content: Text(l.wardLinkRemoveConfirm),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: Text(l.cancel)),
-            FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: Text(l.wardLinkRemoveDevice)),
-          ],
-        ),
+        title: d.name,
+        message: l.wardLinkRemoveConfirm,
+        confirmLabel: l.wardLinkRemoveDevice,
+        isDestructive: true,
+        icon: Icons.link_off_rounded,
       );
       if (ok == true) {
         await WardLinkSyncService.instance.sendUnpair(d.identityPubB64);
@@ -1824,124 +2166,201 @@ class _SettingsTabState extends State<SettingsTab>
             children: [
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: Text(l.wardLinkEnable, style: const TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: Text(l.wardLinkEnableDesc,
-                    style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
+                title: Text(l.wardLinkEnable,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 15)),
                 value: enabled,
                 onChanged: toggleEnabled,
               ),
-              ValueListenableBuilder<WardLinkStatus>(
-                valueListenable: WardLinkSyncService.instance.status,
-                builder: (_, st, __) {
-                  if (!enabled || st.message.isEmpty) return const SizedBox.shrink();
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      children: [
-                        Icon(
-                          st.syncing ? Icons.sync_rounded : Icons.check_circle_outline_rounded,
-                          size: 14,
-                          color: cs.primary,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(st.message,
-                              style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
               if (enabled) ...[
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(
-                    children: [
-                      Icon(Icons.bookmark_rounded, size: 16, color: cs.primary),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(l.wardLinkFavoritesOnlyNote,
-                            style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
-                      ),
-                    ],
+                ValueListenableBuilder<WardLinkStatus>(
+                  valueListenable: WardLinkSyncService.instance.status,
+                  builder: (_, st, __) =>
+                      ValueListenableBuilder<List<PairedDevice>>(
+                    valueListenable: WardLinkPairedDevices.devices,
+                    builder: (_, devices, __) {
+                      if (st.message.isEmpty && devices.isEmpty)
+                        return const SizedBox.shrink();
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: cs.surfaceContainerHighest
+                              .withValues(alpha: 0.35),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 24,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                color: cs.primary.withValues(alpha: 0.14),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                st.syncing
+                                    ? Icons.sync_rounded
+                                    : Icons.check_rounded,
+                                size: 13,
+                                color: cs.primary,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                st.message.isNotEmpty
+                                    ? st.message
+                                    : l.wardLinkFavoritesOnlyNote,
+                                style: TextStyle(
+                                    fontSize: 12.5,
+                                    color: cs.onSurface.withValues(alpha: 0.7)),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (devices.isNotEmpty) ...[
+                              const SizedBox(width: 8),
+                              SizedBox(
+                                height: 22,
+                                child: Stack(
+                                  children: [
+                                    for (var i = 0;
+                                        i < devices.length.clamp(0, 3);
+                                        i++)
+                                      Padding(
+                                        padding:
+                                            EdgeInsets.only(left: i * 15.0),
+                                        child: Container(
+                                          width: 22,
+                                          height: 22,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: cs.surface,
+                                            border: Border.all(
+                                                color: cs.surface, width: 1.5),
+                                          ),
+                                          child: CircleAvatar(
+                                            radius: 11,
+                                            backgroundColor:
+                                                cs.primaryContainer,
+                                            child: Icon(
+                                              devices[i].os == 'android' ||
+                                                      devices[i].os == 'ios'
+                                                  ? Icons.smartphone_rounded
+                                                  : Icons.computer_rounded,
+                                              size: 11,
+                                              color: cs.onPrimaryContainer,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 ),
-                const SizedBox(height: 8),
                 _buildSubSection(
                   key: 'wardlink_settings',
-                  title: 'Sync Settings',
-                  subtitle: 'File size limit and bubble notifications',
+                  title: l.wardLinkSyncSettingsTitle,
+                  subtitle: l.wardLinkSyncSettingsSubtitle,
                   icon: Icons.settings_rounded,
                   searchShowAll: showAll,
                   keywords: [
-                    l.wardLinkMaxFileSize, l.wardLinkBubbleVisibility, l.wardLinkBubbleSize,
-                    'file size', 'bubble', 'sync',
+                    l.wardLinkMaxFileSize,
+                    l.wardLinkBubbleVisibility,
+                    l.wardLinkBubbleSize,
+                    'file size',
+                    'bubble',
+                    'sync',
                   ],
                   expandedContent: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          Text(l.wardLinkMaxFileSize,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                          const Spacer(),
+                          Expanded(
+                            child: Text(l.wardLinkMaxFileSize,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600, fontSize: 13)),
+                          ),
                           ValueListenableBuilder<int>(
-                            valueListenable: SettingsManager.wardLinkMaxFileSizeMb,
+                            valueListenable:
+                                SettingsManager.wardLinkMaxFileSizeMb,
                             builder: (_, mb, __) => DropdownButton<int>(
-                              value: const [512, 1024, 2048, 4096].contains(mb) ? mb : 2048,
+                              value: const [512, 1024, 2048, 4096].contains(mb)
+                                  ? mb
+                                  : 2048,
                               underline: const SizedBox.shrink(),
                               items: const [
-                                DropdownMenuItem(value: 512, child: Text('512 MB')),
-                                DropdownMenuItem(value: 1024, child: Text('1 GB')),
-                                DropdownMenuItem(value: 2048, child: Text('2 GB')),
-                                DropdownMenuItem(value: 4096, child: Text('4 GB')),
+                                DropdownMenuItem(
+                                    value: 512, child: Text('512 MB')),
+                                DropdownMenuItem(
+                                    value: 1024, child: Text('1 GB')),
+                                DropdownMenuItem(
+                                    value: 2048, child: Text('2 GB')),
+                                DropdownMenuItem(
+                                    value: 4096, child: Text('4 GB')),
                               ],
-                              onChanged: (v) { if (v != null) SettingsManager.setWardLinkMaxFileSizeMb(v); },
+                              onChanged: (v) {
+                                if (v != null)
+                                  SettingsManager.setWardLinkMaxFileSizeMb(v);
+                              },
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
+                      const Divider(height: 1),
                       ValueListenableBuilder<bool>(
-                        valueListenable: SettingsManager.wardLinkBubbleOnlyErrors,
+                        valueListenable:
+                            SettingsManager.wardLinkBubbleOnlyErrors,
                         builder: (_, onlyErrors, __) => Row(
                           children: [
                             Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(l.wardLinkBubbleVisibility,
-                                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: cs.onSurface)),
-                                  Text(
-                                    onlyErrors ? l.wardLinkBubbleShowOnErrors : l.wardLinkBubbleShowAlways,
-                                    style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.55)),
-                                  ),
-                                ],
-                              ),
+                              child: Text(l.wardLinkBubbleVisibility,
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: cs.onSurface)),
                             ),
                             Switch(
                               value: !onlyErrors,
-                              onChanged: (v) => SettingsManager.setWardLinkBubbleOnlyErrors(!v),
+                              onChanged: (v) =>
+                                  SettingsManager.setWardLinkBubbleOnlyErrors(
+                                      !v),
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const Divider(height: 1),
                       ValueListenableBuilder<int>(
                         valueListenable: SettingsManager.wardLinkBubbleSize,
-                        builder: (_, sz, __) => Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        builder: (_, sz, __) => Row(
                           children: [
-                            Text(l.wardLinkBubbleSize,
-                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: cs.onSurface)),
-                            Slider(
-                              value: sz.toDouble().clamp(32.0, 64.0),
-                              min: 32.0,
-                              max: 64.0,
-                              divisions: 16,
-                              label: sz.toString(),
-                              onChanged: (v) => SettingsManager.setWardLinkBubbleSize(v.round()),
+                            Expanded(
+                              child: Text(l.wardLinkBubbleSize,
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: cs.onSurface)),
+                            ),
+                            SizedBox(
+                              width: 140,
+                              child: Slider(
+                                value: sz.toDouble().clamp(32.0, 64.0),
+                                min: 32.0,
+                                max: 64.0,
+                                divisions: 16,
+                                label: sz.toString(),
+                                onChanged: (v) =>
+                                    SettingsManager.setWardLinkBubbleSize(
+                                        v.round()),
+                              ),
                             ),
                           ],
                         ),
@@ -1950,105 +2369,160 @@ class _SettingsTabState extends State<SettingsTab>
                   ),
                 ),
                 const SizedBox(height: 8),
-                _buildSubSection(
-                  key: 'wardlink_devices',
-                  title: l.wardLinkPairedDevices,
-                  subtitle: 'Add and manage paired devices',
-                  icon: Icons.devices_rounded,
-                  searchShowAll: showAll,
-                  keywords: [
-                    l.wardLinkPairedDevices, l.wardLinkAddDevice, l.wardLinkE2E, l.wardLinkSyncFromBeginning,
-                    'device', 'pair', 'paired',
-                  ],
-                  expandedContent: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Text(l.wardLinkPairedDevices,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                          const Spacer(),
-                          TextButton.icon(
-                            onPressed: addDevice,
-                            icon: const Icon(Icons.add_rounded, size: 18),
-                            label: Text(l.wardLinkAddDevice),
-                          ),
-                        ],
-                      ),
-                      ValueListenableBuilder<List<PairedDevice>>(
-                        valueListenable: WardLinkPairedDevices.devices,
-                        builder: (_, devices, __) {
-                          if (devices.isEmpty) {
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              child: Text(l.wardLinkNoPairedDevices,
-                                  style: TextStyle(fontSize: 13, color: cs.onSurface.withValues(alpha: 0.5))),
-                            );
-                          }
-                          return Column(
+                ValueListenableBuilder<List<PairedDevice>>(
+                  valueListenable: WardLinkPairedDevices.devices,
+                  builder: (_, devices, __) => _buildSubSection(
+                    key: 'wardlink_devices',
+                    title: l.wardLinkPairedDevices,
+                    subtitle: l.wardLinkPairedDevicesSubtitle,
+                    icon: Icons.devices_rounded,
+                    trailingBadge:
+                        devices.isNotEmpty ? '${devices.length}' : null,
+                    searchShowAll: showAll,
+                    keywords: [
+                      l.wardLinkPairedDevices,
+                      l.wardLinkAddDevice,
+                      l.wardLinkE2E,
+                      l.wardLinkSyncFromBeginning,
+                      'device',
+                      'pair',
+                      'paired',
+                    ],
+                    expandedContent: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (devices.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Text(l.wardLinkNoPairedDevices,
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    color:
+                                        cs.onSurface.withValues(alpha: 0.5))),
+                          )
+                        else
+                          Column(
                             children: devices.map((d) {
                               final synced = d.lastSyncAt != null
-                                  ? l.wardLinkSyncedAgo(_shortWhen(d.lastSyncAt!))
+                                  ? _shortWhen(d.lastSyncAt!)
                                   : l.wardLinkNeverSynced;
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   ListTile(
                                     contentPadding: EdgeInsets.zero,
+                                    dense: true,
                                     leading: Icon(
                                       d.os == 'android' || d.os == 'ios'
                                           ? Icons.smartphone_rounded
                                           : Icons.computer_rounded,
+                                      size: 20,
                                       color: cs.primary,
                                     ),
-                                    title: Text(d.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                    subtitle: Text(synced, style: const TextStyle(fontSize: 12)),
-                                    trailing: IconButton(
-                                      icon: Icon(Icons.delete_outline_rounded, color: cs.error),
-                                      onPressed: () => removeDevice(d),
+                                    title: Text(d.name,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 13.5)),
+                                    trailing: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(synced,
+                                            style: TextStyle(
+                                                fontSize: 11,
+                                                color: cs.onSurface
+                                                    .withValues(alpha: 0.5))),
+                                        IconButton(
+                                          visualDensity: VisualDensity.compact,
+                                          icon: Icon(
+                                              Icons.delete_outline_rounded,
+                                              size: 20,
+                                              color: cs.error),
+                                          onPressed: () => removeDevice(d),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                   Padding(
                                     padding: const EdgeInsets.only(bottom: 8),
                                     child: d.syncFromBeginning
                                         ? Row(
-                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
                                               SizedBox(
                                                 width: 14,
                                                 height: 14,
-                                                child: CircularProgressIndicator(strokeWidth: 2, color: cs.primary),
+                                                child:
+                                                    CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                        color: cs.primary),
                                               ),
                                               const SizedBox(width: 6),
                                               Text(l.wardLinkSyncPending,
-                                                  style: TextStyle(fontSize: 12, color: cs.primary)),
+                                                  style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: cs.primary)),
                                             ],
                                           )
-                                        : SizedBox(
-                                            width: double.infinity,
-                                            child: FilledButton.tonal(
+                                        : Align(
+                                            alignment: Alignment.center,
+                                            child: FilledButton(
                                               style: FilledButton.styleFrom(
-                                                visualDensity: VisualDensity.compact,
-                                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                                backgroundColor: cs.primary
+                                                    .withValues(alpha: 0.12),
+                                                foregroundColor: cs.primary,
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 14,
+                                                        vertical: 6),
+                                                shape: const StadiumBorder(),
+                                                elevation: 0,
                                               ),
                                               onPressed: () async {
-                                                await WardLinkPairedDevices.setSyncFromBeginning(d.identityPubB64, true);
-                                                await WardLinkSyncService.instance.triggerResync(d.identityPubB64);
+                                                await WardLinkPairedDevices
+                                                    .setSyncFromBeginning(
+                                                        d.identityPubB64, true);
+                                                await WardLinkSyncService
+                                                    .instance
+                                                    .triggerResync(
+                                                        d.identityPubB64);
                                               },
-                                              child: Text(l.wardLinkSyncFromBeginning, style: const TextStyle(fontSize: 12)),
+                                              child: Text(
+                                                  l.wardLinkSyncFromBeginning,
+                                                  style: const TextStyle(
+                                                      fontSize: 11.5)),
                                             ),
                                           ),
                                   ),
                                 ],
                               );
                             }).toList(),
-                          );
-                        },
-                      ),
-                      if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux))
-                        _buildWardLinkFirewallHint(context),
-                    ],
+                          ),
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: cs.primary,
+                              foregroundColor: cs.onPrimary,
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: const StadiumBorder(),
+                            ),
+                            onPressed: addDevice,
+                            icon: const Icon(Icons.add_rounded, size: 18),
+                            label: Text(l.wardLinkAddDevice),
+                          ),
+                        ),
+                        if (!kIsWeb &&
+                            (Platform.isWindows ||
+                                Platform.isMacOS ||
+                                Platform.isLinux))
+                          _buildWardLinkFirewallHint(context),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -2164,7 +2638,8 @@ class _SettingsTabState extends State<SettingsTab>
                 ListenableBuilder(
                   listenable: MeshManager.instance.neighbors,
                   builder: (_, __) {
-                    final count = MeshManager.instance.neighbors.neighbors.length;
+                    final count =
+                        MeshManager.instance.neighbors.neighbors.length;
                     if (count == 0) return const SizedBox.shrink();
                     return Padding(
                       padding: const EdgeInsets.only(top: 4),
@@ -2196,41 +2671,25 @@ class _SettingsTabState extends State<SettingsTab>
   Widget _buildNotificationsContent() {
     final colorScheme = Theme.of(context).colorScheme;
     final l = AppLocalizations.of(context);
-    final isDesktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
-    final showAll = _sectionVisible(l.notificationsTitle, l.notificationsSubtitle);
+    final isDesktop =
+        Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+    final showAll =
+        _sectionVisible(l.notificationsTitle, l.notificationsSubtitle);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: colorScheme.tertiaryContainer.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: colorScheme.tertiary.withValues(alpha: 0.3), width: 0.8),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.info_outline_rounded, size: 18, color: colorScheme.tertiary),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  l.notifWarning,
-                  style: TextStyle(fontSize: 13, color: colorScheme.onTertiaryContainer, height: 1.45),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
         _buildSubSection(
           key: 'notif_general',
-          title: 'General',
-          subtitle: 'Enable notifications and content visibility',
+          title: l.notifGeneralTitle,
+          subtitle: l.notifGeneralSubtitle,
           icon: Icons.notifications_rounded,
           searchShowAll: showAll,
-          keywords: [l.notifEnableLabel, l.notifHideContentLabel, l.notificationsEnabled],
+          keywords: [
+            l.notifEnableLabel,
+            l.notifHideContentLabel,
+            l.notificationsEnabled
+          ],
           expandedContent: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2238,21 +2697,25 @@ class _SettingsTabState extends State<SettingsTab>
                 valueListenable: SettingsManager.notificationsEnabled,
                 builder: (_, enabled, __) => SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: Text(l.notifEnableLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(l.notifEnabledSubtitle(enabled),
-                      style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
+                  title: Text(l.notifEnableLabel,
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: Text(l.notifEnabledSubtitle(enabled.toString()),
+                      style: TextStyle(
+                          fontSize: 13, color: colorScheme.onSurfaceVariant)),
                   value: enabled,
                   onChanged: (v) => SettingsManager.setNotificationsEnabled(v),
                 ),
               ),
-              if (!isDesktop)
-                ValueListenableBuilder<bool>(
+              ValueListenableBuilder<bool>(
                   valueListenable: SettingsManager.notifHideContent,
                   builder: (_, hidden, __) => SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: Text(l.notifHideContentLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Text(l.notifHideContentSubtitle(hidden),
-                        style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
+                    title: Text(l.notifHideContentLabel,
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(
+                        l.notifHideContentSubtitle(hidden.toString()),
+                        style: TextStyle(
+                            fontSize: 13, color: colorScheme.onSurfaceVariant)),
                     value: hidden,
                     onChanged: (v) => SettingsManager.setNotifHideContent(v),
                   ),
@@ -2265,10 +2728,16 @@ class _SettingsTabState extends State<SettingsTab>
           _buildSubSection(
             key: 'notif_sound',
             title: l.notifSoundEnableLabel,
-            subtitle: 'Notification sound and audio file',
+            subtitle: l.notifSoundSubtitle,
             icon: Icons.music_note_rounded,
             searchShowAll: showAll,
-            keywords: [l.notifSoundEnableLabel, l.notifSoundChooseLabel, 'sound', 'audio', 'notification'],
+            keywords: [
+              l.notifSoundEnableLabel,
+              l.notifSoundChooseLabel,
+              'sound',
+              'audio',
+              'notification'
+            ],
             expandedContent: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -2276,23 +2745,34 @@ class _SettingsTabState extends State<SettingsTab>
                   valueListenable: SettingsManager.notifSoundEnabled,
                   builder: (_, soundEnabled, __) => SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: Text(l.notifSoundEnableLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Text(l.notifSoundEnabledSubtitle(soundEnabled),
-                        style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
+                    title: Text(l.notifSoundEnableLabel,
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(
+                        l.notifSoundEnabledSubtitle(soundEnabled.toString()),
+                        style: TextStyle(
+                            fontSize: 13, color: colorScheme.onSurfaceVariant)),
                     value: soundEnabled,
                     onChanged: (v) => SettingsManager.setNotifSoundEnabled(v),
                   ),
                 ),
                 const SizedBox(height: 8),
                 Text(l.notifSoundChooseLabel,
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: colorScheme.onSurface)),
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: colorScheme.onSurface)),
                 const SizedBox(height: 8),
                 ValueListenableBuilder<String>(
                   valueListenable: SettingsManager.notifSound,
                   builder: (_, currentSound, __) {
-                    const builtInSounds = ['notification0', 'notification1', 'notification2'];
+                    const builtInSounds = [
+                      'notification0',
+                      'notification1',
+                      'notification2'
+                    ];
                     final allSounds = <String>[...builtInSounds];
-                    if (currentSound.startsWith('custom:') && !allSounds.contains(currentSound)) {
+                    if (currentSound.startsWith('custom:') &&
+                        !allSounds.contains(currentSound)) {
                       allSounds.add(currentSound);
                     }
                     return Column(
@@ -2307,31 +2787,45 @@ class _SettingsTabState extends State<SettingsTab>
                                 SettingsManager.setNotifSound(sound);
                                 try {
                                   if (isCustom) {
-                                    AudioPlayer().play(DeviceFileSource(sound.substring(7)));
+                                    AudioPlayer().play(
+                                        DeviceFileSource(sound.substring(7)));
                                   } else {
-                                    AudioPlayer().play(AssetSource('$sound.wav'));
+                                    AudioPlayer()
+                                        .play(AssetSource('$sound.wav'));
                                   }
-                                } catch (e) { debugPrint('[err] $e'); }
+                                } catch (e) {
+                                  debugPrint('[err] $e');
+                                }
                               },
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 180),
-                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 10),
                                 decoration: BoxDecoration(
                                   color: selected
-                                      ? colorScheme.primaryContainer.withValues(alpha: 0.85)
-                                      : colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                                      ? colorScheme.primaryContainer
+                                          .withValues(alpha: 0.85)
+                                      : colorScheme.surfaceContainerHighest
+                                          .withValues(alpha: 0.45),
                                   borderRadius: BorderRadius.circular(10),
                                   border: Border.all(
-                                    color: selected ? colorScheme.primary : colorScheme.outlineVariant.withValues(alpha: 0.4),
+                                    color: selected
+                                        ? colorScheme.primary
+                                        : colorScheme.outlineVariant
+                                            .withValues(alpha: 0.4),
                                     width: selected ? 1.5 : 0.8,
                                   ),
                                 ),
                                 child: Row(
                                   children: [
                                     Icon(
-                                      selected ? Icons.check_circle : Icons.play_circle_outline,
+                                      selected
+                                          ? Icons.check_circle
+                                          : Icons.play_circle_outline,
                                       size: 20,
-                                      color: selected ? colorScheme.primary : colorScheme.onSurfaceVariant,
+                                      color: selected
+                                          ? colorScheme.primary
+                                          : colorScheme.onSurfaceVariant,
                                     ),
                                     const SizedBox(width: 10),
                                     Expanded(
@@ -2339,8 +2833,12 @@ class _SettingsTabState extends State<SettingsTab>
                                         l.localizeNotifSound(sound),
                                         style: TextStyle(
                                           fontSize: 14,
-                                          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                                          color: selected ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant,
+                                          fontWeight: selected
+                                              ? FontWeight.w600
+                                              : FontWeight.normal,
+                                          color: selected
+                                              ? colorScheme.onPrimaryContainer
+                                              : colorScheme.onSurfaceVariant,
                                         ),
                                         overflow: TextOverflow.ellipsis,
                                       ),
@@ -2356,41 +2854,72 @@ class _SettingsTabState extends State<SettingsTab>
                           child: GestureDetector(
                             onTap: () async {
                               try {
-                                final result = await FilePicker.platform.pickFiles(
+                                final result =
+                                    await FilePicker.platform.pickFiles(
                                   type: FileType.custom,
-                                  allowedExtensions: ['wav', 'mp3', 'm4a', 'ogg', 'aac', 'opus'],
+                                  allowedExtensions: [
+                                    'wav',
+                                    'mp3',
+                                    'm4a',
+                                    'ogg',
+                                    'aac',
+                                    'opus'
+                                  ],
                                 );
-                                if (result == null || result.files.isEmpty) return;
+                                if (result == null || result.files.isEmpty)
+                                  return;
                                 final filePath = result.files.first.path;
                                 if (filePath == null) return;
-                                final appSupport = await getOnyxDocumentsDirectory();
-                                final soundsDir = Directory('${appSupport.path}/custom_sounds');
+                                final appSupport =
+                                    await getOnyxDocumentsDirectory();
+                                final soundsDir = Directory(
+                                    '${appSupport.path}/custom_sounds');
                                 await soundsDir.create(recursive: true);
                                 final fileName = p.basename(filePath);
-                                final destFile = File('${soundsDir.path}/$fileName');
+                                final destFile =
+                                    File('${soundsDir.path}/$fileName');
                                 await File(filePath).copy(destFile.path);
                                 final soundKey = 'custom:${destFile.path}';
                                 SettingsManager.setNotifSound(soundKey);
-                                try { AudioPlayer().play(DeviceFileSource(destFile.path)); } catch (e) { debugPrint('[err] $e'); }
-                                if (mounted) rootScreenKey.currentState?.showSnack(l.notifSoundCustomLoaded);
+                                try {
+                                  AudioPlayer()
+                                      .play(DeviceFileSource(destFile.path));
+                                } catch (e) {
+                                  debugPrint('[err] $e');
+                                }
+                                if (mounted)
+                                  rootScreenKey.currentState
+                                      ?.showSnack(l.notifSoundCustomLoaded);
                               } catch (e) {
                                 debugPrint('[NotifSound] pick error: $e');
-                                if (mounted) rootScreenKey.currentState?.showSnack('${l.notifSoundCustomError}: $e');
+                                if (mounted)
+                                  rootScreenKey.currentState?.showSnack(
+                                      '${l.notifSoundCustomError}: $e');
                               }
                             },
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 180),
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 10),
                               decoration: BoxDecoration(
-                                color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                                color: colorScheme.surfaceContainerHighest
+                                    .withValues(alpha: 0.45),
                                 borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.4), width: 0.8),
+                                border: Border.all(
+                                    color: colorScheme.outlineVariant
+                                        .withValues(alpha: 0.4),
+                                    width: 0.8),
                               ),
                               child: Row(
                                 children: [
-                                  Icon(Icons.file_upload_outlined, size: 20, color: colorScheme.onSurfaceVariant),
+                                  Icon(Icons.file_upload_outlined,
+                                      size: 20,
+                                      color: colorScheme.onSurfaceVariant),
                                   const SizedBox(width: 10),
-                                  Text(l.notifSoundCustom, style: TextStyle(fontSize: 14, color: colorScheme.onSurfaceVariant)),
+                                  Text(l.notifSoundCustom,
+                                      style: TextStyle(
+                                          fontSize: 14,
+                                          color: colorScheme.onSurfaceVariant)),
                                 ],
                               ),
                             ),
@@ -2399,7 +2928,10 @@ class _SettingsTabState extends State<SettingsTab>
                         Padding(
                           padding: const EdgeInsets.only(top: 2, bottom: 4),
                           child: Text(l.notifSoundCustomInvalidFormat,
-                              style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6))),
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: colorScheme.onSurfaceVariant
+                                      .withValues(alpha: 0.6))),
                         ),
                       ],
                     );
@@ -2413,11 +2945,18 @@ class _SettingsTabState extends State<SettingsTab>
           const SizedBox(height: 8),
           _buildSubSection(
             key: 'notif_advanced',
-            title: 'Advanced',
-            subtitle: 'Startup behavior and popup position',
+            title: l.notifAdvancedTitle,
+            subtitle: l.notifAdvancedSubtitle,
             icon: Icons.tune_rounded,
             searchShowAll: showAll,
-            keywords: [l.notifPopupPosition, l.notifPopupPositionSubtitle, l.launchAtStartupLabel, l.launchAtStartupSubtitle, 'startup', 'popup'],
+            keywords: [
+              l.notifPopupPosition,
+              l.notifPopupPositionSubtitle,
+              l.launchAtStartupLabel,
+              l.launchAtStartupSubtitle,
+              'startup',
+              'popup'
+            ],
             expandedContent: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -2426,9 +2965,12 @@ class _SettingsTabState extends State<SettingsTab>
                     valueListenable: SettingsManager.launchAtStartup,
                     builder: (_, autostartEnabled, __) => SwitchListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: Text(l.launchAtStartupLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      title: Text(l.launchAtStartupLabel,
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
                       subtitle: Text(l.launchAtStartupSubtitle,
-                          style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: colorScheme.onSurfaceVariant)),
                       value: autostartEnabled,
                       onChanged: (val) async {
                         final l10n = AppLocalizations.of(context);
@@ -2438,28 +2980,45 @@ class _SettingsTabState extends State<SettingsTab>
                           final bg = SettingsManager.getElementColor(
                             cs.surfaceContainerHighest,
                             SettingsManager.elementBrightness.value,
-                          ).withValues(alpha: SettingsManager.elementOpacity.value);
+                          ).withValues(
+                              alpha: SettingsManager.elementOpacity.value);
                           scaffold
                             ..hideCurrentSnackBar()
                             ..showSnackBar(SnackBar(
                               content: Text(msg,
-                                style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14, fontWeight: FontWeight.w500),
-                                textAlign: TextAlign.center),
+                                  style: TextStyle(
+                                      color: cs.onSurfaceVariant,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500),
+                                  textAlign: TextAlign.center),
                               backgroundColor: bg,
                               behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                              margin: const EdgeInsets.only(bottom: 16, left: 16, right: 16),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 10),
+                              margin: const EdgeInsets.only(
+                                  bottom: 16, left: 16, right: 16),
                               elevation: 4,
                               duration: const Duration(seconds: 2),
                             ));
                         }
+
                         try {
-                          if (val) { await AutostartManager.enable(); } else { await AutostartManager.disable(); }
+                          if (val) {
+                            await AutostartManager.enable();
+                          } else {
+                            await AutostartManager.disable();
+                          }
                           final actual = await AutostartManager.isEnabled();
-                          if (actual != val) { snack(l10n.launchAtStartupFailed); return; }
+                          if (actual != val) {
+                            snack(l10n.launchAtStartupFailed);
+                            return;
+                          }
                           await SettingsManager.setLaunchAtStartup(val);
-                          snack(val ? l10n.launchAtStartupEnabled : l10n.launchAtStartupDisabled);
+                          snack(val
+                              ? l10n.launchAtStartupEnabled
+                              : l10n.launchAtStartupDisabled);
                         } catch (e) {
                           debugPrint('[autostart] Failed to toggle: $e');
                           snack(l10n.launchAtStartupFailed);
@@ -2471,20 +3030,29 @@ class _SettingsTabState extends State<SettingsTab>
                   if (Platform.isWindows) const SizedBox(height: 8),
                   Row(
                     children: [
-                      Icon(Icons.picture_in_picture_rounded, size: 16, color: colorScheme.onSurface),
+                      Icon(Icons.picture_in_picture_rounded,
+                          size: 16, color: colorScheme.onSurface),
                       const SizedBox(width: 6),
                       Text(l.notifPopupPosition,
-                          style: TextStyle(fontWeight: FontWeight.bold, color: colorScheme.onSurface)),
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.onSurface)),
                     ],
                   ),
                   const SizedBox(height: 4),
                   Text(l.notifPopupPositionSubtitle,
-                      style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
+                      style: TextStyle(
+                          fontSize: 13, color: colorScheme.onSurfaceVariant)),
                   const SizedBox(height: 12),
                   ValueListenableBuilder<String>(
                     valueListenable: SettingsManager.notificationPosition,
                     builder: (_, pos, __) {
-                      const positionKeys = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
+                      const positionKeys = [
+                        'top_left',
+                        'top_right',
+                        'bottom_left',
+                        'bottom_right'
+                      ];
                       return GridView.count(
                         crossAxisCount: 2,
                         shrinkWrap: true,
@@ -2496,16 +3064,22 @@ class _SettingsTabState extends State<SettingsTab>
                         children: positionKeys.map((String posKey) {
                           final selected = pos == posKey;
                           return GestureDetector(
-                            onTap: () => SettingsManager.setNotificationPosition(posKey),
+                            onTap: () =>
+                                SettingsManager.setNotificationPosition(posKey),
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 180),
                               decoration: BoxDecoration(
                                 color: selected
-                                    ? colorScheme.primaryContainer.withValues(alpha: 0.85)
-                                    : colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                                    ? colorScheme.primaryContainer
+                                        .withValues(alpha: 0.85)
+                                    : colorScheme.surfaceContainerHighest
+                                        .withValues(alpha: 0.45),
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
-                                  color: selected ? colorScheme.primary : colorScheme.outlineVariant.withValues(alpha: 0.4),
+                                  color: selected
+                                      ? colorScheme.primary
+                                      : colorScheme.outlineVariant
+                                          .withValues(alpha: 0.4),
                                   width: selected ? 1.5 : 0.8,
                                 ),
                               ),
@@ -2514,8 +3088,12 @@ class _SettingsTabState extends State<SettingsTab>
                                 l.localizeNotifPosition(posKey),
                                 style: TextStyle(
                                   fontSize: 13,
-                                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                                  color: selected ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant,
+                                  fontWeight: selected
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                  color: selected
+                                      ? colorScheme.onPrimaryContainer
+                                      : colorScheme.onSurfaceVariant,
                                 ),
                               ),
                             ),
@@ -2529,6 +3107,110 @@ class _SettingsTabState extends State<SettingsTab>
             ),
           ),
         ],
+        if (!isDesktop) ...[
+          const SizedBox(height: 8),
+          _buildSubSection(
+            key: 'notif_background_service',
+            title: l.backgroundServiceTitle,
+            subtitle: l.backgroundServiceSubtitle,
+            icon: Icons.sync_rounded,
+            searchShowAll: showAll,
+            keywords: [
+              l.backgroundServiceTitle,
+              'foreground service',
+              'background',
+              'keep alive',
+            ],
+            expandedContent: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.backgroundServiceEnabled,
+                  builder: (_, enabled, __) => SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(l.backgroundServiceEnableLabel,
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(l.backgroundServiceEnableSubtitle,
+                        style: TextStyle(
+                            fontSize: 13, color: colorScheme.onSurfaceVariant)),
+                    value: enabled,
+                    onChanged: (v) =>
+                        SettingsManager.setBackgroundServiceEnabled(v),
+                  ),
+                ),
+                ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.backgroundServiceEnabled,
+                  builder: (_, enabled, __) {
+                    if (!enabled) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(l.backgroundServiceTextLabel,
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: colorScheme.onSurface)),
+                          const SizedBox(height: 8),
+                          ValueListenableBuilder<String>(
+                            valueListenable:
+                                SettingsManager.backgroundServiceNotificationText,
+                            builder: (_, currentText, __) {
+                              final controller = TextEditingController(
+                                  text: currentText);
+                              controller.selection = TextSelection.collapsed(
+                                  offset: controller.text.length);
+                              return Container(
+                                decoration: BoxDecoration(
+                                  color: colorScheme.surfaceContainerHighest
+                                      .withValues(alpha: 0.45),
+                                  borderRadius: BorderRadius.circular(24),
+                                  border: Border.all(
+                                    color: colorScheme.outlineVariant
+                                        .withValues(alpha: 0.4),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                child: TextField(
+                                  controller: controller,
+                                  style: TextStyle(
+                                      fontSize: 14,
+                                      color: colorScheme.onSurface),
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    hintText: AppLocalizations.of(context)
+                                        .backgroundServiceDefaultText,
+                                    hintStyle: TextStyle(
+                                      color: colorScheme.onSurfaceVariant
+                                          .withValues(alpha: 0.6),
+                                    ),
+                                    filled: false,
+                                    border: InputBorder.none,
+                                    enabledBorder: InputBorder.none,
+                                    focusedBorder: InputBorder.none,
+                                    contentPadding:
+                                        const EdgeInsets.symmetric(
+                                            horizontal: 18, vertical: 12),
+                                  ),
+                                  onSubmitted: (v) => SettingsManager
+                                      .setBackgroundServiceNotificationText(v),
+                                  onTapOutside: (_) => SettingsManager
+                                      .setBackgroundServiceNotificationText(
+                                          controller.text),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -2536,7 +3218,8 @@ class _SettingsTabState extends State<SettingsTab>
   Widget _buildProxyContent() {
     final colorScheme = Theme.of(context).colorScheme;
 
-    InputDecoration fieldDecor(String label, {String? hint, bool enabled = true}) =>
+    InputDecoration fieldDecor(String label,
+            {String? hint, bool enabled = true}) =>
         InputDecoration(
           labelText: label,
           hintText: hint,
@@ -2572,13 +3255,14 @@ class _SettingsTabState extends State<SettingsTab>
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: Text(AppLocalizations.of(context).useProxy,
                   style: const TextStyle(fontWeight: FontWeight.w600)),
               subtitle: Text(
-                enabled ? AppLocalizations.of(context).proxyRouted : AppLocalizations.of(context).proxyDirectConnection,
+                enabled
+                    ? AppLocalizations.of(context).proxyRouted
+                    : AppLocalizations.of(context).proxyDirectConnection,
                 style: TextStyle(
                     fontSize: 13, color: colorScheme.onSurfaceVariant),
               ),
@@ -2588,7 +3272,6 @@ class _SettingsTabState extends State<SettingsTab>
                 if (!v) proxyActiveNotifier.value = false;
               },
             ),
-
             if (enabled)
               ValueListenableBuilder<bool>(
                 valueListenable: proxyActiveNotifier,
@@ -2603,8 +3286,8 @@ class _SettingsTabState extends State<SettingsTab>
                       : const Color(0xFFFF9800);
                   return Container(
                     margin: const EdgeInsets.only(bottom: 4),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
                       color: statusColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(10),
@@ -2640,10 +3323,8 @@ class _SettingsTabState extends State<SettingsTab>
                   );
                 },
               ),
-
             const Divider(),
             const SizedBox(height: 8),
-
             Text(AppLocalizations.of(context).proxyType,
                 style: TextStyle(
                     fontSize: 13,
@@ -2710,7 +3391,6 @@ class _SettingsTabState extends State<SettingsTab>
               },
             ),
             const SizedBox(height: 16),
-
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -2719,7 +3399,9 @@ class _SettingsTabState extends State<SettingsTab>
                   child: TextField(
                     controller: _proxyHostController,
                     enabled: enabled,
-                    decoration: fieldDecor(AppLocalizations.of(context).proxyHost, hint: '127.0.0.1'),
+                    decoration: fieldDecor(
+                        AppLocalizations.of(context).proxyHost,
+                        hint: '127.0.0.1'),
                     style: const TextStyle(fontSize: 14),
                     onChanged: (v) => SettingsManager.setProxyHost(v),
                   ),
@@ -2731,7 +3413,9 @@ class _SettingsTabState extends State<SettingsTab>
                     controller: _proxyPortController,
                     enabled: enabled,
                     keyboardType: TextInputType.number,
-                    decoration: fieldDecor(AppLocalizations.of(context).proxyPort, hint: '8080'),
+                    decoration: fieldDecor(
+                        AppLocalizations.of(context).proxyPort,
+                        hint: '8080'),
                     style: const TextStyle(fontSize: 14),
                     onChanged: (v) => SettingsManager.setProxyPort(v),
                   ),
@@ -2739,22 +3423,23 @@ class _SettingsTabState extends State<SettingsTab>
               ],
             ),
             const SizedBox(height: 12),
-
             TextField(
               controller: _proxyUsernameController,
               enabled: enabled,
-              decoration: fieldDecor(AppLocalizations.of(context).proxyLoginOptional),
+              decoration:
+                  fieldDecor(AppLocalizations.of(context).proxyLoginOptional),
               style: const TextStyle(fontSize: 14),
               onChanged: (v) => SettingsManager.setProxyUsername(v),
             ),
             const SizedBox(height: 12),
-
             StatefulBuilder(
               builder: (_, setLocal) => TextField(
                 controller: _proxyPasswordController,
                 enabled: enabled,
                 obscureText: !_proxyPasswordVisible,
-                decoration: fieldDecor(AppLocalizations.of(context).proxyPasswordOptional).copyWith(
+                decoration: fieldDecor(
+                        AppLocalizations.of(context).proxyPasswordOptional)
+                    .copyWith(
                   suffixIcon: IconButton(
                     icon: Icon(_proxyPasswordVisible
                         ? Icons.visibility_off_outlined
@@ -2770,7 +3455,6 @@ class _SettingsTabState extends State<SettingsTab>
             const SizedBox(height: 16),
             const Divider(),
             const SizedBox(height: 12),
-
             if (_proxyTestResult != null) ...[
               Container(
                 padding:
@@ -2793,7 +3477,6 @@ class _SettingsTabState extends State<SettingsTab>
               ),
               const SizedBox(height: 12),
             ],
-
             Wrap(
               spacing: 10,
               runSpacing: 10,
@@ -2802,7 +3485,9 @@ class _SettingsTabState extends State<SettingsTab>
                   icon: _proxyTesting
                       ? Icons.hourglass_empty
                       : Icons.network_check_rounded,
-                  label: _proxyTesting ? AppLocalizations.of(context).proxyTesting : AppLocalizations.of(context).testProxy,
+                  label: _proxyTesting
+                      ? AppLocalizations.of(context).proxyTesting
+                      : AppLocalizations.of(context).testProxy,
                   fontSize: 14,
                   onPressed: enabled && !_proxyTesting
                       ? () async {
@@ -2810,13 +3495,11 @@ class _SettingsTabState extends State<SettingsTab>
                             _proxyTesting = true;
                             _proxyTestResult = null;
                           });
-                          final (ok, msg) =
-                              await ProxyManager.testConnection();
+                          final (ok, msg) = await ProxyManager.testConnection();
                           if (mounted) {
                             setState(() {
                               _proxyTesting = false;
-                              _proxyTestResult =
-                                  ok ? ' $msg' : ' $msg';
+                              _proxyTestResult = ok ? ' $msg' : ' $msg';
                             });
                           }
                         }
@@ -2828,17 +3511,19 @@ class _SettingsTabState extends State<SettingsTab>
                   fontSize: 14,
                   onPressed: () async {
                     final host = SettingsManager.proxyHost.value.trim();
-                    final port = int.tryParse(SettingsManager.proxyPort.value.trim()) ?? 0;
+                    final port =
+                        int.tryParse(SettingsManager.proxyPort.value.trim()) ??
+                            0;
                     if (host.isEmpty || port <= 0) return;
-                    
+
                     await SettingsManager.setProxyEnabled(true);
                     ProxyManager.applyFromSettings();
                     proxyActiveNotifier.value = false;
                     widget.onDisconnectWs();
-                    Future.delayed(const Duration(milliseconds: 400),
-                        widget.onConnectWs);
+                    Future.delayed(
+                        const Duration(milliseconds: 400), widget.onConnectWs);
                     if (mounted) setState(() => _proxyTestResult = null);
-                    
+
                     final (ok, _) = await ProxyManager.testConnection();
                     if (ok && SettingsManager.proxyEnabled.value) {
                       proxyActiveNotifier.value = true;
@@ -2880,6 +3565,15 @@ class _SettingsTabState extends State<SettingsTab>
     const languages = [
       {'code': 'en', 'label': 'English', 'native': 'English', 'flag': '🇺🇸'},
       {'code': 'ru', 'label': 'Russian', 'native': 'Русский', 'flag': '🇷🇺'},
+      {'code': 'es', 'label': 'Spanish', 'native': 'Español', 'flag': '🇪🇸'},
+      {'code': 'de', 'label': 'German', 'native': 'Deutsch', 'flag': '🇩🇪'},
+      {'code': 'fr', 'label': 'French', 'native': 'Français', 'flag': '🇫🇷'},
+      {
+        'code': 'pt',
+        'label': 'Portuguese',
+        'native': 'Português',
+        'flag': '🇧🇷'
+      },
     ];
 
     return ValueListenableBuilder<Locale>(
@@ -2921,7 +3615,8 @@ class _SettingsTabState extends State<SettingsTab>
                             expand: false,
                             builder: (_, scrollController) {
                               return Container(
-                                margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                                margin:
+                                    const EdgeInsets.fromLTRB(12, 0, 12, 12),
                                 decoration: BoxDecoration(
                                   color: sheetColor,
                                   borderRadius: BorderRadius.circular(20),
@@ -2933,7 +3628,8 @@ class _SettingsTabState extends State<SettingsTab>
                                       width: 36,
                                       height: 4,
                                       decoration: BoxDecoration(
-                                        color: cs.onSurface.withValues(alpha: 0.2),
+                                        color:
+                                            cs.onSurface.withValues(alpha: 0.2),
                                         borderRadius: BorderRadius.circular(2),
                                       ),
                                     ),
@@ -2953,14 +3649,17 @@ class _SettingsTabState extends State<SettingsTab>
                                     Expanded(
                                       child: ListView(
                                         controller: scrollController,
-                                        padding: const EdgeInsets.only(bottom: 8),
+                                        padding:
+                                            const EdgeInsets.only(bottom: 8),
                                         children: languages.map((lang) {
                                           final isSelected =
-                                              currentLocale.languageCode == lang['code'];
+                                              currentLocale.languageCode ==
+                                                  lang['code'];
                                           return ListTile(
                                             leading: Text(
                                               lang['flag']!,
-                                              style: const TextStyle(fontSize: 22),
+                                              style:
+                                                  const TextStyle(fontSize: 22),
                                             ),
                                             title: Text(lang['native']!),
                                             subtitle: Text(
@@ -2972,22 +3671,26 @@ class _SettingsTabState extends State<SettingsTab>
                                               ),
                                             ),
                                             trailing: isSelected
-                                                ? Icon(Icons.check_circle_rounded,
+                                                ? Icon(
+                                                    Icons.check_circle_rounded,
                                                     color: cs.primary)
                                                 : Icon(
-                                                    Icons.radio_button_unchecked_rounded,
+                                                    Icons
+                                                        .radio_button_unchecked_rounded,
                                                     color: cs.onSurface
                                                         .withValues(alpha: 0.3),
                                                   ),
                                             selected: isSelected,
-                                            selectedTileColor:
-                                                cs.primary.withValues(alpha: 0.08),
+                                            selectedTileColor: cs.primary
+                                                .withValues(alpha: 0.08),
                                             shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(12),
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
                                             ),
                                             onTap: () async {
-                                              await SettingsManager.setAppLocale(
-                                                  Locale(lang['code']!));
+                                              await SettingsManager
+                                                  .setAppLocale(
+                                                      Locale(lang['code']!));
                                               if (ctx.mounted) {
                                                 Navigator.of(ctx).pop();
                                               }
@@ -3007,7 +3710,8 @@ class _SettingsTabState extends State<SettingsTab>
                   );
                 },
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     color: Theme.of(context)
                         .colorScheme
@@ -3072,15 +3776,26 @@ class _SettingsTabState extends State<SettingsTab>
       children: [
         _buildSubSection(
           key: 'security_privacy',
-          title: 'Privacy',
-          subtitle: 'Visibility and search settings',
+          title: l.securityPrivacyTitle,
+          subtitle: l.securityPrivacySubtitle,
           icon: Icons.visibility_off_rounded,
           searchShowAll: showAll,
           keywords: [
-            l.showDisplayNameInGroups, l.showDisplayNameSubtitle, l.hideFromSearch,
-            l.hideFromSearchSubtitle, l.statusSettings, l.statusVisibility, l.statusShowStatus,
-            l.statusHideStatus, l.statusCustomText, l.statusWhenOnline, l.statusWhenOffline,
-            l.fakePinTitle, l.fakePinSubtitle, l.decoyAccountSection, l.decoyContactsSection,
+            l.showDisplayNameInGroups,
+            l.showDisplayNameSubtitle,
+            l.hideFromSearch,
+            l.hideFromSearchSubtitle,
+            l.statusSettings,
+            l.statusVisibility,
+            l.statusShowStatus,
+            l.statusHideStatus,
+            l.statusCustomText,
+            l.statusWhenOnline,
+            l.statusWhenOffline,
+            l.fakePinTitle,
+            l.fakePinSubtitle,
+            l.decoyAccountSection,
+            l.decoyContactsSection,
           ],
           expandedContent: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -3096,18 +3811,23 @@ class _SettingsTabState extends State<SettingsTab>
                 valueListenable: SettingsManager.showDisplayNameInGroups,
                 builder: (context, showDN, _) => SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: Text(l.showDisplayNameInGroups, style: const TextStyle(fontSize: 14)),
-                  subtitle: Text(l.showDisplayNameSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  title: Text(l.showDisplayNameInGroups,
+                      style: const TextStyle(fontSize: 14)),
+                  subtitle: Text(l.showDisplayNameSubtitle,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
                   value: showDN,
-                  onChanged: (val) => SettingsManager.setShowDisplayNameInGroups(val),
+                  onChanged: (val) =>
+                      SettingsManager.setShowDisplayNameInGroups(val),
                 ),
               ),
               ValueListenableBuilder<bool>(
                 valueListenable: SettingsManager.hideFromSearch,
                 builder: (context, hideSearch, _) => SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: Text(l.hideFromSearch, style: const TextStyle(fontSize: 14)),
-                  subtitle: Text(l.hideFromSearchSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  title: Text(l.hideFromSearch,
+                      style: const TextStyle(fontSize: 14)),
+                  subtitle: Text(l.hideFromSearchSubtitle,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
                   value: hideSearch,
                   onChanged: (val) async {
                     final okMsg = l.hideFromSearchSavedOk;
@@ -3130,9 +3850,17 @@ class _SettingsTabState extends State<SettingsTab>
           icon: Icons.pin_rounded,
           searchShowAll: showAll,
           keywords: [
-            l.enablePinLock, l.enablePinSubtitle, l.useBiometrics, l.useBiometricsSubtitle,
-            l.lockOnResume, l.lockOnResumeSubtitle, l.fakePinTitle, l.fakePinSubtitle,
-            'biometric', 'fingerprint', 'password',
+            l.enablePinLock,
+            l.enablePinSubtitle,
+            l.useBiometrics,
+            l.useBiometricsSubtitle,
+            l.lockOnResume,
+            l.lockOnResumeSubtitle,
+            l.fakePinTitle,
+            l.fakePinSubtitle,
+            'biometric',
+            'fingerprint',
+            'password',
           ],
           expandedContent: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -3141,8 +3869,10 @@ class _SettingsTabState extends State<SettingsTab>
                 valueListenable: SettingsManager.pinEnabled,
                 builder: (context, pinOn, _) => SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: Text(l.enablePinLock, style: const TextStyle(fontSize: 14)),
-                  subtitle: Text(l.enablePinSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  title: Text(l.enablePinLock,
+                      style: const TextStyle(fontSize: 14)),
+                  subtitle: Text(l.enablePinSubtitle,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
                   value: pinOn,
                   onChanged: (val) async {
                     if (val) {
@@ -3196,8 +3926,11 @@ class _SettingsTabState extends State<SettingsTab>
                         valueListenable: SettingsManager.biometricEnabled,
                         builder: (context, bioOn, _) => SwitchListTile(
                           contentPadding: EdgeInsets.zero,
-                          title: Text(l.useBiometrics, style: const TextStyle(fontSize: 14)),
-                          subtitle: Text(l.useBiometricsSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          title: Text(l.useBiometrics,
+                              style: const TextStyle(fontSize: 14)),
+                          subtitle: Text(l.useBiometricsSubtitle,
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.grey)),
                           secondary: const Icon(Icons.fingerprint_rounded),
                           value: bioOn,
                           onChanged: (val) async {
@@ -3220,23 +3953,27 @@ class _SettingsTabState extends State<SettingsTab>
                 },
               ),
               if (!Platform.isWindows && !Platform.isMacOS && !Platform.isLinux)
-              ValueListenableBuilder<bool>(
-                valueListenable: SettingsManager.pinEnabled,
-                builder: (context, pinOn, _) {
-                  if (!pinOn) return const SizedBox.shrink();
-                  return ValueListenableBuilder<bool>(
-                    valueListenable: SettingsManager.lockOnResume,
-                    builder: (context, lockOn, _) => SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      secondary: const Icon(Icons.lock_clock_outlined),
-                      title: Text(l.lockOnResume, style: const TextStyle(fontSize: 14)),
-                      subtitle: Text(l.lockOnResumeSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                      value: lockOn,
-                      onChanged: (val) => SettingsManager.setLockOnResume(val),
-                    ),
-                  );
-                },
-              ),
+                ValueListenableBuilder<bool>(
+                  valueListenable: SettingsManager.pinEnabled,
+                  builder: (context, pinOn, _) {
+                    if (!pinOn) return const SizedBox.shrink();
+                    return ValueListenableBuilder<bool>(
+                      valueListenable: SettingsManager.lockOnResume,
+                      builder: (context, lockOn, _) => SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        secondary: const Icon(Icons.lock_clock_outlined),
+                        title: Text(l.lockOnResume,
+                            style: const TextStyle(fontSize: 14)),
+                        subtitle: Text(l.lockOnResumeSubtitle,
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.grey)),
+                        value: lockOn,
+                        onChanged: (val) =>
+                            SettingsManager.setLockOnResume(val),
+                      ),
+                    );
+                  },
+                ),
               ValueListenableBuilder<bool>(
                 valueListenable: SettingsManager.pinEnabled,
                 builder: (context, pinOn, _) {
@@ -3244,8 +3981,11 @@ class _SettingsTabState extends State<SettingsTab>
                   return ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.theater_comedy_outlined),
-                    title: Text(l.fakePinTitle, style: const TextStyle(fontSize: 14)),
-                    subtitle: Text(l.fakePinSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    title: Text(l.fakePinTitle,
+                        style: const TextStyle(fontSize: 14)),
+                    subtitle: Text(l.fakePinSubtitle,
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.grey)),
                     trailing: const Icon(Icons.chevron_right, size: 18),
                     onTap: () => showDecoySetupSheet(context),
                   );
@@ -3256,24 +3996,28 @@ class _SettingsTabState extends State<SettingsTab>
         ),
         const SizedBox(height: 8),
         Builder(builder: (_) {
-          final canManage = widget.isPrimaryDevice || widget.isE2eTrustedDevice;
+          // Deliberately not gated by canManage: an untrusted device needs to
+          // reach this section precisely to see RecoveryBanner and recover
+          // trust. Session revoke/approve and security-level changes are
+          // still enforced server-side (403 on unauthorized attempts).
           final username = rootScreenKey.currentState?.currentUsername;
-          return Opacity(
-            opacity: canManage ? 1.0 : 0.4,
-            child: IgnorePointer(
-              ignoring: !canManage,
-              child: _buildSubSection(
-                key: 'security_active_devices',
-                title: canManage ? l.activeDevices : l.activeDevicesPrimaryOnly,
-                subtitle: l.activeDevicesSubtitle,
-                icon: Icons.devices_rounded,
-                searchShowAll: showAll,
-                keywords: [l.activeDevices, l.keyMgmtDescription, 'sessions', 'devices'],
-                expandedContent: ActiveDevicesPanel(
-                  serverBase: serverBase,
-                  username: username,
-                ),
-              ),
+          final canManage = widget.isPrimaryDevice || widget.isE2eTrustedDevice;
+          return _buildSubSection(
+            key: 'security_active_devices',
+            title: l.activeDevices,
+            subtitle: l.activeDevicesSubtitle,
+            icon: Icons.devices_rounded,
+            searchShowAll: showAll,
+            keywords: [
+              l.activeDevices,
+              l.keyMgmtDescription,
+              'sessions',
+              'devices'
+            ],
+            expandedContent: ActiveDevicesPanel(
+              serverBase: serverBase,
+              username: username,
+              showSecurityLevel: canManage,
             ),
           );
         }),
@@ -3286,11 +4030,16 @@ class _SettingsTabState extends State<SettingsTab>
               ignoring: !canManage,
               child: _buildSubSection(
                 key: 'security_change_password',
-                title: canManage ? l.changePassword : l.changePasswordPrimaryOnly,
+                title:
+                    canManage ? l.changePassword : l.changePasswordPrimaryOnly,
                 subtitle: l.changePasswordInfo,
                 icon: Icons.password_rounded,
                 searchShowAll: showAll,
-                keywords: [l.changePassword, l.changePasswordCurrentLabel, l.changePasswordNewLabel],
+                keywords: [
+                  l.changePassword,
+                  l.changePasswordCurrentLabel,
+                  l.changePasswordNewLabel
+                ],
                 expandedContent: _ChangePasswordForm(
                   onSubmit: widget.onChangePassword,
                   onSnack: _showSnack,
@@ -3306,15 +4055,15 @@ class _SettingsTabState extends State<SettingsTab>
   // ── ONYX data folder ────────────────────────────────────────────────────────
 
   Widget _buildAppDataContent() {
-    final l      = AppLocalizations.of(context);
-    final cs     = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
+    final cs = Theme.of(context).colorScheme;
     final custom = OnyxBaseDir.customBase;
 
     return FutureBuilder<String>(
       future: OnyxBaseDir.supportDir().then((d) => d.path),
       builder: (ctx, snap) {
         final displayPath = snap.data ?? custom ?? l.appDataDefault;
-        final isCustom    = custom != null;
+        final isCustom = custom != null;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3322,7 +4071,8 @@ class _SettingsTabState extends State<SettingsTab>
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Text(l.appDataTitle,
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 15)),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -3358,7 +4108,8 @@ class _SettingsTabState extends State<SettingsTab>
                       if (path == null) return;
                       try {
                         if (Platform.isWindows) {
-                          await Process.run('explorer', [path.replaceAll('/', '\\')]);
+                          await Process.run(
+                              'explorer', [path.replaceAll('/', '\\')]);
                         } else if (Platform.isMacOS) {
                           await Process.run('open', [path]);
                         } else {
@@ -3378,8 +4129,7 @@ class _SettingsTabState extends State<SettingsTab>
             ),
 
             // Delete previous (default system) folder — only shown after migration
-            if (isCustom)
-              _buildDeleteOldFolderTile(context, cs),
+            if (isCustom) _buildDeleteOldFolderTile(context, cs),
           ],
         );
       },
@@ -3453,52 +4203,44 @@ class _SettingsTabState extends State<SettingsTab>
     );
   }
 
-  void _showDeleteOldFolderDialog(BuildContext ctx, String oldPath) {
+  Future<void> _showDeleteOldFolderDialog(
+      BuildContext ctx, String oldPath) async {
     final l = AppLocalizations.of(ctx);
-    showDialog<void>(
+    final confirmed = await showOnyxConfirmDialog(
       context: ctx,
-      builder: (_) => AlertDialog(
-        title: Text(l.appDataDeleteOldFolder),
-        content: Text(l.appDataDeleteOldFolderConfirm),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(l.cancel),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
-            onPressed: () async {
-              Navigator.of(ctx).pop();
-              try {
-                final d = Directory(oldPath);
-                if (await d.exists()) {
-                  // Delete user data files but keep Flutter infrastructure files
-                  // that the app still reads from this location (SharedPreferences,
-                  // image cache). Without this, settings like pin_lock_enabled
-                  // are lost because Flutter always writes SharedPreferences to
-                  // the default AppSupport directory regardless of custom base.
-                  final entities = await d.list().toList();
-                  for (final e in entities) {
-                    final name = p.basename(e.path);
-                    if (_kOldFolderSystemFiles.contains(name)) continue;
-                    await e.delete(recursive: true);
-                  }
-                }
-                if (ctx.mounted) {
-                  _showStyledSnack(ctx, l.appDataDeleteOldFolderSuccess);
-                  setState(() { _oldFolderInfoFuture = null; }); // invalidate cache
-                }
-              } catch (e) {
-                if (ctx.mounted) {
-                  _showStyledSnack(ctx, '${l.appDataDeleteOldFolderError}$e');
-                }
-              }
-            },
-            child: Text(l.appDataDeleteOldFolder),
-          ),
-        ],
-      ),
+      title: l.appDataDeleteOldFolder,
+      message: l.appDataDeleteOldFolderConfirm,
+      confirmLabel: l.appDataDeleteOldFolder,
+      isDestructive: true,
+      icon: Icons.delete_forever_rounded,
     );
+    if (confirmed != true) return;
+    try {
+      final d = Directory(oldPath);
+      if (await d.exists()) {
+        // Delete user data files but keep Flutter infrastructure files
+        // that the app still reads from this location (SharedPreferences,
+        // image cache). Without this, settings like pin_lock_enabled
+        // are lost because Flutter always writes SharedPreferences to
+        // the default AppSupport directory regardless of custom base.
+        final entities = await d.list().toList();
+        for (final e in entities) {
+          final name = p.basename(e.path);
+          if (_kOldFolderSystemFiles.contains(name)) continue;
+          await e.delete(recursive: true);
+        }
+      }
+      if (ctx.mounted) {
+        _showStyledSnack(ctx, l.appDataDeleteOldFolderSuccess);
+        setState(() {
+          _oldFolderInfoFuture = null;
+        }); // invalidate cache
+      }
+    } catch (e) {
+      if (ctx.mounted) {
+        _showStyledSnack(ctx, '${l.appDataDeleteOldFolderError}$e');
+      }
+    }
   }
 
   void _showMigrationDialog(BuildContext ctx, String targetPath) {
@@ -3526,10 +4268,20 @@ class _SettingsTabState extends State<SettingsTab>
         _buildSubSection(
           key: 'cache_storage',
           searchShowAll: showAll,
-          title: 'Storage',
-          subtitle: 'Media cache and unused file cleanup',
+          title: l.cacheStorageTitle,
+          subtitle: l.cacheStorageSubtitle,
           icon: Icons.storage_rounded,
-          keywords: [l.mediaCacheSize, l.manageCacheButton, l.manageCacheTitle, l.cleanUnusedFiles, l.clearLocalCache, l.serverMediaCache, 'storage', 'cache', 'cleanup'],
+          keywords: [
+            l.mediaCacheSize,
+            l.manageCacheButton,
+            l.manageCacheTitle,
+            l.cleanUnusedFiles,
+            l.clearLocalCache,
+            l.serverMediaCache,
+            'storage',
+            'cache',
+            'cleanup'
+          ],
           expandedContent: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -3551,7 +4303,9 @@ class _SettingsTabState extends State<SettingsTab>
               ),
               const SizedBox(height: 6),
               _buildLiquidGlassButton(
-                icon: _purging ? Icons.hourglass_top_rounded : Icons.auto_delete_rounded,
+                icon: _purging
+                    ? Icons.hourglass_top_rounded
+                    : Icons.auto_delete_rounded,
                 label: _purging ? l.cleaningUnusedFiles : l.cleanUnusedFiles,
                 fontSize: 14,
                 onPressed: _purging ? null : _purgeOrphanedCache,
@@ -3566,11 +4320,25 @@ class _SettingsTabState extends State<SettingsTab>
           subtitle: l.dangerZoneSubtitle,
           icon: Icons.warning_rounded,
           searchShowAll: showAll,
-          keywords: [l.dangerZone, l.dangerZoneSubtitle, l.factoryReset, l.factoryResetHint, l.resetDeleteAccount, l.resetDeleteLocal, 'reset', 'delete', 'wipe'],
+          keywords: [
+            l.dangerZone,
+            l.dangerZoneSubtitle,
+            l.factoryReset,
+            l.factoryResetHint,
+            l.resetDeleteAccount,
+            l.resetDeleteLocal,
+            'reset',
+            'delete',
+            'wipe'
+          ],
           expandedContent: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildLiquidGlassButton(icon: Icons.restore, label: l.factoryReset, fontSize: 14, onPressed: _factoryReset),
+              _buildLiquidGlassButton(
+                  icon: Icons.restore,
+                  label: l.factoryReset,
+                  fontSize: 14,
+                  onPressed: _factoryReset),
             ],
           ),
         ),
@@ -3587,16 +4355,30 @@ class _SettingsTabState extends State<SettingsTab>
         _buildSubSection(
           key: 'connection_server',
           searchShowAll: showAll,
-          title: 'Server Connection',
-          subtitle: 'Connect or disconnect from the WebSocket server',
+          title: l.connectionServerTitle,
+          subtitle: l.connectionServerSubtitle,
           icon: Icons.wifi_rounded,
-          keywords: [l.connect, l.disconnect, 'websocket', 'server', 'connection'],
+          keywords: [
+            l.connect,
+            l.disconnect,
+            'websocket',
+            'server',
+            'connection'
+          ],
           expandedContent: Wrap(
             spacing: 10,
             runSpacing: 10,
             children: [
-              _buildLiquidGlassButton(icon: Icons.wifi, label: l.connect, fontSize: 14, onPressed: widget.onConnectWs),
-              _buildLiquidGlassButton(icon: Icons.wifi_off, label: l.disconnect, fontSize: 14, onPressed: widget.onDisconnectWs),
+              _buildLiquidGlassButton(
+                  icon: Icons.wifi,
+                  label: l.connect,
+                  fontSize: 14,
+                  onPressed: widget.onConnectWs),
+              _buildLiquidGlassButton(
+                  icon: Icons.wifi_off,
+                  label: l.disconnect,
+                  fontSize: 14,
+                  onPressed: widget.onDisconnectWs),
             ],
           ),
         ),
@@ -3607,7 +4389,19 @@ class _SettingsTabState extends State<SettingsTab>
           title: l.proxyTitle,
           subtitle: l.proxySubtitle,
           icon: Icons.language_rounded,
-          keywords: [l.enableProxy, l.proxyType, l.proxyHost, l.proxyPort, l.proxyUsername, l.proxyPassword, l.testProxy, l.proxyApplyReconnect, l.useProxy, l.proxyDirectConnection, l.proxyRouted],
+          keywords: [
+            l.enableProxy,
+            l.proxyType,
+            l.proxyHost,
+            l.proxyPort,
+            l.proxyUsername,
+            l.proxyPassword,
+            l.testProxy,
+            l.proxyApplyReconnect,
+            l.useProxy,
+            l.proxyDirectConnection,
+            l.proxyRouted
+          ],
           expandedContent: _buildProxyContent(),
         ),
       ],
@@ -3626,7 +4420,18 @@ class _SettingsTabState extends State<SettingsTab>
           title: 'Media & Uploads',
           subtitle: 'Confirmations, auto-load and image preloading',
           icon: Icons.perm_media_rounded,
-          keywords: [l.confirmFileUpload, l.confirmFileUploadSubtitle, l.confirmVoiceMessage, l.confirmVoiceSubtitle, l.autoLoadVideos, l.autoLoadVideosSubtitle, 'upload', 'media', 'video', 'voice'],
+          keywords: [
+            l.confirmFileUpload,
+            l.confirmFileUploadSubtitle,
+            l.confirmVoiceMessage,
+            l.confirmVoiceSubtitle,
+            l.autoLoadVideos,
+            l.autoLoadVideosSubtitle,
+            'upload',
+            'media',
+            'video',
+            'voice'
+          ],
           expandedContent: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -3637,7 +4442,8 @@ class _SettingsTabState extends State<SettingsTab>
                   title: Text(l.confirmFileUpload),
                   subtitle: Text(l.confirmFileUploadSubtitle),
                   value: confirmFile,
-                  onChanged: (val) async => await SettingsManager.setConfirmFileUpload(val),
+                  onChanged: (val) async =>
+                      await SettingsManager.setConfirmFileUpload(val),
                 ),
               ),
               ValueListenableBuilder<bool>(
@@ -3647,7 +4453,8 @@ class _SettingsTabState extends State<SettingsTab>
                   title: Text(l.confirmVoiceMessage),
                   subtitle: Text(l.confirmVoiceSubtitle),
                   value: confirmVoice,
-                  onChanged: (val) async => await SettingsManager.setConfirmVoiceUpload(val),
+                  onChanged: (val) async =>
+                      await SettingsManager.setConfirmVoiceUpload(val),
                 ),
               ),
               ValueListenableBuilder<bool>(
@@ -3657,7 +4464,8 @@ class _SettingsTabState extends State<SettingsTab>
                   title: Text(l.autoLoadVideos),
                   subtitle: Text(l.autoLoadVideosSubtitle),
                   value: autoLoadVideo,
-                  onChanged: (val) async => await SettingsManager.setAutoLoadVideoEnabled(val),
+                  onChanged: (val) async =>
+                      await SettingsManager.setAutoLoadVideoEnabled(val),
                 ),
               ),
               const SizedBox(height: 8),
@@ -3666,21 +4474,37 @@ class _SettingsTabState extends State<SettingsTab>
                 builder: (_, mode, __) => Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Preload chat images', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    const Text('Preload chat images',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 2),
                     Text(
                       'Download images around the open chat in the background so they are ready before you scroll to them.',
-                      style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+                      style: TextStyle(
+                          fontSize: 13,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.6)),
                     ),
                     const SizedBox(height: 8),
                     DropdownButton<MediaPreloadMode>(
                       value: mode,
                       underline: const SizedBox.shrink(),
-                      onChanged: (val) async { if (val != null) await SettingsManager.setMediaPreloadMode(val); },
-                      items: const [
-                        DropdownMenuItem(value: MediaPreloadMode.off, child: Text('Off')),
-                        DropdownMenuItem(value: MediaPreloadMode.wifiOnly, child: Text('Wi-Fi only')),
-                        DropdownMenuItem(value: MediaPreloadMode.always, child: Text('Always')),
+                      onChanged: (val) async {
+                        if (val != null)
+                          await SettingsManager.setMediaPreloadMode(val);
+                      },
+                      items: [
+                        const DropdownMenuItem(
+                            value: MediaPreloadMode.off, child: Text('Off')),
+                        DropdownMenuItem(
+                            value: MediaPreloadMode.wifiOnly,
+                            child: Text(
+                                AppLocalizations.of(context).wifiOnlyOption)),
+                        DropdownMenuItem(
+                            value: MediaPreloadMode.always,
+                            child: Text(AppLocalizations.of(context).always)),
                       ],
                     ),
                   ],
@@ -3692,11 +4516,16 @@ class _SettingsTabState extends State<SettingsTab>
         const SizedBox(height: 8),
         _buildSubSection(
           key: 'interact_performance',
-          title: 'Performance',
-          subtitle: 'Scroll buffer and image preload window',
+          title: l.interactPerformanceTitle,
+          subtitle: l.interactPerformanceSubtitle,
           icon: Icons.speed_rounded,
           searchShowAll: showAll,
-          keywords: ['scroll buffer', 'image preload', 'preload window', 'cache extent'],
+          keywords: [
+            'scroll buffer',
+            'image preload',
+            'preload window',
+            'cache extent'
+          ],
           expandedContent: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -3705,11 +4534,18 @@ class _SettingsTabState extends State<SettingsTab>
                 builder: (_, extent, __) => Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Scroll buffer', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    const Text('Scroll buffer',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 2),
                     Text(
                       'Pixels rendered beyond the visible chat area. Higher = smoother scrolling, more memory. Current: ${extent.toStringAsFixed(0)} px',
-                      style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+                      style: TextStyle(
+                          fontSize: 13,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.6)),
                     ),
                     Slider(
                       value: extent,
@@ -3717,7 +4553,8 @@ class _SettingsTabState extends State<SettingsTab>
                       max: 5000,
                       divisions: 20,
                       label: '${extent.toStringAsFixed(0)} px',
-                      onChanged: (val) async => await SettingsManager.setChatCacheExtent(val),
+                      onChanged: (val) async =>
+                          await SettingsManager.setChatCacheExtent(val),
                     ),
                   ],
                 ),
@@ -3728,11 +4565,18 @@ class _SettingsTabState extends State<SettingsTab>
                 builder: (_, window, __) => Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Image preload window', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    const Text('Image preload window',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 2),
                     Text(
                       'Messages scanned for images when opening a chat. Higher = more images ready before you scroll. Current: $window messages',
-                      style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+                      style: TextStyle(
+                          fontSize: 13,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.6)),
                     ),
                     Slider(
                       value: window.toDouble(),
@@ -3740,7 +4584,9 @@ class _SettingsTabState extends State<SettingsTab>
                       max: 300,
                       divisions: 15,
                       label: '$window',
-                      onChanged: (val) async => await SettingsManager.setImagePreloadWindow(val.round()),
+                      onChanged: (val) async =>
+                          await SettingsManager.setImagePreloadWindow(
+                              val.round()),
                     ),
                   ],
                 ),
@@ -3748,15 +4594,22 @@ class _SettingsTabState extends State<SettingsTab>
             ],
           ),
         ),
-        if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) ...[
+        if (!kIsWeb &&
+            (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) ...[
           const SizedBox(height: 8),
           _buildSubSection(
             key: 'interact_files',
-            title: 'Files & Storage',
-            subtitle: 'Download folder and app data management',
+            title: l.interactFilesTitle,
+            subtitle: l.interactFilesSubtitle,
             icon: Icons.folder_rounded,
             searchShowAll: showAll,
-            keywords: [l.downloadFolder, l.downloadFolderSubtitle, 'download', 'folder', 'storage'],
+            keywords: [
+              l.downloadFolder,
+              l.downloadFolderSubtitle,
+              'download',
+              'folder',
+              'storage'
+            ],
             expandedContent: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -3774,7 +4627,13 @@ class _SettingsTabState extends State<SettingsTab>
           title: l.debugTitle,
           subtitle: l.debugSubtitle,
           icon: Icons.bug_report_rounded,
-          keywords: [l.debugMode, l.debugModeSubtitle, l.enableFileLogging, l.enableFileLoggingSubtitle, l.deleteAllLogs],
+          keywords: [
+            l.debugMode,
+            l.debugModeSubtitle,
+            l.enableFileLogging,
+            l.enableFileLoggingSubtitle,
+            l.deleteAllLogs
+          ],
           expandedContent: _buildDebugContent(),
         ),
         const SizedBox(height: 8),
@@ -3784,7 +4643,12 @@ class _SettingsTabState extends State<SettingsTab>
           title: l.blockedUsersTitle,
           subtitle: l.blockedUsersSubtitle,
           icon: Icons.block_rounded,
-          keywords: [l.blockedUsersEmpty, l.unblockAction, l.blockUserLabel, l.unblockUserLabel],
+          keywords: [
+            l.blockedUsersEmpty,
+            l.unblockAction,
+            l.blockUserLabel,
+            l.unblockUserLabel
+          ],
           expandedContent: _buildBlockedUsersContent(),
         ),
       ],
@@ -3803,7 +4667,8 @@ class _SettingsTabState extends State<SettingsTab>
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Text(l.downloadFolder,
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 15)),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -3840,7 +4705,8 @@ class _SettingsTabState extends State<SettingsTab>
                       onPressed: () async {
                         try {
                           if (Platform.isWindows) {
-                            await Process.run('explorer', [path.replaceAll('/', '\\')]);
+                            await Process.run(
+                                'explorer', [path.replaceAll('/', '\\')]);
                           } else if (Platform.isMacOS) {
                             await Process.run('open', [path]);
                           } else if (Platform.isLinux) {
@@ -3851,7 +4717,8 @@ class _SettingsTabState extends State<SettingsTab>
                       child: const Icon(Icons.folder_open_rounded, size: 18),
                     ),
                     OutlinedButton(
-                      onPressed: () => SettingsManager.setDownloadFolderPath(''),
+                      onPressed: () =>
+                          SettingsManager.setDownloadFolderPath(''),
                       child: Text(l.downloadFolderReset),
                     ),
                   ],
@@ -3882,13 +4749,19 @@ class _SettingsTabState extends State<SettingsTab>
           valueListenable: SettingsManager.enableLogging,
           builder: (_, loggingEnabled, __) => SwitchListTile(
             title: Text(AppLocalizations.of(context).enableFileLogging),
-            subtitle: Text(AppLocalizations.of(context).enableFileLoggingSubtitle),
+            subtitle:
+                Text(AppLocalizations.of(context).enableFileLoggingSubtitle),
             value: loggingEnabled,
-            onChanged: (val) async => await SettingsManager.setEnableLogging(val),
+            onChanged: (val) async =>
+                await SettingsManager.setEnableLogging(val),
           ),
         ),
         const SizedBox(height: 8),
-        _buildLiquidGlassButton(icon: Icons.delete_outline, label: AppLocalizations.of(context).deleteAllLogs, fontSize: 14, onPressed: _deleteAllLogs),
+        _buildLiquidGlassButton(
+            icon: Icons.delete_outline,
+            label: AppLocalizations.of(context).deleteAllLogs,
+            fontSize: 14,
+            onPressed: _deleteAllLogs),
       ],
     );
   }
@@ -3916,22 +4789,27 @@ class _SettingsTabState extends State<SettingsTab>
       return ValueListenableBuilder<String>(
         valueListenable: notifier,
         builder: (_, selected, __) {
-          final validId = deviceList.any((d) => d.deviceId == selected) ? selected : '';
+          final validId =
+              deviceList.any((d) => d.deviceId == selected) ? selected : '';
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(children: [
                 Icon(icon, size: 16, color: colorScheme.primary),
                 const SizedBox(width: 6),
-                Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                Text(label,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 13)),
               ]),
               const SizedBox(height: 6),
               ClipRRect(
                 borderRadius: BorderRadius.circular(14),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
                   decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                    color: colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.6),
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
                       color: colorScheme.outlineVariant.withValues(alpha: 0.35),
@@ -3943,25 +4821,31 @@ class _SettingsTabState extends State<SettingsTab>
                     isDense: false,
                     underline: const SizedBox.shrink(),
                     borderRadius: BorderRadius.circular(14),
-                    icon: Icon(Icons.expand_more_rounded, size: 20, color: colorScheme.onSurface.withValues(alpha: 0.5)),
-                    style: TextStyle(fontSize: 13, color: colorScheme.onSurface),
+                    icon: Icon(Icons.expand_more_rounded,
+                        size: 20,
+                        color: colorScheme.onSurface.withValues(alpha: 0.5)),
+                    style:
+                        TextStyle(fontSize: 13, color: colorScheme.onSurface),
                     dropdownColor: colorScheme.surfaceContainerHigh,
                     items: [
                       DropdownMenuItem(
                         value: '',
                         child: Text(
                           l.audioSystemDefault,
-                          style: TextStyle(fontSize: 13, color: colorScheme.onSurface.withValues(alpha: 0.55)),
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: colorScheme.onSurface
+                                  .withValues(alpha: 0.55)),
                         ),
                       ),
                       ...deviceList.map((d) => DropdownMenuItem(
-                        value: d.deviceId,
-                        child: Text(
-                          d.label.isNotEmpty ? d.label : d.deviceId,
-                          style: const TextStyle(fontSize: 13),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      )),
+                            value: d.deviceId,
+                            child: Text(
+                              d.label.isNotEmpty ? d.label : d.deviceId,
+                              style: const TextStyle(fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          )),
                     ],
                     onChanged: (id) => onChanged(id ?? ''),
                   ),
@@ -3996,7 +4880,9 @@ class _SettingsTabState extends State<SettingsTab>
         const SizedBox(height: 8),
         Text(
           l.audioChangesNote,
-          style: TextStyle(fontSize: 12, color: colorScheme.onSurface.withValues(alpha: 0.5)),
+          style: TextStyle(
+              fontSize: 12,
+              color: colorScheme.onSurface.withValues(alpha: 0.5)),
         ),
       ],
     );
@@ -4040,8 +4926,14 @@ class _SettingsTabState extends State<SettingsTab>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                          Text(description, style: TextStyle(fontSize: 11, color: colorScheme.onSurface.withValues(alpha: 0.5))),
+                          Text(label,
+                              style: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w600)),
+                          Text(description,
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: colorScheme.onSurface
+                                      .withValues(alpha: 0.5))),
                         ],
                       ),
                     ),
@@ -4050,14 +4942,19 @@ class _SettingsTabState extends State<SettingsTab>
                 ),
               ),
               if (enabled) ...[
-                Divider(height: 1, color: colorScheme.outlineVariant.withValues(alpha: 0.2)),
+                Divider(
+                    height: 1,
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.2)),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (qualityNotifier != null && onQualityChanged != null) ...[
-                        const Text('Glass Quality', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                      if (qualityNotifier != null &&
+                          onQualityChanged != null) ...[
+                        const Text('Glass Quality',
+                            style: TextStyle(
+                                fontSize: 11, fontWeight: FontWeight.w600)),
                         const SizedBox(height: 6),
                         ValueListenableBuilder<LiquidGlassQuality>(
                           valueListenable: qualityNotifier,
@@ -4068,28 +4965,56 @@ class _SettingsTabState extends State<SettingsTab>
                               children: LiquidGlassQuality.values.map((q) {
                                 final sel = q == currentQuality;
                                 final (lbl, sub) = switch (q) {
-                                  LiquidGlassQuality.fast    => ('Fast',    'Lightweight\nBest perf'),
-                                  LiquidGlassQuality.medium  => ('Medium',  'No shaders\nBlur only'),
-                                  LiquidGlassQuality.quality => ('Quality', 'Full shaders\nBest visuals'),
+                                  LiquidGlassQuality.fast => (
+                                      'Fast',
+                                      'Lightweight\nBest perf'
+                                    ),
+                                  LiquidGlassQuality.medium => (
+                                      'Medium',
+                                      'No shaders\nBlur only'
+                                    ),
+                                  LiquidGlassQuality.quality => (
+                                      'Quality',
+                                      'Full shaders\nBest visuals'
+                                    ),
                                 };
                                 return Expanded(
                                   child: GestureDetector(
                                     onTap: () => onQualityChanged(q),
                                     child: AnimatedContainer(
-                                      duration: const Duration(milliseconds: 200),
+                                      duration:
+                                          const Duration(milliseconds: 200),
                                       margin: const EdgeInsets.only(right: 6),
-                                      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 6, horizontal: 4),
                                       decoration: BoxDecoration(
-                                        color: sel ? primary.withValues(alpha: 0.15) : surface.withValues(alpha: 0.5),
+                                        color: sel
+                                            ? primary.withValues(alpha: 0.15)
+                                            : surface.withValues(alpha: 0.5),
                                         borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(color: sel ? primary : Colors.transparent, width: 1.5),
+                                        border: Border.all(
+                                            color: sel
+                                                ? primary
+                                                : Colors.transparent,
+                                            width: 1.5),
                                       ),
                                       child: Column(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Text(lbl, style: TextStyle(fontSize: 11, fontWeight: sel ? FontWeight.bold : FontWeight.w500, color: sel ? primary : null)),
+                                          Text(lbl,
+                                              style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: sel
+                                                      ? FontWeight.bold
+                                                      : FontWeight.w500,
+                                                  color: sel ? primary : null)),
                                           const SizedBox(height: 2),
-                                          Text(sub, textAlign: TextAlign.center, style: const TextStyle(fontSize: 9, color: Colors.grey), maxLines: 2),
+                                          Text(sub,
+                                              textAlign: TextAlign.center,
+                                              style: const TextStyle(
+                                                  fontSize: 9,
+                                                  color: Colors.grey),
+                                              maxLines: 2),
                                         ],
                                       ),
                                     ),
@@ -4100,10 +5025,14 @@ class _SettingsTabState extends State<SettingsTab>
                           },
                         ),
                         const SizedBox(height: 10),
-                        Divider(height: 1, color: colorScheme.outlineVariant.withValues(alpha: 0.2)),
+                        Divider(
+                            height: 1,
+                            color: colorScheme.outlineVariant
+                                .withValues(alpha: 0.2)),
                         const SizedBox(height: 8),
                       ],
-                      ...sliders.map((item) => _buildLiquidItem(context: context, item: item)),
+                      ...sliders.map((item) =>
+                          _buildLiquidItem(context: context, item: item)),
                     ],
                   ),
                 ),
@@ -4115,10 +5044,13 @@ class _SettingsTabState extends State<SettingsTab>
     );
   }
 
-  Widget _buildLiquidItem({required BuildContext context, required _LiquidItem item}) {
+  Widget _buildLiquidItem(
+      {required BuildContext context, required _LiquidItem item}) {
     return switch (item) {
-      _LiquidSliderConfig config => _buildLiquidSlider(context: context, config: config),
-      _LiquidToggleItem toggle => _buildInlineLiquidToggle(context: context, item: toggle),
+      _LiquidSliderConfig config =>
+        _buildLiquidSlider(context: context, config: config),
+      _LiquidToggleItem toggle =>
+        _buildInlineLiquidToggle(context: context, item: toggle),
     };
   }
 
@@ -4134,12 +5066,16 @@ class _SettingsTabState extends State<SettingsTab>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(config.label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-              Text(config.format(value), style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              Text(config.label,
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600)),
+              Text(config.format(value),
+                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
             ],
           ),
           const SizedBox(height: 2),
-          Text(config.description, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          Text(config.description,
+              style: const TextStyle(fontSize: 11, color: Colors.grey)),
           Slider(
             min: config.min,
             max: config.max,
@@ -4152,7 +5088,8 @@ class _SettingsTabState extends State<SettingsTab>
     );
   }
 
-  Widget _buildInlineLiquidToggle({required BuildContext context, required _LiquidToggleItem item}) {
+  Widget _buildInlineLiquidToggle(
+      {required BuildContext context, required _LiquidToggleItem item}) {
     final colorScheme = Theme.of(context).colorScheme;
     return ValueListenableBuilder<bool>(
       valueListenable: item.listenable,
@@ -4164,8 +5101,13 @@ class _SettingsTabState extends State<SettingsTab>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(item.label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                  Text(item.description, style: TextStyle(fontSize: 11, color: colorScheme.onSurface.withValues(alpha: 0.5))),
+                  Text(item.label,
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600)),
+                  Text(item.description,
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: colorScheme.onSurface.withValues(alpha: 0.5))),
                 ],
               ),
             ),
@@ -4208,7 +5150,8 @@ class _SettingsTabState extends State<SettingsTab>
     IconData? icon,
     int? iconHue,
   }) {
-    final isExpanded = _expandedSection == section || _settingsSearchQuery.isNotEmpty;
+    final isExpanded =
+        _expandedSection == section || _settingsSearchQuery.isNotEmpty;
     final colorScheme = Theme.of(context).colorScheme;
 
     // In search mode: set ambient breadcrumb context, return flat content, then clear context
@@ -4229,64 +5172,63 @@ class _SettingsTabState extends State<SettingsTab>
           InkWell(
             borderRadius: BorderRadius.circular(16),
             onTap: () => _toggleSection(section),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  if (icon != null) ...[
+                    _buildSectionIcon(icon, iconHue),
+                    const SizedBox(width: 12),
+                  ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (icon != null) ...[
-                          _buildSectionIcon(icon, iconHue),
-                          const SizedBox(width: 12),
-                        ],
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                title,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                  color: colorScheme.onSurface,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                subtitle,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: colorScheme.onSurface
-                                      .withValues(alpha: 0.6),
-                                ),
-                              ),
-                            ],
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: colorScheme.onSurface,
                           ),
                         ),
-                        AnimatedRotation(
-                          turns: isExpanded ? 0.25 : 0.0,
-                          duration: const Duration(milliseconds: 200),
-                          curve: Curves.easeInOut,
-                          child: Icon(
-                            Icons.arrow_forward_ios,
-                            size: 16,
-                            color: colorScheme.onSurface.withValues(alpha: 0.5),
+                        const SizedBox(height: 4),
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: colorScheme.onSurface.withValues(alpha: 0.6),
                           ),
                         ),
                       ],
                     ),
                   ),
-                ),
-                AnimatedSize(
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeOut,
-                  child: isExpanded
-                      ? Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                          child: expandedContentBuilder(),
-                        )
-                      : const SizedBox.shrink(),
-                ),
-              ],
+                  AnimatedRotation(
+                    turns: isExpanded ? 0.25 : 0.0,
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeInOut,
+                    child: Icon(
+                      Icons.arrow_forward_ios,
+                      size: 16,
+                      color: colorScheme.onSurface.withValues(alpha: 0.5),
+                    ),
+                  ),
+                ],
+              ),
             ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+            child: isExpanded
+                ? Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: expandedContentBuilder(),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
+      ),
     );
   }
 
@@ -4298,13 +5240,16 @@ class _SettingsTabState extends State<SettingsTab>
     IconData? icon,
     List<String> keywords = const [],
     bool searchShowAll = false,
+    String? trailingBadge,
   }) {
     // Capture breadcrumb context before visibility check clears it
     final breadcrumb = _searchSectionLabel;
     final breadcrumbIcon = _searchSectionIcon;
 
     final searchActive = _settingsSearchQuery.isNotEmpty;
-    if (searchActive && !searchShowAll && !_sectionVisible(title, subtitle, keywords)) {
+    if (searchActive &&
+        !searchShowAll &&
+        !_sectionVisible(title, subtitle, keywords)) {
       return const SizedBox.shrink();
     }
     final isExpanded = (_expandedSubsectionKey == key) || searchActive;
@@ -4324,32 +5269,46 @@ class _SettingsTabState extends State<SettingsTab>
               child: Row(
                 children: [
                   if (icon != null) ...[
-                    Icon(icon, size: 16, color: colorScheme.primary),
-                    const SizedBox(width: 8),
+                    Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: Icon(icon, size: 16, color: colorScheme.primary),
+                    ),
+                    const SizedBox(width: 10),
                   ],
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                            color: colorScheme.onSurface,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          subtitle,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: colorScheme.onSurface.withValues(alpha: 0.55),
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14.5,
+                        color: colorScheme.onSurface,
+                      ),
                     ),
                   ),
+                  if (trailingBadge != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        trailingBadge,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
                   AnimatedRotation(
                     turns: isExpanded ? 0.5 : 0.0,
                     duration: const Duration(milliseconds: 200),
@@ -4416,7 +5375,8 @@ class _SettingsTabState extends State<SettingsTab>
   }
 
   Widget _buildAppearanceContent() {
-    final isDesktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+    final isDesktop =
+        Platform.isWindows || Platform.isMacOS || Platform.isLinux;
     final l = AppLocalizations.of(context);
     final showAll = _sectionVisible(l.appearanceTitle, l.appearanceSubtitle);
     return Column(
@@ -4441,7 +5401,8 @@ class _SettingsTabState extends State<SettingsTab>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       GestureDetector(
-                        onTap: () async => widget.onThemeChanged(theme, widget.isDarkMode),
+                        onTap: () async =>
+                            widget.onThemeChanged(theme, widget.isDarkMode),
                         child: Container(
                           width: 38,
                           height: 38,
@@ -4449,7 +5410,9 @@ class _SettingsTabState extends State<SettingsTab>
                             shape: BoxShape.circle,
                             color: theme.color,
                             border: Border.all(
-                              color: isSelected ? Colors.white : Colors.transparent,
+                              color: isSelected
+                                  ? Colors.white
+                                  : Colors.transparent,
                               width: isSelected ? 3 : 0,
                             ),
                             boxShadow: [
@@ -4469,7 +5432,8 @@ class _SettingsTabState extends State<SettingsTab>
                         child: Text(
                           theme.name,
                           textAlign: TextAlign.center,
-                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
+                          style: const TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.w500),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -4485,7 +5449,8 @@ class _SettingsTabState extends State<SettingsTab>
                   const SizedBox(width: 12),
                   Switch(
                     value: widget.isDarkMode,
-                    onChanged: (val) async => widget.onThemeChanged(widget.currentTheme, val),
+                    onChanged: (val) async =>
+                        widget.onThemeChanged(widget.currentTheme, val),
                   ),
                 ],
               ),
@@ -4503,13 +5468,27 @@ class _SettingsTabState extends State<SettingsTab>
           expandedContent: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ── Live bubble preview — the exact same MessageBubble widget
+              // used in chat_screen, so it reacts to font/size settings
+              // identically to a real message.
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: MessageBubble(
+                  text: l.fontPreviewMessage,
+                  outgoing: true,
+                  time: DateTime.now(),
+                  peerUsername: 'preview',
+                ),
+              ),
               ValueListenableBuilder<FontFamilyType>(
                 valueListenable: SettingsManager.fontFamily,
                 builder: (_, currentFont, __) {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(l.fontFamily, style: const TextStyle(fontSize: 13, color: Colors.grey)),
+                      Text(l.fontFamily,
+                          style: const TextStyle(
+                              fontSize: 13, color: Colors.grey)),
                       const SizedBox(height: 8),
                       SizedBox(
                         width: double.infinity,
@@ -4522,50 +5501,102 @@ class _SettingsTabState extends State<SettingsTab>
                               builder: (ctx) {
                                 final cs = Theme.of(ctx).colorScheme;
                                 return ValueListenableBuilder<double>(
-                                  valueListenable: SettingsManager.elementBrightness,
+                                  valueListenable:
+                                      SettingsManager.elementBrightness,
                                   builder: (_, brightness, __) {
-                                    final sheetColor = SettingsManager.getElementColor(cs.surfaceContainerHighest, brightness);
+                                    final sheetColor =
+                                        SettingsManager.getElementColor(
+                                            cs.surfaceContainerHighest,
+                                            brightness);
                                     return DraggableScrollableSheet(
                                       initialChildSize: 0.6,
                                       minChildSize: 0.4,
                                       maxChildSize: 0.95,
                                       expand: false,
                                       builder: (_, sc) => Container(
-                                        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                                        decoration: BoxDecoration(color: sheetColor, borderRadius: BorderRadius.circular(20)),
+                                        margin: const EdgeInsets.fromLTRB(
+                                            12, 0, 12, 12),
+                                        decoration: BoxDecoration(
+                                            color: sheetColor,
+                                            borderRadius:
+                                                BorderRadius.circular(20)),
                                         child: Column(
                                           children: [
                                             const SizedBox(height: 8),
                                             Container(
-                                              width: 36, height: 4,
+                                              width: 36,
+                                              height: 4,
                                               decoration: BoxDecoration(
-                                                color: cs.onSurface.withValues(alpha: 0.2),
-                                                borderRadius: BorderRadius.circular(2),
+                                                color: cs.onSurface
+                                                    .withValues(alpha: 0.2),
+                                                borderRadius:
+                                                    BorderRadius.circular(2),
                                               ),
                                             ),
                                             const SizedBox(height: 8),
                                             Padding(
-                                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                                              child: Text(l.fontFamily, style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: cs.onSurface)),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 16,
+                                                      vertical: 4),
+                                              child: Text(l.fontFamily,
+                                                  style: TextStyle(
+                                                      fontSize: 15,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color: cs.onSurface)),
                                             ),
                                             Expanded(
                                               child: ListView(
                                                 controller: sc,
-                                                padding: const EdgeInsets.only(bottom: 8),
-                                                children: FontFamilyType.values.map((font) {
-                                                  final isSel = currentFont == font;
+                                                padding: const EdgeInsets.only(
+                                                    bottom: 8),
+                                                children: FontFamilyType.values
+                                                    .map((font) {
+                                                  final isSel =
+                                                      currentFont == font;
                                                   return ListTile(
-                                                    title: Text(font.displayName, style: font.getBodyTextStyle(fontSize: 14)),
-                                                    subtitle: Text(l.localizeFontDescription(font.description), style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.5))),
+                                                    title: Text(
+                                                        font.displayName,
+                                                        style: font
+                                                            .getBodyTextStyle(
+                                                                fontSize: 14)),
+                                                    subtitle: Text(
+                                                        l.localizeFontDescription(
+                                                            font.description),
+                                                        style: TextStyle(
+                                                            fontSize: 12,
+                                                            color: cs.onSurface
+                                                                .withValues(
+                                                                    alpha:
+                                                                        0.5))),
                                                     trailing: isSel
-                                                        ? Icon(Icons.check_circle_rounded, color: cs.primary)
-                                                        : Icon(Icons.radio_button_unchecked_rounded, color: cs.onSurface.withValues(alpha: 0.3)),
+                                                        ? Icon(
+                                                            Icons
+                                                                .check_circle_rounded,
+                                                            color: cs.primary)
+                                                        : Icon(
+                                                            Icons
+                                                                .radio_button_unchecked_rounded,
+                                                            color: cs.onSurface
+                                                                .withValues(
+                                                                    alpha:
+                                                                        0.3)),
                                                     selected: isSel,
-                                                    selectedTileColor: cs.primary.withValues(alpha: 0.08),
-                                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                                    selectedTileColor:
+                                                        cs.primary.withValues(
+                                                            alpha: 0.08),
+                                                    shape:
+                                                        RoundedRectangleBorder(
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        12)),
                                                     onTap: () async {
-                                                      await SettingsManager.setFontFamily(font);
-                                                      if (ctx.mounted) Navigator.of(ctx).pop();
+                                                      await SettingsManager
+                                                          .setFontFamily(font);
+                                                      if (ctx.mounted)
+                                                        Navigator.of(ctx).pop();
                                                     },
                                                   );
                                                 }).toList(),
@@ -4581,23 +5612,85 @@ class _SettingsTabState extends State<SettingsTab>
                             );
                           },
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            padding: const EdgeInsets.all(14),
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: Theme.of(context).colorScheme.outline, width: 1),
+                              borderRadius: BorderRadius.circular(18),
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .primary
+                                  .withValues(alpha: 0.05),
+                              border: Border.all(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .primary
+                                    .withValues(alpha: 0.15),
+                                width: 1,
+                              ),
                             ),
                             child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(currentFont.displayName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                                    const SizedBox(height: 2),
-                                    Text(l.localizeFontDescription(currentFont.description), style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                                  ],
+                                Container(
+                                  width: 42,
+                                  height: 42,
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .primary
+                                        .withValues(alpha: 0.12),
+                                  ),
+                                  child: Text(
+                                    'Aa',
+                                    style: currentFont
+                                        .getBodyTextStyle(fontSize: 17)
+                                        .copyWith(
+                                          fontWeight: FontWeight.w700,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary,
+                                        ),
+                                  ),
                                 ),
-                                const Icon(Icons.chevron_right),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(currentFont.displayName,
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 14)),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                          l.localizeFontDescription(
+                                              currentFont.description),
+                                          style: const TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey)),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  width: 28,
+                                  height: 28,
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withValues(alpha: 0.06),
+                                  ),
+                                  child: Icon(Icons.chevron_right_rounded,
+                                      size: 16,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurface
+                                          .withValues(alpha: 0.55)),
+                                ),
                               ],
                             ),
                           ),
@@ -4613,51 +5706,101 @@ class _SettingsTabState extends State<SettingsTab>
                 builder: (_, sizeMultiplier, __) {
                   final labels = ['S', 'M', 'L', 'XL'];
                   final values = [0.9, 1.0, 1.1, 1.2];
+                  final cs = Theme.of(context).colorScheme;
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(l.messageSize, style: const TextStyle(fontSize: 13, color: Colors.grey)),
-                          Text('${(sizeMultiplier * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.primary)),
+                          Text(l.messageSize,
+                              style: const TextStyle(
+                                  fontSize: 13, color: Colors.grey)),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: cs.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              '${(sizeMultiplier * 100).toStringAsFixed(0)}%',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: cs.primary),
+                            ),
+                          ),
                         ],
                       ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: List.generate(values.length, (idx) {
-                          final val = values[idx];
-                          final label = labels[idx];
-                          final isSel = (sizeMultiplier - val).abs() < 0.01;
-                          return Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color:
+                              cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Row(
+                          children: List.generate(values.length, (idx) {
+                            final val = values[idx];
+                            final label = labels[idx];
+                            final isSel = (sizeMultiplier - val).abs() < 0.01;
+                            return Expanded(
                               child: GestureDetector(
-                                onTap: () async => SettingsManager.setFontSizeMultiplier(val),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                onTap: () async =>
+                                    SettingsManager.setFontSizeMultiplier(val),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 160),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 9),
                                   decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
-                                      color: isSel ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outline,
-                                      width: isSel ? 2 : 1,
-                                    ),
-                                    color: isSel ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1) : Colors.transparent,
+                                    color:
+                                        isSel ? cs.primary : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(999),
                                   ),
-                                  child: Center(child: Text(label, style: TextStyle(fontWeight: isSel ? FontWeight.w600 : FontWeight.normal, fontSize: 14))),
+                                  child: Center(
+                                    child: Text(
+                                      label,
+                                      style: TextStyle(
+                                        fontWeight: isSel
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
+                                        fontSize: 13,
+                                        color: isSel
+                                            ? cs.onPrimary
+                                            : cs.onSurface
+                                                .withValues(alpha: 0.6),
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          );
-                        }),
+                            );
+                          }),
+                        ),
                       ),
-                      const SizedBox(height: 8),
-                      Slider(
-                        value: sizeMultiplier,
-                        min: 0.8,
-                        max: 1.3,
-                        divisions: 10,
-                        onChanged: (val) async => SettingsManager.setFontSizeMultiplier(val),
+                      const SizedBox(height: 12),
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 4,
+                          activeTrackColor: cs.primary,
+                          inactiveTrackColor:
+                              cs.primary.withValues(alpha: 0.15),
+                          thumbColor: cs.primary,
+                          thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 8),
+                          overlayShape:
+                              const RoundSliderOverlayShape(overlayRadius: 16),
+                        ),
+                        child: Slider(
+                          value: sizeMultiplier,
+                          min: 0.8,
+                          max: 1.3,
+                          divisions: 10,
+                          onChanged: (val) async =>
+                              SettingsManager.setFontSizeMultiplier(val),
+                        ),
                       ),
                     ],
                   );
@@ -4670,15 +5813,24 @@ class _SettingsTabState extends State<SettingsTab>
         // ── Chat Display ─────────────────────────
         _buildSubSection(
           key: 'appearance_chat',
-          title: 'Chat Display',
-          subtitle: 'Alignment, avatars and animations',
+          title: l.appearanceChatDisplayTitle,
+          subtitle: l.appearanceChatDisplaySubtitle,
           searchShowAll: showAll,
           icon: Icons.chat_bubble_outline_rounded,
           keywords: [
-            l.ownMessagesRight, l.ownMessagesLeft, l.alignAllRight, l.alignAllRightSubtitle,
-            l.showAvatarsInChats, l.showAvatarSubtitle, l.showAccountIndicator, l.showAccountIndicatorSubtitle,
-            l.smoothScrollDown, l.messageAnimations, l.chatListMoveAnimations,
-            l.loadOlderMessagesOnScroll, l.showSnackbars,
+            l.ownMessagesRight,
+            l.ownMessagesLeft,
+            l.alignAllRight,
+            l.alignAllRightSubtitle,
+            l.showAvatarsInChats,
+            l.showAvatarSubtitle,
+            l.showAccountIndicator,
+            l.showAccountIndicatorSubtitle,
+            l.smoothScrollDown,
+            l.messageAnimations,
+            l.chatListMoveAnimations,
+            l.loadOlderMessagesOnScroll,
+            l.showSnackbars,
           ],
           expandedContent: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -4689,7 +5841,10 @@ class _SettingsTabState extends State<SettingsTab>
                   children: [
                     Text(swapped ? l.ownMessagesLeft : l.ownMessagesRight),
                     const SizedBox(width: 12),
-                    Switch(value: swapped, onChanged: (val) async => SettingsManager.setSwapMessageAlignment(val)),
+                    Switch(
+                        value: swapped,
+                        onChanged: (val) async =>
+                            SettingsManager.setSwapMessageAlignment(val)),
                   ],
                 ),
               ),
@@ -4700,9 +5855,16 @@ class _SettingsTabState extends State<SettingsTab>
                   valueListenable: SettingsManager.alignAllMessagesRight,
                   builder: (_, alignRight, __) => Row(
                     children: [
-                      Text(alignRight ? (swappedMsg ? l.allMessagesLeft : l.allMessagesRight2) : l.allMessagesMixed),
+                      Text(alignRight
+                          ? (swappedMsg
+                              ? l.allMessagesLeft
+                              : l.allMessagesRight2)
+                          : l.allMessagesMixed),
                       const SizedBox(width: 12),
-                      Switch(value: alignRight, onChanged: (val) async => SettingsManager.setAlignAllMessagesRight(val)),
+                      Switch(
+                          value: alignRight,
+                          onChanged: (val) async =>
+                              SettingsManager.setAlignAllMessagesRight(val)),
                     ],
                   ),
                 ),
@@ -4714,7 +5876,10 @@ class _SettingsTabState extends State<SettingsTab>
                   children: [
                     Text(l.showAvatarsInChats),
                     const SizedBox(width: 12),
-                    Switch(value: showAvatar, onChanged: (val) async => SettingsManager.setShowAvatarInChats(val)),
+                    Switch(
+                        value: showAvatar,
+                        onChanged: (val) async =>
+                            SettingsManager.setShowAvatarInChats(val)),
                   ],
                 ),
               ),
@@ -4728,10 +5893,19 @@ class _SettingsTabState extends State<SettingsTab>
                       children: [
                         Text(l.showAccountIndicator),
                         const SizedBox(width: 12),
-                        Switch(value: showInd, onChanged: (val) async => SettingsManager.setShowAccountIndicator(val)),
+                        Switch(
+                            value: showInd,
+                            onChanged: (val) async =>
+                                SettingsManager.setShowAccountIndicator(val)),
                       ],
                     ),
-                    Text(l.showAccountIndicatorSubtitle, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
+                    Text(l.showAccountIndicatorSubtitle,
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.5))),
                   ],
                 ),
               ),
@@ -4742,7 +5916,10 @@ class _SettingsTabState extends State<SettingsTab>
                   children: [
                     Text(l.smoothScrollDown),
                     const SizedBox(width: 12),
-                    Switch(value: v, onChanged: (val) async => SettingsManager.setSmoothScroll(val)),
+                    Switch(
+                        value: v,
+                        onChanged: (val) async =>
+                            SettingsManager.setSmoothScroll(val)),
                   ],
                 ),
               ),
@@ -4753,7 +5930,10 @@ class _SettingsTabState extends State<SettingsTab>
                   children: [
                     Text(l.messageAnimations),
                     const SizedBox(width: 12),
-                    Switch(value: v, onChanged: (val) async => SettingsManager.setMessageAnimationsEnabled(val)),
+                    Switch(
+                        value: v,
+                        onChanged: (val) async =>
+                            SettingsManager.setMessageAnimationsEnabled(val)),
                   ],
                 ),
               ),
@@ -4764,7 +5944,11 @@ class _SettingsTabState extends State<SettingsTab>
                   children: [
                     Text(l.chatListMoveAnimations),
                     const SizedBox(width: 12),
-                    Switch(value: v, onChanged: (val) async => SettingsManager.setChatListMoveAnimationsEnabled(val)),
+                    Switch(
+                        value: v,
+                        onChanged: (val) async =>
+                            SettingsManager.setChatListMoveAnimationsEnabled(
+                                val)),
                   ],
                 ),
               ),
@@ -4775,7 +5959,10 @@ class _SettingsTabState extends State<SettingsTab>
                   children: [
                     Text(l.loadOlderMessagesOnScroll),
                     const SizedBox(width: 12),
-                    Switch(value: v, onChanged: (val) async => SettingsManager.setMessagePaginationEnabled(val)),
+                    Switch(
+                        value: v,
+                        onChanged: (val) async =>
+                            SettingsManager.setMessagePaginationEnabled(val)),
                   ],
                 ),
               ),
@@ -4786,20 +5973,37 @@ class _SettingsTabState extends State<SettingsTab>
                   children: [
                     Text(l.showSnackbars),
                     const SizedBox(width: 12),
-                    Switch(value: v, onChanged: (val) async => SettingsManager.setSnackbarEnabled(val)),
+                    Switch(
+                        value: v,
+                        onChanged: (val) async =>
+                            SettingsManager.setSnackbarEnabled(val)),
                   ],
                 ),
               ),
               const SizedBox(height: 20),
-              Text(l.scrollDownButtonPosition, style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text(l.scrollDownButtonPosition,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               ValueListenableBuilder<ScrollDownButtonPosition>(
                 valueListenable: SettingsManager.scrollDownButtonPosition,
                 builder: (_, selected, __) {
-                  final options = <(ScrollDownButtonPosition, IconData, String)>[
-                    (ScrollDownButtonPosition.left, Icons.format_align_left_rounded, l.scrollDownButtonPositionLeft),
-                    (ScrollDownButtonPosition.center, Icons.format_align_center_rounded, l.scrollDownButtonPositionCenter),
-                    (ScrollDownButtonPosition.right, Icons.format_align_right_rounded, l.scrollDownButtonPositionRight),
+                  final options =
+                      <(ScrollDownButtonPosition, IconData, String)>[
+                    (
+                      ScrollDownButtonPosition.left,
+                      Icons.format_align_left_rounded,
+                      l.scrollDownButtonPositionLeft
+                    ),
+                    (
+                      ScrollDownButtonPosition.center,
+                      Icons.format_align_center_rounded,
+                      l.scrollDownButtonPositionCenter
+                    ),
+                    (
+                      ScrollDownButtonPosition.right,
+                      Icons.format_align_right_rounded,
+                      l.scrollDownButtonPositionRight
+                    ),
                   ];
                   return Column(
                     children: options.map((opt) {
@@ -4808,25 +6012,47 @@ class _SettingsTabState extends State<SettingsTab>
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: GestureDetector(
-                          onTap: () async => SettingsManager.setScrollDownButtonPosition(pos),
+                          onTap: () async =>
+                              SettingsManager.setScrollDownButtonPosition(pos),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 12),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(
-                                color: isSel ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outline,
+                                color: isSel
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context).colorScheme.outline,
                                 width: isSel ? 2 : 1,
                               ),
-                              color: isSel ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1) : Colors.transparent,
+                              color: isSel
+                                  ? Theme.of(context)
+                                      .colorScheme
+                                      .primary
+                                      .withValues(alpha: 0.1)
+                                  : Colors.transparent,
                             ),
                             child: Row(
                               children: [
-                                Icon(icon, size: 18, color: isSel ? Theme.of(context).colorScheme.primary : null),
+                                Icon(icon,
+                                    size: 18,
+                                    color: isSel
+                                        ? Theme.of(context).colorScheme.primary
+                                        : null),
                                 const SizedBox(width: 10),
                                 Expanded(
-                                  child: Text(label, style: TextStyle(fontWeight: isSel ? FontWeight.w600 : FontWeight.normal)),
+                                  child: Text(label,
+                                      style: TextStyle(
+                                          fontWeight: isSel
+                                              ? FontWeight.w600
+                                              : FontWeight.normal)),
                                 ),
-                                if (isSel) Icon(Icons.check_rounded, size: 18, color: Theme.of(context).colorScheme.primary),
+                                if (isSel)
+                                  Icon(Icons.check_rounded,
+                                      size: 18,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary),
                               ],
                             ),
                           ),
@@ -4842,7 +6068,8 @@ class _SettingsTabState extends State<SettingsTab>
                 builder: (_, size, __) => Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(l.scrollDownButtonSize, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    Text(l.scrollDownButtonSize,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -4853,11 +6080,15 @@ class _SettingsTabState extends State<SettingsTab>
                             divisions: 14,
                             value: size,
                             label: '${size.toInt()} px',
-                            onChanged: (v) => SettingsManager.setScrollDownButtonSize(v),
+                            onChanged: (v) =>
+                                SettingsManager.setScrollDownButtonSize(v),
                           ),
                         ),
                         const SizedBox(width: 8),
-                        SizedBox(width: 50, child: Text('${size.toInt()} px', textAlign: TextAlign.right)),
+                        SizedBox(
+                            width: 50,
+                            child: Text('${size.toInt()} px',
+                                textAlign: TextAlign.right)),
                       ],
                     ),
                   ],
@@ -4875,9 +6106,17 @@ class _SettingsTabState extends State<SettingsTab>
           searchShowAll: showAll,
           icon: Icons.wallpaper_rounded,
           keywords: [
-            l.blurBackground, l.presetsBackground, l.applyGlobally, l.applyGloballySubtitle,
-            l.elementOpacity, l.elementBrightness, 'wallpaper', 'opacity', 'brightness',
-            l.chooseBackground, l.clearBackground2,
+            l.blurBackground,
+            l.presetsBackground,
+            l.applyGlobally,
+            l.applyGloballySubtitle,
+            l.elementOpacity,
+            l.elementBrightness,
+            'wallpaper',
+            'opacity',
+            'brightness',
+            l.chooseBackground,
+            l.clearBackground2,
           ],
           expandedContent: ValueListenableBuilder<String?>(
             valueListenable: SettingsManager.chatVideoBackground,
@@ -4889,7 +6128,9 @@ class _SettingsTabState extends State<SettingsTab>
                 if (videoPath != null && File(videoPath).existsSync()) {
                   preview = ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: AspectRatio(aspectRatio: aspect, child: _VideoPreviewWidget(path: videoPath)),
+                    child: AspectRatio(
+                        aspectRatio: aspect,
+                        child: _VideoPreviewWidget(path: videoPath)),
                   );
                 } else if (path != null && File(path).existsSync()) {
                   preview = ClipRRect(
@@ -4900,11 +6141,17 @@ class _SettingsTabState extends State<SettingsTab>
                         valueListenable: SettingsManager.blurBackground,
                         builder: (_, blur, __) {
                           final provider = FileImage(File(path));
-                          final img = Image(image: provider, width: double.infinity, fit: BoxFit.cover);
+                          final img = Image(
+                              image: provider,
+                              width: double.infinity,
+                              fit: BoxFit.cover);
                           return blur
                               ? ValueListenableBuilder<double>(
                                   valueListenable: SettingsManager.blurSigma,
-                                  builder: (_, sigma, __) => AdaptiveBlur(imageProvider: provider, sigma: sigma, fit: BoxFit.cover),
+                                  builder: (_, sigma, __) => AdaptiveBlur(
+                                      imageProvider: provider,
+                                      sigma: sigma,
+                                      fit: BoxFit.cover),
                                 )
                               : img;
                         },
@@ -4919,8 +6166,15 @@ class _SettingsTabState extends State<SettingsTab>
                       child: ValueListenableBuilder<double>(
                         valueListenable: SettingsManager.elementOpacity,
                         builder: (_, opacity, __) => Container(
-                          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: opacity * 0.47),
-                          child: Icon(Icons.photo_outlined, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest
+                              .withValues(alpha: opacity * 0.47),
+                          child: Icon(Icons.photo_outlined,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant
+                                  .withValues(alpha: 0.5)),
                         ),
                       ),
                     ),
@@ -4935,13 +6189,22 @@ class _SettingsTabState extends State<SettingsTab>
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        _buildAppleButton(icon: Icons.photo_outlined, label: l.chooseBackground, onPressed: _pickChatBackground),
-                        _buildAppleButton(icon: Icons.auto_awesome_rounded, label: l.presetsBackground, onPressed: _showPresetsSheet),
+                        _buildAppleButton(
+                            icon: Icons.photo_outlined,
+                            label: l.chooseBackground,
+                            onPressed: _pickChatBackground),
+                        _buildAppleButton(
+                            icon: Icons.auto_awesome_rounded,
+                            label: l.presetsBackground,
+                            onPressed: _showPresetsSheet),
                         if (path != null || videoPath != null)
                           _buildAppleButton(
                             icon: Icons.close_rounded,
                             label: l.clearBackground2,
-                            onPressed: () async { await _clearChatBackground(); await _clearChatVideoBackground(); },
+                            onPressed: () async {
+                              await _clearChatBackground();
+                              await _clearChatVideoBackground();
+                            },
                             isDestructive: true,
                           ),
                       ],
@@ -4952,7 +6215,8 @@ class _SettingsTabState extends State<SettingsTab>
                       builder: (_, apply, __) => SwitchListTile(
                         title: Text(l.applyBackgroundToApp),
                         value: apply,
-                        onChanged: (val) => SettingsManager.setApplyGlobally(val),
+                        onChanged: (val) =>
+                            SettingsManager.setApplyGlobally(val),
                         contentPadding: EdgeInsets.zero,
                         activeThumbColor: Theme.of(context).colorScheme.primary,
                       ),
@@ -4963,13 +6227,29 @@ class _SettingsTabState extends State<SettingsTab>
                       builder: (_, opacity, __) => Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(l.uiElementsOpacityLabel, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          Text(l.uiElementsOpacityLabel,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold)),
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              Expanded(child: Slider(min: 0.1, max: 1.0, divisions: 18, value: opacity, label: '${(opacity * 100).toStringAsFixed(0)}%', onChanged: (v) => SettingsManager.setElementOpacity(v))),
+                              Expanded(
+                                  child: Slider(
+                                      min: 0.1,
+                                      max: 1.0,
+                                      divisions: 18,
+                                      value: opacity,
+                                      label:
+                                          '${(opacity * 100).toStringAsFixed(0)}%',
+                                      onChanged: (v) =>
+                                          SettingsManager.setElementOpacity(
+                                              v))),
                               const SizedBox(width: 8),
-                              SizedBox(width: 50, child: Text('${(opacity * 100).toStringAsFixed(0)}%', textAlign: TextAlign.right)),
+                              SizedBox(
+                                  width: 50,
+                                  child: Text(
+                                      '${(opacity * 100).toStringAsFixed(0)}%',
+                                      textAlign: TextAlign.right)),
                             ],
                           ),
                         ],
@@ -4981,13 +6261,29 @@ class _SettingsTabState extends State<SettingsTab>
                       builder: (_, brightness, __) => Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(l.uiElementsBrightnessLabel, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          Text(l.uiElementsBrightnessLabel,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold)),
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              Expanded(child: Slider(min: 0.0, max: 1.0, divisions: 20, value: brightness, label: '${(brightness * 100).toStringAsFixed(0)}%', onChanged: (v) => SettingsManager.setElementBrightness(v))),
+                              Expanded(
+                                  child: Slider(
+                                      min: 0.0,
+                                      max: 1.0,
+                                      divisions: 20,
+                                      value: brightness,
+                                      label:
+                                          '${(brightness * 100).toStringAsFixed(0)}%',
+                                      onChanged: (v) =>
+                                          SettingsManager.setElementBrightness(
+                                              v))),
                               const SizedBox(width: 8),
-                              SizedBox(width: 50, child: Text('${(brightness * 100).toStringAsFixed(0)}%', textAlign: TextAlign.right)),
+                              SizedBox(
+                                  width: 50,
+                                  child: Text(
+                                      '${(brightness * 100).toStringAsFixed(0)}%',
+                                      textAlign: TextAlign.right)),
                             ],
                           ),
                         ],
@@ -5003,18 +6299,34 @@ class _SettingsTabState extends State<SettingsTab>
         // ── Layout ───────────────────────────────
         _buildSubSection(
           key: 'appearance_layout',
-          title: 'Layout',
-          subtitle: 'Navigation, graph and tab swiping',
+          title: l.appearanceLayoutTitle,
+          subtitle: l.appearanceLayoutSubtitle,
           searchShowAll: showAll,
           icon: Icons.view_quilt_rounded,
           keywords: [
-            l.inputBarMaxWidth, l.navPanelPosition, l.minimizeBottomNav, l.minimizeBottomNavSubtitle,
-            l.swipeTabs, l.swipeTabsSubtitle, l.tabSwiping, l.tabSwipingSubtitle,
-            l.navBarPosition, l.uiLayout, l.smoothScroll, 'navigation', 'sidebar',
-            l.accountGraph, l.accountGraphSubtitleDesktopOn, l.accountGraphSubtitleMobileOn,
-            l.accountGraphSubtitleDesktopOff, l.accountGraphSubtitleMobileOff,
-            l.animateGraph, l.orbitSpeed,
-            'account graph', 'график аккаунтов', 'графа аккаунтов',
+            l.inputBarMaxWidth,
+            l.navPanelPosition,
+            l.minimizeBottomNav,
+            l.minimizeBottomNavSubtitle,
+            l.swipeTabs,
+            l.swipeTabsSubtitle,
+            l.tabSwiping,
+            l.tabSwipingSubtitle,
+            l.navBarPosition,
+            l.uiLayout,
+            l.smoothScroll,
+            'navigation',
+            'sidebar',
+            l.accountGraph,
+            l.accountGraphSubtitleDesktopOn,
+            l.accountGraphSubtitleMobileOn,
+            l.accountGraphSubtitleDesktopOff,
+            l.accountGraphSubtitleMobileOff,
+            l.animateGraph,
+            l.orbitSpeed,
+            'account graph',
+            'график аккаунтов',
+            'графа аккаунтов',
           ],
           expandedContent: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -5025,13 +6337,25 @@ class _SettingsTabState extends State<SettingsTab>
                   builder: (_, width, __) => Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(l.inputBarMaxWidth, style: const TextStyle(fontWeight: FontWeight.bold)),
+                      Text(l.inputBarMaxWidth,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          Expanded(child: Slider(min: 320, max: 1600, divisions: 27, value: width, label: '${width.toInt()} px', onChanged: (v) => SettingsManager.setInputBarMaxWidth(v))),
+                          Expanded(
+                              child: Slider(
+                                  min: 320,
+                                  max: 1600,
+                                  divisions: 27,
+                                  value: width,
+                                  label: '${width.toInt()} px',
+                                  onChanged: (v) =>
+                                      SettingsManager.setInputBarMaxWidth(v))),
                           const SizedBox(width: 8),
-                          SizedBox(width: 72, child: Text('${width.toInt()} px', textAlign: TextAlign.right)),
+                          SizedBox(
+                              width: 72,
+                              child: Text('${width.toInt()} px',
+                                  textAlign: TextAlign.right)),
                         ],
                       ),
                     ],
@@ -5045,13 +6369,19 @@ class _SettingsTabState extends State<SettingsTab>
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(l.navPanelPosition, style: const TextStyle(fontWeight: FontWeight.bold)),
+                        Text(l.navPanelPosition,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold)),
                         const SizedBox(height: 8),
                         Row(
                           children: [
                             Text(isBottom ? l.navPosBottom : l.navPosLeft),
                             const SizedBox(width: 12),
-                            Switch(value: isBottom, onChanged: (val) async => SettingsManager.setDesktopNavPosition(val ? 'bottom' : 'left')),
+                            Switch(
+                                value: isBottom,
+                                onChanged: (val) async =>
+                                    SettingsManager.setDesktopNavPosition(
+                                        val ? 'bottom' : 'left')),
                           ],
                         ),
                       ],
@@ -5068,10 +6398,20 @@ class _SettingsTabState extends State<SettingsTab>
                   children: [
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: Text(l.accountGraph, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      title: Text(l.accountGraph,
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
                       subtitle: Text(
-                        showGraph ? (isDesktop ? l.accountGraphSubtitleDesktopOn : l.accountGraphSubtitleMobileOn) : (isDesktop ? l.accountGraphSubtitleDesktopOff : l.accountGraphSubtitleMobileOff),
-                        style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                        showGraph
+                            ? (isDesktop
+                                ? l.accountGraphSubtitleDesktopOn
+                                : l.accountGraphSubtitleMobileOn)
+                            : (isDesktop
+                                ? l.accountGraphSubtitleDesktopOff
+                                : l.accountGraphSubtitleMobileOff),
+                        style: TextStyle(
+                            fontSize: 13,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant),
                       ),
                       value: showGraph,
                       onChanged: (v) => SettingsManager.setShowAccountGraph(v),
@@ -5081,18 +6421,33 @@ class _SettingsTabState extends State<SettingsTab>
                       ValueListenableBuilder<double>(
                         valueListenable: SettingsManager.graphOrbitSpeed,
                         builder: (_, speed, __) {
-                          final label = speed < 60 ? l.secOrbit(speed.round()) : l.minOrbit((speed / 60).round());
+                          final label = speed < 60
+                              ? l.secOrbit(speed.round())
+                              : l.minOrbit((speed / 60).round());
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Text(l.orbitSpeed, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                  Text(label, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                                  Text(l.orbitSpeed,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w600)),
+                                  Text(label,
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant)),
                                 ],
                               ),
-                              Slider(min: 30.0, max: 600.0, value: speed, onChanged: SettingsManager.setGraphOrbitSpeed),
+                              Slider(
+                                  min: 30.0,
+                                  max: 600.0,
+                                  value: speed,
+                                  onChanged:
+                                      SettingsManager.setGraphOrbitSpeed),
                             ],
                           );
                         },
@@ -5102,8 +6457,16 @@ class _SettingsTabState extends State<SettingsTab>
                         valueListenable: SettingsManager.graphAnimation,
                         builder: (_, anim, __) => SwitchListTile(
                           contentPadding: EdgeInsets.zero,
-                          title: Text(l.animateGraph, style: const TextStyle(fontWeight: FontWeight.w600)),
-                          subtitle: Text(anim ? l.animateGraphOn : l.animateGraphOff, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                          title: Text(l.animateGraph,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: Text(
+                              anim ? l.animateGraphOn : l.animateGraphOff,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant)),
                           value: anim,
                           onChanged: SettingsManager.setGraphAnimation,
                         ),
@@ -5112,8 +6475,16 @@ class _SettingsTabState extends State<SettingsTab>
                         valueListenable: SettingsManager.graphPreservePosition,
                         builder: (_, preserve, __) => SwitchListTile(
                           contentPadding: EdgeInsets.zero,
-                          title: Text(l.preserveView, style: const TextStyle(fontWeight: FontWeight.w600)),
-                          subtitle: Text(preserve ? l.preserveViewOn : l.preserveViewOff, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                          title: Text(l.preserveView,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: Text(
+                              preserve ? l.preserveViewOn : l.preserveViewOff,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant)),
                           value: preserve,
                           onChanged: SettingsManager.setGraphPreservePosition,
                         ),
@@ -5132,12 +6503,19 @@ class _SettingsTabState extends State<SettingsTab>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(l.tabSwiping, style: const TextStyle(fontWeight: FontWeight.bold)),
-                            Text(l.tabSwipingSubtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                            Text(l.tabSwiping,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            Text(l.tabSwipingSubtitle,
+                                style: const TextStyle(
+                                    fontSize: 12, color: Colors.grey)),
                           ],
                         ),
                       ),
-                      Switch(value: swipeTabs, onChanged: (val) async => SettingsManager.setSwipeTabsEnabled(val)),
+                      Switch(
+                          value: swipeTabs,
+                          onChanged: (val) async =>
+                              SettingsManager.setSwipeTabsEnabled(val)),
                     ],
                   ),
                 ),
@@ -5150,16 +6528,28 @@ class _SettingsTabState extends State<SettingsTab>
           // ── Liquid Glass ─────────────────────────
           _buildSubSection(
             key: 'appearance_glass',
-            title: 'Liquid Glass Effects',
+            title: l.appearanceLiquidGlassTitle,
             subtitle: l.liquidGlassSubtitle,
             searchShowAll: showAll,
             icon: Icons.blur_on_rounded,
             keywords: [
-              l.liquidGlassNavBarLabel, l.liquidGlassNavBarDesc, l.liquidGlassCardsLabel,
-              l.liquidGlassCardsDesc, l.liquidGlassInputLabel, l.liquidGlassInputDesc,
-              l.liquidGlassSearchLabel, l.liquidGlassSearchDesc,
-              l.liquidGlassAppBarLabel, l.liquidGlassAppBarDesc, 'blur', 'tint', 'glass',
-              'chromatic', 'refraction', 'opacity', 'saturation',
+              l.liquidGlassNavBarLabel,
+              l.liquidGlassNavBarDesc,
+              l.liquidGlassCardsLabel,
+              l.liquidGlassCardsDesc,
+              l.liquidGlassInputLabel,
+              l.liquidGlassInputDesc,
+              l.liquidGlassSearchLabel,
+              l.liquidGlassSearchDesc,
+              l.liquidGlassAppBarLabel,
+              l.liquidGlassAppBarDesc,
+              'blur',
+              'tint',
+              'glass',
+              'chromatic',
+              'refraction',
+              'opacity',
+              'saturation',
             ],
             expandedContent: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -5174,14 +6564,83 @@ class _SettingsTabState extends State<SettingsTab>
                   qualityNotifier: SettingsManager.liquidGlassNavBarQuality,
                   onQualityChanged: SettingsManager.setLiquidGlassNavBarQuality,
                   sliders: [
-                    _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassBlur),
-                    _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassTint),
-                    _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassSaturation),
-                    _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassChromatic),
-                    _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassRefractive),
-                    _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassLightIntensity),
-                    _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassThickness),
-                    _LiquidSliderConfig(label: 'Jelly Stretch Amount', description: 'Indicator expansion when dragging between tabs', listenable: SettingsManager.liquidGlassExpansion, min: 0, max: 28, divisions: 28, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassExpansion),
+                    _LiquidSliderConfig(
+                        label: 'Blur',
+                        description: 'Frosted blur intensity behind the glass',
+                        listenable: SettingsManager.liquidGlassBlur,
+                        min: 0,
+                        max: 15,
+                        divisions: 15,
+                        format: (v) => v.toStringAsFixed(0),
+                        onChanged: SettingsManager.setLiquidGlassBlur),
+                    _LiquidSliderConfig(
+                        label: 'Tint',
+                        description: 'Adaptive tint opacity (auto dark/light)',
+                        listenable: SettingsManager.liquidGlassTint,
+                        min: 0,
+                        max: 0.30,
+                        divisions: 30,
+                        format: (v) => '${(v * 100).toStringAsFixed(0)}%',
+                        onChanged: SettingsManager.setLiquidGlassTint),
+                    _LiquidSliderConfig(
+                        label: 'Saturation',
+                        description: 'Color vibrancy picked up from background',
+                        listenable: SettingsManager.liquidGlassSaturation,
+                        min: 0.3,
+                        max: 2.0,
+                        divisions: 17,
+                        format: (v) => v.toStringAsFixed(1),
+                        onChanged: SettingsManager.setLiquidGlassSaturation),
+                    _LiquidSliderConfig(
+                        label: 'Chromatic Aberration',
+                        description:
+                            'Color fringing on glass edges (lens effect)',
+                        listenable: SettingsManager.liquidGlassChromatic,
+                        min: 0,
+                        max: 1.0,
+                        divisions: 20,
+                        format: (v) => v.toStringAsFixed(2),
+                        onChanged: SettingsManager.setLiquidGlassChromatic),
+                    _LiquidSliderConfig(
+                        label: 'Refractive Index',
+                        description: 'How much the glass bends light behind it',
+                        listenable: SettingsManager.liquidGlassRefractive,
+                        min: 1.0,
+                        max: 2.5,
+                        divisions: 15,
+                        format: (v) => v.toStringAsFixed(2),
+                        onChanged: SettingsManager.setLiquidGlassRefractive),
+                    _LiquidSliderConfig(
+                        label: 'Light Intensity',
+                        description:
+                            'Strength of the specular highlight on glass',
+                        listenable: SettingsManager.liquidGlassLightIntensity,
+                        min: 0,
+                        max: 1.0,
+                        divisions: 20,
+                        format: (v) => v.toStringAsFixed(2),
+                        onChanged:
+                            SettingsManager.setLiquidGlassLightIntensity),
+                    _LiquidSliderConfig(
+                        label: 'Thickness',
+                        description:
+                            'Glass depth — affects refraction and edge glow',
+                        listenable: SettingsManager.liquidGlassThickness,
+                        min: 0,
+                        max: 60,
+                        divisions: 12,
+                        format: (v) => v.toStringAsFixed(0),
+                        onChanged: SettingsManager.setLiquidGlassThickness),
+                    _LiquidSliderConfig(
+                        label: 'Jelly Stretch Amount',
+                        description:
+                            'Indicator expansion when dragging between tabs',
+                        listenable: SettingsManager.liquidGlassExpansion,
+                        min: 0,
+                        max: 28,
+                        divisions: 28,
+                        format: (v) => v.toStringAsFixed(0),
+                        onChanged: SettingsManager.setLiquidGlassExpansion),
                   ],
                 ),
                 if (!Platform.isMacOS) ...[
@@ -5194,15 +6653,87 @@ class _SettingsTabState extends State<SettingsTab>
                     toggleGetter: (v) => v as bool,
                     onToggle: SettingsManager.setLiquidGlassOnCards,
                     qualityNotifier: SettingsManager.liquidGlassCardsQuality,
-                    onQualityChanged: SettingsManager.setLiquidGlassCardsQuality,
+                    onQualityChanged:
+                        SettingsManager.setLiquidGlassCardsQuality,
                     sliders: [
-                      _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassCardsBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassCardsBlur),
-                      _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassCardsTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassCardsTint),
-                      _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassCardsSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassCardsSaturation),
-                      _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassCardsChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassCardsChromatic),
-                      _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassCardsRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassCardsRefractive),
-                      _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassCardsLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassCardsLightIntensity),
-                      _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassCardsThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassCardsThickness),
+                      _LiquidSliderConfig(
+                          label: 'Blur',
+                          description:
+                              'Frosted blur intensity behind the glass',
+                          listenable: SettingsManager.liquidGlassCardsBlur,
+                          min: 0,
+                          max: 15,
+                          divisions: 15,
+                          format: (v) => v.toStringAsFixed(0),
+                          onChanged: SettingsManager.setLiquidGlassCardsBlur),
+                      _LiquidSliderConfig(
+                          label: 'Tint',
+                          description:
+                              'Adaptive tint opacity (auto dark/light)',
+                          listenable: SettingsManager.liquidGlassCardsTint,
+                          min: 0,
+                          max: 0.30,
+                          divisions: 30,
+                          format: (v) => '${(v * 100).toStringAsFixed(0)}%',
+                          onChanged: SettingsManager.setLiquidGlassCardsTint),
+                      _LiquidSliderConfig(
+                          label: 'Saturation',
+                          description:
+                              'Color vibrancy picked up from background',
+                          listenable:
+                              SettingsManager.liquidGlassCardsSaturation,
+                          min: 0.3,
+                          max: 2.0,
+                          divisions: 17,
+                          format: (v) => v.toStringAsFixed(1),
+                          onChanged:
+                              SettingsManager.setLiquidGlassCardsSaturation),
+                      _LiquidSliderConfig(
+                          label: 'Chromatic Aberration',
+                          description:
+                              'Color fringing on glass edges (lens effect)',
+                          listenable: SettingsManager.liquidGlassCardsChromatic,
+                          min: 0,
+                          max: 1.0,
+                          divisions: 20,
+                          format: (v) => v.toStringAsFixed(2),
+                          onChanged:
+                              SettingsManager.setLiquidGlassCardsChromatic),
+                      _LiquidSliderConfig(
+                          label: 'Refractive Index',
+                          description:
+                              'How much the glass bends light behind it',
+                          listenable:
+                              SettingsManager.liquidGlassCardsRefractive,
+                          min: 1.0,
+                          max: 2.5,
+                          divisions: 15,
+                          format: (v) => v.toStringAsFixed(2),
+                          onChanged:
+                              SettingsManager.setLiquidGlassCardsRefractive),
+                      _LiquidSliderConfig(
+                          label: 'Light Intensity',
+                          description:
+                              'Strength of the specular highlight on glass',
+                          listenable:
+                              SettingsManager.liquidGlassCardsLightIntensity,
+                          min: 0,
+                          max: 1.0,
+                          divisions: 20,
+                          format: (v) => v.toStringAsFixed(2),
+                          onChanged: SettingsManager
+                              .setLiquidGlassCardsLightIntensity),
+                      _LiquidSliderConfig(
+                          label: 'Thickness',
+                          description:
+                              'Glass depth — affects refraction and edge glow',
+                          listenable: SettingsManager.liquidGlassCardsThickness,
+                          min: 0,
+                          max: 60,
+                          divisions: 12,
+                          format: (v) => v.toStringAsFixed(0),
+                          onChanged:
+                              SettingsManager.setLiquidGlassCardsThickness),
                     ],
                   ),
                 ],
@@ -5217,13 +6748,78 @@ class _SettingsTabState extends State<SettingsTab>
                   qualityNotifier: SettingsManager.liquidGlassInputQuality,
                   onQualityChanged: SettingsManager.setLiquidGlassInputQuality,
                   sliders: [
-                    _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassInputBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassInputBlur),
-                    _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassInputTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassInputTint),
-                    _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassInputSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassInputSaturation),
-                    _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassInputChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassInputChromatic),
-                    _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassInputRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassInputRefractive),
-                    _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassInputLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassInputLightIntensity),
-                    _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassInputThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassInputThickness),
+                    _LiquidSliderConfig(
+                        label: 'Blur',
+                        description: 'Frosted blur intensity behind the glass',
+                        listenable: SettingsManager.liquidGlassInputBlur,
+                        min: 0,
+                        max: 15,
+                        divisions: 15,
+                        format: (v) => v.toStringAsFixed(0),
+                        onChanged: SettingsManager.setLiquidGlassInputBlur),
+                    _LiquidSliderConfig(
+                        label: 'Tint',
+                        description: 'Adaptive tint opacity (auto dark/light)',
+                        listenable: SettingsManager.liquidGlassInputTint,
+                        min: 0,
+                        max: 0.30,
+                        divisions: 30,
+                        format: (v) => '${(v * 100).toStringAsFixed(0)}%',
+                        onChanged: SettingsManager.setLiquidGlassInputTint),
+                    _LiquidSliderConfig(
+                        label: 'Saturation',
+                        description: 'Color vibrancy picked up from background',
+                        listenable: SettingsManager.liquidGlassInputSaturation,
+                        min: 0.3,
+                        max: 2.0,
+                        divisions: 17,
+                        format: (v) => v.toStringAsFixed(1),
+                        onChanged:
+                            SettingsManager.setLiquidGlassInputSaturation),
+                    _LiquidSliderConfig(
+                        label: 'Chromatic Aberration',
+                        description:
+                            'Color fringing on glass edges (lens effect)',
+                        listenable: SettingsManager.liquidGlassInputChromatic,
+                        min: 0,
+                        max: 1.0,
+                        divisions: 20,
+                        format: (v) => v.toStringAsFixed(2),
+                        onChanged:
+                            SettingsManager.setLiquidGlassInputChromatic),
+                    _LiquidSliderConfig(
+                        label: 'Refractive Index',
+                        description: 'How much the glass bends light behind it',
+                        listenable: SettingsManager.liquidGlassInputRefractive,
+                        min: 1.0,
+                        max: 2.5,
+                        divisions: 15,
+                        format: (v) => v.toStringAsFixed(2),
+                        onChanged:
+                            SettingsManager.setLiquidGlassInputRefractive),
+                    _LiquidSliderConfig(
+                        label: 'Light Intensity',
+                        description:
+                            'Strength of the specular highlight on glass',
+                        listenable:
+                            SettingsManager.liquidGlassInputLightIntensity,
+                        min: 0,
+                        max: 1.0,
+                        divisions: 20,
+                        format: (v) => v.toStringAsFixed(2),
+                        onChanged:
+                            SettingsManager.setLiquidGlassInputLightIntensity),
+                    _LiquidSliderConfig(
+                        label: 'Thickness',
+                        description:
+                            'Glass depth — affects refraction and edge glow',
+                        listenable: SettingsManager.liquidGlassInputThickness,
+                        min: 0,
+                        max: 60,
+                        divisions: 12,
+                        format: (v) => v.toStringAsFixed(0),
+                        onChanged:
+                            SettingsManager.setLiquidGlassInputThickness),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -5237,13 +6833,78 @@ class _SettingsTabState extends State<SettingsTab>
                   qualityNotifier: SettingsManager.liquidGlassSearchQuality,
                   onQualityChanged: SettingsManager.setLiquidGlassSearchQuality,
                   sliders: [
-                    _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassSearchBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassSearchBlur),
-                    _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassSearchTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassSearchTint),
-                    _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassSearchSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassSearchSaturation),
-                    _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassSearchChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassSearchChromatic),
-                    _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassSearchRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassSearchRefractive),
-                    _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassSearchLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassSearchLightIntensity),
-                    _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassSearchThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassSearchThickness),
+                    _LiquidSliderConfig(
+                        label: 'Blur',
+                        description: 'Frosted blur intensity behind the glass',
+                        listenable: SettingsManager.liquidGlassSearchBlur,
+                        min: 0,
+                        max: 15,
+                        divisions: 15,
+                        format: (v) => v.toStringAsFixed(0),
+                        onChanged: SettingsManager.setLiquidGlassSearchBlur),
+                    _LiquidSliderConfig(
+                        label: 'Tint',
+                        description: 'Adaptive tint opacity (auto dark/light)',
+                        listenable: SettingsManager.liquidGlassSearchTint,
+                        min: 0,
+                        max: 0.30,
+                        divisions: 30,
+                        format: (v) => '${(v * 100).toStringAsFixed(0)}%',
+                        onChanged: SettingsManager.setLiquidGlassSearchTint),
+                    _LiquidSliderConfig(
+                        label: 'Saturation',
+                        description: 'Color vibrancy picked up from background',
+                        listenable: SettingsManager.liquidGlassSearchSaturation,
+                        min: 0.3,
+                        max: 2.0,
+                        divisions: 17,
+                        format: (v) => v.toStringAsFixed(1),
+                        onChanged:
+                            SettingsManager.setLiquidGlassSearchSaturation),
+                    _LiquidSliderConfig(
+                        label: 'Chromatic Aberration',
+                        description:
+                            'Color fringing on glass edges (lens effect)',
+                        listenable: SettingsManager.liquidGlassSearchChromatic,
+                        min: 0,
+                        max: 1.0,
+                        divisions: 20,
+                        format: (v) => v.toStringAsFixed(2),
+                        onChanged:
+                            SettingsManager.setLiquidGlassSearchChromatic),
+                    _LiquidSliderConfig(
+                        label: 'Refractive Index',
+                        description: 'How much the glass bends light behind it',
+                        listenable: SettingsManager.liquidGlassSearchRefractive,
+                        min: 1.0,
+                        max: 2.5,
+                        divisions: 15,
+                        format: (v) => v.toStringAsFixed(2),
+                        onChanged:
+                            SettingsManager.setLiquidGlassSearchRefractive),
+                    _LiquidSliderConfig(
+                        label: 'Light Intensity',
+                        description:
+                            'Strength of the specular highlight on glass',
+                        listenable:
+                            SettingsManager.liquidGlassSearchLightIntensity,
+                        min: 0,
+                        max: 1.0,
+                        divisions: 20,
+                        format: (v) => v.toStringAsFixed(2),
+                        onChanged:
+                            SettingsManager.setLiquidGlassSearchLightIntensity),
+                    _LiquidSliderConfig(
+                        label: 'Thickness',
+                        description:
+                            'Glass depth — affects refraction and edge glow',
+                        listenable: SettingsManager.liquidGlassSearchThickness,
+                        min: 0,
+                        max: 60,
+                        divisions: 12,
+                        format: (v) => v.toStringAsFixed(0),
+                        onChanged:
+                            SettingsManager.setLiquidGlassSearchThickness),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -5257,13 +6918,78 @@ class _SettingsTabState extends State<SettingsTab>
                   qualityNotifier: SettingsManager.liquidGlassAppBarQuality,
                   onQualityChanged: SettingsManager.setLiquidGlassAppBarQuality,
                   sliders: [
-                    _LiquidSliderConfig(label: 'Blur', description: 'Frosted blur intensity behind the glass', listenable: SettingsManager.liquidGlassAppBarBlur, min: 0, max: 15, divisions: 15, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassAppBarBlur),
-                    _LiquidSliderConfig(label: 'Tint', description: 'Adaptive tint opacity (auto dark/light)', listenable: SettingsManager.liquidGlassAppBarTint, min: 0, max: 0.30, divisions: 30, format: (v) => '${(v * 100).toStringAsFixed(0)}%', onChanged: SettingsManager.setLiquidGlassAppBarTint),
-                    _LiquidSliderConfig(label: 'Saturation', description: 'Color vibrancy picked up from background', listenable: SettingsManager.liquidGlassAppBarSaturation, min: 0.3, max: 2.0, divisions: 17, format: (v) => v.toStringAsFixed(1), onChanged: SettingsManager.setLiquidGlassAppBarSaturation),
-                    _LiquidSliderConfig(label: 'Chromatic Aberration', description: 'Color fringing on glass edges (lens effect)', listenable: SettingsManager.liquidGlassAppBarChromatic, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassAppBarChromatic),
-                    _LiquidSliderConfig(label: 'Refractive Index', description: 'How much the glass bends light behind it', listenable: SettingsManager.liquidGlassAppBarRefractive, min: 1.0, max: 2.5, divisions: 15, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassAppBarRefractive),
-                    _LiquidSliderConfig(label: 'Light Intensity', description: 'Strength of the specular highlight on glass', listenable: SettingsManager.liquidGlassAppBarLightIntensity, min: 0, max: 1.0, divisions: 20, format: (v) => v.toStringAsFixed(2), onChanged: SettingsManager.setLiquidGlassAppBarLightIntensity),
-                    _LiquidSliderConfig(label: 'Thickness', description: 'Glass depth — affects refraction and edge glow', listenable: SettingsManager.liquidGlassAppBarThickness, min: 0, max: 60, divisions: 12, format: (v) => v.toStringAsFixed(0), onChanged: SettingsManager.setLiquidGlassAppBarThickness),
+                    _LiquidSliderConfig(
+                        label: 'Blur',
+                        description: 'Frosted blur intensity behind the glass',
+                        listenable: SettingsManager.liquidGlassAppBarBlur,
+                        min: 0,
+                        max: 15,
+                        divisions: 15,
+                        format: (v) => v.toStringAsFixed(0),
+                        onChanged: SettingsManager.setLiquidGlassAppBarBlur),
+                    _LiquidSliderConfig(
+                        label: 'Tint',
+                        description: 'Adaptive tint opacity (auto dark/light)',
+                        listenable: SettingsManager.liquidGlassAppBarTint,
+                        min: 0,
+                        max: 0.30,
+                        divisions: 30,
+                        format: (v) => '${(v * 100).toStringAsFixed(0)}%',
+                        onChanged: SettingsManager.setLiquidGlassAppBarTint),
+                    _LiquidSliderConfig(
+                        label: 'Saturation',
+                        description: 'Color vibrancy picked up from background',
+                        listenable: SettingsManager.liquidGlassAppBarSaturation,
+                        min: 0.3,
+                        max: 2.0,
+                        divisions: 17,
+                        format: (v) => v.toStringAsFixed(1),
+                        onChanged:
+                            SettingsManager.setLiquidGlassAppBarSaturation),
+                    _LiquidSliderConfig(
+                        label: 'Chromatic Aberration',
+                        description:
+                            'Color fringing on glass edges (lens effect)',
+                        listenable: SettingsManager.liquidGlassAppBarChromatic,
+                        min: 0,
+                        max: 1.0,
+                        divisions: 20,
+                        format: (v) => v.toStringAsFixed(2),
+                        onChanged:
+                            SettingsManager.setLiquidGlassAppBarChromatic),
+                    _LiquidSliderConfig(
+                        label: 'Refractive Index',
+                        description: 'How much the glass bends light behind it',
+                        listenable: SettingsManager.liquidGlassAppBarRefractive,
+                        min: 1.0,
+                        max: 2.5,
+                        divisions: 15,
+                        format: (v) => v.toStringAsFixed(2),
+                        onChanged:
+                            SettingsManager.setLiquidGlassAppBarRefractive),
+                    _LiquidSliderConfig(
+                        label: 'Light Intensity',
+                        description:
+                            'Strength of the specular highlight on glass',
+                        listenable:
+                            SettingsManager.liquidGlassAppBarLightIntensity,
+                        min: 0,
+                        max: 1.0,
+                        divisions: 20,
+                        format: (v) => v.toStringAsFixed(2),
+                        onChanged:
+                            SettingsManager.setLiquidGlassAppBarLightIntensity),
+                    _LiquidSliderConfig(
+                        label: 'Thickness',
+                        description:
+                            'Glass depth — affects refraction and edge glow',
+                        listenable: SettingsManager.liquidGlassAppBarThickness,
+                        min: 0,
+                        max: 60,
+                        divisions: 12,
+                        format: (v) => v.toStringAsFixed(0),
+                        onChanged:
+                            SettingsManager.setLiquidGlassAppBarThickness),
                   ],
                 ),
               ],
@@ -5344,38 +7070,37 @@ class _SettingsTabState extends State<SettingsTab>
               brightness,
             );
             return ClipRRect(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(999),
               child: Container(
                 width: buttonWidth,
                 decoration: BoxDecoration(
                   color: baseColor.withValues(alpha: opacity),
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(999),
                   border: Border.all(
                     color: colorScheme.outlineVariant.withValues(alpha: 0.15),
                     width: 0.8,
                   ),
                 ),
-            child: FilledButton.icon(
-              onPressed: onPressed,
-              icon: Icon(icon, size: 18, color: effectiveColor),
-              label: Text(
-                label,
-                style: TextStyle(
-                  fontSize: fontSize,
-                  color: effectiveColor,
+                child: FilledButton.icon(
+                  onPressed: onPressed,
+                  icon: Icon(icon, size: 18, color: effectiveColor),
+                  label: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: fontSize,
+                      color: effectiveColor,
+                    ),
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 14, horizontal: 16),
+                    shape: const StadiumBorder(),
+                    elevation: 0,
+                  ),
                 ),
               ),
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                padding:
-                    const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-                elevation: 0,
-              ),
-            ),
-          ),
-        );
+            );
           },
         );
       },
@@ -5383,12 +7108,27 @@ class _SettingsTabState extends State<SettingsTab>
   }
 }
 
-enum SectionType { security, notifications, appearance, language, cache, connection, interact, contact, audio, wardLink, mesh, backup, recycleBin }
+enum SectionType {
+  security,
+  notifications,
+  appearance,
+  language,
+  cache,
+  connection,
+  interact,
+  contact,
+  audio,
+  wardLink,
+  mesh,
+  backup,
+  recycleBin
+}
 
 // ── Inline change-password form, embedded as a Security sub-section instead
 // of a modal dialog so it matches the WardLink-style nested-accordion look.
 class _ChangePasswordForm extends StatefulWidget {
-  final Future<void> Function(String passphrase, String oldPassword, String newPassword) onSubmit;
+  final Future<void> Function(
+      String passphrase, String oldPassword, String newPassword) onSubmit;
   final void Function(String) onSnack;
 
   const _ChangePasswordForm({required this.onSubmit, required this.onSnack});
@@ -5413,29 +7153,34 @@ class _ChangePasswordFormState extends State<_ChangePasswordForm> {
     super.dispose();
   }
 
-  InputDecoration _dec(BuildContext ctx, {
+  InputDecoration _dec(
+    BuildContext ctx, {
     required String label,
     required IconData prefixIconData,
     Widget? suffixIcon,
   }) {
     final cs = Theme.of(ctx).colorScheme;
     final brightness = SettingsManager.elementBrightness.value;
-    final fillColor = SettingsManager.getElementColor(cs.surfaceContainerHighest, brightness);
+    final fillColor =
+        SettingsManager.getElementColor(cs.surfaceContainerHighest, brightness);
     return InputDecoration(
       labelText: label,
       labelStyle: TextStyle(color: cs.onSurface.withValues(alpha: 0.7)),
-      prefixIcon: Icon(prefixIconData, color: cs.onSurface.withValues(alpha: 0.6)),
+      prefixIcon:
+          Icon(prefixIconData, color: cs.onSurface.withValues(alpha: 0.6)),
       suffixIcon: suffixIcon,
       filled: true,
       fillColor: fillColor.withValues(alpha: 0.5),
       contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.15), width: 1.0),
+        borderSide: BorderSide(
+            color: cs.outlineVariant.withValues(alpha: 0.15), width: 1.0),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.15), width: 1.0),
+        borderSide: BorderSide(
+            color: cs.outlineVariant.withValues(alpha: 0.15), width: 1.0),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
@@ -5493,7 +7238,9 @@ class _ChangePasswordFormState extends State<_ChangePasswordForm> {
               Icon(Icons.info_outline, size: 16, color: cs.primary),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(l.changePasswordInfo, style: TextStyle(fontSize: 13, color: cs.onPrimaryContainer)),
+                child: Text(l.changePasswordInfo,
+                    style:
+                        TextStyle(fontSize: 13, color: cs.onPrimaryContainer)),
               ),
             ],
           ),
@@ -5502,7 +7249,9 @@ class _ChangePasswordFormState extends State<_ChangePasswordForm> {
         TextField(
           controller: _passphraseCtrl,
           style: TextStyle(color: cs.onSurface),
-          decoration: _dec(context, label: l.changePasswordPassphraseLabel, prefixIconData: Icons.key_rounded),
+          decoration: _dec(context,
+              label: l.changePasswordPassphraseLabel,
+              prefixIconData: Icons.key_rounded),
           maxLines: 2,
           minLines: 1,
         ),
@@ -5516,7 +7265,8 @@ class _ChangePasswordFormState extends State<_ChangePasswordForm> {
             label: l.changePasswordCurrentLabel,
             prefixIconData: Icons.lock_outline,
             suffixIcon: IconButton(
-              icon: Icon(_obscureOld ? Icons.visibility_off : Icons.visibility, size: 18, color: cs.onSurface.withValues(alpha: 0.6)),
+              icon: Icon(_obscureOld ? Icons.visibility_off : Icons.visibility,
+                  size: 18, color: cs.onSurface.withValues(alpha: 0.6)),
               onPressed: () => setState(() => _obscureOld = !_obscureOld),
             ),
           ),
@@ -5531,7 +7281,8 @@ class _ChangePasswordFormState extends State<_ChangePasswordForm> {
             label: l.changePasswordNewLabel,
             prefixIconData: Icons.lock_reset,
             suffixIcon: IconButton(
-              icon: Icon(_obscureNew ? Icons.visibility_off : Icons.visibility, size: 18, color: cs.onSurface.withValues(alpha: 0.6)),
+              icon: Icon(_obscureNew ? Icons.visibility_off : Icons.visibility,
+                  size: 18, color: cs.onSurface.withValues(alpha: 0.6)),
               onPressed: () => setState(() => _obscureNew = !_obscureNew),
             ),
           ),
@@ -5542,7 +7293,11 @@ class _ChangePasswordFormState extends State<_ChangePasswordForm> {
           child: FilledButton.icon(
             onPressed: _submitting ? null : _submit,
             icon: _submitting
-                ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: cs.onPrimary))
+                ? SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: cs.onPrimary))
                 : const Icon(Icons.check_rounded, size: 18),
             label: Text(l.changePasswordChange),
           ),
@@ -5621,7 +7376,11 @@ class _WardLinkQrDialogState extends State<_WardLinkQrDialog> {
     }
     await WardLinkSyncService.instance.start(username);
     final qr = await WardLinkSyncService.instance.pairingQrJson(username);
-    if (mounted) setState(() { _username = username; _qrJson = qr; });
+    if (mounted)
+      setState(() {
+        _username = username;
+        _qrJson = qr;
+      });
   }
 
   void _startScan() {
@@ -5629,7 +7388,11 @@ class _WardLinkQrDialogState extends State<_WardLinkQrDialog> {
       detectionSpeed: DetectionSpeed.normal,
       facing: CameraFacing.back,
     );
-    setState(() { _showScanner = true; _handled = false; _error = null; });
+    setState(() {
+      _showScanner = true;
+      _handled = false;
+      _error = null;
+    });
   }
 
   void _stopScan() {
@@ -5645,7 +7408,10 @@ class _WardLinkQrDialogState extends State<_WardLinkQrDialog> {
     _handled = true;
     _scanCtrl?.dispose();
     _scanCtrl = null;
-    setState(() { _showScanner = false; _busy = true; });
+    setState(() {
+      _showScanner = false;
+      _busy = true;
+    });
 
     final err = await WardLinkSyncService.instance
         .completePairingFromQr(raw, _username!);
@@ -5671,50 +7437,63 @@ class _WardLinkQrDialogState extends State<_WardLinkQrDialog> {
 
     // ── Scanner view ───────────────────────────────────────────────────────────
     if (_showScanner && _scanCtrl != null) {
-      return AlertDialog(
-        titlePadding: const EdgeInsets.fromLTRB(20, 16, 8, 0),
-        title: Row(
+      return OnyxDialogShell(
+        maxWidth: 340,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(child: Text(l.wardLinkScanCode)),
-            IconButton(
-              icon: const Icon(Icons.close_rounded),
-              onPressed: _stopScan,
-              visualDensity: VisualDensity.compact,
+            OnyxDialogHeader(
+              leading: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: cs.primary.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.qr_code_scanner_rounded,
+                    size: 20, color: cs.primary),
+              ),
+              title: Text(
+                l.wardLinkScanCode,
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: cs.onSurface),
+              ),
+              onClose: _stopScan,
+            ),
+            RepaintBoundary(
+              child: SizedBox(
+                height: 260,
+                child: MobileScanner(
+                  controller: _scanCtrl!,
+                  onDetect: _onDetect,
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+              child: Text(
+                l.wardLinkScanInstruction,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6)),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+              child: OutlinedButton(
+                onPressed: _stopScan,
+                style: OutlinedButton.styleFrom(
+                  padding: kOnyxDialogButtonPadding,
+                  shape: kOnyxDialogButtonShape,
+                ),
+                child: Text(l.cancel),
+              ),
             ),
           ],
         ),
-        contentPadding: const EdgeInsets.fromLTRB(0, 12, 0, 0),
-        content: SizedBox(
-          width: 280,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ClipRRect(
-                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
-                child: SizedBox(
-                  width: 280,
-                  height: 260,
-                  child: MobileScanner(
-                    controller: _scanCtrl!,
-                    onDetect: _onDetect,
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: Text(
-                  l.wardLinkScanInstruction,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6)),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-        actions: [
-          TextButton(onPressed: _stopScan, child: Text(l.cancel)),
-        ],
       );
     }
 
@@ -5728,7 +7507,8 @@ class _WardLinkQrDialogState extends State<_WardLinkQrDialog> {
     } else if (_error != null && _qrJson == null) {
       body = Padding(
         padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Text(_error!, style: TextStyle(color: cs.error), textAlign: TextAlign.center),
+        child: Text(_error!,
+            style: TextStyle(color: cs.error), textAlign: TextAlign.center),
       );
     } else if (_qrJson == null) {
       body = const Padding(
@@ -5742,7 +7522,8 @@ class _WardLinkQrDialogState extends State<_WardLinkQrDialog> {
           Text(
             l.wardLinkShowInstruction,
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: cs.onSurface.withValues(alpha: 0.7)),
+            style: TextStyle(
+                fontSize: 13, color: cs.onSurface.withValues(alpha: 0.7)),
           ),
           const SizedBox(height: 16),
           Center(
@@ -5752,16 +7533,25 @@ class _WardLinkQrDialogState extends State<_WardLinkQrDialog> {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: QrImageView(
-                data: _qrJson!,
-                version: QrVersions.auto,
-                size: 200,
-                backgroundColor: Colors.white,
-                eyeStyle: const QrEyeStyle(
-                    eyeShape: QrEyeShape.square, color: Color(0xFF1A1A1A)),
-                dataModuleStyle: const QrDataModuleStyle(
-                    dataModuleShape: QrDataModuleShape.square,
-                    color: Color(0xFF1A1A1A)),
+              // QrImageView regenerates its QR matrix (Reed-Solomon ECC etc.)
+              // in paint(), not just build() — without this boundary, the
+              // dialog's close scale/fade transition (which repaints its
+              // subtree every frame without rebuilding it) would re-run that
+              // expensive computation ~11 times over the 187ms transition.
+              // The boundary caches the rasterized QR as its own layer so
+              // the transition just transforms/fades the cached bitmap.
+              child: RepaintBoundary(
+                child: QrImageView(
+                  data: _qrJson!,
+                  version: QrVersions.auto,
+                  size: 200,
+                  backgroundColor: Colors.white,
+                  eyeStyle: const QrEyeStyle(
+                      eyeShape: QrEyeShape.square, color: Color(0xFF1A1A1A)),
+                  dataModuleStyle: const QrDataModuleStyle(
+                      dataModuleShape: QrDataModuleShape.square,
+                      color: Color(0xFF1A1A1A)),
+                ),
               ),
             ),
           ),
@@ -5774,40 +7564,71 @@ class _WardLinkQrDialogState extends State<_WardLinkQrDialog> {
               const SizedBox(width: 5),
               Text(
                 l.wardLinkE2E,
-                style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.5)),
+                style: TextStyle(
+                    fontSize: 11, color: cs.onSurface.withValues(alpha: 0.5)),
               ),
             ],
           ),
           if (_error != null) ...[
             const SizedBox(height: 8),
-            Text(_error!, style: TextStyle(color: cs.error, fontSize: 12), textAlign: TextAlign.center),
+            Text(_error!,
+                style: TextStyle(color: cs.error, fontSize: 12),
+                textAlign: TextAlign.center),
           ],
         ],
       );
     }
 
-    return AlertDialog(
-      titlePadding: const EdgeInsets.fromLTRB(20, 16, 8, 0),
-      title: Row(
+    return OnyxDialogShell(
+      maxWidth: 340,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(child: Text(l.wardLinkPairTitle)),
-          IconButton(
-            icon: const Icon(Icons.close_rounded),
-            onPressed: () => Navigator.pop(context),
-            visualDensity: VisualDensity.compact,
+          OnyxDialogHeader(
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.devices_other_rounded,
+                  size: 20, color: cs.primary),
+            ),
+            title: Text(
+              l.wardLinkPairTitle,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: cs.onSurface),
+            ),
+            onClose: () => Navigator.pop(context),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+            child: body,
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_isMobile && _qrJson != null && !_busy)
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      padding: kOnyxDialogButtonPadding,
+                      shape: kOnyxDialogButtonShape,
+                    ),
+                    icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
+                    label: Text(l.wardLinkScanCode),
+                    onPressed: _startScan,
+                  ),
+              ],
+            ),
           ),
         ],
       ),
-      contentPadding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-      content: SizedBox(width: 280, child: body),
-      actions: [
-        if (_isMobile && _qrJson != null && !_busy)
-          FilledButton.icon(
-            icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
-            label: Text(l.wardLinkScanCode),
-            onPressed: _startScan,
-          ),
-      ],
     );
   }
 }
@@ -5826,9 +7647,9 @@ class _MigrationDialog extends StatefulWidget {
 }
 
 class _MigrationDialogState extends State<_MigrationDialog> {
-  bool   _done  = false;
-  bool   _error = false;
-  String _step  = '';
+  bool _done = false;
+  bool _error = false;
+  String _step = '';
 
   @override
   void initState() {
@@ -5859,9 +7680,18 @@ class _MigrationDialogState extends State<_MigrationDialog> {
         final prefs = await SharedPreferences.getInstance();
         await SettingsBackup.save(prefs);
       }
-      if (mounted) setState(() { _done = true; _step = l.appDataRestartRequired; });
+      if (mounted)
+        setState(() {
+          _done = true;
+          _step = l.appDataRestartRequired;
+        });
     } catch (e) {
-      if (mounted) setState(() { _done = true; _error = true; _step = '${l.appDataMigrateError}: $e'; });
+      if (mounted)
+        setState(() {
+          _done = true;
+          _error = true;
+          _step = '${l.appDataMigrateError}: $e';
+        });
     }
   }
 
@@ -5888,9 +7718,8 @@ class _MigrationDialogState extends State<_MigrationDialog> {
             if (!apNorm.startsWith(oldNorm)) return fav;
             final newAp = newNorm + apNorm.substring(oldNorm.length);
             // Preserve original path separator style on Windows.
-            final finalAp = Platform.isWindows
-                ? newAp.replaceAll('/', '\\')
-                : newAp;
+            final finalAp =
+                Platform.isWindows ? newAp.replaceAll('/', '\\') : newAp;
             changed = true;
             return {...fav, 'avatarPath': finalAp};
           }).toList();
@@ -5916,7 +7745,7 @@ class _MigrationDialogState extends State<_MigrationDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final l  = AppLocalizations.of(context);
+    final l = AppLocalizations.of(context);
     final cs = Theme.of(context).colorScheme;
 
     return PopScope(
@@ -5934,7 +7763,9 @@ class _MigrationDialogState extends State<_MigrationDialog> {
                   style: const TextStyle(fontWeight: FontWeight.w600)),
             ] else ...[
               Icon(
-                _error ? Icons.error_outline_rounded : Icons.check_circle_outline_rounded,
+                _error
+                    ? Icons.error_outline_rounded
+                    : Icons.check_circle_outline_rounded,
                 color: _error ? cs.error : Colors.green,
                 size: 32,
               ),
@@ -6000,7 +7831,10 @@ class _VideoPreviewWidgetState extends State<_VideoPreviewWidget> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        Video(controller: _controller, fit: BoxFit.cover, controls: NoVideoControls),
+        Video(
+            controller: _controller,
+            fit: BoxFit.cover,
+            controls: NoVideoControls),
         Positioned(
           bottom: 6,
           right: 6,
@@ -6015,7 +7849,8 @@ class _VideoPreviewWidgetState extends State<_VideoPreviewWidget> {
               children: [
                 Icon(Icons.videocam, size: 12, color: Colors.white),
                 SizedBox(width: 4),
-                Text('Video', style: TextStyle(fontSize: 10, color: Colors.white)),
+                Text('Video',
+                    style: TextStyle(fontSize: 10, color: Colors.white)),
               ],
             ),
           ),
@@ -6074,7 +7909,8 @@ class _PresetsSheetState extends State<_PresetsSheet> {
         final src = File(wallpaperPath);
         if (await src.exists()) {
           final ext = p.extension(wallpaperPath);
-          final dest = '${wpDir.path}/wp_${DateTime.now().millisecondsSinceEpoch}$ext';
+          final dest =
+              '${wpDir.path}/wp_${DateTime.now().millisecondsSinceEpoch}$ext';
           await src.copy(dest);
           stableWallpaper = dest;
         }
@@ -6085,7 +7921,8 @@ class _PresetsSheetState extends State<_PresetsSheet> {
         final src = File(videoPath);
         if (await src.exists()) {
           final ext = p.extension(videoPath);
-          final dest = '${wpDir.path}/vid_${DateTime.now().millisecondsSinceEpoch}$ext';
+          final dest =
+              '${wpDir.path}/vid_${DateTime.now().millisecondsSinceEpoch}$ext';
           await src.copy(dest);
           stableVideo = dest;
         }
@@ -6125,7 +7962,8 @@ class _PresetsSheetState extends State<_PresetsSheet> {
       'lgCardsSaturation': SettingsManager.liquidGlassCardsSaturation.value,
       'lgCardsChromatic': SettingsManager.liquidGlassCardsChromatic.value,
       'lgCardsRefractive': SettingsManager.liquidGlassCardsRefractive.value,
-      'lgCardsLightIntensity': SettingsManager.liquidGlassCardsLightIntensity.value,
+      'lgCardsLightIntensity':
+          SettingsManager.liquidGlassCardsLightIntensity.value,
       'lgCardsThickness': SettingsManager.liquidGlassCardsThickness.value,
       // Liquid glass — input
       'lgOnInput': SettingsManager.liquidGlassOnInput.value,
@@ -6135,7 +7973,8 @@ class _PresetsSheetState extends State<_PresetsSheet> {
       'lgInputSaturation': SettingsManager.liquidGlassInputSaturation.value,
       'lgInputChromatic': SettingsManager.liquidGlassInputChromatic.value,
       'lgInputRefractive': SettingsManager.liquidGlassInputRefractive.value,
-      'lgInputLightIntensity': SettingsManager.liquidGlassInputLightIntensity.value,
+      'lgInputLightIntensity':
+          SettingsManager.liquidGlassInputLightIntensity.value,
       'lgInputThickness': SettingsManager.liquidGlassInputThickness.value,
       // Liquid glass — search
       'lgOnSearch': SettingsManager.liquidGlassOnSearch.value,
@@ -6145,7 +7984,8 @@ class _PresetsSheetState extends State<_PresetsSheet> {
       'lgSearchSaturation': SettingsManager.liquidGlassSearchSaturation.value,
       'lgSearchChromatic': SettingsManager.liquidGlassSearchChromatic.value,
       'lgSearchRefractive': SettingsManager.liquidGlassSearchRefractive.value,
-      'lgSearchLightIntensity': SettingsManager.liquidGlassSearchLightIntensity.value,
+      'lgSearchLightIntensity':
+          SettingsManager.liquidGlassSearchLightIntensity.value,
       'lgSearchThickness': SettingsManager.liquidGlassSearchThickness.value,
       // Liquid glass — app bar
       'lgOnAppBar': SettingsManager.liquidGlassOnAppBar.value,
@@ -6155,7 +7995,8 @@ class _PresetsSheetState extends State<_PresetsSheet> {
       'lgAppBarSaturation': SettingsManager.liquidGlassAppBarSaturation.value,
       'lgAppBarChromatic': SettingsManager.liquidGlassAppBarChromatic.value,
       'lgAppBarRefractive': SettingsManager.liquidGlassAppBarRefractive.value,
-      'lgAppBarLightIntensity': SettingsManager.liquidGlassAppBarLightIntensity.value,
+      'lgAppBarLightIntensity':
+          SettingsManager.liquidGlassAppBarLightIntensity.value,
       'lgAppBarThickness': SettingsManager.liquidGlassAppBarThickness.value,
     };
     await SettingsManager.saveThemePreset(preset);
@@ -6175,8 +8016,7 @@ class _PresetsSheetState extends State<_PresetsSheet> {
           );
       double d(String key, double fallback) =>
           (preset[key] as num?)?.toDouble() ?? fallback;
-      bool b(String key, bool fallback) =>
-          (preset[key] as bool?) ?? fallback;
+      bool b(String key, bool fallback) => (preset[key] as bool?) ?? fallback;
 
       // Theme
       final themeName = preset['theme'] as String? ?? '';
@@ -6209,7 +8049,8 @@ class _PresetsSheetState extends State<_PresetsSheet> {
       await SettingsManager.setLiquidGlassSaturation(d('lgSaturation', 1.0));
       await SettingsManager.setLiquidGlassChromatic(d('lgChromatic', 0.30));
       await SettingsManager.setLiquidGlassRefractive(d('lgRefractive', 1.59));
-      await SettingsManager.setLiquidGlassLightIntensity(d('lgLightIntensity', 0.60));
+      await SettingsManager.setLiquidGlassLightIntensity(
+          d('lgLightIntensity', 0.60));
       await SettingsManager.setLiquidGlassThickness(d('lgThickness', 30.0));
       await SettingsManager.setLiquidGlassJellyEnabled(b('lgJelly', true));
 
@@ -6219,11 +8060,16 @@ class _PresetsSheetState extends State<_PresetsSheet> {
           qualityByName(preset['lgCardsQuality'] as String?));
       await SettingsManager.setLiquidGlassCardsBlur(d('lgCardsBlur', 7.0));
       await SettingsManager.setLiquidGlassCardsTint(d('lgCardsTint', 0.10));
-      await SettingsManager.setLiquidGlassCardsSaturation(d('lgCardsSaturation', 1.0));
-      await SettingsManager.setLiquidGlassCardsChromatic(d('lgCardsChromatic', 0.15));
-      await SettingsManager.setLiquidGlassCardsRefractive(d('lgCardsRefractive', 1.40));
-      await SettingsManager.setLiquidGlassCardsLightIntensity(d('lgCardsLightIntensity', 0.50));
-      await SettingsManager.setLiquidGlassCardsThickness(d('lgCardsThickness', 20.0));
+      await SettingsManager.setLiquidGlassCardsSaturation(
+          d('lgCardsSaturation', 1.0));
+      await SettingsManager.setLiquidGlassCardsChromatic(
+          d('lgCardsChromatic', 0.15));
+      await SettingsManager.setLiquidGlassCardsRefractive(
+          d('lgCardsRefractive', 1.40));
+      await SettingsManager.setLiquidGlassCardsLightIntensity(
+          d('lgCardsLightIntensity', 0.50));
+      await SettingsManager.setLiquidGlassCardsThickness(
+          d('lgCardsThickness', 20.0));
 
       // Liquid glass — input
       await SettingsManager.setLiquidGlassOnInput(b('lgOnInput', true));
@@ -6231,11 +8077,16 @@ class _PresetsSheetState extends State<_PresetsSheet> {
           qualityByName(preset['lgInputQuality'] as String?));
       await SettingsManager.setLiquidGlassInputBlur(d('lgInputBlur', 7.0));
       await SettingsManager.setLiquidGlassInputTint(d('lgInputTint', 0.10));
-      await SettingsManager.setLiquidGlassInputSaturation(d('lgInputSaturation', 1.0));
-      await SettingsManager.setLiquidGlassInputChromatic(d('lgInputChromatic', 0.15));
-      await SettingsManager.setLiquidGlassInputRefractive(d('lgInputRefractive', 1.40));
-      await SettingsManager.setLiquidGlassInputLightIntensity(d('lgInputLightIntensity', 0.50));
-      await SettingsManager.setLiquidGlassInputThickness(d('lgInputThickness', 20.0));
+      await SettingsManager.setLiquidGlassInputSaturation(
+          d('lgInputSaturation', 1.0));
+      await SettingsManager.setLiquidGlassInputChromatic(
+          d('lgInputChromatic', 0.15));
+      await SettingsManager.setLiquidGlassInputRefractive(
+          d('lgInputRefractive', 1.40));
+      await SettingsManager.setLiquidGlassInputLightIntensity(
+          d('lgInputLightIntensity', 0.50));
+      await SettingsManager.setLiquidGlassInputThickness(
+          d('lgInputThickness', 20.0));
 
       // Liquid glass — search
       await SettingsManager.setLiquidGlassOnSearch(b('lgOnSearch', false));
@@ -6243,11 +8094,16 @@ class _PresetsSheetState extends State<_PresetsSheet> {
           qualityByName(preset['lgSearchQuality'] as String?));
       await SettingsManager.setLiquidGlassSearchBlur(d('lgSearchBlur', 7.0));
       await SettingsManager.setLiquidGlassSearchTint(d('lgSearchTint', 0.10));
-      await SettingsManager.setLiquidGlassSearchSaturation(d('lgSearchSaturation', 1.0));
-      await SettingsManager.setLiquidGlassSearchChromatic(d('lgSearchChromatic', 0.15));
-      await SettingsManager.setLiquidGlassSearchRefractive(d('lgSearchRefractive', 1.40));
-      await SettingsManager.setLiquidGlassSearchLightIntensity(d('lgSearchLightIntensity', 0.50));
-      await SettingsManager.setLiquidGlassSearchThickness(d('lgSearchThickness', 24.0));
+      await SettingsManager.setLiquidGlassSearchSaturation(
+          d('lgSearchSaturation', 1.0));
+      await SettingsManager.setLiquidGlassSearchChromatic(
+          d('lgSearchChromatic', 0.15));
+      await SettingsManager.setLiquidGlassSearchRefractive(
+          d('lgSearchRefractive', 1.40));
+      await SettingsManager.setLiquidGlassSearchLightIntensity(
+          d('lgSearchLightIntensity', 0.50));
+      await SettingsManager.setLiquidGlassSearchThickness(
+          d('lgSearchThickness', 24.0));
 
       // Liquid glass — app bar
       await SettingsManager.setLiquidGlassOnAppBar(b('lgOnAppBar', false));
@@ -6255,11 +8111,16 @@ class _PresetsSheetState extends State<_PresetsSheet> {
           qualityByName(preset['lgAppBarQuality'] as String?));
       await SettingsManager.setLiquidGlassAppBarBlur(d('lgAppBarBlur', 7.0));
       await SettingsManager.setLiquidGlassAppBarTint(d('lgAppBarTint', 0.10));
-      await SettingsManager.setLiquidGlassAppBarSaturation(d('lgAppBarSaturation', 1.0));
-      await SettingsManager.setLiquidGlassAppBarChromatic(d('lgAppBarChromatic', 0.15));
-      await SettingsManager.setLiquidGlassAppBarRefractive(d('lgAppBarRefractive', 1.40));
-      await SettingsManager.setLiquidGlassAppBarLightIntensity(d('lgAppBarLightIntensity', 0.50));
-      await SettingsManager.setLiquidGlassAppBarThickness(d('lgAppBarThickness', 20.0));
+      await SettingsManager.setLiquidGlassAppBarSaturation(
+          d('lgAppBarSaturation', 1.0));
+      await SettingsManager.setLiquidGlassAppBarChromatic(
+          d('lgAppBarChromatic', 0.15));
+      await SettingsManager.setLiquidGlassAppBarRefractive(
+          d('lgAppBarRefractive', 1.40));
+      await SettingsManager.setLiquidGlassAppBarLightIntensity(
+          d('lgAppBarLightIntensity', 0.50));
+      await SettingsManager.setLiquidGlassAppBarThickness(
+          d('lgAppBarThickness', 20.0));
 
       widget.onSnack('Preset "${preset['name']}" applied');
     } catch (e) {
@@ -6299,11 +8160,15 @@ class _PresetsSheetState extends State<_PresetsSheet> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
                   children: [
-                    Icon(Icons.auto_awesome_rounded, size: 20, color: cs.primary),
+                    Icon(Icons.auto_awesome_rounded,
+                        size: 20, color: cs.primary),
                     const SizedBox(width: 10),
                     Text(
                       'Theme Presets',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: cs.onSurface),
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: cs.onSurface),
                     ),
                   ],
                 ),
@@ -6313,7 +8178,8 @@ class _PresetsSheetState extends State<_PresetsSheet> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
                   'Save and apply combinations of theme, color scheme and wallpaper.',
-                  style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.5)),
+                  style: TextStyle(
+                      fontSize: 12, color: cs.onSurface.withValues(alpha: 0.5)),
                 ),
               ),
               const SizedBox(height: 16),
@@ -6328,12 +8194,14 @@ class _PresetsSheetState extends State<_PresetsSheet> {
                         decoration: InputDecoration(
                           hintText: 'Preset name…',
                           filled: true,
-                          fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                          fillColor:
+                              cs.surfaceContainerHighest.withValues(alpha: 0.5),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(50),
                             borderSide: BorderSide.none,
                           ),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 18, vertical: 12),
                           isDense: true,
                         ),
                       ),
@@ -6342,7 +8210,8 @@ class _PresetsSheetState extends State<_PresetsSheet> {
                     GestureDetector(
                       onTap: _save,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 18, vertical: 12),
                         decoration: BoxDecoration(
                           color: cs.primary,
                           borderRadius: BorderRadius.circular(50),
@@ -6365,7 +8234,9 @@ class _PresetsSheetState extends State<_PresetsSheet> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
                   'Current: ${widget.currentTheme.name} • ${widget.isDarkMode ? "Dark" : "Light"}',
-                  style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.45)),
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: cs.onSurface.withValues(alpha: 0.45)),
                 ),
               ),
               const Divider(height: 24),
@@ -6378,11 +8249,15 @@ class _PresetsSheetState extends State<_PresetsSheet> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.palette_outlined, size: 40, color: cs.onSurface.withValues(alpha: 0.25)),
+                            Icon(Icons.palette_outlined,
+                                size: 40,
+                                color: cs.onSurface.withValues(alpha: 0.25)),
                             const SizedBox(height: 8),
                             Text(
                               'No presets yet',
-                              style: TextStyle(fontSize: 14, color: cs.onSurface.withValues(alpha: 0.4)),
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  color: cs.onSurface.withValues(alpha: 0.4)),
                             ),
                           ],
                         ),
@@ -6394,46 +8269,62 @@ class _PresetsSheetState extends State<_PresetsSheet> {
                       itemCount: presets.length,
                       itemBuilder: (_, i) {
                         final p = presets[i];
-                        final hasWallpaper = (p['wallpaper'] as String?) != null;
+                        final hasWallpaper =
+                            (p['wallpaper'] as String?) != null;
                         final hasVideo = (p['video'] as String?) != null;
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 10),
                           child: Container(
                             decoration: BoxDecoration(
-                              color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                              color: cs.surfaceContainerHighest
+                                  .withValues(alpha: 0.5),
                               borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.2)),
+                              border: Border.all(
+                                  color:
+                                      cs.outlineVariant.withValues(alpha: 0.2)),
                             ),
                             child: ListTile(
-                              contentPadding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+                              contentPadding:
+                                  const EdgeInsets.fromLTRB(16, 8, 8, 8),
                               leading: () {
                                 final wallpaperPath = p['wallpaper'] as String?;
                                 final videoPath = p['video'] as String?;
                                 final themeName = p['theme'] as String? ?? '';
-                                String normalize(String s) =>
-                                    s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
-                                final themeColor = AppTheme.values.firstWhere(
-                                  (t) => normalize(t.name) == normalize(themeName),
-                                  orElse: () => AppTheme.deepPurple,
-                                ).color;
+                                String normalize(String s) => s
+                                    .toLowerCase()
+                                    .replaceAll(RegExp(r'[^a-z0-9]'), '');
+                                final themeColor = AppTheme.values
+                                    .firstWhere(
+                                      (t) =>
+                                          normalize(t.name) ==
+                                          normalize(themeName),
+                                      orElse: () => AppTheme.deepPurple,
+                                    )
+                                    .color;
 
-                                if (videoPath != null && File(videoPath).existsSync()) {
+                                if (videoPath != null &&
+                                    File(videoPath).existsSync()) {
                                   return CircleAvatar(
                                     radius: 18,
                                     backgroundColor: Colors.black87,
-                                    child: const Icon(Icons.videocam, size: 16, color: Colors.white),
+                                    child: const Icon(Icons.videocam,
+                                        size: 16, color: Colors.white),
                                   );
-                                } else if (wallpaperPath != null && File(wallpaperPath).existsSync()) {
+                                } else if (wallpaperPath != null &&
+                                    File(wallpaperPath).existsSync()) {
                                   return CircleAvatar(
                                     radius: 18,
-                                    backgroundImage: FileImage(File(wallpaperPath)),
+                                    backgroundImage:
+                                        FileImage(File(wallpaperPath)),
                                   );
                                 } else {
                                   return CircleAvatar(
                                     radius: 18,
                                     backgroundColor: themeColor,
                                     child: Icon(
-                                      (p['isDark'] as bool? ?? true) ? Icons.dark_mode : Icons.light_mode,
+                                      (p['isDark'] as bool? ?? true)
+                                          ? Icons.dark_mode
+                                          : Icons.light_mode,
                                       size: 16,
                                       color: Colors.white,
                                     ),
@@ -6442,18 +8333,26 @@ class _PresetsSheetState extends State<_PresetsSheet> {
                               }(),
                               title: Text(
                                 p['name'] as String? ?? 'Preset',
-                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600, fontSize: 14),
                               ),
                               subtitle: Text(
                                 [
                                   p['theme'] as String? ?? '',
-                                  (p['isDark'] as bool? ?? true) ? 'Dark' : 'Light',
-                                  if (hasVideo) 'Video wallpaper'
-                                  else if (hasWallpaper) 'Image wallpaper',
-                                  if (p.containsKey('elementOpacity') || p.containsKey('lgOnCards'))
+                                  (p['isDark'] as bool? ?? true)
+                                      ? 'Dark'
+                                      : 'Light',
+                                  if (hasVideo)
+                                    'Video wallpaper'
+                                  else if (hasWallpaper)
+                                    'Image wallpaper',
+                                  if (p.containsKey('elementOpacity') ||
+                                      p.containsKey('lgOnCards'))
                                     'UI effects',
                                 ].join(' • '),
-                                style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.5)),
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: cs.onSurface.withValues(alpha: 0.5)),
                               ),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -6461,22 +8360,31 @@ class _PresetsSheetState extends State<_PresetsSheet> {
                                   GestureDetector(
                                     onTap: () => _apply(p),
                                     child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 14, vertical: 8),
                                       decoration: BoxDecoration(
-                                        color: cs.primary.withValues(alpha: 0.12),
+                                        color:
+                                            cs.primary.withValues(alpha: 0.12),
                                         borderRadius: BorderRadius.circular(50),
                                       ),
                                       child: Text(
                                         'Apply',
-                                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.primary),
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: cs.primary),
                                       ),
                                     ),
                                   ),
                                   const SizedBox(width: 4),
                                   IconButton(
-                                    icon: Icon(Icons.delete_outline, size: 18, color: cs.onSurface.withValues(alpha: 0.4)),
+                                    icon: Icon(Icons.delete_outline,
+                                        size: 18,
+                                        color: cs.onSurface
+                                            .withValues(alpha: 0.4)),
                                     onPressed: () async {
-                                      await SettingsManager.deleteThemePreset(i);
+                                      await SettingsManager.deleteThemePreset(
+                                          i);
                                     },
                                     visualDensity: VisualDensity.compact,
                                   ),
@@ -6626,11 +8534,13 @@ class _BackupSectionState extends State<_BackupSection>
     }
     String? dir;
     if (!Platform.isAndroid) {
-      dir = await FilePicker.platform.getDirectoryPath(dialogTitle: l.backupExport);
+      dir = await FilePicker.platform
+          .getDirectoryPath(dialogTitle: l.backupExport);
     }
     dir ??= await BackupService.backupDir();
     await Directory(dir).create(recursive: true);
-    final ts = DateTime.now().toIso8601String().replaceAll(RegExp(r'[:.\-]'), '');
+    final ts =
+        DateTime.now().toIso8601String().replaceAll(RegExp(r'[:.\-]'), '');
     final dest = p.join(dir, 'onyx_backup_$ts.zip');
     final token = BackupCancelToken();
     setState(() {
@@ -6647,17 +8557,27 @@ class _BackupSectionState extends State<_BackupSection>
         destPath: dest,
         cancelToken: token,
         onProgress: (pr, label) {
-          if (mounted) setState(() { _progress = pr; _label = label; });
+          if (mounted)
+            setState(() {
+              _progress = pr;
+              _label = label;
+            });
         },
       );
       _snack('${l.backupExport}: $dest');
     } on BackupCancelledException {
-      try { await File(dest).delete(); } catch (_) {}
+      try {
+        await File(dest).delete();
+      } catch (_) {}
       _snack(l.cancelled);
     } catch (e) {
       _snack('${l.error}: $e');
     } finally {
-      if (mounted) setState(() { _busy = false; _cancelToken = null; });
+      if (mounted)
+        setState(() {
+          _busy = false;
+          _cancelToken = null;
+        });
     }
   }
 
@@ -6677,20 +8597,13 @@ class _BackupSectionState extends State<_BackupSection>
     final manifest = await BackupService.peekManifest(path);
     if (!mounted) return;
     final created = manifest?['createdAt']?.toString();
-    final ok = await showDialog<bool>(
+    final ok = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.backupRestoreConfirmTitle),
-        content: Text(
-            '${l.backupRestoreConfirmBody}${created != null ? '\n\n($created)' : ''}'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false), child: Text(l.cancel)),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(l.backupRestore)),
-        ],
-      ),
+      title: l.backupRestoreConfirmTitle,
+      message:
+          '${l.backupRestoreConfirmBody}${created != null ? '\n\n($created)' : ''}',
+      confirmLabel: l.backupRestore,
+      icon: Icons.restore_rounded,
     );
     if (ok != true) return;
 
@@ -6891,8 +8804,7 @@ class _BackupSectionState extends State<_BackupSection>
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6),
                   child: LinearProgressIndicator(
-                      minHeight: 6,
-                      value: _progress == 0 ? null : _progress),
+                      minHeight: 6, value: _progress == 0 ? null : _progress),
                 ),
               ],
             ),
@@ -6956,7 +8868,11 @@ class _BackupSectionState extends State<_BackupSection>
           DropdownButton<BackupFrequency>(
             value: _freq,
             isExpanded: true,
-            onChanged: _busy ? null : (f) { if (f != null) _setFreq(f); },
+            onChanged: _busy
+                ? null
+                : (f) {
+                    if (f != null) _setFreq(f);
+                  },
             items: BackupFrequency.values
                 .map((f) => DropdownMenuItem(
                       value: f,
@@ -7085,24 +9001,30 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
               child: Row(
                 children: [
                   if (icon != null) ...[
-                    Icon(icon, size: 16, color: cs.primary),
-                    const SizedBox(width: 8),
+                    Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: cs.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: Icon(icon, size: 16, color: cs.primary),
+                    ),
+                    const SizedBox(width: 10),
                   ],
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: cs.onSurface)),
-                        const SizedBox(height: 2),
-                        Text(subtitle, style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.55))),
-                      ],
-                    ),
+                    child: Text(title,
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14.5,
+                            color: cs.onSurface)),
                   ),
                   AnimatedRotation(
                     turns: isExpanded ? 0.5 : 0.0,
                     duration: const Duration(milliseconds: 200),
                     curve: Curves.easeInOut,
-                    child: Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: cs.onSurface.withValues(alpha: 0.45)),
+                    child: Icon(Icons.keyboard_arrow_down_rounded,
+                        size: 20, color: cs.onSurface.withValues(alpha: 0.45)),
                   ),
                 ],
               ),
@@ -7161,19 +9083,13 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
 
   Future<void> _resetTombstones() async {
     final l = AppLocalizations.of(context);
-    final ok = await showDialog<bool>(
+    final ok = await showOnyxConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.recycleBinResetTitle),
-        content: Text(l.recycleBinResetConfirm),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false), child: Text(l.cancel)),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(l.recycleBinResetButton)),
-        ],
-      ),
+      title: l.recycleBinResetTitle,
+      message: l.recycleBinResetConfirm,
+      confirmLabel: l.recycleBinResetButton,
+      isDestructive: true,
+      icon: Icons.restore_from_trash_rounded,
     );
     if (ok != true) return;
     setState(() => _busy = true);
@@ -7186,37 +9102,25 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
     }
   }
 
-  void _clearAll(BuildContext ctx) {
+  Future<void> _clearAll(BuildContext ctx) async {
     final totalChats = TrashManager.instance.deletedChats.length;
-    final totalMsgs  = TrashManager.instance.deletedMessages.length;
+    final totalMsgs = TrashManager.instance.deletedMessages.length;
     if (totalChats == 0 && totalMsgs == 0) return;
-    final cs = Theme.of(ctx).colorScheme;
-    showDialog(
+    final confirmed = await showOnyxConfirmDialog(
       context: ctx,
-      builder: (dlgCtx) => AlertDialog(
-        title: const Text('Empty Trash?'),
-        content: Text(
+      title: 'Empty Trash?',
+      message:
           'Permanently delete $totalChats chat${totalChats == 1 ? '' : 's'} '
           'and $totalMsgs message${totalMsgs == 1 ? '' : 's'}? '
           'This cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dlgCtx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: cs.error),
-            onPressed: () {
-              Navigator.pop(dlgCtx);
-              TrashManager.instance.clearAll();
-              _snack('Trash emptied');
-            },
-            child: const Text('Empty Trash'),
-          ),
-        ],
-      ),
+      confirmLabel: 'Empty Trash',
+      isDestructive: true,
+      icon: Icons.delete_forever_rounded,
     );
+    if (confirmed == true) {
+      TrashManager.instance.clearAll();
+      _snack('Trash emptied');
+    }
   }
 
   void _restoreChat(TrashedChat chat) {
@@ -7229,46 +9133,34 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
     _snack('Message restored');
   }
 
-  void _permanentlyDeleteChat(BuildContext ctx, TrashedChat chat) {
-    showDialog(
+  Future<void> _permanentlyDeleteChat(
+      BuildContext ctx, TrashedChat chat) async {
+    final confirmed = await showOnyxConfirmDialog(
       context: ctx,
-      builder: (dlgCtx) => AlertDialog(
-        title: const Text('Delete permanently?'),
-        content: Text('Remove "${chat.displayName}" from Trash forever?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(dlgCtx),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () {
-                Navigator.pop(dlgCtx);
-                TrashManager.instance.permanentlyDeleteChat(chat.id);
-              },
-              child: const Text('Delete', style: TextStyle(color: Colors.red))),
-        ],
-      ),
+      title: 'Delete permanently?',
+      message: 'Remove "${chat.displayName}" from Trash forever?',
+      confirmLabel: 'Delete',
+      isDestructive: true,
+      icon: Icons.delete_forever_rounded,
     );
+    if (confirmed == true) {
+      TrashManager.instance.permanentlyDeleteChat(chat.id);
+    }
   }
 
-  void _permanentlyDeleteMessage(BuildContext ctx, TrashedMessage item) {
-    showDialog(
+  Future<void> _permanentlyDeleteMessage(
+      BuildContext ctx, TrashedMessage item) async {
+    final confirmed = await showOnyxConfirmDialog(
       context: ctx,
-      builder: (dlgCtx) => AlertDialog(
-        title: const Text('Delete permanently?'),
-        content: const Text('Remove this message from Trash forever?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(dlgCtx),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () {
-                Navigator.pop(dlgCtx);
-                TrashManager.instance.permanentlyDeleteMessage(item.id);
-              },
-              child: const Text('Delete', style: TextStyle(color: Colors.red))),
-        ],
-      ),
+      title: 'Delete permanently?',
+      message: 'Remove this message from Trash forever?',
+      confirmLabel: 'Delete',
+      isDestructive: true,
+      icon: Icons.delete_forever_rounded,
     );
+    if (confirmed == true) {
+      TrashManager.instance.permanentlyDeleteMessage(item.id);
+    }
   }
 
   String _ago(DateTime dt) {
@@ -7295,7 +9187,8 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
           Expanded(
             child: Text(
               '$count $kind — too many to display safely. Use "Empty Trash" above to clear all.',
-              style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.75)),
+              style: TextStyle(
+                  fontSize: 12, color: cs.onSurface.withValues(alpha: 0.75)),
             ),
           ),
         ],
@@ -7305,9 +9198,9 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
 
   Widget _chatTypeIcon(TrashedChatType type, ColorScheme cs) {
     final icon = switch (type) {
-      TrashedChatType.group    => Icons.group,
+      TrashedChatType.group => Icons.group,
       TrashedChatType.favorite => Icons.bookmark,
-      TrashedChatType.dm       => Icons.person,
+      TrashedChatType.dm => Icons.person,
     };
     return CircleAvatar(
       radius: 16,
@@ -7329,35 +9222,46 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
           valueListenable: TrashManager.instance.chatsNotifier,
           builder: (_, __, ___) {
             final totalChats = TrashManager.instance.deletedChats.length;
-            final totalMsgs  = TrashManager.instance.deletedMessages.length;
+            final totalMsgs = TrashManager.instance.deletedMessages.length;
             final isEmpty = totalChats == 0 && totalMsgs == 0;
             return AdaptiveGlassCard(
               borderRadius: 12,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.delete_sweep_rounded,
-                      size: 18, color: cs.onSurface.withValues(alpha: isEmpty ? 0.3 : 0.6)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      isEmpty
-                          ? 'Trash is empty'
-                          : '$totalChats chat${totalChats == 1 ? '' : 's'}, '
-                            '$totalMsgs message${totalMsgs == 1 ? '' : 's'}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: cs.onSurface.withValues(alpha: isEmpty ? 0.35 : 0.75),
+                  Row(
+                    children: [
+                      Icon(Icons.delete_sweep_rounded,
+                          size: 18,
+                          color: cs.onSurface
+                              .withValues(alpha: isEmpty ? 0.3 : 0.6)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          isEmpty
+                              ? l.trashIsEmpty
+                              : l.trashSummary(totalChats, totalMsgs),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: cs.onSurface
+                                .withValues(alpha: isEmpty ? 0.35 : 0.75),
+                          ),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
-                  FilledButton.tonalIcon(
-                    onPressed: isEmpty ? null : () => _clearAll(context),
-                    icon: const Icon(Icons.delete_forever_rounded, size: 16),
-                    label: const Text('Empty Trash'),
-                    style: FilledButton.styleFrom(
-                      foregroundColor: isEmpty ? null : cs.error,
-                      visualDensity: VisualDensity.compact,
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonalIcon(
+                      onPressed: isEmpty ? null : () => _clearAll(context),
+                      icon: const Icon(Icons.delete_forever_rounded, size: 16),
+                      label: Text(l.emptyTrash),
+                      style: FilledButton.styleFrom(
+                        foregroundColor: isEmpty ? null : cs.error,
+                        visualDensity: VisualDensity.compact,
+                      ),
                     ),
                   ),
                 ],
@@ -7368,8 +9272,8 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
         const SizedBox(height: 8),
         _buildSubSection(
           key: 'trash_chats',
-          title: 'Deleted Chats',
-          subtitle: 'Restore or permanently delete chats',
+          title: l.trashChatsTitle,
+          subtitle: l.trashChatsSubtitle,
           icon: Icons.chat_bubble_outline_rounded,
           expandedContent: ValueListenableBuilder<int>(
             valueListenable: TrashManager.instance.chatsNotifier,
@@ -7378,10 +9282,13 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
               if (chats.isEmpty) {
                 return Row(
                   children: [
-                    Icon(Icons.check_circle_outline_rounded, size: 16, color: cs.primary),
+                    Icon(Icons.check_circle_outline_rounded,
+                        size: 16, color: cs.primary),
                     const SizedBox(width: 8),
                     Text('No deleted chats',
-                        style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: cs.onSurface.withValues(alpha: 0.6))),
                   ],
                 );
               }
@@ -7389,42 +9296,57 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
                 return _tooManyItems(chats.length, 'chats', cs);
               }
               return Column(
-                children: chats.map((chat) => Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      _chatTypeIcon(chat.type, cs),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(chat.displayName, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                            Text('${chat.messages.length} msg · ${_ago(chat.deletedAt)}',
-                                style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.55))),
-                          ],
-                        ),
-                      ),
-                      if (chat.type != TrashedChatType.group)
-                        IconButton(
-                          icon: Icon(Icons.restore_rounded, size: 20, color: cs.primary),
-                          tooltip: 'Restore',
-                          onPressed: () => _restoreChat(chat),
-                        ),
-                      IconButton(
-                        icon: Icon(Icons.delete_forever_rounded, size: 20, color: cs.error),
-                        tooltip: 'Delete permanently',
-                        onPressed: () => _permanentlyDeleteChat(context, chat),
-                      ),
-                    ],
-                  ),
-                )).toList(),
+                children: chats
+                    .map((chat) => Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: cs.surfaceContainerHighest
+                                .withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              _chatTypeIcon(chat.type, cs),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(chat.displayName,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500)),
+                                    Text(
+                                        '${chat.messages.length} msg · ${_ago(chat.deletedAt)}',
+                                        style: TextStyle(
+                                            fontSize: 11,
+                                            color: cs.onSurface
+                                                .withValues(alpha: 0.55))),
+                                  ],
+                                ),
+                              ),
+                              if (chat.type != TrashedChatType.group)
+                                IconButton(
+                                  icon: Icon(Icons.restore_rounded,
+                                      size: 20, color: cs.primary),
+                                  tooltip: 'Restore',
+                                  onPressed: () => _restoreChat(chat),
+                                ),
+                              IconButton(
+                                icon: Icon(Icons.delete_forever_rounded,
+                                    size: 20, color: cs.error),
+                                tooltip: 'Delete permanently',
+                                onPressed: () =>
+                                    _permanentlyDeleteChat(context, chat),
+                              ),
+                            ],
+                          ),
+                        ))
+                    .toList(),
               );
             },
           ),
@@ -7432,8 +9354,8 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
         const SizedBox(height: 8),
         _buildSubSection(
           key: 'trash_messages',
-          title: 'Deleted Messages',
-          subtitle: 'Restore or permanently delete messages',
+          title: l.trashMessagesTitle,
+          subtitle: l.trashMessagesSubtitle,
           icon: Icons.message_outlined,
           expandedContent: ValueListenableBuilder<int>(
             valueListenable: TrashManager.instance.messagesNotifier,
@@ -7442,10 +9364,13 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
               if (messages.isEmpty) {
                 return Row(
                   children: [
-                    Icon(Icons.check_circle_outline_rounded, size: 16, color: cs.primary),
+                    Icon(Icons.check_circle_outline_rounded,
+                        size: 16, color: cs.primary),
                     const SizedBox(width: 8),
                     Text('No deleted messages',
-                        style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: cs.onSurface.withValues(alpha: 0.6))),
                   ],
                 );
               }
@@ -7453,47 +9378,67 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
                 return _tooManyItems(messages.length, 'messages', cs);
               }
               return Column(
-                children: messages.map((item) => Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 16,
-                        backgroundColor: cs.surfaceContainerHighest,
-                        child: Icon(Icons.message_rounded, size: 16, color: cs.onSurfaceVariant),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(item.chatDisplayName, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
-                            Text(item.message.content, maxLines: 2, overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.7))),
-                            Text(_ago(item.deletedAt),
-                                style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.45))),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.restore_rounded, size: 20, color: cs.primary),
-                        tooltip: 'Restore',
-                        onPressed: () => _restoreMessage(item),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.delete_forever_rounded, size: 20, color: cs.error),
-                        tooltip: 'Delete permanently',
-                        onPressed: () => _permanentlyDeleteMessage(context, item),
-                      ),
-                    ],
-                  ),
-                )).toList(),
+                children: messages
+                    .map((item) => Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: cs.surfaceContainerHighest
+                                .withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 16,
+                                backgroundColor: cs.surfaceContainerHighest,
+                                child: Icon(Icons.message_rounded,
+                                    size: 16, color: cs.onSurfaceVariant),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(item.chatDisplayName,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w500)),
+                                    Text(item.message.content,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            color: cs.onSurface
+                                                .withValues(alpha: 0.7))),
+                                    Text(_ago(item.deletedAt),
+                                        style: TextStyle(
+                                            fontSize: 11,
+                                            color: cs.onSurface
+                                                .withValues(alpha: 0.45))),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                icon: Icon(Icons.restore_rounded,
+                                    size: 20, color: cs.primary),
+                                tooltip: 'Restore',
+                                onPressed: () => _restoreMessage(item),
+                              ),
+                              IconButton(
+                                icon: Icon(Icons.delete_forever_rounded,
+                                    size: 20, color: cs.error),
+                                tooltip: 'Delete permanently',
+                                onPressed: () =>
+                                    _permanentlyDeleteMessage(context, item),
+                              ),
+                            ],
+                          ),
+                        ))
+                    .toList(),
               );
             },
           ),
@@ -7502,41 +9447,58 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
         _buildSubSection(
           key: 'trash_settings',
           title: 'Auto-clean & Sync',
-          subtitle: 'Auto-delete schedule, pending WardLink deletions and tombstone reset',
+          subtitle:
+              'Auto-delete schedule, pending WardLink deletions and tombstone reset',
           icon: Icons.auto_delete_rounded,
           expandedContent: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Auto-clean', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const Text('Auto-clean',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               const SizedBox(height: 4),
-              Text('Items in Trash are automatically deleted after the selected period.',
-                  style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
+              Text(
+                  'Items in Trash are automatically deleted after the selected period.',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: cs.onSurface.withValues(alpha: 0.6))),
               const SizedBox(height: 10),
               ValueListenableBuilder<int>(
                 valueListenable: TrashManager.autoCleanDays,
                 builder: (_, days, __) {
                   const options = [
-                    (0, 'Never'), (7, '7 days'), (14, '14 days'),
-                    (30, '30 days'), (60, '60 days'), (90, '90 days'),
+                    (0, 'Never'),
+                    (7, '7 days'),
+                    (14, '14 days'),
+                    (30, '30 days'),
+                    (60, '60 days'),
+                    (90, '90 days'),
                   ];
                   return Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     decoration: BoxDecoration(
-                      border: Border.all(color: cs.outline.withValues(alpha: 0.3)),
+                      border:
+                          Border.all(color: cs.outline.withValues(alpha: 0.3)),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: DropdownButton<int>(
                       value: days,
                       isExpanded: true,
                       underline: const SizedBox.shrink(),
-                      items: options.map((o) => DropdownMenuItem(value: o.$1, child: Text(o.$2))).toList(),
-                      onChanged: (v) { if (v != null) TrashManager.setAutoCleanDays(v); },
+                      items: options
+                          .map((o) =>
+                              DropdownMenuItem(value: o.$1, child: Text(o.$2)))
+                          .toList(),
+                      onChanged: (v) {
+                        if (v != null) TrashManager.setAutoCleanDays(v);
+                      },
                     ),
                   );
                 },
               ),
               const SizedBox(height: 16),
-              Text(l.recycleBinPendingTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              Text(l.recycleBinPendingTitle,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 13)),
               const SizedBox(height: 8),
               ValueListenableBuilder<List<PendingBulkDelete>>(
                 valueListenable: WardLinkPendingDeletions.pending,
@@ -7544,59 +9506,83 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
                   if (pending.isEmpty) {
                     return Row(
                       children: [
-                        Icon(Icons.check_circle_outline_rounded, size: 16, color: cs.primary),
+                        Icon(Icons.check_circle_outline_rounded,
+                            size: 16, color: cs.primary),
                         const SizedBox(width: 8),
-                        Expanded(child: Text(l.recycleBinNoPending,
-                            style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6)))),
+                        Expanded(
+                            child: Text(l.recycleBinNoPending,
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color:
+                                        cs.onSurface.withValues(alpha: 0.6)))),
                       ],
                     );
                   }
                   return Column(
-                    children: pending.map((req) => Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: cs.errorContainer.withValues(alpha: 0.25),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: cs.error.withValues(alpha: 0.3)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(Icons.warning_amber_rounded, size: 18, color: cs.error),
-                              const SizedBox(width: 8),
-                              Expanded(child: Text(l.recycleBinPendingDesc(req.peerName, req.favs.length),
-                                  style: const TextStyle(fontSize: 13))),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              TextButton(
-                                onPressed: _busy ? null : () => _applyPending(req),
-                                child: Text(l.recycleBinApply, style: TextStyle(color: cs.error)),
+                    children: pending
+                        .map((req) => Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color:
+                                    cs.errorContainer.withValues(alpha: 0.25),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                    color: cs.error.withValues(alpha: 0.3)),
                               ),
-                              const SizedBox(width: 8),
-                              FilledButton.tonal(
-                                onPressed: _busy ? null : () => _keepPending(req),
-                                child: Text(l.recycleBinKeep),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(Icons.warning_amber_rounded,
+                                          size: 18, color: cs.error),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                          child: Text(
+                                              l.recycleBinPendingDesc(
+                                                  req.peerName,
+                                                  req.favs.length),
+                                              style: const TextStyle(
+                                                  fontSize: 13))),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      TextButton(
+                                        onPressed: _busy
+                                            ? null
+                                            : () => _applyPending(req),
+                                        child: Text(l.recycleBinApply,
+                                            style: TextStyle(color: cs.error)),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      FilledButton.tonal(
+                                        onPressed: _busy
+                                            ? null
+                                            : () => _keepPending(req),
+                                        child: Text(l.recycleBinKeep),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    )).toList(),
+                            ))
+                        .toList(),
                   );
                 },
               ),
               const SizedBox(height: 16),
-              Text(l.recycleBinResetTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              Text(l.recycleBinResetTitle,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 13)),
               const SizedBox(height: 4),
               Text(l.recycleBinResetDesc,
-                  style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6))),
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: cs.onSurface.withValues(alpha: 0.6))),
               const SizedBox(height: 10),
               FilledButton.tonalIcon(
                 onPressed: _busy ? null : _resetTombstones,
