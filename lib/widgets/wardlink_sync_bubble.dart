@@ -16,6 +16,7 @@ import '../globals.dart' show navigatorKey;
 import '../l10n/app_localizations.dart';
 import '../managers/settings_manager.dart';
 import '../services/wardlink/wardlink_sync_service.dart';
+import 'onyx_dialog.dart';
 
 class WardLinkSyncBubble extends StatefulWidget {
   const WardLinkSyncBubble({super.key});
@@ -160,103 +161,108 @@ class _WardLinkSyncBubbleState extends State<WardLinkSyncBubble>
         child: Transform.scale(
           scale: scale,
           child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanUpdate: (d) {
-          setState(() {
-            _pos = Offset(
-              (_pos!.dx + d.delta.dx).clamp(0.0, mq.size.width - sz),
-              (_pos!.dy + d.delta.dy)
-                  .clamp(mq.viewPadding.top, mq.size.height - 90),
-            );
-          });
-        },
-        onTap: isDone ? null : _openDetails,
-        onLongPress: _openLog,
-        child: SizedBox(
-          width: sz,
-          height: sz,
-          child: AnimatedBuilder(
-            animation: _spin,
-            builder: (_, __) {
-              return Stack(
-                alignment: Alignment.center,
-                children: [
-                  Container(
-                    width: sz,
-                    height: sz,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isFailed
-                          ? cs.errorContainer
-                          : isDone
-                              ? cs.primary
-                              : cs.primaryContainer,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.45),
-                          blurRadius: 14,
-                          offset: const Offset(0, 4),
-                        ),
-                        BoxShadow(
-                          color: (isFailed ? cs.error : cs.primary)
-                              .withValues(alpha: 0.30),
-                          blurRadius: 20,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (!isDone)
-                    SizedBox(
-                      width: sz - 6,
-                      height: sz - 6,
-                      child: CircularProgressIndicator(
-                        value: progress,
-                        strokeWidth: 3,
-                        backgroundColor: cs.onPrimaryContainer.withValues(alpha: 0.15),
-                        valueColor: AlwaysStoppedAnimation(cs.primary),
-                      ),
-                    ),
-                  isDone
-                      ? Icon(
-                          isFailed ? Icons.sync_problem_rounded : Icons.check_rounded,
-                          size: sz * 0.48,
-                          color: isFailed ? cs.onErrorContainer : cs.onPrimary,
-                        )
-                      : Transform.rotate(
-                          angle: _spin.value * 2 * pi,
-                          child: Icon(Icons.sync_rounded,
-                              size: sz * 0.42, color: cs.onPrimaryContainer),
-                        ),
-                  // Count badge.
-                  if (!isDone && st.filesDone > 0)
-                    Positioned(
-                      right: 0,
-                      bottom: 0,
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: cs.primary,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: cs.surface, width: 1.5),
-                        ),
-                        constraints:
-                            const BoxConstraints(minWidth: 18, minHeight: 18),
-                        child: Text(
-                          '${st.filesDone}',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: cs.onPrimary),
-                        ),
-                      ),
-                    ),
-                ],
-              );
+            behavior: HitTestBehavior.opaque,
+            onPanUpdate: (d) {
+              setState(() {
+                _pos = Offset(
+                  (_pos!.dx + d.delta.dx).clamp(0.0, mq.size.width - sz),
+                  (_pos!.dy + d.delta.dy)
+                      .clamp(mq.viewPadding.top, mq.size.height - 90),
+                );
+              });
             },
-          ),
-        ),
+            onTap: isDone ? null : _openDetails,
+            onLongPress: _openLog,
+            child: SizedBox(
+              width: sz,
+              height: sz,
+              child: AnimatedBuilder(
+                animation: _spin,
+                builder: (_, __) {
+                  return Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Container(
+                        width: sz,
+                        height: sz,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: isFailed
+                              ? cs.errorContainer
+                              : isDone
+                                  ? cs.primary
+                                  : cs.primaryContainer,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.45),
+                              blurRadius: 14,
+                              offset: const Offset(0, 4),
+                            ),
+                            BoxShadow(
+                              color: (isFailed ? cs.error : cs.primary)
+                                  .withValues(alpha: 0.30),
+                              blurRadius: 20,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (!isDone)
+                        SizedBox(
+                          width: sz - 6,
+                          height: sz - 6,
+                          child: CircularProgressIndicator(
+                            value: progress,
+                            strokeWidth: 3,
+                            backgroundColor:
+                                cs.onPrimaryContainer.withValues(alpha: 0.15),
+                            valueColor: AlwaysStoppedAnimation(cs.primary),
+                          ),
+                        ),
+                      isDone
+                          ? Icon(
+                              isFailed
+                                  ? Icons.sync_problem_rounded
+                                  : Icons.check_rounded,
+                              size: sz * 0.48,
+                              color:
+                                  isFailed ? cs.onErrorContainer : cs.onPrimary,
+                            )
+                          : Transform.rotate(
+                              angle: _spin.value * 2 * pi,
+                              child: Icon(Icons.sync_rounded,
+                                  size: sz * 0.42,
+                                  color: cs.onPrimaryContainer),
+                            ),
+                      // Count badge.
+                      if (!isDone && st.filesDone > 0)
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: cs.primary,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: cs.surface, width: 1.5),
+                            ),
+                            constraints: const BoxConstraints(
+                                minWidth: 18, minHeight: 18),
+                            child: Text(
+                              '${st.filesDone}',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: cs.onPrimary),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
           ), // GestureDetector
         ), // Transform.scale
       ), // Opacity
@@ -271,7 +277,8 @@ class _WardLinkDetailsDialog extends StatelessWidget {
     if (b <= 0) return '';
     if (b < 1024) return '${b}B';
     if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(0)}KB';
-    if (b < 1024 * 1024 * 1024) return '${(b / 1024 / 1024).toStringAsFixed(1)}MB';
+    if (b < 1024 * 1024 * 1024)
+      return '${(b / 1024 / 1024).toStringAsFixed(1)}MB';
     return '${(b / 1024 / 1024 / 1024).toStringAsFixed(2)}GB';
   }
 
@@ -280,11 +287,10 @@ class _WardLinkDetailsDialog extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final l = AppLocalizations.of(context);
 
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    return OnyxDialogShell(
+      maxWidth: 460,
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 460,
           maxHeight: MediaQuery.sizeOf(context).height * 0.7,
         ),
         child: ValueListenableBuilder<WardLinkStatus>(
@@ -297,47 +303,54 @@ class _WardLinkDetailsDialog extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Header
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 18, 12, 8),
-                  child: Row(
-                    children: [
-                      Icon(Icons.sync_rounded, color: cs.primary, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          st.peerName != null
-                              ? 'WardLink · ${st.peerName}'
-                              : 'WardLink',
-                          style: const TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w700),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => Navigator.of(context).pop(),
-                      ),
-                    ],
+                OnyxDialogHeader(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: cs.primary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child:
+                        Icon(Icons.sync_rounded, color: cs.primary, size: 20),
                   ),
+                  title: Text(
+                    st.peerName != null
+                        ? 'WardLink · ${st.peerName}'
+                        : 'WardLink',
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: cs.onSurface),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onClose: () => Navigator.of(context).pop(),
                 ),
 
                 // Current file + progress
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        st.syncing
-                            ? l.wardLinkSyncingNow
-                            : (st.filesDone > 0
-                                ? l.wardLinkDone
-                                : l.wardLinkUpToDate),
-                        style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: cs.primary),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: cs.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(28),
+                        ),
+                        child: Text(
+                          st.syncing
+                              ? l.wardLinkSyncingNow
+                              : (st.filesDone > 0
+                                  ? l.wardLinkDone
+                                  : l.wardLinkUpToDate),
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: cs.primary),
+                        ),
                       ),
                       if (st.currentFile != null) ...[
                         const SizedBox(height: 8),
@@ -478,8 +491,7 @@ class _WardLinkLogDialogState extends State<_WardLinkLogDialog> {
         WardLinkLogLevel.info => cs.onSurface.withValues(alpha: 0.65),
       };
 
-  String _ts(DateTime t) =>
-      '${t.hour.toString().padLeft(2, '0')}:'
+  String _ts(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:'
       '${t.minute.toString().padLeft(2, '0')}:'
       '${t.second.toString().padLeft(2, '0')}';
 
@@ -488,12 +500,10 @@ class _WardLinkLogDialogState extends State<_WardLinkLogDialog> {
     final cs = Theme.of(context).colorScheme;
     final l = AppLocalizations.of(context);
 
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      clipBehavior: Clip.antiAlias,
+    return OnyxDialogShell(
+      maxWidth: 480,
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 480,
           maxHeight: MediaQuery.sizeOf(context).height * 0.82,
         ),
         child: Builder(
@@ -514,41 +524,43 @@ class _WardLinkLogDialogState extends State<_WardLinkLogDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // ── Header ────────────────────────────────────────────────────
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 8, 10),
-                  child: Row(
-                    children: [
-                      Icon(Icons.sync_rounded, color: cs.primary, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              st.peerName != null
-                                  ? 'WardLink · ${st.peerName}'
-                                  : 'WardLink',
-                              style: const TextStyle(
-                                  fontSize: 15, fontWeight: FontWeight.w700),
-                            ),
-                            Text(
-                              activity,
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: cs.onSurface.withValues(alpha: 0.55)),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => Navigator.of(context).pop(),
-                      ),
-                    ],
+                OnyxDialogHeader(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: cs.primary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child:
+                        Icon(Icons.sync_rounded, color: cs.primary, size: 20),
                   ),
+                  title: Text(
+                    st.peerName != null
+                        ? 'WardLink · ${st.peerName}'
+                        : 'WardLink',
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: cs.onSurface),
+                  ),
+                  subtitle: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: cs.onSurface.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                    child: Text(
+                      activity,
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: cs.onSurface.withValues(alpha: 0.65)),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  onClose: () => Navigator.of(context).pop(),
                 ),
                 const Divider(height: 1),
 
@@ -627,11 +639,9 @@ class _WardLinkLogDialogState extends State<_WardLinkLogDialog> {
                                       for (final f in chat.files)
                                         ListTile(
                                           dense: true,
-                                          visualDensity:
-                                              VisualDensity.compact,
-                                          contentPadding:
-                                              const EdgeInsets.only(
-                                                  left: 52, right: 16),
+                                          visualDensity: VisualDensity.compact,
+                                          contentPadding: const EdgeInsets.only(
+                                              left: 52, right: 16),
                                           leading: f.error
                                               ? Icon(
                                                   Icons.error_outline_rounded,
@@ -654,8 +664,8 @@ class _WardLinkLogDialogState extends State<_WardLinkLogDialog> {
                                                     ),
                                           title: Text(
                                             f.name,
-                                            style: const TextStyle(
-                                                fontSize: 12),
+                                            style:
+                                                const TextStyle(fontSize: 12),
                                             overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
@@ -668,8 +678,7 @@ class _WardLinkLogDialogState extends State<_WardLinkLogDialog> {
                 // ── Expandable log ────────────────────────────────────────
                 const Divider(height: 1),
                 InkWell(
-                  onTap: () =>
-                      setState(() => _logExpanded = !_logExpanded),
+                  onTap: () => setState(() => _logExpanded = !_logExpanded),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 20, vertical: 10),
@@ -687,8 +696,7 @@ class _WardLinkLogDialogState extends State<_WardLinkLogDialog> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            l.wardLinkLog +
-                                (hasErrors ? '  ⚠ errors' : ''),
+                            l.wardLinkLog + (hasErrors ? '  ⚠ errors' : ''),
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
@@ -699,9 +707,7 @@ class _WardLinkLogDialogState extends State<_WardLinkLogDialog> {
                           ),
                         ),
                         Icon(
-                          _logExpanded
-                              ? Icons.expand_less
-                              : Icons.expand_more,
+                          _logExpanded ? Icons.expand_less : Icons.expand_more,
                           size: 20,
                           color: cs.onSurface.withValues(alpha: 0.4),
                         ),
@@ -731,8 +737,7 @@ class _WardLinkLogDialogState extends State<_WardLinkLogDialog> {
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 2),
                                 child: Row(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
                                       _ts(e.time),
@@ -751,8 +756,7 @@ class _WardLinkLogDialogState extends State<_WardLinkLogDialog> {
                                           height: 1.3,
                                           color: _levelColor(cs, e.level),
                                           fontWeight:
-                                              e.level ==
-                                                      WardLinkLogLevel.error
+                                              e.level == WardLinkLogLevel.error
                                                   ? FontWeight.w600
                                                   : FontWeight.normal,
                                         ),

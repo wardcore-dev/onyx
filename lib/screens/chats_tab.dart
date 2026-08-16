@@ -304,7 +304,7 @@ class _ChatHighlightRingState extends State<_ChatHighlightRing> {
           duration: const Duration(milliseconds: 400),
           curve: Curves.easeOut,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(28),
             boxShadow: isHighlighted
                 ? [
                     BoxShadow(
@@ -747,7 +747,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
               margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               decoration: BoxDecoration(
                 color: sheetColor,
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(28),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1241,7 +1241,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                     child: Container(
                       decoration: BoxDecoration(
                         color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(28),
                       ),
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                       child: Row(
@@ -1293,10 +1293,11 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                   ? (details) => _showDesktopContextMenu(context, details.globalPosition, it)
                   : null,
               child: InkWell(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(28),
               onLongPress: () => _showChatActionsSheet(context, it),
               onTap: () => _openChatWithLockCheck(context, it.otherUsername),
               child: AdaptiveGlassCard(
+              borderRadius: 28,
               child: Padding(
                 padding:
                     const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
@@ -1306,16 +1307,64 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                       onTap: () => _openChatWithLockCheck(context, it.otherUsername),
                       onLongPress: () => _showUserProfileDialog(
                           it.otherUsername, it.displayName),
-                      child: ValueListenableBuilder<int>(
-                        valueListenable: avatarVersion,
-                        builder: (_, __, ___) => AvatarWidget(
-                          key: ValueKey('avatar-${it.otherUsername}'),
-                          username: it.otherUsername,
-                          tokenProvider: avatarTokenProvider,
-                          avatarBaseUrl: serverBase,
-                          size: 40,
-                          editable: false,
-                        ),
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          ValueListenableBuilder<int>(
+                            valueListenable: avatarVersion,
+                            builder: (_, __, ___) => AvatarWidget(
+                              key: ValueKey('avatar-${it.otherUsername}'),
+                              username: it.otherUsername,
+                              tokenProvider: avatarTokenProvider,
+                              avatarBaseUrl: serverBase,
+                              size: 40,
+                              editable: false,
+                            ),
+                          ),
+                          // Online dot: only while actually connected (a stale
+                          // onlineUsersNotifier from before a disconnect would
+                          // otherwise show everyone as online) and only when
+                          // the contact hasn't hidden their status from us —
+                          // same two conditions chat_screen.dart's header
+                          // status line checks for this contact.
+                          Positioned(
+                            right: 0,
+                            bottom: 0,
+                            child: ListenableBuilder(
+                              listenable: Listenable.merge([
+                                onlineUsersNotifier,
+                                wsConnectedNotifier,
+                                userStatusVisibilityNotifier,
+                              ]),
+                              builder: (_, __) {
+                                if (!wsConnectedNotifier.value) {
+                                  return const SizedBox.shrink();
+                                }
+                                final hidden = userStatusVisibilityNotifier
+                                        .value[it.otherUsername] ==
+                                    'hide';
+                                if (hidden) return const SizedBox.shrink();
+                                final online = onlineUsersNotifier.value
+                                    .contains(it.otherUsername);
+                                if (!online) return const SizedBox.shrink();
+                                return Container(
+                                  width: 11,
+                                  height: 11,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: const Color(0xFF34C759),
+                                    border: Border.all(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .surface,
+                                      width: 2,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(width: 12),

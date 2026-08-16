@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import '../globals.dart' show rootScreenKey;
+import '../l10n/app_localizations.dart' show lookupAppLocalizations;
 import '../managers/settings_manager.dart';
 
 /// Returns the directory where ONYX saves received files.
@@ -61,6 +63,26 @@ Future<void> revealInFileSystem(String filePath) async {
     }
   } catch (e) {
     debugPrint('revealInFileSystem error: $e');
+  }
+}
+
+/// Standard "Saved to: <path>" confirmation for an explicit save-to-disk
+/// action (native Save As dialog, or the configured downloads folder) — on
+/// desktop it adds a "Show in file system" action button so the user can
+/// jump straight to the saved file. Never call this for files that only
+/// landed in ONYX's own cache/support directories; those aren't meant to be
+/// browsed by the user.
+void showSavedToSnack(String path) {
+  if (!kIsWeb &&
+      (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+    final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+    rootScreenKey.currentState?.showSnack(
+      'Saved to: $path',
+      actionLabel: l.showInFileSystem,
+      onAction: () => revealInFileSystem(path),
+    );
+  } else {
+    rootScreenKey.currentState?.showSnack('Saved to: $path');
   }
 }
 

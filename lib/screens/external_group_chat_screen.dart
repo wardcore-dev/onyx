@@ -2,9 +2,12 @@
 import '../widgets/marquee_text.dart';
 import '../widgets/empty_chat_placeholder.dart';
 import '../widgets/onyx_dialog.dart';
+import '../widgets/apple_segmented_tabs.dart';
+import '../utils/code_heuristic.dart';
 import '../utils/chat_image_preloader.dart';
 import '../utils/gallery_extractor.dart';
 import 'media_gallery_screen.dart';
+import 'external_post_comments_screen.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import '../enums/liquid_glass_quality.dart';
 import 'package:ONYX/screens/forward_screen.dart';
@@ -27,6 +30,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory;
 import '../models/group.dart';
+import '../models/role.dart';
 import '../models/external_server.dart';
 import '../managers/external_server_manager.dart';
 import '../enums/media_provider.dart';
@@ -38,6 +42,8 @@ import '../widgets/file_preview_dialog.dart';
 import '../widgets/album_preview_dialog.dart';
 import '../widgets/voice_confirm_dialog.dart';
 import '../widgets/avatar_crop_screen.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import '../widgets/adaptive_glass_card.dart';
 import '../utils/clipboard_image.dart';
 import '../utils/file_utils.dart';
 import '../globals.dart';
@@ -67,6 +73,12 @@ const List<String> _randomHints = [
   'Write something...',
   'Break the silence!',
 ];
+
+Color _hexToColor(String hex) {
+  var value = hex.replaceFirst('#', '');
+  if (value.length == 6) value = 'FF$value';
+  return Color(int.tryParse(value, radix: 16) ?? 0xFF3498db);
+}
 
 List<Map<String, dynamic>> _parseJsonInIsolate(String jsonString) {
   final data = jsonDecode(jsonString) as List<dynamic>;
@@ -116,7 +128,21 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
   late String _groupName;
   late int _avatarVersion;
+  late int _slowModeSeconds;
   late String? _myRole;
+  Set<String> _myPermissions = {};
+  // username -> {'name': role display name, 'color': '#rrggbb'}
+  Map<String, Map<String, String>> _memberRoleInfo = {};
+  // Usernames currently muted — drives Mute vs Unmute in the message context
+  // menu. Seeded from /members (is_muted) and kept live via the
+  // member_muted/member_unmuted WS events.
+  Set<String> _mutedUsernames = {};
+
+  // Tracks whichever post's comment thread is currently pushed on top of
+  // this screen, so incoming comment_added/comment_deleted WS events can be
+  // forwarded live instead of only refreshing the badge count.
+  int? _openCommentsPostId;
+  GlobalKey<ExternalPostCommentsScreenState>? _openCommentsKey;
 
   Map<String, dynamic>? _replyingToMessage;
   Map<String, dynamic>? _pinnedMessage;
@@ -400,7 +426,27 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
   bool get _canPost {
     if (!widget.group.isChannel) return true;
-    return _myRole == 'owner' || _myRole == 'moderator';
+    return _myRole == 'owner' ||
+        _myRole == 'moderator' ||
+        _has('post_in_channel');
+  }
+
+  // Owner is treated as having every permission even against a server that
+  // hasn't started sending `my_permissions` yet (pre-custom-roles upgrade).
+  bool _has(String perm) => _myPermissions.contains(perm) || _myRole == 'owner';
+
+  // Whether the group/channel-profile dialog should render as editable at
+  // all (title "Edit ..." + editable fields) rather than a plain read-only
+  // "Group"/"Channel" info view.
+  bool get _hasAnyChannelEditPermission =>
+      _has('manage_settings') || _has('manage_slow_mode') || _has('manage_roles');
+
+  bool get _serverSupportsCustomRoles {
+    final liveServer = ExternalServerManager.servers.value.firstWhere(
+      (s) => s.id == widget.server.id,
+      orElse: () => widget.server,
+    );
+    return liveServer.features.contains('custom_roles');
   }
 
   @override
@@ -409,7 +455,10 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
     _groupName = widget.group.name;
     _avatarVersion = widget.group.avatarVersion;
+    _slowModeSeconds = widget.group.slowModeSeconds;
     _myRole = widget.group.myRole;
+    _myPermissions = widget.group.myPermissions;
+    if (!widget.group.isChannel) _loadMemberRoleInfo();
     _inputHint = _randomHints[Random().nextInt(_randomHints.length)];
     _focusNode = FocusNode();
     HardwareKeyboard.instance.addHandler(_handleGlobalKey);
@@ -423,20 +472,14 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     _loadHistoryFromCache();
 
     if (_isConnected) {
-      final voiceActive = VoiceChannelManager.instance.isInChannel.value &&
-          VoiceChannelManager.instance.currentServerId.value ==
-              widget.server.id;
-      if (voiceActive) {
-        // Keep the WS alive — _connectToServer will reuse it (just subscribes).
-        debugPrint(
-            '[ext-chat] Voice call active, reusing existing WS connection');
-        _isConnected = false;
-      } else {
-        debugPrint(
-            '[ext-chat] Server connected, disconnecting for fresh reconnection');
-        ExternalServerManager.disconnectWebSocket(widget.server.id);
-        _isConnected = false;
-      }
+      // Keep the WS alive and let _connectToServer just (re)subscribe and
+      // refresh history over it — tearing down and reconnecting from
+      // scratch here used to cost a full TCP+TLS+WS handshake on every
+      // screen open, which is fast on WiFi but can take several seconds on
+      // cellular, showing up as the screen hanging ~10s before the
+      // "connected" toast appeared on phones.
+      debugPrint('[ext-chat] Server connected, reusing existing WS connection');
+      _isConnected = false;
     }
 
     _isConnecting = true;
@@ -863,34 +906,108 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     }
 
     if (type == 'role_changed') {
-      final newRole = obj['role']?.toString();
-      if (newRole != null && mounted) {
+      final newRoleName = obj['role_name']?.toString();
+      final newPermissions = (obj['permissions'] as List?)
+              ?.map((e) => e.toString())
+              .toSet() ??
+          <String>{};
+      if (newRoleName != null && mounted) {
         final currentGroups = ExternalServerManager.externalGroups.value;
         final updatedGroups = currentGroups.map((g) {
           if (g.id == widget.group.id &&
               g.externalServerId == widget.server.id) {
-            return Group(
-              id: g.id,
-              name: g.name,
-              isChannel: g.isChannel,
-              owner: g.owner,
-              inviteLink: g.inviteLink,
-              avatarVersion: g.avatarVersion,
-              externalServerId: g.externalServerId,
-              myRole: newRole,
-            );
+            return g.copyWith(myRole: newRoleName, myPermissions: newPermissions);
           }
           return g;
         }).toList();
         ExternalServerManager.externalGroups.value = updatedGroups;
 
         setState(() {
-          _myRole = newRole;
+          _myRole = newRoleName;
+          _myPermissions = newPermissions;
         });
 
         rootScreenKey.currentState?.showSnack(
             lookupAppLocalizations(SettingsManager.appLocale.value)
-                .roleChanged(newRole));
+                .roleChanged(newRoleName));
+      }
+      return;
+    }
+
+    if (type == 'member_role_updated') {
+      final username = obj['username']?.toString();
+      final roleName = obj['role_name']?.toString();
+      final roleColor = obj['role_color']?.toString();
+      if (username != null &&
+          roleName != null &&
+          roleColor != null &&
+          mounted) {
+        setState(() {
+          _memberRoleInfo = {
+            ..._memberRoleInfo,
+            username: {'name': roleName, 'color': roleColor},
+          };
+        });
+      }
+      return;
+    }
+
+    if (type == 'comment_added' ||
+        type == 'comment_deleted' ||
+        type == 'comment_reaction_update') {
+      final postId = (obj['post_id'] as num?)?.toInt();
+      if (postId != null && mounted) {
+        if (type == 'comment_added') {
+          final comment = obj['comment'] as Map<String, dynamic>?;
+          setState(() {
+            _updateCommentCountLocal(postId, 1,
+                lastSender: comment?['sender']?.toString(),
+                lastContent: comment?['content']?.toString());
+          });
+        } else if (type == 'comment_deleted') {
+          setState(() {
+            _updateCommentCountLocal(postId, -1);
+          });
+        }
+        if (_openCommentsPostId == postId) {
+          _openCommentsKey?.currentState?.handleWsEvent(obj);
+        }
+      }
+      return;
+    }
+
+    if (type == 'member_muted' || type == 'member_unmuted') {
+      final username = obj['username']?.toString();
+      if (username != null && mounted) {
+        setState(() {
+          if (type == 'member_muted') {
+            _mutedUsernames = {..._mutedUsernames, username};
+          } else {
+            _mutedUsernames = {..._mutedUsernames}..remove(username);
+          }
+        });
+      }
+      return;
+    }
+
+    if (type == 'group_settings_updated') {
+      if (mounted) {
+        final currentGroups = ExternalServerManager.externalGroups.value;
+        final updatedGroups = currentGroups.map((g) {
+          if (g.id == widget.group.id &&
+              g.externalServerId == widget.server.id) {
+            return g.copyWith(
+              description: obj['description'] as String?,
+              defaultRoleId: obj['default_role_id'] as int?,
+              clearDefaultRoleId: obj['default_role_id'] == null,
+              maxMembers: obj['max_members'] as int?,
+              maxMessageLength: obj['max_message_length'] as int?,
+              maxMessagesPerMinute: obj['max_messages_per_minute'] as int?,
+            );
+          }
+          return g;
+        }).toList();
+        ExternalServerManager.externalGroups.value = updatedGroups;
       }
       return;
     }
@@ -908,16 +1025,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         final updatedGroups = currentGroups.map((g) {
           if (g.id == widget.group.id &&
               g.externalServerId == widget.server.id) {
-            return Group(
-              id: g.id,
-              name: newName,
-              isChannel: g.isChannel,
-              owner: g.owner,
-              inviteLink: g.inviteLink,
-              avatarVersion: g.avatarVersion,
-              externalServerId: g.externalServerId,
-              myRole: g.myRole,
-            );
+            return g.copyWith(name: newName);
           }
           return g;
         }).toList();
@@ -962,7 +1070,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
               _messages.indexWhere((m) => m['id']?.toString() == messageId);
           if (idx >= 0) _messages[idx]['reactions'] = reactionsMap;
         });
-        applyReactionUpdate('ext_$messageId', reactionsMap);
+        applyReactionCounts('ext_$messageId', reactionsMap);
         _debouncedCacheSave();
       }
       return;
@@ -984,16 +1092,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         final updatedGroups = currentGroups.map((g) {
           if (g.id == widget.group.id &&
               g.externalServerId == widget.server.id) {
-            return Group(
-              id: g.id,
-              name: g.name,
-              isChannel: g.isChannel,
-              owner: g.owner,
-              inviteLink: g.inviteLink,
-              avatarVersion: parsedVersion,
-              externalServerId: g.externalServerId,
-              myRole: g.myRole,
-            );
+            return g.copyWith(avatarVersion: parsedVersion);
           }
           return g;
         }).toList();
@@ -1054,6 +1153,132 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       'reply_to_content': obj['reply_to_content'],
     };
     _bufferIncomingMessage(newMsg);
+  }
+
+  // Mutates the cached comment_count (and, on a new comment, the last-comment
+  // preview) on a loaded message in-place so the comment badge stays live
+  // without re-fetching history. Call inside setState.
+  void _updateCommentCountLocal(int postId, int delta,
+      {String? lastSender, String? lastContent}) {
+    for (final m in _messages) {
+      if (int.tryParse(m['id']?.toString() ?? '') == postId) {
+        final current = (m['comment_count'] as num?)?.toInt() ?? 0;
+        m['comment_count'] = (current + delta).clamp(0, 1 << 31);
+        if (delta > 0 && lastSender != null) {
+          m['last_comment_sender'] = lastSender;
+          m['last_comment_content'] = lastContent;
+        }
+        break;
+      }
+    }
+  }
+
+  // A Telegram-style "N comments" bar under a channel post bubble — a
+  // distinct card (not just an inline label) showing the count plus a
+  // one-line preview of the most recent comment, if any.
+  Widget _buildCommentsAffordance(
+      BuildContext context, ColorScheme colorScheme, Map<String, dynamic> msg) {
+    final l = AppLocalizations.of(context);
+    final count = (msg['comment_count'] as num?)?.toInt() ?? 0;
+    final lastSender = msg['last_comment_sender']?.toString();
+    final lastContent = msg['last_comment_content']?.toString();
+    final hasPreview = count > 0 &&
+        lastSender != null &&
+        lastSender.isNotEmpty &&
+        lastContent != null;
+
+    return GestureDetector(
+      onTap: () => _openCommentsThread(msg),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        // IntrinsicWidth makes the pill hug its content (ending right after
+        // "Comment"/the preview text) instead of stretching to the bubble's
+        // full width; the ConstrainedBox below still caps it so a long
+        // preview ellipsizes rather than growing the pill unbounded.
+        child: IntrinsicWidth(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+              // Full stadium/pill shape rather than a soft-rounded card.
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.15),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.mode_comment_rounded,
+                    size: 13, color: colorScheme.primary),
+                const SizedBox(width: 6),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 200),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        count == 0
+                            ? l.addCommentAction
+                            : l.commentsCount(count),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: colorScheme.onSurface.withValues(alpha: 0.85),
+                        ),
+                      ),
+                      if (hasPreview) ...[
+                        const SizedBox(height: 1),
+                        Text(
+                          '$lastSender: ${getPreviewText(lastContent)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color:
+                                colorScheme.onSurface.withValues(alpha: 0.55),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Icon(Icons.chevron_right_rounded,
+                    size: 14,
+                    color: colorScheme.onSurface.withValues(alpha: 0.35)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openCommentsThread(Map<String, dynamic> msg) async {
+    final postId = int.tryParse(msg['id']?.toString() ?? '');
+    if (postId == null) return;
+    final key = GlobalKey<ExternalPostCommentsScreenState>();
+    _openCommentsPostId = postId;
+    _openCommentsKey = key;
+    await showExternalPostCommentsDialog(
+      context: context,
+      key: key,
+      server: widget.server,
+      postId: postId,
+      postSender: msg['sender']?.toString() ?? '',
+      postContent: msg['content']?.toString() ?? '',
+      canDeleteAny: _has('delete_messages'),
+      // Comments are open to every member server-side (create_comment only
+      // checks mute status, not post_in_channel) — unlike the top-level
+      // channel post box, _canPost must not gate the comment input.
+      canPost: true,
+      onPickAttachment: pickAndUploadCommentAttachment,
+      onUploadVoice: uploadCommentVoiceBytes,
+    );
+    _openCommentsPostId = null;
+    _openCommentsKey = null;
   }
 
   Future<void> _handleBanned(String? reason) async {
@@ -1285,6 +1510,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         if (data is Map<String, dynamic>) {
           final name = data['name']?.toString();
           final avatarVersion = data['avatar_version'];
+          final slowMode = data['slow_mode_seconds'];
           if (mounted && name != null) {
             setState(() {
               _groupName = name;
@@ -1293,12 +1519,58 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                     ? avatarVersion
                     : int.tryParse(avatarVersion.toString()) ?? _avatarVersion;
               }
+              if (slowMode != null) {
+                _slowModeSeconds = slowMode is int
+                    ? slowMode
+                    : int.tryParse(slowMode.toString()) ?? _slowModeSeconds;
+              }
             });
           }
         }
       }
     } catch (e) {
       debugPrint('[fetch-group-info] Error: $e');
+    }
+    _fetchMyRole();
+  }
+
+  // Refreshes the cached role/permissions from the server so a stale local
+  // cache (e.g. from before a role change while the WS was disconnected)
+  // never keeps admin controls hidden or wrongly shown.
+  Future<void> _fetchMyRole() async {
+    try {
+      final response = await http.get(
+        Uri.parse('${widget.server.baseUrl}/my-role'),
+        headers: {'authorization': 'Bearer ${widget.server.token}'},
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is Map<String, dynamic>) {
+          final role = data['role']?.toString();
+          final permissions = (data['my_permissions'] as List?)
+                  ?.map((e) => e.toString())
+                  .toSet() ??
+              <String>{};
+          if (mounted && role != null) {
+            final currentGroups = ExternalServerManager.externalGroups.value;
+            final updatedGroups = currentGroups.map((g) {
+              if (g.id == widget.group.id &&
+                  g.externalServerId == widget.server.id) {
+                return g.copyWith(myRole: role, myPermissions: permissions);
+              }
+              return g;
+            }).toList();
+            ExternalServerManager.externalGroups.value = updatedGroups;
+
+            setState(() {
+              _myRole = role;
+              _myPermissions = permissions;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[fetch-my-role] Error: $e');
     }
   }
 
@@ -1354,9 +1626,31 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       // refresh fires — which happens on every websocket reconnect. Keep
       // everything we already had locally (pending AND already-confirmed)
       // and only let the fresh fetch add/update, never silently remove.
+      //
+      // BUT a message that's missing from the fetch *and* falls within the
+      // id range the fetch actually covers was deleted server-side, not
+      // merely paged out — the fetch is DESC-ordered by id with no gaps
+      // among existing rows, so every currently-existing message with id >=
+      // the smallest id in this batch is guaranteed to be present in it.
+      // Without this distinction, a deletion only ever "stuck" for clients
+      // that were live-connected at that exact moment (via group_msg_deleted
+      // over WS); everyone else's next history refresh silently resurrected
+      // the message from their local cache forever.
+      final fetchedIds = newMessages
+          .map((m) => int.tryParse(m['id']?.toString() ?? ''))
+          .whereType<int>();
+      final minFetchedId =
+          fetchedIds.isEmpty ? null : fetchedIds.reduce((a, b) => a < b ? a : b);
+
       final previouslyKnown = _messages.where((msg) {
-        final id = msg['id']?.toString() ?? '';
-        return id.isNotEmpty;
+        final idStr = msg['id']?.toString() ?? '';
+        if (idStr.isEmpty) return false;
+        final id = int.tryParse(idStr);
+        if (id != null && minFetchedId != null && id >= minFetchedId) {
+          // Within the fetched window but absent from it — deleted.
+          return false;
+        }
+        return true;
       }).toList();
 
       final mergedMessages = <Map<String, dynamic>>[];
@@ -1443,6 +1737,12 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     }
   }
 
+  String _formatMuteExpiry(int expiresAtMs) {
+    final date = DateTime.fromMillisecondsSinceEpoch(expiresAtMs);
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} '
+        '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+  }
+
   Future<void> _sendMessage(String text) async {
     if (text.trim().isEmpty) return;
 
@@ -1458,6 +1758,23 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           lookupAppLocalizations(SettingsManager.appLocale.value)
               .onlyModsCanPost);
       return;
+    }
+
+    if (looksLikeCode(text)) {
+      final l = AppLocalizations.of(context);
+      final sendAsCode = await showOnyxConfirmDialog(
+        context: context,
+        title: l.sendAsCodeTitle,
+        message: l.sendAsCodeContent,
+        confirmLabel: l.sendAsCode,
+        cancelLabel: l.sendAsPlainText,
+        icon: Icons.code_rounded,
+      );
+      if (!mounted) return;
+      if (sendAsCode == null) return;
+      if (sendAsCode) {
+        text = '```${detectCodeLanguage(text)}\n$text\n```';
+      }
     }
 
     final replyInfo = _replyingToMessage;
@@ -1544,8 +1861,26 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           _messages.removeWhere((m) => m['id'] == tempId);
           _allMessageIds.remove(tempId);
         });
-        rootScreenKey.currentState?.showSnack(
-            lookupAppLocalizations(SettingsManager.appLocale.value).sendFailed);
+        if (e is ExternalSendException && e.isMute) {
+          showOnyxInfoDialog(
+            context: context,
+            title: AppLocalizations.of(context).youAreMutedTitle,
+            message: e.muteExpiresAt != null
+                ? AppLocalizations.of(context)
+                    .mutedUntilMessage(_formatMuteExpiry(e.muteExpiresAt!))
+                : e.message,
+            icon: Icons.volume_off_rounded,
+            isError: true,
+          );
+        } else if (e is ExternalSendException) {
+          rootScreenKey.currentState?.showSnack(
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .errorMsg(e.message));
+        } else {
+          rootScreenKey.currentState?.showSnack(
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .sendFailed);
+        }
       }
     }
   }
@@ -1599,6 +1934,60 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     _focusNode.requestFocus();
   }
 
+  void _startEditingExtMessage(Map<String, dynamic> msg) {
+    final content = msg['content']?.toString() ?? '';
+    final msgId = msg['id']?.toString();
+    if (msgId == null) return;
+    setState(() {
+      _editingMsgId = msgId;
+      _editingOriginalContent = content;
+    });
+    _textCtrl.text = content;
+    _textCtrl.selection = TextSelection.fromPosition(
+      TextPosition(offset: content.length),
+    );
+    _focusNode.requestFocus();
+  }
+
+  Future<void> _deleteExtMessage(String msgId) async {
+    try {
+      final resp = await http.delete(
+        Uri.parse(
+            '${widget.server.baseUrl}/groups/${widget.group.id}/messages/$msgId'),
+        headers: {'authorization': 'Bearer ${widget.server.token}'},
+      );
+      if (resp.statusCode == 200 && mounted) {
+        setState(() {
+          _messages.removeWhere((m) => m['id']?.toString() == msgId);
+        });
+        unawaited(_saveHistoryToCache(_messages));
+      } else if (mounted) {
+        rootScreenKey.currentState?.showSnack(
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .failedDelete);
+      }
+    } catch (e) {
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack(
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .failedDelete);
+      }
+    }
+  }
+
+  Future<void> _confirmDeleteExtMessage(String msgId) async {
+    final l = AppLocalizations.of(context);
+    final confirmed = await showOnyxConfirmDialog(
+      context: context,
+      title: l.deleteMessageTitle,
+      message: l.deleteGroupMsgContent,
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
+    );
+    if (confirmed == true) _deleteExtMessage(msgId);
+  }
+
   Future<void> _serverToggleReaction(
       int messageId, String emoji, bool wasReacted) async {
     try {
@@ -1639,6 +2028,23 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           });
           applyReactionUpdate('ext_$messageId', reactionsMap);
           _debouncedCacheSave();
+        }
+      } else {
+        // The tap already applied an optimistic toggle (see callers) —
+        // undo it now that the server rejected the request (e.g. the
+        // 2-different-emojis cap), so the UI doesn't show a reaction that
+        // was never actually recorded.
+        toggleReaction('ext_$messageId', emoji, widget.server.username,
+            anonymous: true);
+        if (mounted) {
+          final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+          try {
+            final error = jsonDecode(resp.body)['error'] ?? l.failedReaction;
+            rootScreenKey.currentState
+                ?.showSnack(l.errorMsg(error.toString()));
+          } catch (_) {
+            rootScreenKey.currentState?.showSnack(l.failedReaction);
+          }
         }
       }
     } catch (e) {
@@ -1714,7 +2120,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         final t = AppLocalizations.of(dialogContext);
         return Dialog(
           shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
           clipBehavior: Clip.antiAlias,
           insetPadding:
               const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
@@ -2135,6 +2541,14 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
   void _showExternalMessageMenu(Map<String, dynamic> msg) async {
     _focusNode.unfocus();
     final content = msg['content']?.toString() ?? '';
+    final rawSender = msg['sender']?.toString() ?? '';
+    final isMe = rawSender == widget.server.username;
+    // Editing someone else's message is never allowed for anyone, matching
+    // the server (there is no edit-any-message permission). delete_messages
+    // holders may delete anyone's message, in both groups and channels.
+    final canEdit = isMe;
+    final canDelete = isMe || _has('delete_messages');
+    final msgId = msg['id']?.toString();
     final isImage = content.startsWith('IMAGEv1:');
     final isAlbum = content.startsWith('ALBUMv1:');
     final isVideo = content.toUpperCase().startsWith('VIDEOV1:');
@@ -2206,7 +2620,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
               margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               decoration: BoxDecoration(
                 color: sheetColor,
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(28),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -2221,16 +2635,18 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                     ),
                   ),
                   const SizedBox(height: 8),
-                  actionTile(Icons.reply_rounded, 'Reply', () {
-                    Navigator.pop(ctx);
-                    _startReply(msg);
-                  }),
+                  if (_canPost)
+                    actionTile(Icons.reply_rounded, 'Reply', () {
+                      Navigator.pop(ctx);
+                      _startReply(msg);
+                    }),
                   actionTile(Icons.add_reaction_outlined, 'React', () {
                     Navigator.pop(ctx);
                     final extMsgId = msg['id']?.toString() ?? '';
                     final msgIdInt = int.tryParse(extMsgId);
                     openEmojiPicker(
                         context, 'ext_$extMsgId', widget.server.username,
+                        anonymous: true,
                         onAfterToggle: (emoji, wasReacted) {
                       if (msgIdInt != null) {
                         _serverToggleReaction(msgIdInt, emoji, wasReacted);
@@ -2282,6 +2698,54 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                   SettingsManager.appLocale.value)
                               .msgCopied);
                     }),
+                  if (canEdit && !isMedia && msgId != null)
+                    actionTile(
+                        Icons.edit_rounded, AppLocalizations.of(context).edit,
+                        () {
+                      Navigator.pop(ctx);
+                      _startEditingExtMessage(msg);
+                    }),
+                  if (canDelete && msgId != null)
+                    actionTile(
+                      Icons.delete_outline_rounded,
+                      AppLocalizations.of(context).delete,
+                      () {
+                        Navigator.pop(ctx);
+                        _confirmDeleteExtMessage(msgId);
+                      },
+                      color: Colors.red.shade400,
+                    ),
+                  if (!widget.group.isChannel &&
+                      !isMe &&
+                      (_has('mute_members') || _has('view_mute_list')))
+                    actionTile(
+                      _mutedUsernames.contains(rawSender)
+                          ? Icons.volume_up_rounded
+                          : Icons.volume_off_rounded,
+                      _mutedUsernames.contains(rawSender)
+                          ? AppLocalizations.of(context).unmuteAction
+                          : AppLocalizations.of(context).muteAction,
+                      () {
+                        Navigator.pop(ctx);
+                        if (_mutedUsernames.contains(rawSender)) {
+                          _unmuteMemberFromChat(rawSender);
+                        } else {
+                          _muteMemberFromChat(rawSender);
+                        }
+                      },
+                    ),
+                  if (!widget.group.isChannel &&
+                      !isMe &&
+                      (_has('ban_members') || _has('view_ban_list')))
+                    actionTile(
+                      Icons.block_rounded,
+                      AppLocalizations.of(context).ban,
+                      () {
+                        Navigator.pop(ctx);
+                        _banMemberFromChat(rawSender);
+                      },
+                      color: Colors.red.shade400,
+                    ),
                   const SizedBox(height: 4),
                 ],
               ),
@@ -2590,7 +3054,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           }
           final destPath = '${onyxDir.path}/$originalName';
           await file.copy(destPath);
-          rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+          showSavedToSnack(destPath);
         }
         return;
       }
@@ -2618,7 +3082,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           return;
         }
         await file.copy(destPath);
-        rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+        showSavedToSnack(destPath);
       }
     } catch (e) {
       rootScreenKey.currentState?.showSnack('Save failed: $e');
@@ -2629,6 +3093,12 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       Map<String, dynamic> msg) {
     final content = msg['content']?.toString() ?? '';
     final rawSender = msg['sender']?.toString() ?? '';
+    final isMe = rawSender == widget.server.username;
+    // See _showExternalMessageMenu: no one may edit another user's message;
+    // delete_messages holders may delete anyone's message.
+    final canEdit = isMe;
+    final canDelete = isMe || _has('delete_messages');
+    final msgId = msg['id']?.toString();
     final isImage = content.startsWith('IMAGEv1:');
     final isAlbum = content.startsWith('ALBUMv1:');
     final isVideo = content.toUpperCase().startsWith('VIDEOV1:');
@@ -2670,15 +3140,16 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                 content.contains('cdn.')));
     final l = AppLocalizations.of(context);
     return [
-      DesktopMenuItem(
-        icon: Icons.reply_rounded,
-        label: l.reply,
-        onPressed: () => _startReply({
-          'id': msg['id']?.toString(),
-          'sender': rawSender,
-          'content': content,
-        }),
-      ),
+      if (_canPost)
+        DesktopMenuItem(
+          icon: Icons.reply_rounded,
+          label: l.reply,
+          onPressed: () => _startReply({
+            'id': msg['id']?.toString(),
+            'sender': rawSender,
+            'content': content,
+          }),
+        ),
       DesktopMenuItem(
         icon: Icons.add_reaction_outlined,
         label: l.react,
@@ -2686,6 +3157,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
           final extMsgId = msg['id']?.toString() ?? '';
           final msgIdInt = int.tryParse(extMsgId);
           openEmojiPicker(context, 'ext_$extMsgId', widget.server.username,
+              anonymous: true,
               onAfterToggle: (emoji, wasReacted) {
             if (msgIdInt != null) {
               _serverToggleReaction(msgIdInt, emoji, wasReacted);
@@ -2718,6 +3190,20 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
             rootScreenKey.currentState?.showSnack(l.msgCopied);
           },
         ),
+      if (canEdit && !isMedia && msgId != null)
+        DesktopMenuItem(
+          icon: Icons.edit_rounded,
+          label: l.edit,
+          onPressed: () => _startEditingExtMessage(msg),
+        ),
+      if (canDelete && msgId != null)
+        DesktopMenuItem(
+          icon: Icons.delete_outline_rounded,
+          label: l.delete,
+          type: ContextMenuButtonType.delete,
+          color: Colors.red.shade400,
+          onPressed: () => _confirmDeleteExtMessage(msgId),
+        ),
       if (isFile)
         DesktopMenuItem(
           icon: Icons.folder_open_rounded,
@@ -2742,7 +3228,365 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
             revealInFileSystem(localPath);
           },
         ),
+      if (!widget.group.isChannel &&
+          !isMe &&
+          (_has('mute_members') || _has('view_mute_list')))
+        DesktopMenuItem(
+          icon: _mutedUsernames.contains(rawSender)
+              ? Icons.volume_up_rounded
+              : Icons.volume_off_rounded,
+          label: _mutedUsernames.contains(rawSender)
+              ? l.unmuteAction
+              : l.muteAction,
+          onPressed: () => _mutedUsernames.contains(rawSender)
+              ? _unmuteMemberFromChat(rawSender)
+              : _muteMemberFromChat(rawSender),
+        ),
+      if (!widget.group.isChannel &&
+          !isMe &&
+          (_has('ban_members') || _has('view_ban_list')))
+        DesktopMenuItem(
+          icon: Icons.block_rounded,
+          label: l.ban,
+          color: Colors.red.shade400,
+          onPressed: () => _banMemberFromChat(rawSender),
+        ),
     ];
+  }
+
+  // Mirrors _MembersManagementDialogState's mute/ban flow so the same action
+  // is reachable from a message's context menu (right-click / long-press),
+  // not just the Manage Members list. "Manage Mute List"/"Manage Ban List"
+  // (view_mute_list/view_ban_list) grant this too — see the server-side OR
+  // in moderation_handlers.rs / members.rs.
+  Future<void> _muteMemberFromChat(String username) async {
+    final reasonController = TextEditingController();
+    int selectedMinutes = 15;
+
+    final confirmed = await showOnyxDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final cs = Theme.of(context).colorScheme;
+          return OnyxDialogShell(
+            maxWidth: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                OnyxDialogHeader(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: cs.secondary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child:
+                        Icon(Icons.volume_off, size: 20, color: cs.secondary),
+                  ),
+                  title: Text(
+                    AppLocalizations.of(context).muteUserTitle(username),
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: cs.onSurface),
+                  ),
+                  onClose: () => Navigator.pop(context, false),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                          AppLocalizations.of(context)
+                              .durationLabel
+                              .toUpperCase(),
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.0,
+                              color: cs.onSurface.withValues(alpha: 0.38))),
+                      const SizedBox(height: 8),
+                      Builder(builder: (context) {
+                        final options = [
+                          (15, AppLocalizations.of(context).duration15Min),
+                          (60, AppLocalizations.of(context).duration1Hour),
+                          (
+                            60 * 24,
+                            AppLocalizations.of(context).duration1Day
+                          ),
+                          (
+                            60 * 24 * 7,
+                            AppLocalizations.of(context).duration1Week
+                          ),
+                        ];
+                        final selectedIndex = options
+                            .indexWhere((o) => o.$1 == selectedMinutes)
+                            .clamp(0, options.length - 1);
+                        return AppleValueSegmentedControl(
+                          labels: options.map((o) => o.$2).toList(),
+                          selectedIndex: selectedIndex,
+                          onChanged: (i) => setDialogState(
+                              () => selectedMinutes = options[i].$1),
+                        );
+                      }),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: reasonController,
+                        decoration: InputDecoration(
+                          labelText:
+                              AppLocalizations.of(context).muteReasonLabel,
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24)),
+                          filled: true,
+                          fillColor:
+                              cs.surfaceContainerHighest.withValues(alpha: 0.3),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20, vertical: 14),
+                        ),
+                        maxLines: 2,
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FilledButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        style: FilledButton.styleFrom(
+                          padding: kOnyxDialogButtonPadding,
+                          shape: kOnyxDialogButtonShape,
+                        ),
+                        child: Text(AppLocalizations.of(context).muteAction),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        style: OutlinedButton.styleFrom(
+                          padding: kOnyxDialogButtonPadding,
+                          shape: kOnyxDialogButtonShape,
+                        ),
+                        child: Text(AppLocalizations.of(context).cancel),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final url =
+          '${widget.server.baseUrl}/members/${Uri.encodeComponent(username)}/mute';
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Authorization': 'Bearer ${widget.server.token}',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'reason': reasonController.text.trim(),
+              'duration_minutes': selectedMinutes,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+      if (response.statusCode == 200) {
+        rootScreenKey.currentState?.showSnack(l.userMuted(username));
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? l.failedMute;
+          rootScreenKey.currentState?.showSnack(l.errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(l.errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[mute] Exception: $e');
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .failedMuteUser(username));
+    }
+  }
+
+  Future<void> _unmuteMemberFromChat(String username) async {
+    try {
+      final url =
+          '${widget.server.baseUrl}/members/${Uri.encodeComponent(username)}/unmute';
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: {'Authorization': 'Bearer ${widget.server.token}'},
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+      if (response.statusCode == 200) {
+        rootScreenKey.currentState?.showSnack(l.userUnmuted(username));
+        if (mounted) {
+          setState(() {
+            _mutedUsernames = {..._mutedUsernames}..remove(username);
+          });
+        }
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? l.failedUnmute;
+          rootScreenKey.currentState?.showSnack(l.errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(l.errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[unmute] Exception: $e');
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .failedUnmuteUser(username));
+    }
+  }
+
+  Future<void> _banMemberFromChat(String username) async {
+    final reasonController = TextEditingController();
+    final confirm = await showOnyxDialog<bool>(
+      context: context,
+      builder: (context) {
+        final cs = Theme.of(context).colorScheme;
+        return OnyxDialogShell(
+          maxWidth: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              OnyxDialogHeader(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: cs.error.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.block, size: 20, color: cs.error),
+                ),
+                title: Text(
+                  AppLocalizations.of(context).banMemberTitle,
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: cs.onSurface),
+                ),
+                onClose: () => Navigator.pop(context, false),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      AppLocalizations.of(context).banConfirm(username),
+                      style: TextStyle(
+                          fontSize: 14,
+                          height: 1.4,
+                          color: cs.onSurface.withValues(alpha: 0.65)),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: reasonController,
+                      decoration: InputDecoration(
+                        labelText: AppLocalizations.of(context).banReason,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(24)),
+                        filled: true,
+                        fillColor:
+                            cs.surfaceContainerHighest.withValues(alpha: 0.3),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 14),
+                      ),
+                      maxLines: 2,
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: FilledButton.styleFrom(
+                        padding: kOnyxDialogButtonPadding,
+                        shape: kOnyxDialogButtonShape,
+                        backgroundColor: cs.error,
+                        foregroundColor: cs.onError,
+                      ),
+                      child: Text(AppLocalizations.of(context).ban),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      style: OutlinedButton.styleFrom(
+                        padding: kOnyxDialogButtonPadding,
+                        shape: kOnyxDialogButtonShape,
+                      ),
+                      child: Text(AppLocalizations.of(context).cancel),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final url =
+          '${widget.server.baseUrl}/members/${Uri.encodeComponent(username)}/ban';
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Authorization': 'Bearer ${widget.server.token}',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'reason': reasonController.text.trim()}),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        rootScreenKey.currentState?.showSnack(
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .userBanned(username));
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? 'Failed to ban';
+          rootScreenKey.currentState?.showSnack(
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[ban] Exception: $e');
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value).failedBan);
+    }
   }
 
   bool get _isReadOnlyChannel => !_canPost;
@@ -2944,7 +3788,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     try {
       final res = await http.post(
         Uri.parse(
-            '${widget.server.baseUrl}/group/join/${widget.group.inviteLink}'),
+            '${widget.server.baseUrl}/groups/join/${widget.group.inviteLink}'),
         headers: {
           'authorization': 'Bearer ${widget.server.token}',
         },
@@ -3074,6 +3918,106 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
     for (final task in List<UploadTask>.from(_pendingUploads)) {
       _cancelUpload(task);
     }
+  }
+
+  // Pick a single image/video and upload it, returning the encoded
+  // MEDIA_PROXYv1 content string ready to post — used by the comment thread
+  // dialog's attach button, which posts to /messages/:id/comments instead of
+  // the main chat's /send. Deliberately skips the bulk/album/drag-drop paths
+  // _pickAndUploadMedia supports: a comment only ever carries one attachment.
+  Future<String?> pickAndUploadCommentAttachment() async {
+    if (kIsWeb) {
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .mediaUploadNotSupportedWeb);
+      return null;
+    }
+
+    String? path;
+    if (Platform.isAndroid || Platform.isIOS) {
+      final paths = await showMediaPickerSheet(context);
+      path = (paths != null && paths.isNotEmpty) ? paths.first : null;
+    } else {
+      try {
+        final result = await FilePicker.platform.pickFiles(type: FileType.media);
+        path = result?.files.first.path;
+      } catch (e) {
+        debugPrint('[comment-attach] FilePicker error: $e');
+        rootScreenKey.currentState?.showSnack('File picker error: $e');
+        return null;
+      }
+    }
+    if (path == null) return null;
+
+    final fileType = FileTypeDetector.getFileType(path);
+    if (fileType != 'IMAGE' && fileType != 'VIDEO') {
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .unsupportedFileType(p.extension(path)));
+      return null;
+    }
+
+    final bytes = await File(path).readAsBytes();
+    final basename = p.basename(path);
+    String? link;
+    String providerName;
+    if (_serverHasLocalMedia) {
+      link = await _uploadToServer(bytes, basename);
+      providerName = 'server';
+    } else {
+      const provider = MediaProvider.catbox;
+      link = await _uploadToProvider(bytes, basename, provider);
+      providerName = provider.name;
+    }
+    if (link == null) {
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .uploadFailed);
+      return null;
+    }
+
+    final type = fileType == 'IMAGE' ? 'image' : 'video';
+    final payload = jsonEncode({
+      'url': link,
+      'orig': basename,
+      'provider': providerName,
+      'type': type,
+    });
+    return 'MEDIA_PROXYv1:$payload';
+  }
+
+  // Uploads already-recorded voice bytes and returns the encoded
+  // MEDIA_PROXYv1 content string — mirrors _uploadVoiceBytes but returns the
+  // content instead of sending it as a main-chat message, so the comment
+  // dialog can post it to /messages/:id/comments itself.
+  Future<String?> uploadCommentVoiceBytes(Uint8List bytes) async {
+    final recordedPath = rootScreenKey.currentState?.lastRecordedPathForUpload;
+    final ext = recordedPath != null ? p.extension(recordedPath) : '.wav';
+    final basename = 'voice_${DateTime.now().millisecondsSinceEpoch}$ext';
+
+    String? link;
+    String providerName;
+    if (_serverHasLocalMedia) {
+      link = await _uploadToServer(bytes, basename);
+      providerName = 'server';
+    } else {
+      const provider = MediaProvider.catbox;
+      link = await _uploadToProvider(bytes, basename, provider);
+      providerName = provider.name;
+    }
+    if (link == null) {
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .voiceUploadFailed);
+      return null;
+    }
+    final payload = jsonEncode({
+      'url': link,
+      'orig': basename,
+      'provider': providerName,
+      'type': 'voice',
+    });
+    return 'MEDIA_PROXYv1:$payload';
   }
 
   Future<void> _pickAndUploadMedia() async {
@@ -3581,7 +4525,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                 horizontal: 12, vertical: 10),
                             decoration: BoxDecoration(
                               color: baseColor.withValues(alpha: opacity),
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(28),
                               border: Border.all(
                                 color: colorScheme.outlineVariant
                                     .withValues(alpha: 0.15),
@@ -3654,7 +4598,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                 horizontal: 12, vertical: 10),
                             decoration: BoxDecoration(
                               color: baseColor.withValues(alpha: opacity),
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(28),
                               border: Border.all(
                                 color: colorScheme.outlineVariant
                                     .withValues(alpha: 0.15),
@@ -3856,7 +4800,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                     settings: settings,
                     quality: glassQuality,
                     padding: EdgeInsets.zero,
-                    shape: LiquidRoundedRectangle(borderRadius: 24),
+                    shape: LiquidRoundedRectangle(borderRadius: 28),
                     clipBehavior: Clip.antiAlias,
                     child: bar,
                   );
@@ -3870,181 +4814,626 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
   }
 
   Future<void> _showEditProfileDialog() async {
+    final canEdit = _hasAnyChannelEditPermission;
+    final canEditSettings = _has('manage_settings');
+
+    var liveDescription = widget.group.description;
+    var liveDefaultRoleId = widget.group.defaultRoleId;
+    var liveMaxMembers = widget.group.maxMembers;
+    var liveMaxMessageLength = widget.group.maxMessageLength;
+    var liveMaxMessagesPerMinute = widget.group.maxMessagesPerMinute;
+    List<Role> roles = [];
+
+    if (_serverSupportsCustomRoles) {
+      final fetchedSettings = await _loadGroupSettings();
+      if (fetchedSettings != null) {
+        liveDescription =
+            fetchedSettings['description'] as String? ?? liveDescription;
+        liveDefaultRoleId =
+            fetchedSettings['default_role_id'] as int? ?? liveDefaultRoleId;
+        liveMaxMembers =
+            fetchedSettings['max_members'] as int? ?? liveMaxMembers;
+        liveMaxMessageLength =
+            fetchedSettings['max_message_length'] as int? ??
+                liveMaxMessageLength;
+        liveMaxMessagesPerMinute =
+            fetchedSettings['max_messages_per_minute'] as int? ??
+                liveMaxMessagesPerMinute;
+      }
+      roles = await _loadRoles();
+    }
+    if (!mounted) return;
+
     final nameController = TextEditingController(text: _groupName);
+    final slowModeController =
+        TextEditingController(text: _slowModeSeconds.toString());
+    final descriptionController =
+        TextEditingController(text: liveDescription);
+    final maxMembersController =
+        TextEditingController(text: liveMaxMembers.toString());
+    final maxMessageLengthController =
+        TextEditingController(text: liveMaxMessageLength.toString());
+    final maxMessagesPerMinuteController =
+        TextEditingController(text: liveMaxMessagesPerMinute.toString());
     Uint8List? newAvatarBytes;
     bool removeAvatar = false;
+    int? defaultRoleId = liveDefaultRoleId;
 
-    await showDialog(
+    await showOnyxDialog(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          backgroundColor: Theme.of(context)
-              .colorScheme
-              .surface
-              .withValues(alpha: SettingsManager.elementOpacity.value),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(widget.group.isChannel ? 'Edit Channel' : 'Edit Group'),
-          content: SingleChildScrollView(
+        builder: (context, setState) {
+          final cs = Theme.of(context).colorScheme;
+          return OnyxDialogShell(
+            maxWidth: 400,
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                GestureDetector(
-                  onTap: () async {
-                    final result = await FilePicker.platform.pickFiles(
-                      type: FileType.image,
-                      withData: true,
-                    );
-                    if (result == null ||
-                        result.files.first.bytes == null ||
-                        !mounted) {
-                      return;
-                    }
-                    final bytes = result.files.first.bytes!;
-
-                    final croppedBytes =
-                        await showAvatarCropScreen(this.context, bytes);
-                    if (croppedBytes != null && mounted) {
-                      setState(() {
-                        newAvatarBytes = croppedBytes;
-                        removeAvatar = false;
-                      });
-                    }
-                  },
-                  onLongPress: () {
-                    setState(() {
-                      newAvatarBytes = null;
-                      removeAvatar = true;
-                    });
-                    rootScreenKey.currentState?.showSnack(
-                        lookupAppLocalizations(SettingsManager.appLocale.value)
-                            .avatarWillBeDeleted);
-                  },
-                  child: CircleAvatar(
-                    key: ValueKey(
-                        'edit_avatar_${widget.server.id}_${widget.group.id}_${_groupName}_$_avatarVersion'),
-                    radius: 60,
-                    backgroundColor:
-                        Theme.of(context).colorScheme.primaryContainer,
-                    backgroundImage: newAvatarBytes != null
-                        ? MemoryImage(newAvatarBytes!)
-                        : (!removeAvatar && _avatarVersion > 0
-                            ? NetworkImage(
-                                '${widget.server.baseUrl}/groups/${widget.group.id}/avatar?v=$_avatarVersion&sid=${widget.server.id}')
-                            : null) as ImageProvider?,
-                    child: (newAvatarBytes == null &&
-                            (removeAvatar || _avatarVersion == 0))
-                        ? Icon(Icons.group,
-                            size: 60,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onPrimaryContainer)
-                        : null,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Tap to change • Hold to remove',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                GestureDetector(
-                  onTap: () {
-                    Clipboard.setData(ClipboardData(
-                        text: '${widget.server.host}:${widget.server.port}'));
-                    rootScreenKey.currentState?.showSnack(
-                        lookupAppLocalizations(SettingsManager.appLocale.value)
-                            .ipCopied);
-                  },
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                OnyxDialogHeader(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
                     decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(20),
+                      color: cs.primary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
                     ),
-                    child: Row(
+                    child: Icon(canEdit ? Icons.edit : Icons.info_outline,
+                        size: 20, color: cs.primary),
+                  ),
+                  title: Text(
+                    canEdit
+                        ? (widget.group.isChannel
+                            ? AppLocalizations.of(context).editChannelTitle
+                            : AppLocalizations.of(context).editGroupTitle)
+                        : (widget.group.isChannel
+                            ? AppLocalizations.of(context).channelInfoTitle
+                            : AppLocalizations.of(context).groupInfoTitle),
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: cs.onSurface),
+                  ),
+                  onClose: () => Navigator.pop(context),
+                ),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        Icon(Icons.dns_outlined,
-                            size: 13,
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant),
-                        const SizedBox(width: 6),
-                        Text(
-                          '${widget.server.host}:${widget.server.port}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
+                        GestureDetector(
+                          onTap: canEditSettings
+                              ? () async {
+                                  final result = await FilePicker.platform
+                                      .pickFiles(
+                                    type: FileType.image,
+                                    withData: true,
+                                  );
+                                  if (result == null ||
+                                      result.files.first.bytes == null ||
+                                      !mounted) {
+                                    return;
+                                  }
+                                  final bytes = result.files.first.bytes!;
+
+                                  final croppedBytes =
+                                      await showAvatarCropScreen(
+                                          this.context, bytes);
+                                  if (croppedBytes != null && mounted) {
+                                    setState(() {
+                                      newAvatarBytes = croppedBytes;
+                                      removeAvatar = false;
+                                    });
+                                  }
+                                }
+                              : null,
+                          onLongPress: canEditSettings
+                              ? () {
+                                  setState(() {
+                                    newAvatarBytes = null;
+                                    removeAvatar = true;
+                                  });
+                                  rootScreenKey.currentState?.showSnack(
+                                      lookupAppLocalizations(
+                                              SettingsManager.appLocale.value)
+                                          .avatarWillBeDeleted);
+                                }
+                              : null,
+                          child: Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: cs.primary.withValues(alpha: 0.16),
+                                width: 2,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: cs.primary.withValues(alpha: 0.10),
+                                  blurRadius: 18,
+                                  spreadRadius: 1,
+                                ),
+                              ],
+                            ),
+                            child: CircleAvatar(
+                              key: ValueKey(
+                                  'edit_avatar_${widget.server.id}_${widget.group.id}_${_groupName}_$_avatarVersion'),
+                              radius: 58,
+                              backgroundColor: cs.primaryContainer,
+                              backgroundImage: newAvatarBytes != null
+                                  ? MemoryImage(newAvatarBytes!)
+                                  : (!removeAvatar && _avatarVersion > 0
+                                      ? NetworkImage(
+                                          '${widget.server.baseUrl}/groups/${widget.group.id}/avatar?v=$_avatarVersion&sid=${widget.server.id}')
+                                      : null) as ImageProvider?,
+                              child: (newAvatarBytes == null &&
+                                      (removeAvatar || _avatarVersion == 0))
+                                  ? Icon(Icons.group,
+                                      size: 56,
+                                      color: cs.onPrimaryContainer)
+                                  : null,
+                            ),
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        Icon(Icons.copy,
-                            size: 12,
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant),
+                        if (canEditSettings) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            AppLocalizations.of(context).tapAvatarLongRemove,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        GestureDetector(
+                          onTap: () {
+                            Clipboard.setData(ClipboardData(
+                                text:
+                                    '${widget.server.host}:${widget.server.port}'));
+                            rootScreenKey.currentState?.showSnack(
+                                lookupAppLocalizations(
+                                        SettingsManager.appLocale.value)
+                                    .ipCopied);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 7),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest
+                                  .withValues(alpha: 0.5),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .outline
+                                    .withValues(alpha: 0.12),
+                                width: 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.dns_outlined,
+                                    size: 13,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '${widget.server.host}:${widget.server.port}',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures()
+                                    ],
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Icon(Icons.copy,
+                                    size: 12,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        if (canEditSettings)
+                          TextField(
+                            controller: nameController,
+                            decoration: InputDecoration(
+                              labelText: widget.group.isChannel
+                                  ? AppLocalizations.of(context)
+                                      .channelNameLabel
+                                  : AppLocalizations.of(context)
+                                      .groupNameLabel,
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(50)),
+                              filled: true,
+                              fillColor: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest
+                                  .withValues(alpha: 0.3),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 14),
+                              counterText: '',
+                            ),
+                            maxLength: 64,
+                          )
+                        else
+                          Text(
+                            _groupName,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: -0.2,
+                                color: cs.onSurface),
+                          ),
+                        // Slow mode applies server-side to groups as well as
+                        // channels (see send_message in messages.rs), so the
+                        // field must be reachable there too, not gated on
+                        // isChannel.
+                        if (_has('manage_slow_mode')) ...[
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: slowModeController,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              labelText:
+                                  AppLocalizations.of(context).slowModeLabel,
+                              helperText:
+                                  AppLocalizations.of(context).slowModeHelper,
+                              helperMaxLines: 2,
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(50)),
+                              filled: true,
+                              fillColor: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest
+                                  .withValues(alpha: 0.3),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 14),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        if (canEditSettings)
+                          TextField(
+                            controller: descriptionController,
+                            maxLines: 4,
+                            maxLength: 500,
+                            decoration: InputDecoration(
+                              labelText: AppLocalizations.of(context)
+                                  .descriptionLabel,
+                              hintText: AppLocalizations.of(context)
+                                  .descriptionHint,
+                              alignLabelWithHint: true,
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(20)),
+                              filled: true,
+                              fillColor: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest
+                                  .withValues(alpha: 0.3),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 14),
+                            ),
+                          )
+                        else
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: cs.surfaceContainerHighest
+                                  .withValues(alpha: 0.3),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              liveDescription.trim().isEmpty
+                                  ? AppLocalizations.of(context)
+                                      .noDescriptionSet
+                                  : liveDescription,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 14,
+                                height: 1.4,
+                                fontStyle: liveDescription.trim().isEmpty
+                                    ? FontStyle.italic
+                                    : FontStyle.normal,
+                                color: cs.onSurface.withValues(alpha: 0.65),
+                              ),
+                            ),
+                          ),
+                        if (!canEdit) const SizedBox(height: 20),
+                        if (_serverSupportsCustomRoles) ...[
+                          if (_has('manage_settings')) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              AppLocalizations.of(context).limitsHeader,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: cs.onSurfaceVariant),
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: maxMembersController,
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(
+                                labelText: AppLocalizations.of(context)
+                                    .maxMembersLabel,
+                                border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(50)),
+                                filled: true,
+                                fillColor: cs.surfaceContainerHighest
+                                    .withValues(alpha: 0.3),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 20, vertical: 14),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: maxMessageLengthController,
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(
+                                labelText: AppLocalizations.of(context)
+                                    .maxMessageLengthLabel,
+                                border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(50)),
+                                filled: true,
+                                fillColor: cs.surfaceContainerHighest
+                                    .withValues(alpha: 0.3),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 20, vertical: 14),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: maxMessagesPerMinuteController,
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(
+                                labelText: AppLocalizations.of(context)
+                                    .maxMessagesPerMinuteLabel,
+                                border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(50)),
+                                filled: true,
+                                fillColor: cs.surfaceContainerHighest
+                                    .withValues(alpha: 0.3),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 20, vertical: 14),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              AppLocalizations.of(context).defaultRoleLabel,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: cs.onSurfaceVariant),
+                            ),
+                            const SizedBox(height: 4),
+                            Container(
+                              clipBehavior: Clip.antiAlias,
+                              decoration: BoxDecoration(
+                                color: cs.surfaceContainerHighest
+                                    .withValues(alpha: 0.3),
+                                borderRadius: BorderRadius.circular(50),
+                              ),
+                              child: DropdownButtonHideUnderline(
+                                child: DropdownButton<int>(
+                                  isExpanded: true,
+                                  borderRadius: BorderRadius.circular(20),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 20, vertical: 14),
+                                  value: roles.any((r) => r.id == defaultRoleId)
+                                      ? defaultRoleId
+                                      : null,
+                                  hint: Text(AppLocalizations.of(context)
+                                      .defaultRoleLabel),
+                                  items: roles
+                                      .map((r) => DropdownMenuItem<int>(
+                                            value: r.id,
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Container(
+                                                  width: 12,
+                                                  height: 12,
+                                                  decoration: BoxDecoration(
+                                                    color: _hexToColor(r.color),
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Text(r.name),
+                                              ],
+                                            ),
+                                          ))
+                                      .toList(),
+                                  onChanged: (v) =>
+                                      setState(() => defaultRoleId = v),
+                                ),
+                              ),
+                            ),
+                          ],
+                          if (_has('manage_roles')) ...[
+                            const SizedBox(height: 12),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  AppLocalizations.of(context).rolesHeader,
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: cs.onSurfaceVariant),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            ...roles.map((role) => ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  dense: true,
+                                  leading: Container(
+                                    width: 14,
+                                    height: 14,
+                                    decoration: BoxDecoration(
+                                      color: _hexToColor(role.color),
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                  title: Text(role.name),
+                                  subtitle: Text(AppLocalizations.of(context)
+                                      .roleSubtitle(role.permissions.length,
+                                          role.memberCount)),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.edit,
+                                            size: 18),
+                                        onPressed: () async {
+                                          final saved =
+                                              await _showRoleEditorDialog(
+                                                  existing: role);
+                                          if (saved == true) {
+                                            final fetched = await _loadRoles();
+                                            setState(() => roles = fetched);
+                                          }
+                                        },
+                                      ),
+                                      if (!role.isSystem)
+                                        IconButton(
+                                          icon: Icon(Icons.delete_outline,
+                                              size: 18, color: cs.error),
+                                          onPressed: () async {
+                                            await _deleteRole(role);
+                                            final fetched = await _loadRoles();
+                                            setState(() => roles = fetched);
+                                          },
+                                        ),
+                                    ],
+                                  ),
+                                )),
+                            TextButton.icon(
+                              onPressed: () async {
+                                final saved = await _showRoleEditorDialog();
+                                if (saved == true) {
+                                  final fetched = await _loadRoles();
+                                  setState(() => roles = fetched);
+                                }
+                              },
+                              icon: const Icon(Icons.add, size: 18),
+                              label: Text(
+                                  AppLocalizations.of(context).addRoleAction),
+                            ),
+                          ],
+                        ],
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 20),
-                TextField(
-                  controller: nameController,
-                  decoration: InputDecoration(
-                    labelText:
-                        widget.group.isChannel ? 'Channel name' : 'Group name',
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    filled: true,
-                    fillColor: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest
-                        .withValues(alpha: 0.3),
-                    counterText: '',
+                if (canEdit)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FilledButton(
+                        onPressed: () async {
+                          final newName = nameController.text.trim();
+                          if (newName.isEmpty) {
+                            rootScreenKey.currentState?.showSnack(
+                                lookupAppLocalizations(
+                                        SettingsManager.appLocale.value)
+                                    .nameCannotBeEmpty);
+                            return;
+                          }
+                          final newSlowMode =
+                              int.tryParse(slowModeController.text.trim());
+                          final newDescription =
+                              descriptionController.text.trim();
+                          final newMaxMembers = int.tryParse(
+                                  maxMembersController.text.trim()) ??
+                              liveMaxMembers;
+                          final newMaxMessageLength = int.tryParse(
+                                  maxMessageLengthController.text.trim()) ??
+                              liveMaxMessageLength;
+                          final newMaxMessagesPerMinute = int.tryParse(
+                                  maxMessagesPerMinuteController.text
+                                      .trim()) ??
+                              liveMaxMessagesPerMinute;
+                          Navigator.pop(context);
+
+                          if (newName != _groupName) {
+                            await _renameGroup(newName);
+                          }
+
+                          if (newSlowMode != null &&
+                              newSlowMode != _slowModeSeconds) {
+                            await _setSlowMode(newSlowMode);
+                          }
+
+                          if (newAvatarBytes != null) {
+                            await _uploadGroupAvatar(newAvatarBytes!);
+                          } else if (removeAvatar) {
+                            await _deleteGroupAvatar();
+                          }
+
+                          final settingsChanged =
+                              newDescription != liveDescription ||
+                                  newMaxMembers != liveMaxMembers ||
+                                  newMaxMessageLength !=
+                                      liveMaxMessageLength ||
+                                  newMaxMessagesPerMinute !=
+                                      liveMaxMessagesPerMinute ||
+                                  defaultRoleId != liveDefaultRoleId;
+                          if (settingsChanged) {
+                            await _updateGroupSettings({
+                              'description': newDescription,
+                              'max_members': newMaxMembers,
+                              'max_message_length': newMaxMessageLength,
+                              'max_messages_per_minute':
+                                  newMaxMessagesPerMinute,
+                              'default_role_id': defaultRoleId,
+                            });
+                          }
+                        },
+                        style: FilledButton.styleFrom(
+                          padding: kOnyxDialogButtonPadding,
+                          shape: kOnyxDialogButtonShape,
+                        ),
+                        child: Text(AppLocalizations.of(context).save),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          padding: kOnyxDialogButtonPadding,
+                          shape: kOnyxDialogButtonShape,
+                        ),
+                        child: Text(AppLocalizations.of(context).cancel),
+                      ),
+                    ],
                   ),
-                  maxLength: 64,
                 ),
               ],
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text(AppLocalizations.of(context).cancel),
-            ),
-            FilledButton(
-              onPressed: () async {
-                final newName = nameController.text.trim();
-                if (newName.isEmpty) {
-                  rootScreenKey.currentState?.showSnack(
-                      lookupAppLocalizations(SettingsManager.appLocale.value)
-                          .nameCannotBeEmpty);
-                  return;
-                }
-                Navigator.pop(context);
-
-                if (newName != _groupName) {
-                  await _renameGroup(newName);
-                }
-
-                if (newAvatarBytes != null) {
-                  await _uploadGroupAvatar(newAvatarBytes!);
-                } else if (removeAvatar) {
-                  await _deleteGroupAvatar();
-                }
-              },
-              child: Text(AppLocalizations.of(context).save),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -4131,16 +5520,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         final updatedGroups = currentGroups.map((g) {
           if (g.id == widget.group.id &&
               g.externalServerId == widget.server.id) {
-            return Group(
-              id: g.id,
-              name: newName,
-              isChannel: g.isChannel,
-              owner: g.owner,
-              inviteLink: g.inviteLink,
-              avatarVersion: g.avatarVersion,
-              externalServerId: g.externalServerId,
-              myRole: g.myRole,
-            );
+            return g.copyWith(name: newName);
           }
           return g;
         }).toList();
@@ -4163,6 +5543,577 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
       debugPrint('[rename] Exception: $e');
       rootScreenKey.currentState?.showSnack(
           lookupAppLocalizations(SettingsManager.appLocale.value).failedRename);
+    }
+  }
+
+  Future<void> _setSlowMode(int seconds) async {
+    try {
+      final url =
+          '${widget.server.baseUrl}/groups/${widget.group.id}/slow-mode';
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${widget.server.token}',
+            },
+            body: jsonEncode({'seconds': seconds}),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+      if (response.statusCode == 200) {
+        if (mounted) {
+          setState(() {
+            _slowModeSeconds = seconds;
+          });
+        }
+        rootScreenKey.currentState?.showSnack(
+            seconds > 0 ? l.slowModeSetTo(seconds) : l.slowModeDisabled);
+      } else {
+        try {
+          final error =
+              jsonDecode(response.body)['error'] ?? l.failedSetSlowMode;
+          rootScreenKey.currentState?.showSnack(l.errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(l.errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[slow-mode] Exception: $e');
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .failedUpdateSlowMode);
+    }
+  }
+
+  Future<void> _loadMemberRoleInfo() async {
+    try {
+      final url = '${widget.server.baseUrl}/members';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${widget.server.token}'},
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200 && mounted) {
+        final data = jsonDecode(response.body) as List;
+        final map = <String, Map<String, String>>{};
+        final muted = <String>{};
+        for (final entry in data) {
+          if (entry is! Map) continue;
+          final username = entry['username']?.toString();
+          final roleName = entry['role_name']?.toString();
+          final roleColor = entry['role_color']?.toString();
+          if (username != null && roleName != null && roleColor != null) {
+            map[username] = {'name': roleName, 'color': roleColor};
+          }
+          if (username != null && entry['is_muted'] == true) {
+            muted.add(username);
+          }
+        }
+        setState(() {
+          _memberRoleInfo = map;
+          _mutedUsernames = muted;
+        });
+      }
+    } catch (e) {
+      debugPrint('[member-roles] Exception loading: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>?> _loadGroupSettings() async {
+    try {
+      final url = '${widget.server.baseUrl}/groups/${widget.group.id}/settings';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${widget.server.token}'},
+      ).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      debugPrint('[settings] load error: $e');
+    }
+    return null;
+  }
+
+  Future<void> _updateGroupSettings(Map<String, dynamic> body) async {
+    final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+    try {
+      final url = '${widget.server.baseUrl}/groups/${widget.group.id}/settings';
+      debugPrint('[settings] PUT $url');
+
+      final response = await http
+          .put(
+            Uri.parse(url),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${widget.server.token}',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      debugPrint(
+          '[settings] Status: ${response.statusCode}, Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final currentGroups = ExternalServerManager.externalGroups.value;
+        final updatedGroups = currentGroups.map((g) {
+          if (g.id == widget.group.id &&
+              g.externalServerId == widget.server.id) {
+            return g.copyWith(
+              description: body['description'] as String?,
+              defaultRoleId: body['default_role_id'] as int?,
+              clearDefaultRoleId: body.containsKey('default_role_id') &&
+                  body['default_role_id'] == null,
+              maxMembers: body['max_members'] as int?,
+              maxMessageLength: body['max_message_length'] as int?,
+              maxMessagesPerMinute: body['max_messages_per_minute'] as int?,
+            );
+          }
+          return g;
+        }).toList();
+        ExternalServerManager.externalGroups.value = updatedGroups;
+        rootScreenKey.currentState?.showSnack(l.settingsUpdated);
+      } else {
+        try {
+          final error =
+              jsonDecode(response.body)['error'] ?? l.failedUpdateSettings;
+          rootScreenKey.currentState?.showSnack(l.errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(l.errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[settings] Exception: $e');
+      rootScreenKey.currentState?.showSnack(l.failedUpdateSettings);
+    }
+  }
+
+  Future<List<Role>> _loadRoles() async {
+    try {
+      final url = '${widget.server.baseUrl}/roles';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${widget.server.token}'},
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as List;
+        return data
+            .map((e) => Role.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+    } catch (e) {
+      debugPrint('[roles] Exception loading roles: $e');
+    }
+    return [];
+  }
+
+  Future<void> _deleteRole(Role role) async {
+    final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+    final confirm = await showOnyxConfirmDialog(
+      context: context,
+      title: l.deleteRoleConfirmTitle,
+      message: l.deleteRoleConfirmContent,
+      isDestructive: true,
+      icon: Icons.delete_outline,
+    );
+    if (confirm != true) return;
+
+    try {
+      final url = '${widget.server.baseUrl}/roles/${role.id}';
+      final response = await http
+          .delete(
+            Uri.parse(url),
+            headers: {'Authorization': 'Bearer ${widget.server.token}'},
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        rootScreenKey.currentState?.showSnack(l.roleDeleted);
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? l.failedDeleteRole;
+          rootScreenKey.currentState?.showSnack(l.errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(l.errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[roles] Exception deleting role: $e');
+      rootScreenKey.currentState?.showSnack(l.failedDeleteRole);
+    }
+  }
+
+  // Sub-permissions grouped under "Manage Members" in the role editor: they
+  // only make sense (and can only be toggled) once manage_members is on, and
+  // at least one of them must be picked so the parent permission isn't a
+  // no-op grant.
+  static const List<String> _manageMembersChildPerms = [
+    'view_ban_list',
+    'view_mute_list',
+    'manage_roles',
+    'kick_members',
+  ];
+
+  // view_ban_list/view_mute_list ("Manage Ban List"/"Manage Mute List") were
+  // widened server-side to also grant the plain ban_members/mute_members
+  // capability (see has_any_permission in moderation_handlers.rs/members.rs),
+  // which made the separate ban_members/mute_members checkboxes redundant —
+  // same capability, two toggles. They're hidden from the editor now; these
+  // keep the underlying legacy bit in sync with its replacement checkbox so
+  // old roles/any code still checking the narrower bit keep working.
+  static const Map<String, String> _legacyPermAliases = {
+    'view_ban_list': 'ban_members',
+    'view_mute_list': 'mute_members',
+  };
+
+  Future<bool?> _showRoleEditorDialog({Role? existing}) {
+    final nameController = TextEditingController(text: existing?.name ?? '');
+    final Set<String> selectedPermissions = {...?existing?.permissions};
+    // Normalize legacy roles saved before the alias merge: if only the old
+    // bit is present, treat the new checkbox as checked too so it displays
+    // (and re-saves) correctly.
+    for (final entry in _legacyPermAliases.entries) {
+      if (selectedPermissions.contains(entry.value)) {
+        selectedPermissions.add(entry.key);
+      }
+    }
+    const presetColors = [
+      '#e74c3c',
+      '#e67e22',
+      '#f1c40f',
+      '#2ecc71',
+      '#1abc9c',
+      '#3498db',
+      '#9b59b6',
+      '#e91e63',
+      '#95a5a6',
+      '#34495e',
+    ];
+    String selectedColor = existing?.color ?? presetColors[5];
+
+    return showOnyxDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          final cs = Theme.of(context).colorScheme;
+          final l = AppLocalizations.of(context);
+          return OnyxDialogShell(
+            maxWidth: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                OnyxDialogHeader(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: cs.primary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.shield_outlined, size: 20, color: cs.primary),
+                  ),
+                  title: Text(
+                    existing == null ? l.roleEditorCreateTitle : l.roleEditorEditTitle,
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: cs.onSurface),
+                  ),
+                  onClose: () => Navigator.pop(context, false),
+                ),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextField(
+                          controller: nameController,
+                          decoration: InputDecoration(
+                            labelText: l.roleNameLabel,
+                            border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(50)),
+                            filled: true,
+                            fillColor: cs.surfaceContainerHighest
+                                .withValues(alpha: 0.3),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 14),
+                          ),
+                          maxLength: 40,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(l.roleColorLabel,
+                            style: TextStyle(
+                                fontSize: 12, color: cs.onSurfaceVariant)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: presetColors.map((hex) {
+                            final color = _hexToColor(hex);
+                            final isSelected = selectedColor == hex;
+                            return GestureDetector(
+                              onTap: () =>
+                                  setState(() => selectedColor = hex),
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  shape: BoxShape.circle,
+                                  border: isSelected
+                                      ? Border.all(
+                                          color: cs.onSurface, width: 2)
+                                      : null,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(l.rolePermissionsLabel,
+                            style: TextStyle(
+                                fontSize: 12, color: cs.onSurfaceVariant)),
+                        ...kAllPermissions
+                            .where((perm) =>
+                                perm != 'manage_members' &&
+                                !_manageMembersChildPerms.contains(perm) &&
+                                // post_in_channel only means anything for
+                                // channels (it gates who may post at all);
+                                // a plain group has no such restriction.
+                                (perm != 'post_in_channel' ||
+                                    widget.group.isChannel) &&
+                                // Not offered as a grantable permission in
+                                // the role editor; the bit and its
+                                // server-side enforcement are unchanged.
+                                perm != 'view_invite_link' &&
+                                // Superseded by Manage Ban List/Manage Mute
+                                // List (see _legacyPermAliases) — kept as a
+                                // server-side bit for compatibility, but no
+                                // longer shown as its own checkbox.
+                                !_legacyPermAliases.values.contains(perm))
+                            .map((perm) => CheckboxListTile(
+                                  value: selectedPermissions.contains(perm),
+                                  onChanged: (v) => setState(() {
+                                    if (v == true) {
+                                      selectedPermissions.add(perm);
+                                    } else {
+                                      selectedPermissions.remove(perm);
+                                    }
+                                  }),
+                                  title: Text(_permissionLabel(context, perm)),
+                                  controlAffinity:
+                                      ListTileControlAffinity.leading,
+                                  contentPadding: EdgeInsets.zero,
+                                  dense: true,
+                                )),
+                        CheckboxListTile(
+                          value:
+                              selectedPermissions.contains('manage_members'),
+                          onChanged: (v) => setState(() {
+                            if (v == true) {
+                              selectedPermissions.add('manage_members');
+                            } else {
+                              selectedPermissions.remove('manage_members');
+                              selectedPermissions
+                                  .removeAll(_manageMembersChildPerms);
+                            }
+                          }),
+                          title: Text(_permissionLabel(context, 'manage_members')),
+                          controlAffinity: ListTileControlAffinity.leading,
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                        ),
+                        ..._manageMembersChildPerms.map((perm) => Padding(
+                              padding: const EdgeInsets.only(left: 28),
+                              child: CheckboxListTile(
+                                value: selectedPermissions.contains(perm),
+                                onChanged: selectedPermissions
+                                        .contains('manage_members')
+                                    ? (v) => setState(() {
+                                          if (v == true) {
+                                            selectedPermissions.add(perm);
+                                          } else {
+                                            selectedPermissions.remove(perm);
+                                          }
+                                        })
+                                    : null,
+                                title: Text(_permissionLabel(context, perm)),
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                contentPadding: EdgeInsets.zero,
+                                dense: true,
+                              ),
+                            )),
+                      ],
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FilledButton(
+                        onPressed: () async {
+                          final name = nameController.text.trim();
+                          if (name.isEmpty) {
+                            rootScreenKey.currentState?.showSnack(
+                                lookupAppLocalizations(
+                                        SettingsManager.appLocale.value)
+                                    .nameCannotBeEmpty);
+                            return;
+                          }
+                          if (selectedPermissions.contains('manage_members') &&
+                              !_manageMembersChildPerms.any(
+                                  selectedPermissions.contains)) {
+                            rootScreenKey.currentState?.showSnack(
+                                lookupAppLocalizations(
+                                        SettingsManager.appLocale.value)
+                                    .manageMembersRequiresChild);
+                            return;
+                          }
+                          // Keep the legacy ban_members/mute_members bits in
+                          // sync with their replacement checkboxes (see
+                          // _legacyPermAliases) since those checkboxes are no
+                          // longer shown independently.
+                          final permissionsToSend = {...selectedPermissions};
+                          for (final entry in _legacyPermAliases.entries) {
+                            if (permissionsToSend.contains(entry.key)) {
+                              permissionsToSend.add(entry.value);
+                            } else {
+                              permissionsToSend.remove(entry.value);
+                            }
+                          }
+                          final ok = await _saveRole(
+                            existing: existing,
+                            name: name,
+                            color: selectedColor,
+                            permissions: permissionsToSend,
+                          );
+                          if (ok && context.mounted) {
+                            Navigator.pop(context, true);
+                          }
+                        },
+                        style: FilledButton.styleFrom(
+                          padding: kOnyxDialogButtonPadding,
+                          shape: kOnyxDialogButtonShape,
+                        ),
+                        child: Text(AppLocalizations.of(context).save),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        style: OutlinedButton.styleFrom(
+                          padding: kOnyxDialogButtonPadding,
+                          shape: kOnyxDialogButtonShape,
+                        ),
+                        child: Text(AppLocalizations.of(context).cancel),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<bool> _saveRole({
+    Role? existing,
+    required String name,
+    required String color,
+    required Set<String> permissions,
+  }) async {
+    final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+    try {
+      final url = existing == null
+          ? '${widget.server.baseUrl}/roles'
+          : '${widget.server.baseUrl}/roles/${existing.id}';
+      final body = jsonEncode({
+        'name': name,
+        'color': color,
+        'permissions': permissions.toList(),
+      });
+      final response = await (existing == null
+              ? http.post(
+                  Uri.parse(url),
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ${widget.server.token}',
+                  },
+                  body: body,
+                )
+              : http.put(
+                  Uri.parse(url),
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ${widget.server.token}',
+                  },
+                  body: body,
+                ))
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        rootScreenKey.currentState?.showSnack(l.roleSaved);
+        return true;
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? l.failedSaveRole;
+          rootScreenKey.currentState?.showSnack(l.errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(l.errorMsg(response.body));
+        }
+        return false;
+      }
+    } catch (e) {
+      debugPrint('[roles] Exception saving role: $e');
+      rootScreenKey.currentState?.showSnack(l.failedSaveRole);
+      return false;
+    }
+  }
+
+  String _permissionLabel(BuildContext context, String perm) {
+    final l = AppLocalizations.of(context);
+    switch (perm) {
+      case 'kick_members':
+        return l.permKickMembers;
+      case 'ban_members':
+        return l.permBanMembers;
+      case 'mute_members':
+        return l.permMuteMembers;
+      case 'manage_roles':
+        return l.permManageRoles;
+      case 'manage_settings':
+        return l.permManageSettings;
+      case 'manage_donations':
+        return l.permManageDonations;
+      case 'create_polls':
+        return l.permCreatePolls;
+      case 'post_in_channel':
+        return l.permPostInChannel;
+      case 'delete_messages':
+        return l.permDeleteMessages;
+      case 'manage_members':
+        return l.permManageMembers;
+      case 'manage_slow_mode':
+        return l.permManageSlowMode;
+      case 'view_ban_list':
+        return l.permViewBanList;
+      case 'view_mute_list':
+        return l.permViewMuteList;
+      case 'view_invite_link':
+        return l.permViewInviteLink;
+      default:
+        return perm;
     }
   }
 
@@ -4323,16 +6274,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         final updatedGroups = currentGroups.map((g) {
           if (g.id == widget.group.id &&
               g.externalServerId == widget.server.id) {
-            return Group(
-              id: g.id,
-              name: g.name,
-              isChannel: g.isChannel,
-              owner: g.owner,
-              inviteLink: g.inviteLink,
-              avatarVersion: _avatarVersion,
-              externalServerId: g.externalServerId,
-              myRole: g.myRole,
-            );
+            return g.copyWith(avatarVersion: _avatarVersion);
           }
           return g;
         }).toList();
@@ -4405,16 +6347,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
         final updatedGroups = currentGroups.map((g) {
           if (g.id == widget.group.id &&
               g.externalServerId == widget.server.id) {
-            return Group(
-              id: g.id,
-              name: g.name,
-              isChannel: g.isChannel,
-              owner: g.owner,
-              inviteLink: g.inviteLink,
-              avatarVersion: _avatarVersion,
-              externalServerId: g.externalServerId,
-              myRole: g.myRole,
-            );
+            return g.copyWith(avatarVersion: _avatarVersion);
           }
           return g;
         }).toList();
@@ -4443,11 +6376,37 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
   }
 
   void _showMembersDialog() {
-    showDialog(
+    showOnyxDialog(
       context: context,
       builder: (context) => _MembersManagementDialog(
         server: widget.server,
         group: widget.group,
+        myRole: _myRole,
+        myPermissions: _myPermissions,
+        serverSupportsCustomRoles: _serverSupportsCustomRoles,
+      ),
+    );
+  }
+
+  void _showDonationsDialog() {
+    showOnyxDialog(
+      context: context,
+      builder: (context) => _DonationsDialog(
+        server: widget.server,
+        group: widget.group,
+        isOwner: _has('manage_donations'),
+      ),
+    );
+  }
+
+  void _showPollsDialog() {
+    final canCreate =
+        widget.group.isChannel ? _has('create_polls') : true;
+    showOnyxDialog(
+      context: context,
+      builder: (context) => _PollsDialog(
+        server: widget.server,
+        canCreate: canCreate,
       ),
     );
   }
@@ -4882,10 +6841,28 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                     _showEditProfileDialog();
                                   } else if (value == 'members') {
                                     _showMembersDialog();
+                                  } else if (value == 'donate') {
+                                    _showDonationsDialog();
+                                  } else if (value == 'polls') {
+                                    _showPollsDialog();
                                   }
                                 },
                                 itemBuilder: (context) {
-                                  final isOwner = _myRole == 'owner';
+                                  // The entry point and the dialog's actual
+                                  // capabilities must agree: a role with e.g.
+                                  // only mute_members (no manage_members)
+                                  // still needs to be able to reach the
+                                  // mute button, or the permission is a
+                                  // dead grant. So "can I see the menu item"
+                                  // mirrors every capability the dialog
+                                  // itself gates on, not just manage_members.
+                                  final canManageMembers =
+                                      _has('manage_members') ||
+                                          _has('mute_members') ||
+                                          _has('ban_members') ||
+                                          _has('view_mute_list') ||
+                                          _has('view_ban_list') ||
+                                          _has('manage_roles');
                                   final liveServer = ExternalServerManager
                                       .servers.value
                                       .firstWhere(
@@ -4916,18 +6893,48 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                             .galleryMenuLabel),
                                       ]),
                                     ),
+                                    PopupMenuItem<String>(
+                                      value: 'donate',
+                                      child: Row(children: [
+                                        Icon(Icons.volunteer_activism,
+                                            size: 18, color: csA.primary),
+                                        const SizedBox(width: 8),
+                                        Text(AppLocalizations.of(context)
+                                            .donateMenuLabel),
+                                      ]),
+                                    ),
+                                    PopupMenuItem<String>(
+                                      value: 'polls',
+                                      child: Row(children: [
+                                        Icon(Icons.poll_outlined,
+                                            size: 18, color: csA.primary),
+                                        const SizedBox(width: 8),
+                                        Text(AppLocalizations.of(context)
+                                            .pollsMenuLabel),
+                                      ]),
+                                    ),
                                     const PopupMenuDivider(),
-                                    if (isOwner) ...[
-                                      PopupMenuItem<String>(
-                                        value: 'edit_profile',
-                                        child: Row(children: [
-                                          Icon(Icons.edit,
-                                              size: 18, color: csA.primary),
-                                          const SizedBox(width: 8),
-                                          Text(AppLocalizations.of(context)
-                                              .editProfile),
-                                        ]),
-                                      ),
+                                    PopupMenuItem<String>(
+                                      value: 'edit_profile',
+                                      child: Row(children: [
+                                        Icon(
+                                            _hasAnyChannelEditPermission
+                                                ? Icons.edit
+                                                : Icons.info_outline,
+                                            size: 18,
+                                            color: csA.primary),
+                                        const SizedBox(width: 8),
+                                        Text(_hasAnyChannelEditPermission
+                                            ? AppLocalizations.of(context)
+                                                .editProfile
+                                            : (widget.group.isChannel
+                                                ? AppLocalizations.of(context)
+                                                    .channelInfoTitle
+                                                : AppLocalizations.of(context)
+                                                    .groupInfoTitle)),
+                                      ]),
+                                    ),
+                                    if (canManageMembers)
                                       PopupMenuItem<String>(
                                         value: 'members',
                                         child: Row(children: [
@@ -4938,8 +6945,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                               .manageMembers),
                                         ]),
                                       ),
-                                      const PopupMenuDivider(),
-                                    ],
+                                    const PopupMenuDivider(),
                                     PopupMenuItem<String>(
                                       value: 'disconnect',
                                       enabled: _isConnected,
@@ -5199,11 +7205,13 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                   MediaQuery.of(context).size.width * 0.7),
                           child: SwipeableMessageWrapper(
                             onSwipeRight: () => _showExternalMessageMenu(msg),
-                            onSwipeLeft: () => _startReply({
-                              'id': msg['id']?.toString(),
-                              'sender': rawSender,
-                              'content': content,
-                            }),
+                            onSwipeLeft: _canPost
+                                ? () => _startReply({
+                                      'id': msg['id']?.toString(),
+                                      'sender': rawSender,
+                                      'content': content,
+                                    })
+                                : null,
                             child: MessageBubble(
                               key: ValueKey<String>(
                                   'mb_${msg['timestamp']}_${rawSender}_${content.hashCode}'),
@@ -5266,6 +7274,10 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 
                         Widget contentWithSender;
                         if (!isMe) {
+                          final senderRoleInfo = _memberRoleInfo[rawSender];
+                          final senderNameColor = senderRoleInfo != null
+                              ? _hexToColor(senderRoleInfo['color']!)
+                              : colorScheme.onSurface.withValues(alpha: 0.7);
                           contentWithSender = Column(
                             crossAxisAlignment: shouldAlignRight
                                 ? CrossAxisAlignment.end
@@ -5278,8 +7290,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                   style: TextStyle(
                                     fontWeight: FontWeight.w600,
                                     fontSize: 12,
-                                    color: colorScheme.onSurface
-                                        .withValues(alpha: 0.7),
+                                    color: senderNameColor,
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -5336,7 +7347,8 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                   final wasReacted = hasReaction('ext_$msgId',
                                       emoji, widget.server.username);
                                   toggleReaction('ext_$msgId', emoji,
-                                      widget.server.username);
+                                      widget.server.username,
+                                      anonymous: true);
                                   if (msgIdInt != null)
                                     _serverToggleReaction(
                                         msgIdInt, emoji, wasReacted);
@@ -5345,6 +7357,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                   final msgIdInt = int.tryParse(msgId);
                                   openEmojiPicker(ctx2, 'ext_$msgId',
                                       widget.server.username,
+                                      anonymous: true,
                                       onAfterToggle: (emoji, wasReacted) {
                                     if (msgIdInt != null)
                                       _serverToggleReaction(
@@ -5352,6 +7365,12 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                   });
                                 },
                               ),
+                              if (widget.group.isChannel)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: _buildCommentsAffordance(
+                                      context, colorScheme, msg),
+                                ),
                             ],
                           ),
                         );
@@ -5535,7 +7554,19 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                   );
                 },
                 child: Center(
-                  child: _isReadOnlyChannel
+                  // Every non-writable state below (read-only channel,
+                  // disconnected, loading history) renders a differently
+                  // sized placeholder pill that — unlike _buildInputBar
+                  // itself — never fed _bottomBarHeight, so the scroll-down
+                  // button kept using the stale 76.0 default and sat higher
+                  // than the equivalent state in a plain group.
+                  child: MeasureSize(
+                    onChange: (size) {
+                      if ((_bottomBarHeight.value - size.height).abs() > 0.5) {
+                        _bottomBarHeight.value = size.height;
+                      }
+                    },
+                    child: _isReadOnlyChannel
                       ? ListenableBuilder(
                           listenable: Listenable.merge([
                             SettingsManager.elementOpacity,
@@ -5583,7 +7614,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                       ),
                                     ),
                               child: Text(
-                                'This is a channel. Only owner and moderators can post.',
+                                'Only owner and moderators can post.',
                                 style: TextStyle(
                                   color: colorScheme.onSurface
                                       .withValues(alpha: 0.6),
@@ -5818,6 +7849,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
                                     );
                                   },
                                 ),
+                  ),
                 ),
               ),
             ),
@@ -5922,10 +7954,16 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
 class _MembersManagementDialog extends StatefulWidget {
   final ExternalServer server;
   final Group group;
+  final String? myRole;
+  final Set<String> myPermissions;
+  final bool serverSupportsCustomRoles;
 
   const _MembersManagementDialog({
     required this.server,
     required this.group,
+    this.myRole,
+    this.myPermissions = const {},
+    this.serverSupportsCustomRoles = false,
   });
 
   @override
@@ -5935,12 +7973,19 @@ class _MembersManagementDialog extends StatefulWidget {
 
 class _MembersManagementDialogState extends State<_MembersManagementDialog> {
   List<Map<String, dynamic>> _members = [];
+  List<Role> _roles = [];
   bool _loading = true;
+
+  bool _has(String perm) =>
+      widget.myPermissions.contains(perm) || widget.myRole == 'owner';
 
   @override
   void initState() {
     super.initState();
     _loadMembers();
+    if (widget.serverSupportsCustomRoles) {
+      _loadRoles();
+    }
   }
 
   Future<void> _loadMembers() async {
@@ -5971,41 +8016,120 @@ class _MembersManagementDialogState extends State<_MembersManagementDialog> {
     }
   }
 
+  Future<void> _loadRoles() async {
+    try {
+      final url = '${widget.server.baseUrl}/roles';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${widget.server.token}'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as List;
+        if (mounted) {
+          setState(() {
+            _roles =
+                data.map((e) => Role.fromJson(e as Map<String, dynamic>)).toList();
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('[members] Exception loading roles: $e');
+    }
+  }
+
   Future<void> _banMember(String username) async {
     final reasonController = TextEditingController();
-    final confirm = await showDialog<bool>(
+    final confirm = await showOnyxDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppLocalizations.of(context).banMemberTitle),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(AppLocalizations.of(context).banConfirm(username)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: reasonController,
-              decoration: InputDecoration(
-                labelText: AppLocalizations.of(context).banReason,
-                border: const OutlineInputBorder(),
+      builder: (context) {
+        final cs = Theme.of(context).colorScheme;
+        return OnyxDialogShell(
+          maxWidth: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              OnyxDialogHeader(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: cs.error.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.block, size: 20, color: cs.error),
+                ),
+                title: Text(
+                  AppLocalizations.of(context).banMemberTitle,
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: cs.onSurface),
+                ),
+                onClose: () => Navigator.pop(context, false),
               ),
-              maxLines: 2,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(AppLocalizations.of(context).cancel),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      AppLocalizations.of(context).banConfirm(username),
+                      style: TextStyle(
+                          fontSize: 14,
+                          height: 1.4,
+                          color: cs.onSurface.withValues(alpha: 0.65)),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: reasonController,
+                      decoration: InputDecoration(
+                        labelText: AppLocalizations.of(context).banReason,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(24)),
+                        filled: true,
+                        fillColor:
+                            cs.surfaceContainerHighest.withValues(alpha: 0.3),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 14),
+                      ),
+                      maxLines: 2,
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: FilledButton.styleFrom(
+                        padding: kOnyxDialogButtonPadding,
+                        shape: kOnyxDialogButtonShape,
+                        backgroundColor: cs.error,
+                        foregroundColor: cs.onError,
+                      ),
+                      child: Text(AppLocalizations.of(context).ban),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      style: OutlinedButton.styleFrom(
+                        padding: kOnyxDialogButtonPadding,
+                        shape: kOnyxDialogButtonShape,
+                      ),
+                      child: Text(AppLocalizations.of(context).cancel),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-            ),
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(AppLocalizations.of(context).ban),
-          ),
-        ],
-      ),
+        );
+      },
     );
 
     if (confirm != true) return;
@@ -6053,79 +8177,259 @@ class _MembersManagementDialogState extends State<_MembersManagementDialog> {
     }
   }
 
-  Future<void> _changeRole(String username, String currentRole) async {
+  Future<void> _changeRole(String username, String currentRole,
+      {int? currentRoleId}) async {
+    if (widget.serverSupportsCustomRoles && _roles.isNotEmpty) {
+      final selected = await showOnyxDialog<Role>(
+        context: context,
+        builder: (context) {
+          final cs = Theme.of(context).colorScheme;
+          return OnyxDialogShell(
+            maxWidth: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                OnyxDialogHeader(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: cs.primary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.admin_panel_settings,
+                        size: 20, color: cs.primary),
+                  ),
+                  title: Text(
+                    AppLocalizations.of(context).changeRoleTitle(username),
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: cs.onSurface),
+                  ),
+                  onClose: () => Navigator.pop(context),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      ..._roles.map((role) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: OutlinedButton.icon(
+                              onPressed: role.id == currentRoleId
+                                  ? null
+                                  : () => Navigator.pop(context, role),
+                              icon: Container(
+                                width: 12,
+                                height: 12,
+                                margin: const EdgeInsets.only(left: 8),
+                                decoration: BoxDecoration(
+                                  color: _hexToColor(role.color),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              label: Padding(
+                                padding: const EdgeInsets.only(left: 4),
+                                child: Text(role.name),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                alignment: Alignment.centerLeft,
+                                padding: kOnyxDialogButtonPadding,
+                                shape: kOnyxDialogButtonShape,
+                              ),
+                            ),
+                          )),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: Text(AppLocalizations.of(context).cancel),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+
+      if (selected == null) return;
+
+      try {
+        final url =
+            '${widget.server.baseUrl}/members/${Uri.encodeComponent(username)}/role';
+        final response = await http
+            .post(
+              Uri.parse(url),
+              headers: {
+                'Authorization': 'Bearer ${widget.server.token}',
+                'Content-Type': 'application/json',
+              },
+              body: jsonEncode({'role_id': selected.id}),
+            )
+            .timeout(const Duration(seconds: 10));
+
+        if (response.statusCode == 200) {
+          rootScreenKey.currentState?.showSnack(
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .roleUpdated(selected.name));
+          _loadMembers();
+        } else {
+          try {
+            final error =
+                jsonDecode(response.body)['error'] ?? 'Failed to change role';
+            rootScreenKey.currentState?.showSnack(
+                lookupAppLocalizations(SettingsManager.appLocale.value)
+                    .errorMsg(error.toString()));
+          } catch (e) {
+            rootScreenKey.currentState?.showSnack(
+                lookupAppLocalizations(SettingsManager.appLocale.value)
+                    .errorMsg(response.body));
+          }
+        }
+      } catch (e) {
+        debugPrint('[role] Exception: $e');
+        rootScreenKey.currentState?.showSnack(
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .failedChangeRole);
+      }
+      return;
+    }
+
+    return _changeRoleLegacy(username, currentRole);
+  }
+
+  Future<void> _changeRoleLegacy(String username, String currentRole) async {
     final ownerCount = _members.where((m) => m['role'] == 'owner').length;
     final canPromoteToOwner = currentRole != 'owner' && ownerCount < 3;
     final canDemoteOwner = currentRole == 'owner' && ownerCount > 1;
 
-    final newRole = await showDialog<String>(
+    final newRole = await showOnyxDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppLocalizations.of(context).changeRoleTitle(username)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(AppLocalizations.of(context).currentRoleLabel(currentRole),
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text(AppLocalizations.of(context).ownerCount(ownerCount),
-                style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
-            const SizedBox(height: 16),
-            Text(AppLocalizations.of(context).selectNewRole),
-            const SizedBox(height: 8),
-            FilledButton.icon(
-              onPressed: (currentRole == 'owner' && !canDemoteOwner) ||
-                      (!canPromoteToOwner && currentRole != 'owner')
-                  ? null
-                  : () => Navigator.pop(context, 'owner'),
-              icon: const Icon(Icons.admin_panel_settings),
-              label: Text(currentRole == 'owner'
-                  ? AppLocalizations.of(context).ownerCurrent
-                  : ownerCount >= 3
-                      ? AppLocalizations.of(context).ownerLimitReached
-                      : AppLocalizations.of(context).owner),
-              style: FilledButton.styleFrom(
-                alignment: Alignment.centerLeft,
+      builder: (context) {
+        final cs = Theme.of(context).colorScheme;
+        return OnyxDialogShell(
+          maxWidth: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              OnyxDialogHeader(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.admin_panel_settings,
+                      size: 20, color: cs.primary),
+                ),
+                title: Text(
+                  AppLocalizations.of(context).changeRoleTitle(username),
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: cs.onSurface),
+                ),
+                onClose: () => Navigator.pop(context),
               ),
-            ),
-            const SizedBox(height: 8),
-            FilledButton.tonalIcon(
-              onPressed: () => Navigator.pop(context, 'moderator'),
-              icon: const Icon(Icons.shield),
-              label: Text(AppLocalizations.of(context).moderator),
-              style: FilledButton.styleFrom(
-                alignment: Alignment.centerLeft,
-              ),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: () => Navigator.pop(context, 'member'),
-              icon: const Icon(Icons.person),
-              label: Text(AppLocalizations.of(context).memberRole),
-              style: OutlinedButton.styleFrom(
-                alignment: Alignment.centerLeft,
-              ),
-            ),
-            if (currentRole == 'owner' && !canDemoteOwner) ...[
-              const SizedBox(height: 8),
-              Text(
-                AppLocalizations.of(context).cannotDemoteLastOwner,
-                style: TextStyle(
-                    fontSize: 12, color: Theme.of(context).colorScheme.error),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                        AppLocalizations.of(context)
+                            .currentRoleLabel(currentRole),
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    Text(AppLocalizations.of(context).ownerCount(ownerCount),
+                        style: TextStyle(
+                            fontSize: 12, color: cs.onSurfaceVariant)),
+                    const SizedBox(height: 16),
+                    Text(AppLocalizations.of(context).selectNewRole),
+                    const SizedBox(height: 8),
+                    FilledButton.icon(
+                      onPressed: (currentRole == 'owner' && !canDemoteOwner) ||
+                              (!canPromoteToOwner && currentRole != 'owner')
+                          ? null
+                          : () => Navigator.pop(context, 'owner'),
+                      icon: const Padding(
+                        padding: EdgeInsets.only(left: 8),
+                        child: Icon(Icons.admin_panel_settings),
+                      ),
+                      label: Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: Text(currentRole == 'owner'
+                            ? AppLocalizations.of(context).ownerCurrent
+                            : ownerCount >= 3
+                                ? AppLocalizations.of(context)
+                                    .ownerLimitReached
+                                : AppLocalizations.of(context).owner),
+                      ),
+                      style: FilledButton.styleFrom(
+                        alignment: Alignment.centerLeft,
+                        padding: kOnyxDialogButtonPadding,
+                        shape: kOnyxDialogButtonShape,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.tonalIcon(
+                      onPressed: () => Navigator.pop(context, 'moderator'),
+                      icon: const Padding(
+                        padding: EdgeInsets.only(left: 8),
+                        child: Icon(Icons.shield),
+                      ),
+                      label: Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: Text(AppLocalizations.of(context).moderator),
+                      ),
+                      style: FilledButton.styleFrom(
+                        alignment: Alignment.centerLeft,
+                        padding: kOnyxDialogButtonPadding,
+                        shape: kOnyxDialogButtonShape,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () => Navigator.pop(context, 'member'),
+                      icon: const Padding(
+                        padding: EdgeInsets.only(left: 8),
+                        child: Icon(Icons.person),
+                      ),
+                      label: Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: Text(AppLocalizations.of(context).memberRole),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        alignment: Alignment.centerLeft,
+                        padding: kOnyxDialogButtonPadding,
+                        shape: kOnyxDialogButtonShape,
+                      ),
+                    ),
+                    if (currentRole == 'owner' && !canDemoteOwner) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        AppLocalizations.of(context).cannotDemoteLastOwner,
+                        style: TextStyle(fontSize: 12, color: cs.error),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text(AppLocalizations.of(context).cancel),
+                    ),
+                  ],
+                ),
               ),
             ],
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(AppLocalizations.of(context).cancel),
           ),
-        ],
-      ),
+        );
+      },
     );
 
     if (newRole == null || newRole == currentRole) return;
@@ -6175,89 +8479,410 @@ class _MembersManagementDialogState extends State<_MembersManagementDialog> {
     }
   }
 
+  Future<void> _muteMember(String username) async {
+    final reasonController = TextEditingController();
+    int selectedMinutes = 15;
+
+    final confirmed = await showOnyxDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final cs = Theme.of(context).colorScheme;
+          return OnyxDialogShell(
+            maxWidth: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                OnyxDialogHeader(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: cs.secondary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child:
+                        Icon(Icons.volume_off, size: 20, color: cs.secondary),
+                  ),
+                  title: Text(
+                    AppLocalizations.of(context).muteUserTitle(username),
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: cs.onSurface),
+                  ),
+                  onClose: () => Navigator.pop(context, false),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                          AppLocalizations.of(context)
+                              .durationLabel
+                              .toUpperCase(),
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.0,
+                              color: cs.onSurface.withValues(alpha: 0.38))),
+                      const SizedBox(height: 8),
+                      Builder(builder: (context) {
+                        final options = [
+                          (15, AppLocalizations.of(context).duration15Min),
+                          (60, AppLocalizations.of(context).duration1Hour),
+                          (
+                            60 * 24,
+                            AppLocalizations.of(context).duration1Day
+                          ),
+                          (
+                            60 * 24 * 7,
+                            AppLocalizations.of(context).duration1Week
+                          ),
+                        ];
+                        final selectedIndex = options
+                            .indexWhere((o) => o.$1 == selectedMinutes)
+                            .clamp(0, options.length - 1);
+                        return AppleValueSegmentedControl(
+                          labels: options.map((o) => o.$2).toList(),
+                          selectedIndex: selectedIndex,
+                          onChanged: (i) => setDialogState(
+                              () => selectedMinutes = options[i].$1),
+                        );
+                      }),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: reasonController,
+                        decoration: InputDecoration(
+                          labelText:
+                              AppLocalizations.of(context).muteReasonLabel,
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24)),
+                          filled: true,
+                          fillColor:
+                              cs.surfaceContainerHighest.withValues(alpha: 0.3),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20, vertical: 14),
+                        ),
+                        maxLines: 2,
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FilledButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        style: FilledButton.styleFrom(
+                          padding: kOnyxDialogButtonPadding,
+                          shape: kOnyxDialogButtonShape,
+                        ),
+                        child: Text(AppLocalizations.of(context).muteAction),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        style: OutlinedButton.styleFrom(
+                          padding: kOnyxDialogButtonPadding,
+                          shape: kOnyxDialogButtonShape,
+                        ),
+                        child: Text(AppLocalizations.of(context).cancel),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final url =
+          '${widget.server.baseUrl}/members/${Uri.encodeComponent(username)}/mute';
+      debugPrint('[mute] POST $url');
+
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Authorization': 'Bearer ${widget.server.token}',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'reason': reasonController.text.trim(),
+              'duration_minutes': selectedMinutes,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      debugPrint(
+          '[mute] Status: ${response.statusCode}, Body: ${response.body}');
+
+      final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+      if (response.statusCode == 200) {
+        rootScreenKey.currentState?.showSnack(l.userMuted(username));
+        _loadMembers();
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? l.failedMute;
+          rootScreenKey.currentState?.showSnack(l.errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(l.errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[mute] Exception: $e');
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .failedMuteUser(username));
+    }
+  }
+
+  Future<void> _unmuteMember(String username) async {
+    try {
+      final url =
+          '${widget.server.baseUrl}/members/${Uri.encodeComponent(username)}/unmute';
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: {'Authorization': 'Bearer ${widget.server.token}'},
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+      if (response.statusCode == 200) {
+        rootScreenKey.currentState?.showSnack(l.userUnmuted(username));
+        _loadMembers();
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? l.failedUnmute;
+          rootScreenKey.currentState?.showSnack(l.errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(l.errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[unmute] Exception: $e');
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .failedUnmuteUser(username));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(AppLocalizations.of(context).manageMembersTitle),
-      content: SizedBox(
-        width: 500,
-        height: 400,
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _members.isEmpty
-                ? Center(child: Text(AppLocalizations.of(context).noMembersYet))
-                : ListView.builder(
-                    itemCount: _members.length,
-                    itemBuilder: (context, index) {
-                      final member = _members[index];
-                      final username = member['username'] ?? '';
-                      final displayName = member['display_name'] ?? username;
-                      final role = member['role'] ?? 'member';
-                      final isOwner = role == 'owner';
-                      final canModerate = widget.group.myRole == 'owner';
-
-                      return ListTile(
-                        leading: CircleAvatar(
-                          child: Text(
-                            displayName.isNotEmpty
-                                ? displayName[0].toUpperCase()
-                                : '?',
-                          ),
-                        ),
-                        title: Text(displayName),
-                        subtitle: Text('$username • $role'),
-                        trailing: !isOwner && canModerate
-                            ? Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.admin_panel_settings,
-                                        size: 20),
-                                    tooltip:
-                                        AppLocalizations.of(context).changeRole,
-                                    onPressed: () =>
-                                        _changeRole(username, role),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      Icons.block,
-                                      size: 20,
-                                      color:
-                                          Theme.of(context).colorScheme.error,
-                                    ),
-                                    tooltip: AppLocalizations.of(context).ban,
-                                    onPressed: () => _banMember(username),
-                                  ),
-                                ],
-                              )
-                            : null,
-                      );
-                    },
-                  ),
-      ),
-      actions: [
-        if (widget.group.myRole == 'owner' ||
-            widget.group.myRole == 'moderator')
-          TextButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-
-              showDialog(
-                context: context,
-                builder: (context) => _BannedUsersDialog(
-                  server: widget.server,
-                  group: widget.group,
-                ),
-              );
-            },
-            icon: const Icon(Icons.block),
-            label: Text(AppLocalizations.of(context).viewBans),
+    final cs = Theme.of(context).colorScheme;
+    // "Manage Mute List"/"Manage Ban List" (view_mute_list/view_ban_list)
+    // are meant to fully cover muting/banning, not just viewing the list —
+    // so either that or the narrower mute_members/ban_members grants access.
+    final canViewMutes = _has('view_mute_list') || _has('mute_members');
+    final canViewBans = _has('view_ban_list') || _has('ban_members');
+    return OnyxDialogShell(
+      maxWidth: 500,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OnyxDialogHeader(
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.people, size: 20, color: cs.primary),
+            ),
+            title: Text(
+              AppLocalizations.of(context).manageMembersTitle,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: cs.onSurface),
+            ),
+            onClose: () => Navigator.pop(context),
           ),
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: Text(AppLocalizations.of(context).close),
-        ),
-      ],
+          SizedBox(
+            height: 400,
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _members.isEmpty
+                    ? Center(
+                        child: Text(AppLocalizations.of(context).noMembersYet))
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        itemCount: _members.length,
+                        itemBuilder: (context, index) {
+                          final member = _members[index];
+                          final username = member['username'] ?? '';
+                          final displayName =
+                              member['display_name'] ?? username;
+                          final role = member['role'] ?? 'member';
+                          final roleId = member['role_id'] as int?;
+                          final roleName =
+                              member['role_name']?.toString() ?? role;
+                          final roleColor = member['role_color']?.toString();
+                          // Prefer the numeric system-role id (1 = Owner) so a
+                          // custom role merely named "Owner" isn't treated as
+                          // owner-protected; fall back to the legacy string
+                          // for servers that predate custom roles.
+                          final isOwner =
+                              roleId != null ? roleId == 1 : role == 'owner';
+                          final canChangeRole =
+                              !isOwner && _has('manage_roles');
+                          final canMute = !isOwner &&
+                              (_has('mute_members') || _has('view_mute_list'));
+                          final canBan = !isOwner &&
+                              (_has('ban_members') || _has('view_ban_list'));
+                          final actions = <Widget>[
+                            if (canChangeRole)
+                              IconButton(
+                                icon: const Icon(Icons.admin_panel_settings,
+                                    size: 20),
+                                tooltip:
+                                    AppLocalizations.of(context).changeRole,
+                                onPressed: () => _changeRole(
+                                    username, role,
+                                    currentRoleId: roleId),
+                              ),
+                            if (canMute)
+                              IconButton(
+                                icon: Icon(
+                                    member['is_muted'] == true
+                                        ? Icons.volume_up
+                                        : Icons.volume_off,
+                                    size: 20),
+                                tooltip: member['is_muted'] == true
+                                    ? AppLocalizations.of(context)
+                                        .unmuteAction
+                                    : AppLocalizations.of(context)
+                                        .muteAction,
+                                onPressed: () => member['is_muted'] == true
+                                    ? _unmuteMember(username)
+                                    : _muteMember(username),
+                              ),
+                            if (canBan)
+                              IconButton(
+                                icon: Icon(Icons.block,
+                                    size: 20, color: cs.error),
+                                tooltip: AppLocalizations.of(context).ban,
+                                onPressed: () => _banMember(username),
+                              ),
+                          ];
+
+                          return ListTile(
+                            leading: CircleAvatar(
+                              child: Text(
+                                displayName.isNotEmpty
+                                    ? displayName[0].toUpperCase()
+                                    : '?',
+                              ),
+                            ),
+                            title: Text(displayName),
+                            subtitle: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(child: Text(username)),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: (roleColor != null
+                                            ? _hexToColor(roleColor)
+                                            : cs.surfaceContainerHighest)
+                                        .withValues(alpha: 0.25),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    roleName,
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        color: roleColor != null
+                                            ? _hexToColor(roleColor)
+                                            : cs.onSurfaceVariant),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            trailing: actions.isNotEmpty
+                                ? Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: actions,
+                                  )
+                                : null,
+                          );
+                        },
+                      ),
+          ),
+          if (canViewMutes || canViewBans)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Row(
+                children: [
+                  if (canViewMutes)
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          padding: kOnyxDialogButtonPadding,
+                          shape: kOnyxDialogButtonShape,
+                        ),
+                        onPressed: () {
+                          // Push on top of Manage Members instead of
+                          // replacing it, so closing this dialog's X
+                          // returns to Manage Members rather than exiting
+                          // the whole flow.
+                          showOnyxDialog(
+                            context: context,
+                            builder: (context) => _MutedUsersDialog(
+                              server: widget.server,
+                              group: widget.group,
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.volume_off, size: 16),
+                        label: Text(
+                            AppLocalizations.of(context).mutedUsersTitle),
+                      ),
+                    ),
+                  if (canViewMutes && canViewBans) const SizedBox(width: 8),
+                  if (canViewBans)
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          padding: kOnyxDialogButtonPadding,
+                          shape: kOnyxDialogButtonShape,
+                        ),
+                        onPressed: () {
+                          // Same reasoning as the Mute Users button above:
+                          // push, don't replace.
+                          showOnyxDialog(
+                            context: context,
+                            builder: (context) => _BannedUsersDialog(
+                              server: widget.server,
+                              group: widget.group,
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.block, size: 16),
+                        label: Text(AppLocalizations.of(context).viewBans),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -6363,69 +8988,87 @@ class _BannedUsersDialogState extends State<_BannedUsersDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(AppLocalizations.of(context).bannedUsersTitle),
-      content: SizedBox(
-        width: 500,
-        height: 400,
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _bans.isEmpty
-                ? Center(
-                    child: Text(AppLocalizations.of(context).noBannedUsers))
-                : ListView.builder(
-                    itemCount: _bans.length,
-                    itemBuilder: (context, index) {
-                      final ban = _bans[index];
-                      final username = ban['username'] ?? '';
-                      final bannedBy = ban['banned_by'] ?? 'Unknown';
-                      final reason = ban['reason']?.toString();
-                      final bannedAt = ban['banned_at'] ?? '';
+    final cs = Theme.of(context).colorScheme;
+    return OnyxDialogShell(
+      maxWidth: 500,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OnyxDialogHeader(
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.error.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.block, size: 20, color: cs.error),
+            ),
+            title: Text(
+              AppLocalizations.of(context).bannedUsersTitle,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: cs.onSurface),
+            ),
+            onClose: () => Navigator.pop(context),
+          ),
+          SizedBox(
+            height: 400,
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _bans.isEmpty
+                    ? Center(
+                        child: Text(AppLocalizations.of(context).noBannedUsers))
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        itemCount: _bans.length,
+                        itemBuilder: (context, index) {
+                          final ban = _bans[index];
+                          final username = ban['username'] ?? '';
+                          final bannedBy = ban['banned_by'] ?? 'Unknown';
+                          final reason = ban['reason']?.toString();
+                          final bannedAt = ban['banned_at'] ?? '';
 
-                      return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor:
-                              Theme.of(context).colorScheme.errorContainer,
-                          child: Icon(
-                            Icons.block,
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                        ),
-                        title: Text(username),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(AppLocalizations.of(context)
-                                .bannedBy(bannedBy)),
-                            if (reason != null && reason.isNotEmpty)
-                              Text(
-                                  AppLocalizations.of(context)
-                                      .bannedReason(reason),
-                                  style: const TextStyle(
-                                      fontStyle: FontStyle.italic)),
-                            Text(
-                                AppLocalizations.of(context)
-                                    .bannedDate(_formatDate(bannedAt)),
-                                style: const TextStyle(fontSize: 12)),
-                          ],
-                        ),
-                        isThreeLine: true,
-                        trailing: IconButton(
-                          icon: const Icon(Icons.check_circle_outline),
-                          tooltip: AppLocalizations.of(context).unban,
-                          color: Theme.of(context).colorScheme.primary,
-                          onPressed: () => _unbanUser(username),
-                        ),
-                      );
-                    },
-                  ),
+                          return ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: cs.errorContainer,
+                              child: Icon(Icons.block, color: cs.error),
+                            ),
+                            title: Text(username),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(AppLocalizations.of(context)
+                                    .bannedBy(bannedBy)),
+                                if (reason != null && reason.isNotEmpty)
+                                  Text(
+                                      AppLocalizations.of(context)
+                                          .bannedReason(reason),
+                                      style: const TextStyle(
+                                          fontStyle: FontStyle.italic)),
+                                Text(
+                                    AppLocalizations.of(context)
+                                        .bannedDate(_formatDate(bannedAt)),
+                                    style: const TextStyle(fontSize: 12)),
+                              ],
+                            ),
+                            isThreeLine: true,
+                            trailing: IconButton(
+                              icon: const Icon(Icons.check_circle_outline),
+                              tooltip: AppLocalizations.of(context).unban,
+                              color: cs.primary,
+                              onPressed: () => _unbanUser(username),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+          const SizedBox(height: 16),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: Text(AppLocalizations.of(context).close),
-        ),
-      ],
     );
   }
 
@@ -6436,5 +9079,1204 @@ class _BannedUsersDialogState extends State<_BannedUsersDialog> {
     } catch (e) {
       return isoDate;
     }
+  }
+}
+
+class _MutedUsersDialog extends StatefulWidget {
+  final ExternalServer server;
+  final Group group;
+
+  const _MutedUsersDialog({
+    required this.server,
+    required this.group,
+  });
+
+  @override
+  State<_MutedUsersDialog> createState() => _MutedUsersDialogState();
+}
+
+class _MutedUsersDialogState extends State<_MutedUsersDialog> {
+  List<Map<String, dynamic>> _mutes = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMutes();
+  }
+
+  Future<void> _loadMutes() async {
+    try {
+      final url = '${widget.server.baseUrl}/mutes';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${widget.server.token}'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (mounted) {
+          setState(() {
+            _mutes = List<Map<String, dynamic>>.from(data);
+            _loading = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() => _loading = false);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _unmuteUser(String username) async {
+    try {
+      final url =
+          '${widget.server.baseUrl}/members/${Uri.encodeComponent(username)}/unmute';
+      debugPrint('[unmute] POST $url');
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${widget.server.token}'},
+      ).timeout(const Duration(seconds: 10));
+
+      debugPrint(
+          '[unmute] Status: ${response.statusCode}, Body: ${response.body}');
+
+      final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+      if (response.statusCode == 200) {
+        rootScreenKey.currentState?.showSnack(l.userUnmuted(username));
+        _loadMutes();
+      } else {
+        try {
+          final error = jsonDecode(response.body)['error'] ?? l.failedUnmute;
+          rootScreenKey.currentState?.showSnack(l.errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(l.errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[unmute] Exception: $e');
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .failedUnmuteUser(username));
+    }
+  }
+
+  String _formatExpiry(dynamic expiresAtMs) {
+    final ms = expiresAtMs is int
+        ? expiresAtMs
+        : int.tryParse(expiresAtMs?.toString() ?? '');
+    if (ms == null) return '';
+    final date = DateTime.fromMillisecondsSinceEpoch(ms);
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return OnyxDialogShell(
+      maxWidth: 500,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OnyxDialogHeader(
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.secondary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.volume_off, size: 20, color: cs.secondary),
+            ),
+            title: Text(
+              AppLocalizations.of(context).mutedUsersTitle,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: cs.onSurface),
+            ),
+            onClose: () => Navigator.pop(context),
+          ),
+          SizedBox(
+            height: 400,
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _mutes.isEmpty
+                    ? Center(
+                        child: Text(AppLocalizations.of(context).noMutedUsers))
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        itemCount: _mutes.length,
+                        itemBuilder: (context, index) {
+                          final mute = _mutes[index];
+                          final username = mute['username'] ?? '';
+                          final mutedBy = mute['muted_by'] ?? 'Unknown';
+                          final reason = mute['reason']?.toString();
+                          final expiresAt = mute['expires_at'];
+
+                          return ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: cs.secondaryContainer,
+                              child: Icon(Icons.volume_off,
+                                  color: cs.onSecondaryContainer),
+                            ),
+                            title: Text(username),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(AppLocalizations.of(context)
+                                    .mutedByLabel(mutedBy)),
+                                if (reason != null && reason.isNotEmpty)
+                                  Text(
+                                      AppLocalizations.of(context)
+                                          .bannedReason(reason),
+                                      style: const TextStyle(
+                                          fontStyle: FontStyle.italic)),
+                                Text(
+                                    AppLocalizations.of(context)
+                                        .mutedUntilLabel(
+                                            _formatExpiry(expiresAt)),
+                                    style: const TextStyle(fontSize: 12)),
+                              ],
+                            ),
+                            isThreeLine: true,
+                            trailing: IconButton(
+                              icon: const Icon(Icons.volume_up),
+                              tooltip:
+                                  AppLocalizations.of(context).unmuteAction,
+                              color: cs.primary,
+                              onPressed: () => _unmuteUser(username),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+}
+
+class _DonationsDialog extends StatefulWidget {
+  final ExternalServer server;
+  final Group group;
+  final bool isOwner;
+
+  const _DonationsDialog({
+    required this.server,
+    required this.group,
+    required this.isOwner,
+  });
+
+  @override
+  State<_DonationsDialog> createState() => _DonationsDialogState();
+}
+
+class _DonationsDialogState extends State<_DonationsDialog> {
+  List<Map<String, dynamic>> _addresses = [];
+  bool _loading = true;
+  int? _expandedIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDonations();
+  }
+
+  Future<void> _loadDonations() async {
+    try {
+      final url = '${widget.server.baseUrl}/donations';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${widget.server.token}'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (mounted) {
+          setState(() {
+            _addresses = List<Map<String, dynamic>>.from(data);
+            _loading = false;
+          });
+        }
+      } else {
+        if (mounted) setState(() => _loading = false);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return OnyxDialogShell(
+      maxWidth: 460,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OnyxDialogHeader(
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child:
+                  Icon(Icons.volunteer_activism, size: 20, color: cs.primary),
+            ),
+            title: Text(
+              AppLocalizations.of(context).supportThisCommunityTitle,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: cs.onSurface),
+            ),
+            onClose: () => Navigator.pop(context),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+            child: Text(
+              AppLocalizations.of(context).donationDisclaimer,
+              style: TextStyle(
+                  fontSize: 11.5, color: cs.onSurfaceVariant, height: 1.3),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 340,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _addresses.isEmpty
+                      ? Center(
+                          child: Text(
+                            widget.isOwner
+                                ? AppLocalizations.of(context)
+                                    .noDonationsOwnerHint
+                                : AppLocalizations.of(context)
+                                    .noDonationsMemberHint,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: cs.onSurfaceVariant),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: _addresses.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final item = _addresses[index];
+                            final label = item['label']?.toString() ?? '';
+                            final address = item['address']?.toString() ?? '';
+                            final expanded = _expandedIndex == index;
+
+                            return AdaptiveGlassCard(
+                              borderRadius: 28,
+                              padding: EdgeInsets.zero,
+                              child: Column(
+                                children: [
+                                  InkWell(
+                                    borderRadius: BorderRadius.circular(28),
+                                    onTap: () => setState(() {
+                                      _expandedIndex = expanded ? null : index;
+                                    }),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(16),
+                                      child: Row(
+                                        children: [
+                                          Container(
+                                            width: 32,
+                                            height: 32,
+                                            decoration: BoxDecoration(
+                                              color: cs.surfaceContainerHighest,
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            ),
+                                            child: Icon(Icons.currency_bitcoin,
+                                                size: 18, color: cs.primary),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Text(label,
+                                                style: TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 16,
+                                                    color: cs.onSurface)),
+                                          ),
+                                          AnimatedRotation(
+                                            turns: expanded ? 0.25 : 0.0,
+                                            duration: const Duration(
+                                                milliseconds: 200),
+                                            curve: Curves.easeInOut,
+                                            child: Icon(
+                                              Icons.arrow_forward_ios,
+                                              size: 16,
+                                              color: cs.onSurface
+                                                  .withValues(alpha: 0.5),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  AnimatedSize(
+                                    duration: const Duration(milliseconds: 250),
+                                    curve: Curves.easeOut,
+                                    child: expanded
+                                        ? Padding(
+                                            padding: const EdgeInsets.fromLTRB(
+                                                16, 0, 16, 16),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.stretch,
+                                              children: [
+                                                Container(
+                                                  alignment: Alignment.center,
+                                                  padding:
+                                                      const EdgeInsets.all(10),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.white,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            12),
+                                                  ),
+                                                  child: QrImageView(
+                                                    data: address,
+                                                    version: QrVersions.auto,
+                                                    size: 160,
+                                                    eyeStyle: const QrEyeStyle(
+                                                        eyeShape:
+                                                            QrEyeShape.square,
+                                                        color: Colors.black),
+                                                    dataModuleStyle:
+                                                        const QrDataModuleStyle(
+                                                            dataModuleShape:
+                                                                QrDataModuleShape
+                                                                    .square,
+                                                            color:
+                                                                Colors.black),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child: Text(
+                                                        address,
+                                                        style: const TextStyle(
+                                                            fontSize: 11,
+                                                            fontFamily:
+                                                                'monospace'),
+                                                        maxLines: 2,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    GestureDetector(
+                                                      onTap: () {
+                                                        Clipboard.setData(
+                                                            ClipboardData(
+                                                                text: address));
+                                                        rootScreenKey
+                                                            .currentState
+                                                            ?.showSnack(
+                                                                AppLocalizations.of(
+                                                                        context)
+                                                                    .addressCopied);
+                                                      },
+                                                      child: Icon(
+                                                          Icons.copy_rounded,
+                                                          size: 16,
+                                                          color: cs.primary),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                          )
+                                        : const SizedBox.shrink(),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (widget.isOwner)
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      padding: kOnyxDialogButtonPadding,
+                      shape: kOnyxDialogButtonShape,
+                    ),
+                    onPressed: () async {
+                      Navigator.pop(context);
+                      await showOnyxDialog(
+                        context: context,
+                        builder: (context) => _EditDonationsDialog(
+                          server: widget.server,
+                          initial: _addresses,
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.edit, size: 16),
+                    label: Text(AppLocalizations.of(context).edit),
+                  ),
+                if (widget.isOwner) const SizedBox(height: 8),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: FilledButton.styleFrom(
+                    padding: kOnyxDialogButtonPadding,
+                    shape: kOnyxDialogButtonShape,
+                  ),
+                  child: Text(AppLocalizations.of(context).close),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EditDonationsDialog extends StatefulWidget {
+  final ExternalServer server;
+  final List<Map<String, dynamic>> initial;
+
+  const _EditDonationsDialog({
+    required this.server,
+    required this.initial,
+  });
+
+  @override
+  State<_EditDonationsDialog> createState() => _EditDonationsDialogState();
+}
+
+class _EditDonationsDialogState extends State<_EditDonationsDialog> {
+  late List<(TextEditingController, TextEditingController)> _rows;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _rows = widget.initial
+        .map((a) => (
+              TextEditingController(text: a['label']?.toString() ?? ''),
+              TextEditingController(text: a['address']?.toString() ?? ''),
+            ))
+        .toList();
+    if (_rows.isEmpty) _addRow();
+  }
+
+  void _addRow() {
+    setState(() {
+      _rows.add((TextEditingController(), TextEditingController()));
+    });
+  }
+
+  void _removeRow(int index) {
+    setState(() {
+      _rows.removeAt(index);
+    });
+  }
+
+  Future<void> _save() async {
+    final addresses = _rows
+        .map((r) => {
+              'label': r.$1.text.trim(),
+              'address': r.$2.text.trim(),
+            })
+        .where((a) =>
+            (a['label'] as String).isNotEmpty &&
+            (a['address'] as String).isNotEmpty)
+        .toList();
+
+    setState(() => _saving = true);
+
+    try {
+      final url = '${widget.server.baseUrl}/donations';
+      final response = await http
+          .put(
+            Uri.parse(url),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${widget.server.token}',
+            },
+            body: jsonEncode({'addresses': addresses}),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+      if (response.statusCode == 200) {
+        if (mounted) {
+          Navigator.pop(context);
+          rootScreenKey.currentState?.showSnack(l.donationsSaved);
+        }
+      } else {
+        try {
+          final error =
+              jsonDecode(response.body)['error'] ?? l.failedSaveDonations;
+          rootScreenKey.currentState?.showSnack(l.errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(l.errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[donations] Exception: $e');
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .failedSaveDonations);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return OnyxDialogShell(
+      maxWidth: 460,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OnyxDialogHeader(
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.edit, size: 20, color: cs.primary),
+            ),
+            title: Text(
+              AppLocalizations.of(context).editDonationsTitle,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: cs.onSurface),
+            ),
+            onClose: _saving ? null : () => Navigator.pop(context),
+          ),
+          SizedBox(
+            height: 340,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: _rows.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (context, index) {
+                        final (labelCtrl, addressCtrl) = _rows[index];
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              flex: 2,
+                              child: TextField(
+                                controller: labelCtrl,
+                                decoration: InputDecoration(
+                                  labelText: AppLocalizations.of(context)
+                                      .donationCoinLabel,
+                                  isDense: true,
+                                  border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(50)),
+                                  filled: true,
+                                  fillColor: cs.surfaceContainerHighest
+                                      .withValues(alpha: 0.3),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 12),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              flex: 3,
+                              child: TextField(
+                                controller: addressCtrl,
+                                decoration: InputDecoration(
+                                  labelText: AppLocalizations.of(context)
+                                      .donationAddressLabel,
+                                  isDense: true,
+                                  border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(50)),
+                                  filled: true,
+                                  fillColor: cs.surfaceContainerHighest
+                                      .withValues(alpha: 0.3),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 12),
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.remove_circle_outline,
+                                  size: 20),
+                              onPressed: () => _removeRow(index),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _addRow,
+                      icon: const Icon(Icons.add),
+                      label:
+                          Text(AppLocalizations.of(context).addDonationAddress),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                FilledButton(
+                  onPressed: _saving ? null : _save,
+                  style: FilledButton.styleFrom(
+                    padding: kOnyxDialogButtonPadding,
+                    shape: kOnyxDialogButtonShape,
+                  ),
+                  child: _saving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : Text(AppLocalizations.of(context).save),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: _saving ? null : () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    padding: kOnyxDialogButtonPadding,
+                    shape: kOnyxDialogButtonShape,
+                  ),
+                  child: Text(AppLocalizations.of(context).cancel),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PollsDialog extends StatefulWidget {
+  final ExternalServer server;
+  final bool canCreate;
+
+  const _PollsDialog({
+    required this.server,
+    required this.canCreate,
+  });
+
+  @override
+  State<_PollsDialog> createState() => _PollsDialogState();
+}
+
+class _PollsDialogState extends State<_PollsDialog> {
+  List<Map<String, dynamic>> _polls = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPolls();
+  }
+
+  Future<void> _loadPolls() async {
+    try {
+      final url = '${widget.server.baseUrl}/polls';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${widget.server.token}'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (mounted) {
+          setState(() {
+            _polls = List<Map<String, dynamic>>.from(data);
+            _loading = false;
+          });
+        }
+      } else {
+        if (mounted) setState(() => _loading = false);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _vote(int pollId, int optionId) async {
+    try {
+      final url = '${widget.server.baseUrl}/polls/$pollId/vote';
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${widget.server.token}',
+            },
+            body: jsonEncode({'option_id': optionId}),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final updated = jsonDecode(response.body) as Map<String, dynamic>;
+        if (mounted) {
+          setState(() {
+            final idx = _polls.indexWhere((p) => p['id'] == pollId);
+            if (idx >= 0) {
+              _polls[idx] = updated;
+            }
+          });
+        }
+      } else {
+        final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+        try {
+          final error = jsonDecode(response.body)['error'] ?? l.failedVote;
+          rootScreenKey.currentState?.showSnack(l.errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(l.errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[poll-vote] Exception: $e');
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value).failedVote);
+    }
+  }
+
+  Widget _buildPollCard(BuildContext context, Map<String, dynamic> poll) {
+    final cs = Theme.of(context).colorScheme;
+    final pollId = (poll['id'] as num).toInt();
+    final question = poll['question']?.toString() ?? '';
+    final totalVotes = (poll['total_votes'] as num?)?.toInt() ?? 0;
+    final options = List<Map<String, dynamic>>.from(poll['options'] ?? []);
+    final hasVoted = options.any((o) => o['selected_by_me'] == true);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(question, style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Text(AppLocalizations.of(context).pollVoteCountAnonymous(totalVotes),
+              style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+          const SizedBox(height: 10),
+          ...options.map((opt) {
+            final optionId = (opt['id'] as num).toInt();
+            final text = opt['text']?.toString() ?? '';
+            final votes = (opt['votes'] as num?)?.toInt() ?? 0;
+            final selected = opt['selected_by_me'] == true;
+            final fraction = totalVotes > 0 ? votes / totalVotes : 0.0;
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(28),
+                onTap: () => _vote(pollId, optionId),
+                child: Stack(
+                  children: [
+                    Container(
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(28),
+                        border: Border.all(
+                            color: selected
+                                ? cs.primary
+                                : cs.outlineVariant.withValues(alpha: 0.3),
+                            width: selected ? 1.5 : 0.8),
+                      ),
+                    ),
+                    if (hasVoted)
+                      FractionallySizedBox(
+                        widthFactor: fraction.clamp(0.0, 1.0),
+                        child: Container(
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: cs.primary.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(28),
+                          ),
+                        ),
+                      ),
+                    Positioned.fill(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Row(
+                          children: [
+                            if (selected)
+                              Icon(Icons.check_circle,
+                                  size: 16, color: cs.primary)
+                            else
+                              const SizedBox(width: 16),
+                            const SizedBox(width: 8),
+                            Expanded(
+                                child: Text(text,
+                                    overflow: TextOverflow.ellipsis)),
+                            if (hasVoted)
+                              Text('$votes',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: cs.onSurfaceVariant)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return OnyxDialogShell(
+      maxWidth: 460,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OnyxDialogHeader(
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.poll_outlined, size: 20, color: cs.primary),
+            ),
+            title: Text(
+              AppLocalizations.of(context).pollsMenuLabel,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: cs.onSurface),
+            ),
+            onClose: () => Navigator.pop(context),
+          ),
+          SizedBox(
+            height: 380,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _polls.isEmpty
+                      ? Center(
+                          child: Text(
+                            widget.canCreate
+                                ? AppLocalizations.of(context).noPollsOwnerHint
+                                : AppLocalizations.of(context).noPollsHint,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: cs.onSurfaceVariant),
+                          ),
+                        )
+                      : ListView(
+                          children: _polls
+                              .map((p) => _buildPollCard(context, p))
+                              .toList(),
+                        ),
+            ),
+          ),
+          if (widget.canCreate)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  padding: kOnyxDialogButtonPadding,
+                  shape: kOnyxDialogButtonShape,
+                ),
+                onPressed: () async {
+                  final created = await showOnyxDialog<bool>(
+                    context: context,
+                    builder: (context) =>
+                        _CreatePollDialog(server: widget.server),
+                  );
+                  if (created == true) {
+                    _loadPolls();
+                  }
+                },
+                icon: const Icon(Icons.add, size: 16),
+                label: Text(AppLocalizations.of(context).newPollAction),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CreatePollDialog extends StatefulWidget {
+  final ExternalServer server;
+
+  const _CreatePollDialog({required this.server});
+
+  @override
+  State<_CreatePollDialog> createState() => _CreatePollDialogState();
+}
+
+class _CreatePollDialogState extends State<_CreatePollDialog> {
+  final _questionController = TextEditingController();
+  final List<TextEditingController> _optionControllers = [
+    TextEditingController(),
+    TextEditingController(),
+  ];
+  bool _multiChoice = false;
+  bool _saving = false;
+
+  void _addOption() {
+    if (_optionControllers.length >= 10) return;
+    setState(() => _optionControllers.add(TextEditingController()));
+  }
+
+  void _removeOption(int index) {
+    if (_optionControllers.length <= 2) return;
+    setState(() => _optionControllers.removeAt(index));
+  }
+
+  Future<void> _create() async {
+    final question = _questionController.text.trim();
+    final options = _optionControllers
+        .map((c) => c.text.trim())
+        .where((t) => t.isNotEmpty)
+        .toList();
+
+    if (question.isEmpty) {
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .pollQuestionEmpty);
+      return;
+    }
+    if (options.length < 2) {
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .pollNeedsTwoOptions);
+      return;
+    }
+
+    setState(() => _saving = true);
+
+    try {
+      final url = '${widget.server.baseUrl}/polls';
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${widget.server.token}',
+            },
+            body: jsonEncode({
+              'question': question,
+              'options': options,
+              'multi_choice': _multiChoice,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final l = lookupAppLocalizations(SettingsManager.appLocale.value);
+      if (response.statusCode == 200) {
+        if (mounted) Navigator.pop(context, true);
+      } else {
+        try {
+          final error =
+              jsonDecode(response.body)['error'] ?? l.failedCreatePoll;
+          rootScreenKey.currentState?.showSnack(l.errorMsg(error.toString()));
+        } catch (e) {
+          rootScreenKey.currentState?.showSnack(l.errorMsg(response.body));
+        }
+      }
+    } catch (e) {
+      debugPrint('[create-poll] Exception: $e');
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .failedCreatePoll);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return OnyxDialogShell(
+      maxWidth: 460,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OnyxDialogHeader(
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.add_chart, size: 20, color: cs.primary),
+            ),
+            title: Text(
+              AppLocalizations.of(context).newPollAction,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: cs.onSurface),
+            ),
+            onClose: _saving ? null : () => Navigator.pop(context),
+          ),
+          SizedBox(
+            height: 340,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: _questionController,
+                    decoration: InputDecoration(
+                      labelText: AppLocalizations.of(context).pollQuestionLabel,
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(28)),
+                      filled: true,
+                      fillColor:
+                          cs.surfaceContainerHighest.withValues(alpha: 0.3),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 14),
+                    ),
+                    maxLength: 300,
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: _optionControllers.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (context, index) {
+                        return Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _optionControllers[index],
+                                decoration: InputDecoration(
+                                  labelText: AppLocalizations.of(context)
+                                      .pollOptionLabel(index + 1),
+                                  isDense: true,
+                                  border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(28)),
+                                  filled: true,
+                                  fillColor: cs.surfaceContainerHighest
+                                      .withValues(alpha: 0.3),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 12),
+                                ),
+                                maxLength: 100,
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.remove_circle_outline,
+                                  size: 20),
+                              onPressed: _optionControllers.length > 2
+                                  ? () => _removeOption(index)
+                                  : null,
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed:
+                            _optionControllers.length < 10 ? _addOption : null,
+                        icon: const Icon(Icons.add),
+                        label: Text(AppLocalizations.of(context).addPollOption),
+                      ),
+                      const Spacer(),
+                      Text(AppLocalizations.of(context).multipleChoiceLabel),
+                      Switch(
+                        value: _multiChoice,
+                        onChanged: (v) => setState(() => _multiChoice = v),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                FilledButton(
+                  onPressed: _saving ? null : _create,
+                  style: FilledButton.styleFrom(
+                    padding: kOnyxDialogButtonPadding,
+                    shape: kOnyxDialogButtonShape,
+                  ),
+                  child: _saving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : Text(AppLocalizations.of(context).create),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: _saving ? null : () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    padding: kOnyxDialogButtonPadding,
+                    shape: kOnyxDialogButtonShape,
+                  ),
+                  child: Text(AppLocalizations.of(context).cancel),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

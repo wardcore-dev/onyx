@@ -6,7 +6,7 @@ import 'dart:math' show min;
 import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
-import '../utils/file_utils.dart' show getOnyxSaveDirectory;
+import '../utils/file_utils.dart' show getOnyxSaveDirectory, showSavedToSnack;
 import '../utils/onyx_base_dir.dart' show getOnyxDocumentsDirectory;
 import 'package:just_audio/just_audio.dart';
 import 'package:http/http.dart' as http;
@@ -812,7 +812,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
 
         final savedFile = File(destPath);
         await File(_cachedFilePath!).copy(savedFile.path);
-        rootScreenKey.currentState?.showSnack('Saved to: ${savedFile.path}');
+        showSavedToSnack(savedFile.path);
         return;
       }
 
@@ -837,7 +837,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
       final destPath = '${targetDir.path}/$basename';
       final savedFile = File(destPath);
       await File(_cachedFilePath!).copy(savedFile.path);
-      rootScreenKey.currentState?.showSnack('Saved to: ${savedFile.path}');
+      showSavedToSnack(savedFile.path);
 
       if (Platform.isAndroid) await OpenFilex.open(savedFile.path);
     } catch (e, st) {

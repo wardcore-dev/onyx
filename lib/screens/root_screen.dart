@@ -35,6 +35,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:convert/convert.dart';
 import 'package:window_manager/window_manager.dart';
 import '../managers/external_server_manager.dart';
+import '../managers/profile_preset_manager.dart';
 import '../models/external_server.dart';
 import 'package:path/path.dart' as p;
 
@@ -264,6 +265,12 @@ class RootScreenState extends State<RootScreen>
   int _reconnectAttempts = 0;
   final Duration _baseReconnectDelay = const Duration(seconds: 3);
   final Duration _maxReconnectDelay = const Duration(seconds: 60);
+  // When a connect attempt was last kicked off (_connectWs actually issuing a
+  // new WebSocketChannel.connect), so the reconnect loop can tell "still
+  // mid-handshake, give it a moment" apart from "silently hung forever" — see
+  // _startReconnectLoop.
+  DateTime? _lastConnectAttemptAt;
+  static const Duration _connectAttemptTimeout = Duration(seconds: 10);
 
   int _index = 0;
   late final PageController _pageController;
@@ -347,6 +354,8 @@ class RootScreenState extends State<RootScreen>
   // queue of snackbars one after another.
   Timer? _snackDebounce;
   String? _pendingSnackText;
+  String? _pendingSnackActionLabel;
+  VoidCallback? _pendingSnackAction;
 
   String? selectedChatOther;
   String? selectedMeshChatOther;
@@ -435,19 +444,27 @@ class RootScreenState extends State<RootScreen>
 
   // Public entry point. Coalesces bursts: only the last message in a rapid
   // sequence is actually shown, after a short quiet period.
-  void showSnack(String text) {
+  void showSnack(String text, {String? actionLabel, VoidCallback? onAction}) {
     if (!mounted) return;
     if (!SettingsManager.snackbarEnabled.value) return;
     _pendingSnackText = text;
+    _pendingSnackActionLabel = actionLabel;
+    _pendingSnackAction = onAction;
     _snackDebounce?.cancel();
     _snackDebounce = Timer(const Duration(milliseconds: 350), () {
       final t = _pendingSnackText;
+      final actLabel = _pendingSnackActionLabel;
+      final act = _pendingSnackAction;
       _pendingSnackText = null;
-      if (t != null) _presentSnack(t);
+      _pendingSnackActionLabel = null;
+      _pendingSnackAction = null;
+      if (t != null) {
+        _presentSnack(t, actionLabel: actLabel, onAction: act);
+      }
     });
   }
 
-  void _presentSnack(String text) {
+  void _presentSnack(String text, {String? actionLabel, VoidCallback? onAction}) {
     if (!mounted) return;
     if (!SettingsManager.snackbarEnabled.value) return;
     final colorScheme = Theme.of(context).colorScheme;
@@ -472,11 +489,18 @@ class RootScreenState extends State<RootScreen>
         ),
         backgroundColor: backgroundColor,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         margin: const EdgeInsets.only(bottom: 16, left: 16, right: 16),
         elevation: 4,
         duration: const Duration(seconds: 2),
+        action: (actionLabel != null && onAction != null)
+            ? SnackBarAction(
+                label: actionLabel,
+                textColor: colorScheme.primary,
+                onPressed: onAction,
+              )
+            : null,
       ),
     );
   }
@@ -745,6 +769,41 @@ class RootScreenState extends State<RootScreen>
       }
     }
 
+    return changed;
+  }
+
+  /// Merge WardLink-synced own-outgoing personal-chat messages into [chats].
+  /// Deliberately separate from [importFavorites]: it never touches
+  /// favourites/folder state, so the personal-outgoing WardLink scope stays
+  /// fully isolated from the Favorites scope (no shared bookkeeping, no
+  /// merged/cascade side effects).
+  bool importPersonalMessages(Map<String, List<ChatMessage>> incomingChats) {
+    bool changed = false;
+    for (final entry in incomingChats.entries) {
+      final chatId = entry.key;
+      if (entry.value.isEmpty) continue;
+      if (!chats.containsKey(chatId)) {
+        chats[chatId] = entry.value;
+        changed = true;
+        bumpChatMessageVersion(chatId);
+      } else {
+        final existing = chats[chatId]!;
+        final existingIds = existing.map((m) => m.id).toSet();
+        final newMessages =
+            entry.value.where((m) => !existingIds.contains(m.id)).toList();
+        if (newMessages.isNotEmpty) {
+          existing.addAll(newMessages);
+          existing.sort((a, b) => a.time.compareTo(b.time));
+          changed = true;
+          bumpChatMessageVersion(chatId);
+        }
+      }
+    }
+    if (changed) {
+      schedulePersistChats();
+      chatsVersion.value++;
+      if (mounted) setState(() {});
+    }
     return changed;
   }
 
@@ -3193,9 +3252,9 @@ class RootScreenState extends State<RootScreen>
         // — a reminder tap's "username" is actually an encoded routing
         // string, see ReminderService.encodeWindowsReminderTap.
         if (username.startsWith(ReminderService.reminderTapPrefix)) {
-          final parts =
-              username.substring(ReminderService.reminderTapPrefix.length)
-                  .split('|');
+          final parts = username
+              .substring(ReminderService.reminderTapPrefix.length)
+              .split('|');
           if (parts.length == 5) {
             await _routeToReminder({
               'chatType': parts[0],
@@ -3303,7 +3362,8 @@ class RootScreenState extends State<RootScreen>
             'isDesktop=$isDesktop');
         if (!mounted) return;
         NotificationService.clearMessagesForUser(other);
-        if (pendingHighlightChat.value == other) pendingHighlightChat.value = null;
+        if (pendingHighlightChat.value == other)
+          pendingHighlightChat.value = null;
 
         if (isDesktop) {
           setState(() {
@@ -3364,7 +3424,8 @@ class RootScreenState extends State<RootScreen>
         // runPendingUnlockNavigation (main.dart) once the PIN/biometric
         // check actually succeeds — that path is only reachable after a
         // real unlock, so it can never race the lock screen's own push.
-        debugPrint('[lock] stashing openChat($other) into pendingUnlockNavigation');
+        debugPrint(
+            '[lock] stashing openChat($other) into pendingUnlockNavigation');
         pendingUnlockNavigation = openChat;
         return;
       }
@@ -3438,7 +3499,8 @@ class RootScreenState extends State<RootScreen>
           setPendingMessageScrollTarget(chatId, messageId);
         }
         if (!mounted) return;
-        if (pendingHighlightChat.value == other) pendingHighlightChat.value = null;
+        if (pendingHighlightChat.value == other)
+          pendingHighlightChat.value = null;
         if (isDesktop) {
           setState(() {
             selectedChatOther = other;
@@ -3560,7 +3622,8 @@ class RootScreenState extends State<RootScreen>
           });
         } else {
           Navigator.of(context).push(
-            _chatRoute((_) => ExternalGroupChatScreen(group: group, server: server)),
+            _chatRoute(
+                (_) => ExternalGroupChatScreen(group: group, server: server)),
           );
         }
         break;
@@ -3716,7 +3779,9 @@ class RootScreenState extends State<RootScreen>
         // non-null with closeCode == null — wsConnectedNotifier only stays
         // true while the connection is actually confirmed alive, so check
         // that too instead of trusting `_ws` alone.
-        if (_ws == null || _ws!.closeCode != null || !wsConnectedNotifier.value) {
+        if (_ws == null ||
+            _ws!.closeCode != null ||
+            !wsConnectedNotifier.value) {
           _appendLog('[lifecycle] App resumed — reconnecting immediately');
           _disconnectWs(manual: false, suppressPresence: true).then((_) {
             _connectWs();
@@ -3959,6 +4024,7 @@ class RootScreenState extends State<RootScreen>
       }).catchError((e) {
         _appendLog('[ext-servers] init failed: $e');
       }));
+      unawaited(ProfilePresetManager.loadPresets());
 
       final ready = await wsReadyFuture;
       if (!ready) {
@@ -4032,7 +4098,8 @@ class RootScreenState extends State<RootScreen>
     if (mounted) setState(() => _isPrimaryDevice = cachedIsPrimary == 'true');
     final cachedIsTrusted =
         await SecureStore.read('is_e2e_trusted_device_$username');
-    if (mounted) setState(() => _isE2eTrustedDevice = cachedIsTrusted == 'true');
+    if (mounted)
+      setState(() => _isE2eTrustedDevice = cachedIsTrusted == 'true');
 
     Future(() async {
       try {
@@ -4235,9 +4302,20 @@ class RootScreenState extends State<RootScreen>
       // Restart WardLink scoped to the new account (reloads its trusted-
       // device list and starts broadcasting the new username), mirroring
       // the startup path in _loadCurrentAccount.
+      //
+      // Favourites are awaited before the server actually opens (chained,
+      // not blocking WS connection below): starting WardLink's HTTP server
+      // immediately would let a peer reach us and pull a manifest built from
+      // still-empty `_favorites` (cleared above, not yet reloaded) — which
+      // that peer's bulk-delete tombstone guard could misread as "this
+      // account deleted everything." _loadFavorites() itself is fast (local
+      // SharedPreferences read), so this doesn't meaningfully delay startup.
       unawaited(WardLinkTombstones.load(username));
       if (SettingsManager.wardLinkEnabled.value) {
-        unawaited(WardLinkSyncService.instance.start(username));
+        unawaited(_loadFavorites()
+            .then((_) => WardLinkSyncService.instance.start(username)));
+      } else {
+        unawaited(_loadFavorites());
       }
       if (SettingsManager.meshModeEnabled.value) {
         unawaited(MeshManager.instance.start(username));
@@ -4256,11 +4334,13 @@ class RootScreenState extends State<RootScreen>
       _appendLog('[account] switch complete, ws ready=$ready');
 
       // Load the rest after WS is up — these don't block connection
-      unawaited(_loadFavorites());
+      // (favourites are already loading/loaded via the WardLink-gated chain
+      // above, so no separate call is needed here).
       unawaited(() async {
         try {
           await ExternalServerManager.loadServers();
           unawaited(ExternalServerManager.refreshAllExternalGroups());
+          unawaited(ProfilePresetManager.loadPresets());
           _appendLog(
               '[ext-servers] Loaded ${ExternalServerManager.servers.value.length} external servers for $username');
         } catch (e) {
@@ -4797,6 +4877,15 @@ class RootScreenState extends State<RootScreen>
     required bool isPrimary,
   }) async {
     try {
+      // Stop WardLink before touching any account state — it was previously
+      // wired only into _switchToAccount(), so logging into a NEW account
+      // from the login/QR screen left it running under the OLD account's
+      // username while root_screen's favorites/chats below got cleared and
+      // reloaded for the new one. A sync landing in that window pulled the
+      // old account's paired-device data (e.g. favorites from a phone still
+      // paired to the old account) into the new account's now-current state.
+      await WardLinkSyncService.instance.stop();
+
       await AccountManager.saveToken(username, token);
       await AccountManager.saveUsername(username);
       await AccountManager.addAccount(username);
@@ -4828,6 +4917,13 @@ class RootScreenState extends State<RootScreen>
       await _loadFavorites();
       _appendLog('[qr-login] ok for $username');
 
+      // Restart WardLink scoped to the new account now that favorites are
+      // loaded, mirroring _switchToAccount().
+      unawaited(WardLinkTombstones.load(username));
+      if (SettingsManager.wardLinkEnabled.value) {
+        unawaited(WardLinkSyncService.instance.start(username));
+      }
+
       await _disconnectWs();
       _pubkeyCache.clear();
       _pubkeyUploadedToServer = false;
@@ -4851,6 +4947,7 @@ class RootScreenState extends State<RootScreen>
       try {
         await ExternalServerManager.loadServers();
         await ExternalServerManager.refreshAllExternalGroups();
+        unawaited(ProfilePresetManager.loadPresets());
       } catch (e) {
         _appendLog('[ext-servers] Failed to load for qr account: $e');
       }
@@ -4876,6 +4973,15 @@ class RootScreenState extends State<RootScreen>
         }),
       );
       if (res.statusCode == 200) {
+        // Stop WardLink before touching any account state — see the same
+        // guard in loginWithQrToken() above for why: it was previously wired
+        // only into _switchToAccount(), so logging into a NEW account here
+        // left it running under the OLD account's username while the
+        // favorites/chats below got cleared and reloaded for the new one,
+        // letting an in-flight sync from a device paired to the old account
+        // land in the new account's now-current state.
+        await WardLinkSyncService.instance.stop();
+
         final obj = jsonDecode(res.body);
         final token = obj['token'];
         await AccountManager.saveToken(username, token);
@@ -4918,6 +5024,13 @@ class RootScreenState extends State<RootScreen>
         await _loadFavorites();
         _appendLog('[login] ok for $username');
 
+        // Restart WardLink scoped to the new account now that favorites are
+        // loaded, mirroring _switchToAccount().
+        unawaited(WardLinkTombstones.load(username));
+        if (SettingsManager.wardLinkEnabled.value) {
+          unawaited(WardLinkSyncService.instance.start(username));
+        }
+
         await _disconnectWs();
         _pubkeyCache.clear();
         _pubkeyUploadedToServer = false;
@@ -4941,6 +5054,7 @@ class RootScreenState extends State<RootScreen>
         try {
           await ExternalServerManager.loadServers();
           await ExternalServerManager.refreshAllExternalGroups();
+          unawaited(ProfilePresetManager.loadPresets());
           _appendLog(
               '[ext-servers] Loaded ${ExternalServerManager.servers.value.length} external servers for $username');
         } catch (e) {
@@ -4996,8 +5110,10 @@ class RootScreenState extends State<RootScreen>
       final data = jsonDecode(res.body);
       final serverIsPrimary = data['is_primary'] == true;
       final serverIsTrusted = data['e2e_trusted'] == true;
-      await SecureStore.write('is_primary_device_$username', serverIsPrimary ? 'true' : 'false');
-      await SecureStore.write('is_e2e_trusted_device_$username', serverIsTrusted ? 'true' : 'false');
+      await SecureStore.write(
+          'is_primary_device_$username', serverIsPrimary ? 'true' : 'false');
+      await SecureStore.write('is_e2e_trusted_device_$username',
+          serverIsTrusted ? 'true' : 'false');
       if (mounted) {
         setState(() {
           _isPrimaryDevice = serverIsPrimary;
@@ -5039,7 +5155,8 @@ class RootScreenState extends State<RootScreen>
     if (executesAtStr != null) {
       try {
         final dt = DateTime.parse(executesAtStr).toLocal();
-        when = '${dt.day}.${dt.month}.${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+        when =
+            '${dt.day}.${dt.month}.${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
       } catch (_) {
         when = executesAtStr;
       }
@@ -5084,13 +5201,15 @@ class RootScreenState extends State<RootScreen>
                             color: cs.error.withValues(alpha: 0.14),
                             borderRadius: BorderRadius.circular(14),
                           ),
-                          child: Icon(Icons.warning_rounded, color: cs.error, size: 24),
+                          child: Icon(Icons.warning_rounded,
+                              color: cs.error, size: 24),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
                             l10n.recoveryAlertRequestedTitle,
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                         ),
                       ],
@@ -5105,7 +5224,9 @@ class RootScreenState extends State<RootScreen>
                       children: [
                         Text(
                           l10n.recoveryAlertRequestedBody(deviceName, when),
-                          style: TextStyle(color: cs.onSurface.withValues(alpha: 0.7), fontSize: 13),
+                          style: TextStyle(
+                              color: cs.onSurface.withValues(alpha: 0.7),
+                              fontSize: 13),
                         ),
                         const SizedBox(height: 20),
                         Row(
@@ -5114,9 +5235,11 @@ class RootScreenState extends State<RootScreen>
                               child: FilledButton(
                                 onPressed: () => Navigator.pop(ctx),
                                 style: FilledButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14),
                                   shape: const StadiumBorder(),
-                                  backgroundColor: cs.primary.withValues(alpha: 0.16),
+                                  backgroundColor:
+                                      cs.primary.withValues(alpha: 0.16),
                                   foregroundColor: cs.primary,
                                 ),
                                 child: Text(l10n.recoveryAlertIgnoreButton),
@@ -5130,7 +5253,8 @@ class RootScreenState extends State<RootScreen>
                                   await _cancelPendingRecovery();
                                 },
                                 style: FilledButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14),
                                   shape: const StadiumBorder(),
                                   backgroundColor: cs.error,
                                   foregroundColor: cs.onError,
@@ -5424,6 +5548,7 @@ class RootScreenState extends State<RootScreen>
       _appendLog('[ws] no account');
       return;
     }
+    _lastConnectAttemptAt = DateTime.now();
     AccountManager.getToken(currentUsername!).then((token) async {
       if (token == null) {
         _appendLog('[ws] no token');
@@ -5806,7 +5931,9 @@ class RootScreenState extends State<RootScreen>
                       id: tokenId,
                       deviceName: deviceName,
                       deviceOs: deviceOs,
-                      requestedAt: DateTime.tryParse(obj['timestamp'] as String? ?? '') ?? DateTime.now(),
+                      requestedAt: DateTime.tryParse(
+                              obj['timestamp'] as String? ?? '') ??
+                          DateTime.now(),
                     ));
                   }
                   // Also pull the authoritative list (picks up approvals/quorum
@@ -5835,7 +5962,8 @@ class RootScreenState extends State<RootScreen>
               }
 
               if (typ == 'recovery_requested') {
-                _appendLog('[ws] recovery_requested from device_id=${obj['from_device_id']}');
+                _appendLog(
+                    '[ws] recovery_requested from device_id=${obj['from_device_id']}');
                 if (!mounted) return;
                 _showRecoveryRequestedDialog(obj);
                 return;
@@ -5859,7 +5987,8 @@ class RootScreenState extends State<RootScreen>
               }
 
               if (typ == 'recovery_executed') {
-                _appendLog('[ws] recovery_executed new_primary_device_id=${obj['new_primary_device_id']}');
+                _appendLog(
+                    '[ws] recovery_executed new_primary_device_id=${obj['new_primary_device_id']}');
                 unawaited(_refreshTrustStatus());
                 if (!mounted) return;
                 _showRecoveryAlertDialog(
@@ -6263,6 +6392,17 @@ class RootScreenState extends State<RootScreen>
                 }
                 return;
               }
+
+              if (typ == 'comment_added' ||
+                  typ == 'comment_deleted' ||
+                  typ == 'comment_reaction_update') {
+                final groupId = obj['group_id'] as int?;
+                if (groupId != null &&
+                    _groupMessageListeners.containsKey(groupId)) {
+                  _groupMessageListeners[groupId]!(obj);
+                }
+                return;
+              }
             }
           } catch (e) {
             _appendLog('[ws] onMessage error: $e');
@@ -6384,8 +6524,26 @@ class RootScreenState extends State<RootScreen>
       if (t.tick % (delay.inSeconds == 0 ? 1 : delay.inSeconds) != 0) return;
 
       // Don't stack a new attempt on top of one that's already in flight
-      // (socket opened, handshake still pending).
-      if (_ws != null && _ws!.closeCode == null) return;
+      // (socket opened, handshake still pending) — UNLESS it's been pending
+      // too long. WebSocketChannel.connect() returns a non-null channel
+      // immediately and only surfaces failure later via onError/onDone; on a
+      // network black-hole (stale NAT entry after sleep/wake, a firewall
+      // silently dropping the SYN, a dead Wi-Fi association) neither ever
+      // fires, `_ws` stays non-null with closeCode == null forever, and this
+      // loop would otherwise wait on it indefinitely — which is exactly why
+      // reconnect used to only ever happen when the user reopened the
+      // window (sendOnlineStatus force-tears-down a stale `_ws` before
+      // retrying). Do the same teardown here so it also self-heals in the
+      // background.
+      if (_ws != null && _ws!.closeCode == null) {
+        final since = _lastConnectAttemptAt == null
+            ? Duration.zero
+            : DateTime.now().difference(_lastConnectAttemptAt!);
+        if (since < _connectAttemptTimeout) return;
+        _appendLog(
+            '[ws.reconnect] connect attempt stuck for ${since.inSeconds}s — forcing teardown before retry');
+        await _disconnectWs(manual: false, suppressPresence: true);
+      }
 
       _reconnectAttempts++;
       _appendLog(
@@ -7664,8 +7822,8 @@ class RootScreenState extends State<RootScreen>
       String to, String text, String localId, Map<String, dynamic>? replyTo) {
     final chatId = chatIdForUser(to);
     final previous = _chatSendChains[chatId] ?? Future<void>.value();
-    final chained = previous.then((_) =>
-        _sendChatMessageBackgroundTask(to, text, localId, replyTo));
+    final chained = previous.then(
+        (_) => _sendChatMessageBackgroundTask(to, text, localId, replyTo));
     // Swallow errors here so one failed send doesn't permanently wedge the
     // chain for every later message to this chat — the task itself already
     // handles/logs its own failures.
@@ -7673,8 +7831,8 @@ class RootScreenState extends State<RootScreen>
     unawaited(chained);
   }
 
-  Future<void> _sendChatMessageBackgroundTask(
-      String to, String text, String localId, Map<String, dynamic>? replyTo) async {
+  Future<void> _sendChatMessageBackgroundTask(String to, String text,
+      String localId, Map<String, dynamic>? replyTo) async {
     Map<String, String>? payloads;
     String? fallbackEnvelope;
 
@@ -7831,6 +7989,9 @@ class RootScreenState extends State<RootScreen>
         for (final m in msgs) {
           if (m.serverMessageId == messageId) {
             m.updateContent(newText);
+            // WardLink diffs edits by comparing editedAt — without this the
+            // edit is invisible to sync (see wardlink-personal-edit-delete-sync).
+            m.editedAt = DateTime.now();
             break;
           }
         }
@@ -7883,6 +8044,8 @@ class RootScreenState extends State<RootScreen>
                 message: toTrash,
                 deletedAt: DateTime.now(),
               ));
+              // Tombstone so WardLink removes this message on paired devices too.
+              WardLinkTombstones.recordMsgDeleted(removedChatId, toTrash.id);
             }
           }
         }
@@ -7914,6 +8077,8 @@ class RootScreenState extends State<RootScreen>
                 message: toTrash,
                 deletedAt: DateTime.now(),
               ));
+              // Tombstone so WardLink removes this message on paired devices too.
+              WardLinkTombstones.recordMsgDeleted(entry.key, toTrash.id);
             }
           }
         }
@@ -7925,6 +8090,7 @@ class RootScreenState extends State<RootScreen>
           chatsVersion.value++;
         }
         schedulePersistChats(chatId: removedChatId);
+        unawaited(WardLinkSyncService.instance.pokeNow());
         if (mounted) setState(() {});
       }
       _appendLog('[delete] message id=$messageId deleted');
@@ -8356,115 +8522,85 @@ class RootScreenState extends State<RootScreen>
 
   Widget _buildMobileAppBar(BuildContext context) {
     return ValueListenableBuilder<bool>(
-      valueListenable: SettingsManager.applyGlobally,
-      builder: (_, apply, __) {
-        return ValueListenableBuilder<String?>(
-          valueListenable: SettingsManager.chatVideoBackground,
-          builder: (_, videoPath, __) {
-            return ValueListenableBuilder<String?>(
-              valueListenable: SettingsManager.chatBackground,
-              builder: (_, path, __) {
-                final makeTransparent = apply &&
-                    ((path != null && File(path).existsSync()) ||
-                        (videoPath != null && File(videoPath).existsSync()));
-                return ValueListenableBuilder<bool>(
-                  valueListenable: SettingsManager.showAccountIndicator,
-                  builder: (_, showInd, __) => ClipRect(
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                      child: AppBar(
-                    title: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ValueListenableBuilder<bool>(
-                          valueListenable: wsConnectedNotifier,
-                          builder: (_, connected, __) {
-                            final baseStyle = const TextStyle(
-                                fontSize: 20, fontWeight: FontWeight.bold);
-                            final targetScale =
-                                (baseStyle.fontSize ?? 20) * 1.2 / 24.0;
-                            return TweenAnimationBuilder<double>(
-                              tween: Tween<double>(
-                                  begin: 1.0,
-                                  end: connected ? targetScale : 1.0),
-                              duration: const Duration(milliseconds: 300),
-                              curve: Curves.easeInOut,
-                              builder: (_, scale, child) =>
-                                  Transform.scale(scale: scale, child: child),
-                              child: GestureDetector(
-                                onTap: () => showAboutOnyxDialog(context),
-                                child: Padding(
-                                  padding: const EdgeInsets.only(top: 2),
-                                  child: Image.asset('assets/onyx-512.png',
-                                      width: 25,
-                                      height: 25,
-                                      fit: BoxFit.contain),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        GestureDetector(
-                          onTap: () => showAboutOnyxDialog(context),
-                          child: ConnectionTitle(
-                            style: const TextStyle(
-                                fontSize: 20, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        const ProxyShieldBadge(),
-                      ],
-                    ),
-                    centerTitle: true,
-                    leading: (showInd && currentUsername != null)
-                        ? Container(
-                            padding: const EdgeInsets.only(left: 17, top: 12),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  currentDisplayName ?? currentUsername!,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                Text(
-                                  '@$currentUsername',
-                                  style: const TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                        : null,
-                    leadingWidth:
-                        (showInd && currentUsername != null) ? 100 : null,
-                    backgroundColor: makeTransparent
-                        ? Colors.transparent
-                        : Theme.of(context).colorScheme.surface.withValues(alpha: 0.7),
-                    elevation: 0,
-                    actions: [
-                      if (_index == 0 || !isDesktop)
-                        IconButton(
-                          icon: const Icon(Icons.search),
-                          onPressed: _onSearchRequested,
-                        ),
-                    ],
-                      ),
+      valueListenable: SettingsManager.showAccountIndicator,
+      builder: (_, showInd, __) => AppBar(
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ValueListenableBuilder<bool>(
+              valueListenable: wsConnectedNotifier,
+              builder: (_, connected, __) {
+                final baseStyle =
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.bold);
+                final targetScale = (baseStyle.fontSize ?? 20) * 1.2 / 24.0;
+                return TweenAnimationBuilder<double>(
+                  tween: Tween<double>(
+                      begin: 1.0, end: connected ? targetScale : 1.0),
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                  builder: (_, scale, child) =>
+                      Transform.scale(scale: scale, child: child),
+                  child: GestureDetector(
+                    onTap: () => showAboutOnyxDialog(context),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Image.asset('assets/onyx-512.png',
+                          width: 25, height: 25, fit: BoxFit.contain),
                     ),
                   ),
                 );
               },
-            );
-          },
-        );
-      },
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => showAboutOnyxDialog(context),
+              child: ConnectionTitle(
+                style:
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(width: 6),
+            const ProxyShieldBadge(),
+          ],
+        ),
+        centerTitle: true,
+        leading: (showInd && currentUsername != null)
+            ? Container(
+                padding: const EdgeInsets.only(left: 17, top: 12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      currentDisplayName ?? currentUsername!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    Text(
+                      '@$currentUsername',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : null,
+        leadingWidth: (showInd && currentUsername != null) ? 100 : null,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        actions: [
+          if (_index == 0 || !isDesktop)
+            IconButton(
+              icon: const Icon(Icons.search),
+              onPressed: _onSearchRequested,
+            ),
+        ],
+      ),
     );
   }
 
@@ -8878,12 +9014,12 @@ class RootScreenState extends State<RootScreen>
                                       AccountsTab(
                                         currentUsername: currentUsername,
                                         currentUin: currentUin,
-                                        onRefreshProfile: currentUsername ==
-                                                null
-                                            ? null
-                                            : () => unawaited(
-                                                _refreshProfileFromServer(
-                                                    currentUsername!)),
+                                        onRefreshProfile:
+                                            currentUsername == null
+                                                ? null
+                                                : () => unawaited(
+                                                    _refreshProfileFromServer(
+                                                        currentUsername!)),
                                         identityPubFp:
                                             _identityPublicKey != null
                                                 ? _computePubkeyFpHex(

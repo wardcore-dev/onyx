@@ -25,6 +25,24 @@ class ChatMessage {
   /// When the message content was last edited (used for WardLink edit sync).
   DateTime? editedAt;
 
+  /// True when this message arrived on this device via WardLink sync from
+  /// the device that actually sent it, rather than being sent from here.
+  /// This device doesn't "own" the message as far as the server is
+  /// concerned, so edit/delete must not be offered for it here — only the
+  /// originating device can change or delete it. Never persisted across
+  /// server-authoritative reloads; only set on WardLink-imported copies.
+  bool isWardLinkCopy;
+
+  /// Name of the device this WardLink copy was pulled from (the device that
+  /// actually sent it). Null when [isWardLinkCopy] is false. Shown as a
+  /// small badge on the message so the user knows where it originated.
+  String? syncedFromDeviceName;
+
+  /// OS of the device named in [syncedFromDeviceName] ('android'/'ios'/
+  /// 'windows'/'macos'/'linux', per WardLinkPairedDevice.os), used to pick
+  /// a phone vs. computer icon for the sync badge.
+  String? syncedFromDeviceOs;
+
   /// Mesh-only: delivery progress for outgoing bleMesh messages.
   MeshDeliveryStatus? meshDeliveryStatus;
 
@@ -68,6 +86,9 @@ class ChatMessage {
     DeliveryMode? deliveryMode,
     this.deliveredAt,
     this.editedAt,
+    this.isWardLinkCopy = false,
+    this.syncedFromDeviceName,
+    this.syncedFromDeviceOs,
     this.meshDeliveryStatus,
     this.meshPacketId,
     this.meshFileId,
@@ -123,6 +144,10 @@ class ChatMessage {
     'deliveryMode': deliveryMode.name,
     'deliveredAt': deliveredAt?.toIso8601String(),
     if (editedAt != null) 'editedAt': editedAt!.toIso8601String(),
+    if (isWardLinkCopy) 'isWardLinkCopy': true,
+    if (syncedFromDeviceName != null)
+      'syncedFromDeviceName': syncedFromDeviceName,
+    if (syncedFromDeviceOs != null) 'syncedFromDeviceOs': syncedFromDeviceOs,
     if (meshDeliveryStatus != null) 'meshDeliveryStatus': meshDeliveryStatus!.name,
     if (meshPacketId != null) 'meshPacketId': meshPacketId,
     if (meshFileId != null) 'meshFileId': meshFileId,
@@ -162,6 +187,9 @@ class ChatMessage {
       editedAt: j['editedAt'] != null
           ? DateTime.tryParse(j['editedAt'].toString())
           : null,
+      isWardLinkCopy: j['isWardLinkCopy'] == true,
+      syncedFromDeviceName: j['syncedFromDeviceName']?.toString(),
+      syncedFromDeviceOs: j['syncedFromDeviceOs']?.toString(),
       meshDeliveryStatus: _parseMeshDeliveryStatus(j['meshDeliveryStatus']),
       meshPacketId: j['meshPacketId'] is int
           ? j['meshPacketId'] as int

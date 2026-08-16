@@ -81,7 +81,7 @@ class ProxyShieldBadge extends StatelessWidget {
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.35),
       builder: (ctx) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
         backgroundColor: colorScheme.surface,
         elevation: 8,
         

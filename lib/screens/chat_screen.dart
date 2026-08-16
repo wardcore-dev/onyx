@@ -39,6 +39,7 @@ import '../widgets/video_message_widget.dart';
 import '../widgets/avatar_widget.dart';
 import '../widgets/avatar_fullscreen_viewer.dart';
 import '../widgets/onyx_dialog.dart';
+import '../utils/code_heuristic.dart';
 import '../call/call_manager.dart';
 import '../screens/call_overlay.dart';
 import '../managers/user_cache.dart';
@@ -807,9 +808,12 @@ class ChatScreenState extends State<ChatScreen>
 
   Future<void> _confirmDeleteSelected() async {
     // media can be deleted anytime (outgoing), text only within 30s (canEditOrDelete already checks outgoing+timer)
+    // A WardLink-synced copy isn't ours to delete from this device — only
+    // the device that actually sent it can.
     final toDelete = _selectedMessages.values
         .where((m) =>
             m.serverMessageId != null &&
+            !m.isWardLinkCopy &&
             (!_isTextMessage(m) ? m.outgoing : m.canEditOrDelete))
         .toList();
     if (toDelete.isEmpty) return;
@@ -1014,7 +1018,10 @@ class ChatScreenState extends State<ChatScreen>
             rootScreenKey.currentState?.showSnack(l.msgCopied);
           },
         ),
-      if (msg.canEditOrDelete && !isMedia)
+      // A WardLink-synced copy of our own outgoing message isn't actually
+      // ours to change from here — only the device that originally sent it
+      // can edit/delete it against the server.
+      if (msg.canEditOrDelete && !isMedia && !msg.isWardLinkCopy)
         DesktopMenuItem(
           icon: Icons.edit_rounded,
           label: l.edit,
@@ -1041,15 +1048,16 @@ class ChatScreenState extends State<ChatScreen>
           messageId: msg.serverMessageId?.toString() ?? msg.id,
         ),
       ),
-      DesktopMenuItem(
-        icon: Icons.delete_outline_rounded,
-        label: l.delete,
-        type: ContextMenuButtonType.delete,
-        color: Colors.red.shade400,
-        onPressed: () => msg.outgoing
-            ? _desktopDeleteMessage(msg)
-            : _deleteMessageForMe(msg),
-      ),
+      if (!(msg.outgoing && msg.isWardLinkCopy))
+        DesktopMenuItem(
+          icon: Icons.delete_outline_rounded,
+          label: l.delete,
+          type: ContextMenuButtonType.delete,
+          color: Colors.red.shade400,
+          onPressed: () => msg.outgoing
+              ? _desktopDeleteMessage(msg)
+              : _deleteMessageForMe(msg),
+        ),
       if (isFile)
         DesktopMenuItem(
           icon: Icons.folder_open_rounded,
@@ -1268,7 +1276,7 @@ class ChatScreenState extends State<ChatScreen>
           }
           final destPath = '${onyxDir.path}/$originalName';
           await file.copy(destPath);
-          rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+          showSavedToSnack(destPath);
         }
         return;
       }
@@ -1297,7 +1305,7 @@ class ChatScreenState extends State<ChatScreen>
           return;
         }
         await file.copy(destPath);
-        rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+        showSavedToSnack(destPath);
       }
     } catch (e) {
       rootScreenKey.currentState?.showSnack('Save failed: $e');
@@ -1986,8 +1994,27 @@ class ChatScreenState extends State<ChatScreen>
       }
       debugPrint(
           '[reaction.private] server responded ${resp.statusCode}: ${resp.body}');
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        // Server rejected the change (e.g. the message was already deleted
+        // server-side — private messages are ephemeral). The local toggle
+        // above was optimistic and never actually took effect, so undo it;
+        // otherwise the sender's UI shows a reaction the recipient never
+        // sees, since no reaction_update was ever broadcast.
+        if (mounted) toggleReaction(uniqueKey, emoji, widget.myUsername);
+        if (mounted) {
+          rootScreenKey.currentState?.showSnack(
+              lookupAppLocalizations(SettingsManager.appLocale.value)
+                  .failedReaction);
+        }
+      }
     } catch (e) {
       debugPrint('[reaction.private] server error: $e');
+      if (mounted) toggleReaction(uniqueKey, emoji, widget.myUsername);
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack(
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .failedReaction);
+      }
     }
   }
 
@@ -2101,7 +2128,7 @@ class ChatScreenState extends State<ChatScreen>
   Future<void> _submitMessage(String value) async {
     if (value.trim().isEmpty) return;
 
-    final content = value.trim();
+    var content = value.trim();
 
     if (_editingMessage != null) {
       final editing = _editingMessage!;
@@ -2115,6 +2142,25 @@ class ChatScreenState extends State<ChatScreen>
         await widget.onEditMessage(serverId, content);
       }
       return;
+    }
+
+    if (looksLikeCode(content)) {
+      final l = AppLocalizations.of(context);
+      final sendAsCode = await showOnyxConfirmDialog(
+        context: context,
+        title: l.sendAsCodeTitle,
+        message: l.sendAsCodeContent,
+        confirmLabel: l.sendAsCode,
+        cancelLabel: l.sendAsPlainText,
+        icon: Icons.code_rounded,
+      );
+      if (!mounted) return;
+      // Dismissed without an explicit choice (tapped the barrier/back) —
+      // don't guess, just leave the draft in place instead of sending it.
+      if (sendAsCode == null) return;
+      if (sendAsCode) {
+        content = '```${detectCodeLanguage(content)}\n$content\n```';
+      }
     }
 
     if (_isLANMode) {
@@ -4630,6 +4676,22 @@ class ChatScreenState extends State<ChatScreen>
                                                       children: [
                                                         if (sel.active)
                                                           checkmark,
+                                                        // Badge sits on the
+                                                        // side facing the
+                                                        // center of the
+                                                        // screen — left of
+                                                        // a right-aligned
+                                                        // (outgoing) bubble,
+                                                        // right of a
+                                                        // left-aligned
+                                                        // (incoming) one.
+                                                        if (msg.isWardLinkCopy &&
+                                                            shouldShowRight) ...[
+                                                          buildWardLinkSyncBadge(
+                                                              context, msg),
+                                                          const SizedBox(
+                                                              width: 6),
+                                                        ],
                                                         Flexible(
                                                           child:
                                                               SwipeableMessageWrapper(
@@ -4729,6 +4791,13 @@ class ChatScreenState extends State<ChatScreen>
                                                             ),
                                                           ),
                                                         ),
+                                                        if (msg.isWardLinkCopy &&
+                                                            !shouldShowRight) ...[
+                                                          const SizedBox(
+                                                              width: 6),
+                                                          buildWardLinkSyncBadge(
+                                                              context, msg),
+                                                        ],
                                                       ],
                                                     ),
                                                   ),
@@ -4990,7 +5059,7 @@ class ChatScreenState extends State<ChatScreen>
                                                 color: baseColor.withValues(
                                                     alpha: opacity),
                                                 borderRadius:
-                                                    BorderRadius.circular(16),
+                                                    BorderRadius.circular(28),
                                                 border: Border.all(
                                                   color: colorScheme.primary
                                                       .withValues(alpha: 0.25),
@@ -5091,7 +5160,7 @@ class ChatScreenState extends State<ChatScreen>
                                                 color: baseColor.withValues(
                                                     alpha: opacity),
                                                 borderRadius:
-                                                    BorderRadius.circular(16),
+                                                    BorderRadius.circular(28),
                                                 border: Border.all(
                                                   color: Theme.of(context)
                                                       .colorScheme
@@ -5412,7 +5481,7 @@ class ChatScreenState extends State<ChatScreen>
                                         quality: glassQuality,
                                         padding: EdgeInsets.zero,
                                         shape: LiquidRoundedRectangle(
-                                            borderRadius: 24),
+                                            borderRadius: 28),
                                         clipBehavior: Clip.antiAlias,
                                         child: bar,
                                       );
@@ -6786,7 +6855,7 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
             margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             decoration: BoxDecoration(
               color: sheetColor,
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(28),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -6820,7 +6889,12 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
                 ),
                 if (widget.onSave != null)
                   actionTile(Icons.save_alt_rounded, l.save, widget.onSave),
-                if (widget.msg.outgoing && !widget.isMedia)
+                // A WardLink-synced copy of our own outgoing message isn't
+                // actually ours to change from here — only the device that
+                // originally sent it can edit/delete it against the server.
+                if (widget.msg.outgoing &&
+                    !widget.isMedia &&
+                    !widget.msg.isWardLinkCopy)
                   actionTile(
                     Icons.edit_rounded,
                     editLabel(),
@@ -6828,7 +6902,8 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
                   ),
                 if (!widget.isMedia)
                   actionTile(Icons.copy_rounded, l.copy, widget.onCopy),
-                if (widget.onDelete != null)
+                if (widget.onDelete != null &&
+                    !(widget.msg.outgoing && widget.msg.isWardLinkCopy))
                   actionTile(
                     Icons.delete_outline_rounded,
                     deleteLabel(),

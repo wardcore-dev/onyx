@@ -360,8 +360,6 @@ class _ExternalServerJoinScreenState extends State<ExternalServerJoinScreen> {
               _infoRow('Media', '${info['media_provider'] ?? 'none'}'),
               _infoRow('Max file size', '${info['max_file_size_mb'] ?? 0} MB'),
               _infoRow('Max members/group', '${info['max_members_per_group'] ?? 0}'),
-              if (info['require_approval'] == true)
-                _infoRow('Approval required', 'Yes'),
               if (info['features'] != null) ...[
                 const SizedBox(height: 8),
                 Wrap(

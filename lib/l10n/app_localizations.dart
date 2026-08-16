@@ -988,6 +988,30 @@ abstract class AppLocalizations {
   /// **'Reset failed'**
   String get resetFailed;
 
+  /// No description provided for @resetConfirmStep1Title.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you sure you want to do this?'**
+  String get resetConfirmStep1Title;
+
+  /// No description provided for @resetConfirmStep1Message.
+  ///
+  /// In en, this message translates to:
+  /// **'This will permanently delete the data you selected. This cannot be undone.'**
+  String get resetConfirmStep1Message;
+
+  /// No description provided for @resetConfirmStep2Title.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you sure?'**
+  String get resetConfirmStep2Title;
+
+  /// No description provided for @resetConfirmStep2Message.
+  ///
+  /// In en, this message translates to:
+  /// **'This is your last chance to cancel. Confirming starts the reset immediately.'**
+  String get resetConfirmStep2Message;
+
   /// No description provided for @connectionTitle.
   ///
   /// In en, this message translates to:
@@ -1521,6 +1545,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Scan'**
   String get deviceAuthTabScan;
+
+  /// No description provided for @deviceAuthTapToScan.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to scan QR code'**
+  String get deviceAuthTapToScan;
 
   /// No description provided for @deviceAuthLanNote.
   ///
@@ -2217,6 +2247,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Background cleared'**
   String get chatBgCleared;
+
+  /// No description provided for @sendAsCodeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Send as code?'**
+  String get sendAsCodeTitle;
+
+  /// No description provided for @sendAsCodeContent.
+  ///
+  /// In en, this message translates to:
+  /// **'This message looks like code. Send it as a formatted code block?'**
+  String get sendAsCodeContent;
+
+  /// No description provided for @sendAsCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Send as code'**
+  String get sendAsCode;
+
+  /// No description provided for @sendAsPlainText.
+  ///
+  /// In en, this message translates to:
+  /// **'Send as text'**
+  String get sendAsPlainText;
 
   /// No description provided for @allMessagesLeft.
   ///
@@ -3100,6 +3154,12 @@ abstract class AppLocalizations {
   /// **'Failed to edit message'**
   String get failedEdit;
 
+  /// No description provided for @failedReaction.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to add reaction'**
+  String get failedReaction;
+
   /// No description provided for @noInternetCached.
   ///
   /// In en, this message translates to:
@@ -3297,6 +3357,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Edit channel'**
   String get editChannelTitle;
+
+  /// No description provided for @groupInfoTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Group'**
+  String get groupInfoTitle;
+
+  /// No description provided for @channelInfoTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Channel'**
+  String get channelInfoTitle;
 
   /// No description provided for @channelNameLabel.
   ///
@@ -3784,6 +3856,12 @@ abstract class AppLocalizations {
   /// **'Password is required for groups'**
   String get passwordRequiredForGroups;
 
+  /// No description provided for @passwordRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Password is required'**
+  String get passwordRequired;
+
   /// No description provided for @connectionFailed.
   ///
   /// In en, this message translates to:
@@ -3879,6 +3957,120 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Max file size'**
   String get serverInfoMaxFile;
+
+  /// No description provided for @profilePresets.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity'**
+  String get profilePresets;
+
+  /// No description provided for @profilePresetsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved identities for joining external servers'**
+  String get profilePresetsSubtitle;
+
+  /// No description provided for @newPreset.
+  ///
+  /// In en, this message translates to:
+  /// **'New Identity'**
+  String get newPreset;
+
+  /// No description provided for @editPreset.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit Identity'**
+  String get editPreset;
+
+  /// No description provided for @deletePreset.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete Identity'**
+  String get deletePreset;
+
+  /// No description provided for @deletePresetConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete the identity \"{label}\"?'**
+  String deletePresetConfirm(String label);
+
+  /// No description provided for @presetLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity name'**
+  String get presetLabel;
+
+  /// No description provided for @presetLabelHint.
+  ///
+  /// In en, this message translates to:
+  /// **'e.g. Work, Gaming'**
+  String get presetLabelHint;
+
+  /// No description provided for @presetNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Note'**
+  String get presetNote;
+
+  /// No description provided for @presetNoteHint.
+  ///
+  /// In en, this message translates to:
+  /// **'What is this identity for? (optional)'**
+  String get presetNoteHint;
+
+  /// No description provided for @presetColor.
+  ///
+  /// In en, this message translates to:
+  /// **'Tag color'**
+  String get presetColor;
+
+  /// No description provided for @presetLabelRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a name for the identity'**
+  String get presetLabelRequired;
+
+  /// No description provided for @noPresetsYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No identities yet'**
+  String get noPresetsYet;
+
+  /// No description provided for @noPresetsYetSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Save a username and password combo once, reuse it on any external server'**
+  String get noPresetsYetSubtitle;
+
+  /// No description provided for @myPresets.
+  ///
+  /// In en, this message translates to:
+  /// **'My identities'**
+  String get myPresets;
+
+  /// No description provided for @usePreset.
+  ///
+  /// In en, this message translates to:
+  /// **'Use identity'**
+  String get usePreset;
+
+  /// No description provided for @saveAsPreset.
+  ///
+  /// In en, this message translates to:
+  /// **'Save as identity'**
+  String get saveAsPreset;
+
+  /// No description provided for @presetSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity saved'**
+  String get presetSaved;
+
+  /// No description provided for @presetDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity deleted'**
+  String get presetDeleted;
 
   /// No description provided for @thirdPartyServer.
   ///
@@ -4714,6 +4906,18 @@ abstract class AppLocalizations {
   /// **'Up to date'**
   String get wardLinkUpToDate;
 
+  /// No description provided for @syncedFromDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Synced from {device}'**
+  String syncedFromDevice(String device);
+
+  /// No description provided for @syncedFromUnknownDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Synced from another device'**
+  String get syncedFromUnknownDevice;
+
   /// No description provided for @wardLinkFilesDone.
   ///
   /// In en, this message translates to:
@@ -4797,6 +5001,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Bubble size'**
   String get wardLinkBubbleSize;
+
+  /// No description provided for @wardLinkSyncFavoritesToggle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync Favorites'**
+  String get wardLinkSyncFavoritesToggle;
+
+  /// No description provided for @wardLinkSyncFavoritesToggleDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync your Favorites — their messages and media'**
+  String get wardLinkSyncFavoritesToggleDesc;
+
+  /// No description provided for @wardLinkSyncPersonalToggle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync my personal messages'**
+  String get wardLinkSyncPersonalToggle;
+
+  /// No description provided for @wardLinkSyncPersonalToggleDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync only the messages YOU sent in personal chats to your other devices — the contact\'s messages already arrive via the server and are never synced this way'**
+  String get wardLinkSyncPersonalToggleDesc;
 
   /// No description provided for @meshSubtitle.
   ///
@@ -6759,6 +6987,606 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{chats, plural, one{{chats} chat} other{{chats} chats}}, {messages, plural, one{{messages} message} other{{messages} messages}}'**
   String trashSummary(int chats, int messages);
+
+  /// No description provided for @muteAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get muteAction;
+
+  /// No description provided for @unmuteAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute'**
+  String get unmuteAction;
+
+  /// No description provided for @muteUserTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute {name}'**
+  String muteUserTitle(String name);
+
+  /// No description provided for @durationLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Duration'**
+  String get durationLabel;
+
+  /// No description provided for @duration15Min.
+  ///
+  /// In en, this message translates to:
+  /// **'15 min'**
+  String get duration15Min;
+
+  /// No description provided for @duration1Hour.
+  ///
+  /// In en, this message translates to:
+  /// **'1 hour'**
+  String get duration1Hour;
+
+  /// No description provided for @duration1Day.
+  ///
+  /// In en, this message translates to:
+  /// **'1 day'**
+  String get duration1Day;
+
+  /// No description provided for @duration1Week.
+  ///
+  /// In en, this message translates to:
+  /// **'1 week'**
+  String get duration1Week;
+
+  /// No description provided for @muteReasonLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Reason (optional)'**
+  String get muteReasonLabel;
+
+  /// No description provided for @userMuted.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} muted'**
+  String userMuted(String name);
+
+  /// No description provided for @failedMute.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to mute'**
+  String get failedMute;
+
+  /// No description provided for @failedMuteUser.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to mute {name}'**
+  String failedMuteUser(String name);
+
+  /// No description provided for @mutedUsersTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Muted Users'**
+  String get mutedUsersTitle;
+
+  /// No description provided for @noMutedUsers.
+  ///
+  /// In en, this message translates to:
+  /// **'No muted users'**
+  String get noMutedUsers;
+
+  /// No description provided for @mutedByLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Muted by: {name}'**
+  String mutedByLabel(String name);
+
+  /// No description provided for @mutedUntilLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Until: {date}'**
+  String mutedUntilLabel(String date);
+
+  /// No description provided for @userUnmuted.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} unmuted'**
+  String userUnmuted(String name);
+
+  /// No description provided for @failedUnmute.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to unmute'**
+  String get failedUnmute;
+
+  /// No description provided for @failedUnmuteUser.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to unmute {name}'**
+  String failedUnmuteUser(String name);
+
+  /// No description provided for @youAreMutedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'You are muted'**
+  String get youAreMutedTitle;
+
+  /// No description provided for @mutedUntilMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'You can\'t send messages in this chat until {date}.'**
+  String mutedUntilMessage(String date);
+
+  /// No description provided for @slowModeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Slow mode (seconds, 0 = off)'**
+  String get slowModeLabel;
+
+  /// No description provided for @slowModeHelper.
+  ///
+  /// In en, this message translates to:
+  /// **'Minimum delay between messages for regular members. Admins are never limited.'**
+  String get slowModeHelper;
+
+  /// No description provided for @slowModeSetTo.
+  ///
+  /// In en, this message translates to:
+  /// **'{seconds, plural, one{Slow mode set to {seconds} second} other{Slow mode set to {seconds} seconds}}'**
+  String slowModeSetTo(int seconds);
+
+  /// No description provided for @slowModeDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Slow mode disabled'**
+  String get slowModeDisabled;
+
+  /// No description provided for @failedSetSlowMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to set slow mode'**
+  String get failedSetSlowMode;
+
+  /// No description provided for @failedUpdateSlowMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to update slow mode'**
+  String get failedUpdateSlowMode;
+
+  /// No description provided for @donateMenuLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Donate'**
+  String get donateMenuLabel;
+
+  /// No description provided for @pollsMenuLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Polls'**
+  String get pollsMenuLabel;
+
+  /// No description provided for @supportThisCommunityTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Support this community'**
+  String get supportThisCommunityTitle;
+
+  /// No description provided for @donationDisclaimer.
+  ///
+  /// In en, this message translates to:
+  /// **'ONYX does not process these payments and cannot refund them. Only send crypto to addresses you trust.'**
+  String get donationDisclaimer;
+
+  /// No description provided for @noDonationsOwnerHint.
+  ///
+  /// In en, this message translates to:
+  /// **'No donation addresses yet. Tap \"Edit\" to add some.'**
+  String get noDonationsOwnerHint;
+
+  /// No description provided for @noDonationsMemberHint.
+  ///
+  /// In en, this message translates to:
+  /// **'This community has not set up donations yet.'**
+  String get noDonationsMemberHint;
+
+  /// No description provided for @editDonationsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit donation addresses'**
+  String get editDonationsTitle;
+
+  /// No description provided for @donationCoinLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Coin (e.g. BTC)'**
+  String get donationCoinLabel;
+
+  /// No description provided for @donationAddressLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Address'**
+  String get donationAddressLabel;
+
+  /// No description provided for @addDonationAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Add address'**
+  String get addDonationAddress;
+
+  /// No description provided for @donationsSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Donation addresses saved'**
+  String get donationsSaved;
+
+  /// No description provided for @failedSaveDonations.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to save donation addresses'**
+  String get failedSaveDonations;
+
+  /// No description provided for @noPollsOwnerHint.
+  ///
+  /// In en, this message translates to:
+  /// **'No polls yet. Tap \"New poll\" to create one.'**
+  String get noPollsOwnerHint;
+
+  /// No description provided for @noPollsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'No polls yet.'**
+  String get noPollsHint;
+
+  /// No description provided for @newPollAction.
+  ///
+  /// In en, this message translates to:
+  /// **'New poll'**
+  String get newPollAction;
+
+  /// No description provided for @addPollOption.
+  ///
+  /// In en, this message translates to:
+  /// **'Add option'**
+  String get addPollOption;
+
+  /// No description provided for @pollQuestionLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Question'**
+  String get pollQuestionLabel;
+
+  /// No description provided for @pollOptionLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Option {number}'**
+  String pollOptionLabel(int number);
+
+  /// No description provided for @multipleChoiceLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Multiple choice'**
+  String get multipleChoiceLabel;
+
+  /// No description provided for @pollQuestionEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Question cannot be empty'**
+  String get pollQuestionEmpty;
+
+  /// No description provided for @pollNeedsTwoOptions.
+  ///
+  /// In en, this message translates to:
+  /// **'Add at least 2 options'**
+  String get pollNeedsTwoOptions;
+
+  /// No description provided for @failedCreatePoll.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to create poll'**
+  String get failedCreatePoll;
+
+  /// No description provided for @failedVote.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to submit vote'**
+  String get failedVote;
+
+  /// No description provided for @pollVoteCountAnonymous.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{{count} vote} other{{count} votes}} • anonymous'**
+  String pollVoteCountAnonymous(int count);
+
+  /// No description provided for @descriptionLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Description'**
+  String get descriptionLabel;
+
+  /// No description provided for @descriptionHint.
+  ///
+  /// In en, this message translates to:
+  /// **'What is this group about?'**
+  String get descriptionHint;
+
+  /// No description provided for @noDescriptionSet.
+  ///
+  /// In en, this message translates to:
+  /// **'No description set.'**
+  String get noDescriptionSet;
+
+  /// No description provided for @limitsHeader.
+  ///
+  /// In en, this message translates to:
+  /// **'Limits'**
+  String get limitsHeader;
+
+  /// No description provided for @maxMembersLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Max members'**
+  String get maxMembersLabel;
+
+  /// No description provided for @maxMessageLengthLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Max message length'**
+  String get maxMessageLengthLabel;
+
+  /// No description provided for @maxMessagesPerMinuteLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Max messages per minute'**
+  String get maxMessagesPerMinuteLabel;
+
+  /// No description provided for @invalidLimitValue.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid number'**
+  String get invalidLimitValue;
+
+  /// No description provided for @defaultRoleLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Default role for new members'**
+  String get defaultRoleLabel;
+
+  /// No description provided for @rolesHeader.
+  ///
+  /// In en, this message translates to:
+  /// **'Roles'**
+  String get rolesHeader;
+
+  /// No description provided for @addRoleAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Add role'**
+  String get addRoleAction;
+
+  /// No description provided for @deleteRoleConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete role?'**
+  String get deleteRoleConfirmTitle;
+
+  /// No description provided for @deleteRoleConfirmContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Members with this role will be moved to Member.'**
+  String get deleteRoleConfirmContent;
+
+  /// No description provided for @roleEditorCreateTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Create role'**
+  String get roleEditorCreateTitle;
+
+  /// No description provided for @roleEditorEditTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit role'**
+  String get roleEditorEditTitle;
+
+  /// No description provided for @roleNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Role name'**
+  String get roleNameLabel;
+
+  /// No description provided for @roleColorLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Color'**
+  String get roleColorLabel;
+
+  /// No description provided for @rolePermissionsLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Permissions'**
+  String get rolePermissionsLabel;
+
+  /// No description provided for @roleSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} permissions · {members} members'**
+  String roleSubtitle(int count, int members);
+
+  /// No description provided for @settingsUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Settings updated'**
+  String get settingsUpdated;
+
+  /// No description provided for @failedUpdateSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to update settings'**
+  String get failedUpdateSettings;
+
+  /// No description provided for @roleSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Role saved'**
+  String get roleSaved;
+
+  /// No description provided for @failedSaveRole.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to save role'**
+  String get failedSaveRole;
+
+  /// No description provided for @roleDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Role deleted'**
+  String get roleDeleted;
+
+  /// No description provided for @failedDeleteRole.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to delete role'**
+  String get failedDeleteRole;
+
+  /// No description provided for @addCommentAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Comment'**
+  String get addCommentAction;
+
+  /// No description provided for @commentsCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} comments'**
+  String commentsCount(int count);
+
+  /// No description provided for @commentsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Comments'**
+  String get commentsTitle;
+
+  /// No description provided for @writeCommentHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Write a comment...'**
+  String get writeCommentHint;
+
+  /// No description provided for @failedLoadComments.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to load comments'**
+  String get failedLoadComments;
+
+  /// No description provided for @failedPostComment.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to post comment'**
+  String get failedPostComment;
+
+  /// No description provided for @failedDeleteComment.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to delete comment'**
+  String get failedDeleteComment;
+
+  /// No description provided for @failedEditComment.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to edit comment'**
+  String get failedEditComment;
+
+  /// No description provided for @noCommentsYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No comments yet'**
+  String get noCommentsYet;
+
+  /// No description provided for @permKickMembers.
+  ///
+  /// In en, this message translates to:
+  /// **'Kick members'**
+  String get permKickMembers;
+
+  /// No description provided for @permBanMembers.
+  ///
+  /// In en, this message translates to:
+  /// **'Ban members'**
+  String get permBanMembers;
+
+  /// No description provided for @permMuteMembers.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute members'**
+  String get permMuteMembers;
+
+  /// No description provided for @permManageRoles.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage roles'**
+  String get permManageRoles;
+
+  /// No description provided for @permManageSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage settings'**
+  String get permManageSettings;
+
+  /// No description provided for @permManageDonations.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage donations'**
+  String get permManageDonations;
+
+  /// No description provided for @permCreatePolls.
+  ///
+  /// In en, this message translates to:
+  /// **'Create polls'**
+  String get permCreatePolls;
+
+  /// No description provided for @permPostInChannel.
+  ///
+  /// In en, this message translates to:
+  /// **'Post in channel'**
+  String get permPostInChannel;
+
+  /// No description provided for @permDeleteMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete messages'**
+  String get permDeleteMessages;
+
+  /// No description provided for @permManageMembers.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage members'**
+  String get permManageMembers;
+
+  /// No description provided for @permManageSlowMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage slow mode'**
+  String get permManageSlowMode;
+
+  /// No description provided for @permViewBanList.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage ban list'**
+  String get permViewBanList;
+
+  /// No description provided for @permViewMuteList.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage mute list'**
+  String get permViewMuteList;
+
+  /// No description provided for @permViewInviteLink.
+  ///
+  /// In en, this message translates to:
+  /// **'View invite link'**
+  String get permViewInviteLink;
+
+  /// No description provided for @manageMembersRequiresChild.
+  ///
+  /// In en, this message translates to:
+  /// **'Select at least one of Manage Ban List, Manage Mute List, or Manage Roles'**
+  String get manageMembersRequiresChild;
 }
 
 class _AppLocalizationsDelegate

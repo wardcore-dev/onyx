@@ -13,6 +13,97 @@ class AppleSegment {
   const AppleSegment({required this.icon, required this.label});
 }
 
+/// Same sliding-pill look as [AppleSegmentedTabs], but for a plain value
+/// picker (no TabController/TabBarView involved) — e.g. a duration choice
+/// inside a dialog built with a bare StatefulBuilder, which has no
+/// TickerProvider to drive a TabController.
+class AppleValueSegmentedControl extends StatelessWidget {
+  final List<String> labels;
+  final int selectedIndex;
+  final ValueChanged<int> onChanged;
+
+  const AppleValueSegmentedControl({
+    super.key,
+    required this.labels,
+    required this.selectedIndex,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final count = labels.length;
+
+    const trackHeight = 38.0;
+    const trackPadding = 3.0;
+    const pillRadius = (trackHeight - trackPadding * 2) / 2;
+
+    return Container(
+      height: trackHeight,
+      padding: const EdgeInsets.all(trackPadding),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(trackHeight / 2),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final segmentWidth = constraints.maxWidth / count;
+          return Stack(
+            children: [
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+                left: segmentWidth * selectedIndex,
+                top: 0,
+                bottom: 0,
+                width: segmentWidth,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: cs.surface,
+                    borderRadius: BorderRadius.circular(pillRadius),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.16),
+                        blurRadius: 4,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Row(
+                children: List.generate(count, (i) {
+                  final selected = selectedIndex == i;
+                  return Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => onChanged(i),
+                      child: Center(
+                        child: Text(
+                          labels[i],
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight:
+                                selected ? FontWeight.w600 : FontWeight.w500,
+                            color: selected
+                                ? cs.onSurface
+                                : cs.onSurface.withValues(alpha: 0.55),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 class AppleSegmentedTabs extends StatefulWidget {
   final TabController controller;
   final List<AppleSegment> segments;

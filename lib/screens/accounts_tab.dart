@@ -497,16 +497,16 @@ class _AccountsTabState extends State<AccountsTab>
                                   filled: true,
                                   fillColor: baseColor.withValues(alpha: 0.5),
                                   border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(14)),
+                                      borderRadius: BorderRadius.circular(28)),
                                   enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(28),
                                     borderSide: BorderSide(
                                         color: cs.outlineVariant
                                             .withValues(alpha: 0.3),
                                         width: 0.8),
                                   ),
                                   focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(28),
                                     borderSide:
                                         BorderSide(color: cs.primary, width: 1.4),
                                   ),
@@ -785,7 +785,7 @@ class _AccountsTabState extends State<AccountsTab>
           
           if (widget.currentUsername != null)
             AdaptiveGlassCard(
-              borderRadius: 20,
+              borderRadius: 28,
               padding: const EdgeInsets.all(12),
               onTap: _showEditProfileDialog,
               child: Row(
@@ -943,11 +943,11 @@ class _AccountsTabState extends State<AccountsTab>
                 brightness,
               );
               return ClipRRect(
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(28),
                 child: Container(
                   decoration: BoxDecoration(
                     color: baseColor.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(28),
                     border: Border.all(
                       color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
                       width: 0.8,
@@ -998,7 +998,7 @@ class _AccountsTabState extends State<AccountsTab>
                           : Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
                       foregroundColor: Theme.of(context).colorScheme.primary,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
                       elevation: 0,
                     ),
                   ),
@@ -1018,11 +1018,11 @@ class _AccountsTabState extends State<AccountsTab>
                 brightness,
               );
               return ClipRRect(
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(28),
                 child: Container(
                   decoration: BoxDecoration(
                     color: baseColor.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(28),
                     border: Border.all(
                       color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
                       width: 0.8,
@@ -1061,7 +1061,7 @@ class _AccountsTabState extends State<AccountsTab>
                           : Theme.of(context).colorScheme.secondary.withValues(alpha: 0.12),
                       foregroundColor: Theme.of(context).colorScheme.secondary,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
                       elevation: 0,
                     ),
                   ),
@@ -1084,11 +1084,11 @@ class _AccountsTabState extends State<AccountsTab>
                       brightness,
                     );
                     return ClipRRect(
-                      borderRadius: BorderRadius.circular(24),
+                      borderRadius: BorderRadius.circular(28),
                       child: Container(
                         decoration: BoxDecoration(
                           color: baseColor.withValues(alpha: 0.6),
-                          borderRadius: BorderRadius.circular(24),
+                          borderRadius: BorderRadius.circular(28),
                           border: Border.all(
                             color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
                             width: 0.8,
@@ -1121,7 +1121,7 @@ class _AccountsTabState extends State<AccountsTab>
                             foregroundColor: Theme.of(context).colorScheme.secondary,
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(24)),
+                                borderRadius: BorderRadius.circular(28)),
                             elevation: 0,
                           ),
                         ),
@@ -1169,7 +1169,7 @@ class _AccountsTabState extends State<AccountsTab>
                           ),
                         ),
                         child: AdaptiveGlassCard(
-                          borderRadius: 20,
+                          borderRadius: 28,
                           padding: const EdgeInsets.all(12),
                           onTap: () {
                             if (isDesktop) {

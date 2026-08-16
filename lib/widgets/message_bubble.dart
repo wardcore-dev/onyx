@@ -19,6 +19,7 @@ import '../globals.dart';
 import '../models/font_family.dart';
 import '../enums/delivery_mode.dart';
 import '../services/mesh/mesh_file_transfer.dart';
+import '../l10n/app_localizations.dart';
 
 /// A menu item for the desktop right-click context menu, with optional icon.
 class DesktopMenuItem {
@@ -780,9 +781,7 @@ class MessageBubble extends StatelessWidget {
         builder: (context) {
           final codeMatches = _codeBlockRegex.allMatches(text).toList();
 
-          bool looksLikeCode = _isLikelyCode(text);
-
-          if (codeMatches.isNotEmpty || looksLikeCode) {
+          if (codeMatches.isNotEmpty) {
             final children = <Widget>[];
             int lastEnd = 0;
 
@@ -828,13 +827,6 @@ class MessageBubble extends StatelessWidget {
                   );
                 }
               }
-            } else if (looksLikeCode) {
-              children.add(
-                CodeBlockWidget(
-                  code: text.trim(),
-                  language: _detectLanguage(text),
-                ),
-              );
             }
 
             return SingleChildScrollView(
@@ -863,7 +855,7 @@ class MessageBubble extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
       decoration: BoxDecoration(
         color: baseColor,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(28),
         border: Border.all(color: borderColorFinal, width: borderWidthFinal),
         boxShadow: highlighted
             ? [
@@ -1453,87 +1445,6 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
-  bool _isLikelyCode(String text) {
-    if (text.isEmpty) return false;
-    if (text.length < 10) return false;
-
-    int codeIndicators = 0;
-
-    if (text.contains('{') ||
-        text.contains('}') ||
-        text.contains('[') ||
-        text.contains(']') ||
-        text.contains('(') && text.contains(')')) {
-      codeIndicators++;
-    }
-
-    if (text.contains(';')) {
-      codeIndicators++;
-    }
-
-    if (text.contains('=>') ||
-        text.contains('==') ||
-        text.contains('!=') ||
-        text.contains('===') ||
-        text.contains('const ') ||
-        text.contains('final ') ||
-        text.contains('let ') ||
-        text.contains('var ') ||
-        text.contains('function') ||
-        text.contains('class ') ||
-        text.contains('def ') ||
-        text.contains('void ')) {
-      codeIndicators += 2;
-    }
-
-    final lines = text.split('\n');
-    if (lines.length > 2) {
-      int linesWithIndent = 0;
-      for (final line in lines) {
-        if (line.startsWith('  ') || line.startsWith('\t')) {
-          linesWithIndent++;
-        }
-      }
-      if (linesWithIndent > lines.length * 0.3) {
-        codeIndicators++;
-      }
-    }
-
-    return codeIndicators >= 2;
-  }
-
-  String _detectLanguage(String text) {
-    final lower = text.toLowerCase();
-
-    if (lower.contains('void main') ||
-        lower.contains('import') && lower.contains('dart')) {
-      return 'dart';
-    }
-    if (lower.contains('def ') ||
-        lower.contains('import ') &&
-            (lower.contains('sys') || lower.contains('os'))) {
-      return 'python';
-    }
-    if (lower.contains('function ') ||
-        lower.contains('const ') && lower.contains('=>')) {
-      return 'javascript';
-    }
-    if (lower.contains('public class') || lower.contains('public static')) {
-      return 'java';
-    }
-    if (lower.contains('class ') && lower.contains('{')) {
-      if (lower.contains('async') || lower.contains('await')) {
-        return 'dart';
-      }
-      return 'java';
-    }
-    if (lower.contains('#include')) {
-      return 'cpp';
-    }
-
-    return 'plaintext';
-  }
-
   double _getMaxWidth(String text, double fontSizeMultiplier) {
     final lines = text.split('\n');
 
@@ -1556,6 +1467,46 @@ class MessageBubble extends StatelessWidget {
       return 350 * fontSizeMultiplier;
     }
   }
+}
+
+/// Small standalone badge for a WardLink-synced message (own message that
+/// arrived here via passive LAN sync from another of the user's paired
+/// devices) — a phone/computer icon depending on [ChatMessage.syncedFromDeviceOs],
+/// with the specific device name available on tap/hover via [Tooltip]. Meant
+/// to sit beside the bubble (not inside it), in the chat message row's own
+/// [Row] alongside the bubble, so it reads as "this message" rather than
+/// competing with the bubble's own status icons.
+Widget buildWardLinkSyncBadge(
+  BuildContext context,
+  ChatMessage msg, {
+  double size = 22,
+}) {
+  final cs = Theme.of(context).colorScheme;
+  final isPhone = msg.syncedFromDeviceOs == 'android' ||
+      msg.syncedFromDeviceOs == 'ios';
+  final l = AppLocalizations.of(context);
+  return Tooltip(
+    message: msg.syncedFromDeviceName != null
+        ? l.syncedFromDevice(msg.syncedFromDeviceName!)
+        : l.syncedFromUnknownDevice,
+    child: Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.6),
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: cs.outlineVariant.withValues(alpha: 0.3),
+          width: 0.6,
+        ),
+      ),
+      child: Icon(
+        isPhone ? Icons.smartphone_rounded : Icons.computer_rounded,
+        size: size * 0.55,
+        color: cs.onSurface.withValues(alpha: 0.6),
+      ),
+    ),
+  );
 }
 
 Widget _meshFilePlaceholder(

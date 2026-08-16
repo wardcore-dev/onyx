@@ -11,6 +11,7 @@ import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import '../widgets/onyx_dialog.dart';
+import '../utils/code_heuristic.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -1070,8 +1071,26 @@ class _MeshChatScreenState extends State<MeshChatScreen>
   // ── Send text ──────────────────────────────────────────────────────────────
 
   Future<void> _send() async {
-    final text = _ctrl.text.trim();
+    var text = _ctrl.text.trim();
     if (text.isEmpty) return;
+
+    if (looksLikeCode(text)) {
+      final l = AppLocalizations.of(context);
+      final sendAsCode = await showOnyxConfirmDialog(
+        context: context,
+        title: l.sendAsCodeTitle,
+        message: l.sendAsCodeContent,
+        confirmLabel: l.sendAsCode,
+        cancelLabel: l.sendAsPlainText,
+        icon: Icons.code_rounded,
+      );
+      if (!mounted) return;
+      if (sendAsCode == null) return;
+      if (sendAsCode) {
+        text = '```${detectCodeLanguage(text)}\n$text\n```';
+      }
+    }
+
     _ctrl.clear();
 
     final replyTo = _replyToMsg;
@@ -2462,7 +2481,7 @@ class _MeshChatScreenState extends State<MeshChatScreen>
                             settings: glassSettings,
                             quality: glassQuality,
                             padding: EdgeInsets.zero,
-                            shape: LiquidRoundedRectangle(borderRadius: 24),
+                            shape: LiquidRoundedRectangle(borderRadius: 28),
                             clipBehavior: Clip.antiAlias,
                             child: bar,
                           );
@@ -2863,7 +2882,7 @@ class _MeshMessageActionsSheet extends StatelessWidget {
             margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             decoration: BoxDecoration(
               color: sheetColor,
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(28),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,

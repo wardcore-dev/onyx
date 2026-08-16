@@ -155,6 +155,10 @@ class SettingsManager {
   static const _wardLinkMaxFileSizeMbKey    = 'wardlink_max_file_size_mb';
   static const _wardLinkBubbleOnlyErrorsKey = 'wardlink_bubble_only_errors';
   static const _wardLinkBubbleSizeKey       = 'wardlink_bubble_size';
+  // Independent WardLink sync scopes — isolated from each other, each may be
+  // toggled on/off without affecting the other.
+  static const _wardLinkSyncFavoritesKey        = 'wardlink_sync_favorites';
+  static const _wardLinkSyncPersonalOutgoingKey = 'wardlink_sync_personal_outgoing';
   // Download folder — custom save directory for received files (null = Downloads/ONYX).
   static const _downloadFolderPathKey     = 'download_folder_path';
   // Chat viewport render buffer beyond the visible area (px). Higher = smoother
@@ -401,6 +405,12 @@ class SettingsManager {
   static final ValueNotifier<bool> wardLinkBubbleOnlyErrors = ValueNotifier<bool>(false);
   // Bubble diameter in logical pixels: 40 (small), 48 (normal), 58 (large)
   static final ValueNotifier<int>  wardLinkBubbleSize       = ValueNotifier<int>(48);
+  // Independent sync scopes. Each device only offers/accepts a scope if it
+  // has that scope enabled locally — the two scopes never merge or leak into
+  // each other. Favorites defaults on (preserves pre-existing behaviour);
+  // personal-outgoing defaults off (new, opt-in).
+  static final ValueNotifier<bool> wardLinkSyncFavorites        = ValueNotifier<bool>(true);
+  static final ValueNotifier<bool> wardLinkSyncPersonalOutgoing = ValueNotifier<bool>(false);
 
   // Custom download folder (null/empty = use system Downloads/ONYX).
   static final ValueNotifier<String> downloadFolderPath = ValueNotifier<String>('');
@@ -707,6 +717,10 @@ class SettingsManager {
     SettingsManager.wardLinkMaxFileSizeMb.value    = prefs.getInt(_wardLinkMaxFileSizeMbKey) ?? 2048;
     SettingsManager.wardLinkBubbleOnlyErrors.value = prefs.getBool(_wardLinkBubbleOnlyErrorsKey) ?? false;
     SettingsManager.wardLinkBubbleSize.value       = prefs.getInt(_wardLinkBubbleSizeKey) ?? 48;
+    SettingsManager.wardLinkSyncFavorites.value        =
+        prefs.getBool(_wardLinkSyncFavoritesKey) ?? true;
+    SettingsManager.wardLinkSyncPersonalOutgoing.value =
+        prefs.getBool(_wardLinkSyncPersonalOutgoingKey) ?? false;
 
     SettingsManager.autoLoadVideoEnabled.value = prefs.getBool(_autoLoadVideoKey) ?? false;
 
@@ -1626,6 +1640,18 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setInt(_wardLinkBubbleSizeKey, val);
     wardLinkBubbleSize.value = val;
+  }
+
+  static Future<void> setWardLinkSyncFavorites(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_wardLinkSyncFavoritesKey, val);
+    wardLinkSyncFavorites.value = val;
+  }
+
+  static Future<void> setWardLinkSyncPersonalOutgoing(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_wardLinkSyncPersonalOutgoingKey, val);
+    wardLinkSyncPersonalOutgoing.value = val;
   }
 
   static Future<void> setDownloadFolderPath(String val) async {

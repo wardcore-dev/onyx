@@ -211,7 +211,7 @@ const String serverBase = 'https://api-onyx.wardcore.com';
 const String wsUrl = 'wss://api-onyx.wardcore.com/ws';
 const String publicIpApi = 'https://api.ipify.org';
 
-const String kAppVersion = 'v1.9-beta';
+const String kAppVersion = 'v1.10-beta';
 
 bool get isDesktop {
   if (kIsWeb) return false;

@@ -324,7 +324,7 @@ class _FavoritesTabState extends State<FavoritesTab>
             color: SettingsManager.getElementColor(
                 cs.surfaceContainerHighest,
                 SettingsManager.elementBrightness.value),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(28),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -667,7 +667,7 @@ class _FavoritesTabState extends State<FavoritesTab>
             color: SettingsManager.getElementColor(
                 cs.surfaceContainerHighest,
                 SettingsManager.elementBrightness.value),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(28),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -792,7 +792,7 @@ class _FavoritesTabState extends State<FavoritesTab>
             color: SettingsManager.getElementColor(
                 cs.surfaceContainerHighest,
                 SettingsManager.elementBrightness.value),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(28),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -873,7 +873,7 @@ class _FavoritesTabState extends State<FavoritesTab>
             color: SettingsManager.getElementColor(
                 cs.surfaceContainerHighest,
                 SettingsManager.elementBrightness.value),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(28),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1095,7 +1095,7 @@ class _FavoritesTabState extends State<FavoritesTab>
             color: SettingsManager.getElementColor(
                 cs.surfaceContainerHighest,
                 SettingsManager.elementBrightness.value),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(28),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1315,7 +1315,7 @@ class _FavoritesTabState extends State<FavoritesTab>
       child: Container(
         decoration: BoxDecoration(
           color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(28),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
@@ -1636,7 +1636,7 @@ class _FavoritesTabState extends State<FavoritesTab>
           decoration: BoxDecoration(
             color: SettingsManager.getElementColor(cs.surfaceContainerHighest,
                 SettingsManager.elementBrightness.value),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(28),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1724,7 +1724,7 @@ class _FavoritesTabState extends State<FavoritesTab>
           backgroundColor:
               cs.surface.withValues(alpha: SettingsManager.elementOpacity.value),
           shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
           title: Text(l.favNewFolder),
           content: TextField(
             controller: controller,
@@ -1771,13 +1771,13 @@ class _FavoritesTabState extends State<FavoritesTab>
           : null,
       child: Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(28),
           border: selected
               ? Border.all(color: cs.primary, width: 2)
               : null,
         ),
         child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(28),
         onTap: editMode
             ? null
             : _selectionMode
@@ -1787,6 +1787,7 @@ class _FavoritesTabState extends State<FavoritesTab>
             ? null
             : () => _showChatActions(context, fav, favFolders),
         child: AdaptiveGlassCard(
+        borderRadius: 28,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
           child: Row(
@@ -1933,7 +1934,7 @@ class _FavoritesTabState extends State<FavoritesTab>
           ? (d) => _showDesktopFolderContextMenu(context, d.globalPosition, folder)
           : null,
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(28),
         onTap: editMode || _selectionMode
             ? null
             : () => _openFolderWithLockCheck(context, folder),
@@ -1941,6 +1942,7 @@ class _FavoritesTabState extends State<FavoritesTab>
             ? null
             : () => _showFolderActions(context, folder),
         child: AdaptiveGlassCard(
+        borderRadius: 28,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
           child: Row(
@@ -2197,12 +2199,13 @@ class _FavoritesTabState extends State<FavoritesTab>
           ? (d) => _showDesktopInlineContextMenu(context, d.globalPosition, fav, cs)
           : null,
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(28),
         onTap: editMode ? null : () => _openFavWithLockCheck(context, fav.id),
         onLongPress: editMode
             ? null
             : () => _showInlineChatActions(context, fav, cs),
         child: AdaptiveGlassCard(
+        borderRadius: 28,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
           child: Row(
@@ -2310,7 +2313,7 @@ class _FavoritesTabState extends State<FavoritesTab>
             color: SettingsManager.getElementColor(
                 cs.surfaceContainerHighest,
                 SettingsManager.elementBrightness.value),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(28),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -2526,7 +2529,7 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
             color: SettingsManager.getElementColor(
                 cs.surfaceContainerHighest,
                 SettingsManager.elementBrightness.value),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(28),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -2621,7 +2624,7 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
       clipBehavior: Clip.antiAlias,
       insetPadding:
           const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
@@ -2812,11 +2815,12 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
           ? (d) => _showDesktopContextMenu(context, d.globalPosition, fav, cs)
           : null,
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(28),
         onTap: editMode ? null : () => _openWithLockCheck(context, fav.id),
         onLongPress:
             editMode ? null : () => _showChatActions(context, fav, cs),
         child: AdaptiveGlassCard(
+        borderRadius: 28,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
           child: Row(
@@ -3148,16 +3152,16 @@ class _EditChatDialogState extends State<_EditChatDialog> {
                               filled: true,
                               fillColor: fillColor.withValues(alpha: 0.3),
                               border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(14)),
+                                  borderRadius: BorderRadius.circular(28)),
                               enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
+                                borderRadius: BorderRadius.circular(28),
                                 borderSide: BorderSide(
                                     color:
                                         cs.outlineVariant.withValues(alpha: 0.3),
                                     width: 0.8),
                               ),
                               focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
+                                borderRadius: BorderRadius.circular(28),
                                 borderSide: BorderSide(
                                     color: cs.primary, width: 1.4),
                               ),
@@ -3416,16 +3420,16 @@ class _EditFolderDialogState extends State<_EditFolderDialog> {
                               filled: true,
                               fillColor: fillColor.withValues(alpha: 0.5),
                               border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(14)),
+                                  borderRadius: BorderRadius.circular(28)),
                               enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
+                                borderRadius: BorderRadius.circular(28),
                                 borderSide: BorderSide(
                                     color: cs.outlineVariant
                                         .withValues(alpha: 0.3),
                                     width: 0.8),
                               ),
                               focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
+                                borderRadius: BorderRadius.circular(28),
                                 borderSide: BorderSide(
                                     color: cs.primary, width: 1.4),
                               ),
@@ -3649,16 +3653,16 @@ class _NewFolderDialogState extends State<_NewFolderDialog> {
                               filled: true,
                               fillColor: fillColor.withValues(alpha: 0.5),
                               border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(14)),
+                                  borderRadius: BorderRadius.circular(28)),
                               enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
+                                borderRadius: BorderRadius.circular(28),
                                 borderSide: BorderSide(
                                     color: cs.outlineVariant
                                         .withValues(alpha: 0.3),
                                     width: 0.8),
                               ),
                               focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
+                                borderRadius: BorderRadius.circular(28),
                                 borderSide: BorderSide(
                                     color: cs.primary, width: 1.4),
                               ),
@@ -3884,15 +3888,15 @@ class _NewChatDialogState extends State<_NewChatDialog> {
                               filled: true,
                               fillColor: fillColor.withValues(alpha: 0.3),
                               border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(14)),
+                                  borderRadius: BorderRadius.circular(28)),
                               enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
+                                borderRadius: BorderRadius.circular(28),
                                 borderSide: BorderSide(
                                     color: cs.outlineVariant.withValues(alpha: 0.3),
                                     width: 0.8),
                               ),
                               focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
+                                borderRadius: BorderRadius.circular(28),
                                 borderSide:
                                     BorderSide(color: cs.primary, width: 1.4),
                               ),

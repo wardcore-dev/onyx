@@ -166,7 +166,7 @@ class _SupportSheetState extends State<SupportSheet> {
     return Container(
       decoration: BoxDecoration(
         color: cs.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       ),
       padding: EdgeInsets.fromLTRB(
           24, 12, 24, 24 + MediaQuery.paddingOf(context).bottom),
@@ -239,7 +239,7 @@ class _SupportSheetState extends State<SupportSheet> {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
                 color: coin.color.withValues(alpha: 0.07),
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(28),
                 border: Border.all(color: coin.color.withValues(alpha: 0.2)),
               ),
               child: Column(
@@ -287,7 +287,7 @@ class _SupportSheetState extends State<SupportSheet> {
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(28),
             ),
             child: QrImageView(
               data: coin.address,
@@ -305,7 +305,7 @@ class _SupportSheetState extends State<SupportSheet> {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
               color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(28),
               border:
                   Border.all(color: cs.outlineVariant.withValues(alpha: 0.2)),
             ),
@@ -680,6 +680,78 @@ class _SettingsTabState extends State<SettingsTab>
     }
   }
 
+  Widget _buildResetOption({
+    required ColorScheme colorScheme,
+    required bool value,
+    required ValueChanged<bool?>? onChanged,
+    required String title,
+    required String subtitle,
+  }) {
+    final enabled = onChanged != null;
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: enabled ? () => onChanged(!value) : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: value
+              ? colorScheme.error.withValues(alpha: 0.08)
+              : colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: value
+                ? colorScheme.error.withValues(alpha: 0.35)
+                : colorScheme.outlineVariant.withValues(alpha: 0.25),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Checkbox(
+              value: value,
+              onChanged: onChanged,
+              activeColor: colorScheme.error,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ),
+            const SizedBox(width: 2),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                        color: enabled
+                            ? colorScheme.onSurface
+                            : colorScheme.onSurface.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurface
+                            .withValues(alpha: enabled ? 0.6 : 0.35),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _factoryReset() async {
     final username = await AccountManager.getCurrentAccount();
 
@@ -687,87 +759,139 @@ class _SettingsTabState extends State<SettingsTab>
     final l = AppLocalizations.of(context);
     final resettingMsg = l.resetting;
 
-    final result = await showDialog<({bool deleteAccount, bool deleteLocal})>(
+    final result = await showOnyxDialog<({bool deleteAccount, bool deleteLocal})>(
       context: context,
       builder: (ctx) {
+        final colorScheme = Theme.of(ctx).colorScheme;
         bool deleteAccount = false;
         bool deleteLocal = false;
         return StatefulBuilder(
-          builder: (ctx, setState) => AlertDialog(
-            title: Text(l.factoryReset),
-            content: Column(
+          builder: (ctx, setState) => OnyxDialogShell(
+            maxWidth: 420,
+            child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  l.factoryResetHint,
-                  style: const TextStyle(fontSize: 13, color: Colors.grey),
-                ),
-                const SizedBox(height: 16),
-                CheckboxListTile(
-                  value: deleteAccount,
-                  onChanged: username == null
-                      ? null
-                      : (v) => setState(() => deleteAccount = v ?? false),
-                  title: Text(
-                    l.resetDeleteAccount,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+                OnyxDialogHeader(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: colorScheme.error.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.restart_alt_rounded,
+                        size: 20, color: colorScheme.error),
                   ),
-                  subtitle: Text(
-                    username != null
+                  title: Text(
+                    l.factoryReset,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  onClose: () => Navigator.of(ctx).pop(null),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                  child: Text(
+                    l.factoryResetHint,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                  child: _buildResetOption(
+                    colorScheme: colorScheme,
+                    value: deleteAccount,
+                    onChanged: username == null
+                        ? null
+                        : (v) => setState(() => deleteAccount = v ?? false),
+                    title: l.resetDeleteAccount,
+                    subtitle: username != null
                         ? l.resetDeleteAccountSubtitle(username)
                         : l.resetNoAccount,
-                    style: const TextStyle(fontSize: 12),
                   ),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  contentPadding: EdgeInsets.zero,
                 ),
-                const SizedBox(height: 4),
-                CheckboxListTile(
-                  value: deleteLocal,
-                  onChanged: (v) => setState(() => deleteLocal = v ?? false),
-                  title: Text(
-                    l.resetDeleteLocal,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                  child: _buildResetOption(
+                    colorScheme: colorScheme,
+                    value: deleteLocal,
+                    onChanged: (v) => setState(() => deleteLocal = v ?? false),
+                    title: l.resetDeleteLocal,
+                    subtitle: l.resetDeleteLocalSubtitle,
                   ),
-                  subtitle: Text(
-                    l.resetDeleteLocalSubtitle,
-                    style: const TextStyle(fontSize: 12),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FilledButton(
+                        style: FilledButton.styleFrom(
+                          padding: kOnyxDialogButtonPadding,
+                          shape: kOnyxDialogButtonShape,
+                          backgroundColor: colorScheme.error,
+                          foregroundColor: colorScheme.onError,
+                        ),
+                        onPressed: (deleteAccount || deleteLocal)
+                            ? () => Navigator.of(ctx).pop(
+                                  (
+                                    deleteAccount: deleteAccount,
+                                    deleteLocal: deleteLocal
+                                  ),
+                                )
+                            : null,
+                        child: Text(l.reset),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton(
+                        onPressed: () => Navigator.of(ctx).pop(null),
+                        style: OutlinedButton.styleFrom(
+                          padding: kOnyxDialogButtonPadding,
+                          shape: kOnyxDialogButtonShape,
+                        ),
+                        child: Text(l.cancel),
+                      ),
+                    ],
                   ),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  contentPadding: EdgeInsets.zero,
                 ),
               ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(null),
-                child: Text(l.cancel),
-              ),
-              StatefulBuilder(
-                builder: (ctx2, _) => FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: (deleteAccount || deleteLocal)
-                      ? () => Navigator.of(ctx).pop(
-                            (
-                              deleteAccount: deleteAccount,
-                              deleteLocal: deleteLocal
-                            ),
-                          )
-                      : null,
-                  child: Text(l.reset),
-                ),
-              ),
-            ],
           ),
         );
       },
     );
 
     if (result == null) return;
+    if (!mounted) return;
+
+    // Double confirmation before an irreversible destructive action:
+    // first a plain "are you sure", then a harsher final check.
+    final step1 = await showOnyxConfirmDialog(
+      context: context,
+      title: l.resetConfirmStep1Title,
+      message: l.resetConfirmStep1Message,
+      confirmLabel: l.yes,
+      isDestructive: true,
+      icon: Icons.warning_amber_rounded,
+    );
+    if (step1 != true || !mounted) return;
+
+    final step2 = await showOnyxConfirmDialog(
+      context: context,
+      title: l.resetConfirmStep2Title,
+      message: l.resetConfirmStep2Message,
+      confirmLabel: l.reset,
+      isDestructive: true,
+      icon: Icons.warning_amber_rounded,
+    );
+    if (step2 != true || !mounted) return;
 
     try {
       if (mounted) rootScreenKey.currentState?.showSnack(resettingMsg);
@@ -1057,16 +1181,16 @@ class _SettingsTabState extends State<SettingsTab>
                                   fillColor: cs.surfaceContainerHighest
                                       .withValues(alpha: 0.4),
                                   border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(14)),
+                                      borderRadius: BorderRadius.circular(28)),
                                   enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(28),
                                     borderSide: BorderSide(
                                         color: cs.outlineVariant
                                             .withValues(alpha: 0.3),
                                         width: 0.8),
                                   ),
                                   focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(28),
                                     borderSide: BorderSide(
                                         color: cs.primary, width: 1.4),
                                   ),
@@ -1081,16 +1205,16 @@ class _SettingsTabState extends State<SettingsTab>
                                   fillColor: cs.surfaceContainerHighest
                                       .withValues(alpha: 0.4),
                                   border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(14)),
+                                      borderRadius: BorderRadius.circular(28)),
                                   enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(28),
                                     borderSide: BorderSide(
                                         color: cs.outlineVariant
                                             .withValues(alpha: 0.3),
                                         width: 0.8),
                                   ),
                                   focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(28),
                                     borderSide: BorderSide(
                                         color: cs.primary, width: 1.4),
                                   ),
@@ -1447,6 +1571,7 @@ class _SettingsTabState extends State<SettingsTab>
   }
 
   Future<void> _clearChatVideoBackground() async {
+    final clearedMsg = AppLocalizations.of(context).chatBgCleared;
     try {
       final dir = await getOnyxSupportDirectory();
       final bgDir = Directory('${dir.path}/backgrounds');
@@ -1465,7 +1590,7 @@ class _SettingsTabState extends State<SettingsTab>
       debugPrint('[err] $e');
     }
     await SettingsManager.setChatVideoBackground(null);
-    _showSnack('Video wallpaper cleared');
+    _showSnack(clearedMsg);
   }
 
   void _showPresetsSheet() {
@@ -1908,7 +2033,7 @@ class _SettingsTabState extends State<SettingsTab>
           const SizedBox(height: 20),
           Center(
             child: Text(
-              'open-beta 1.9',
+              'open-beta 1.10',
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context)
@@ -2275,6 +2400,8 @@ class _SettingsTabState extends State<SettingsTab>
                     l.wardLinkMaxFileSize,
                     l.wardLinkBubbleVisibility,
                     l.wardLinkBubbleSize,
+                    l.wardLinkSyncFavoritesToggle,
+                    l.wardLinkSyncPersonalToggle,
                     'file size',
                     'bubble',
                     'sync',
@@ -2282,6 +2409,50 @@ class _SettingsTabState extends State<SettingsTab>
                   expandedContent: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Two independent, isolated sync scopes: enabling or
+                      // disabling one never affects the other — each is its
+                      // own manifest/import path in WardLinkSyncService.
+                      ValueListenableBuilder<bool>(
+                        valueListenable: SettingsManager.wardLinkSyncFavorites,
+                        builder: (_, syncFavorites, __) => Row(
+                          children: [
+                            Expanded(
+                              child: Text(l.wardLinkSyncFavoritesToggle,
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: cs.onSurface)),
+                            ),
+                            Switch(
+                              value: syncFavorites,
+                              onChanged: (v) =>
+                                  SettingsManager.setWardLinkSyncFavorites(v),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      ValueListenableBuilder<bool>(
+                        valueListenable:
+                            SettingsManager.wardLinkSyncPersonalOutgoing,
+                        builder: (_, syncPersonal, __) => Row(
+                          children: [
+                            Expanded(
+                              child: Text(l.wardLinkSyncPersonalToggle,
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: cs.onSurface)),
+                            ),
+                            Switch(
+                              value: syncPersonal,
+                              onChanged: (v) => SettingsManager
+                                  .setWardLinkSyncPersonalOutgoing(v),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
                       Row(
                         children: [
                           Expanded(
@@ -3165,7 +3336,7 @@ class _SettingsTabState extends State<SettingsTab>
                                 decoration: BoxDecoration(
                                   color: colorScheme.surfaceContainerHighest
                                       .withValues(alpha: 0.45),
-                                  borderRadius: BorderRadius.circular(24),
+                                  borderRadius: BorderRadius.circular(28),
                                   border: Border.all(
                                     color: colorScheme.outlineVariant
                                         .withValues(alpha: 0.4),
@@ -3226,23 +3397,23 @@ class _SettingsTabState extends State<SettingsTab>
           filled: true,
           fillColor: colorScheme.surface,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(28),
             borderSide: BorderSide(color: colorScheme.outline),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(28),
             borderSide: BorderSide(
               color: colorScheme.outline.withValues(alpha: enabled ? 0.5 : 0.2),
             ),
           ),
           disabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(28),
             borderSide: BorderSide(
               color: colorScheme.outline.withValues(alpha: 0.15),
             ),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(28),
             borderSide: BorderSide(color: colorScheme.primary, width: 2),
           ),
           contentPadding:
@@ -3619,7 +3790,7 @@ class _SettingsTabState extends State<SettingsTab>
                                     const EdgeInsets.fromLTRB(12, 0, 12, 12),
                                 decoration: BoxDecoration(
                                   color: sheetColor,
-                                  borderRadius: BorderRadius.circular(20),
+                                  borderRadius: BorderRadius.circular(28),
                                 ),
                                 child: Column(
                                   children: [
@@ -4803,14 +4974,14 @@ class _SettingsTabState extends State<SettingsTab>
               ]),
               const SizedBox(height: 6),
               ClipRRect(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(28),
                 child: Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
                   decoration: BoxDecoration(
                     color: colorScheme.surfaceContainerHighest
                         .withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(28),
                     border: Border.all(
                       color: colorScheme.outlineVariant.withValues(alpha: 0.35),
                     ),
@@ -4820,7 +4991,7 @@ class _SettingsTabState extends State<SettingsTab>
                     isExpanded: true,
                     isDense: false,
                     underline: const SizedBox.shrink(),
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(28),
                     icon: Icon(Icons.expand_more_rounded,
                         size: 20,
                         color: colorScheme.onSurface.withValues(alpha: 0.5)),
@@ -4907,7 +5078,7 @@ class _SettingsTabState extends State<SettingsTab>
         return Container(
           decoration: BoxDecoration(
             color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(28),
             border: Border.all(
               color: enabled
                   ? colorScheme.primary.withValues(alpha: 0.3)
@@ -5165,12 +5336,12 @@ class _SettingsTabState extends State<SettingsTab>
     }
 
     return AdaptiveGlassCard(
-      borderRadius: 16,
+      borderRadius: 28,
       padding: EdgeInsets.zero,
       child: Column(
         children: [
           InkWell(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(28),
             onTap: () => _toggleSection(section),
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -5256,12 +5427,12 @@ class _SettingsTabState extends State<SettingsTab>
     final colorScheme = Theme.of(context).colorScheme;
 
     final card = AdaptiveGlassCard(
-      borderRadius: 12,
+      borderRadius: 28,
       padding: EdgeInsets.zero,
       child: Column(
         children: [
           InkWell(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(28),
             onTap: () => setState(
                 () => _expandedSubsectionKey = isExpanded ? null : key),
             child: Padding(
@@ -5519,7 +5690,7 @@ class _SettingsTabState extends State<SettingsTab>
                                         decoration: BoxDecoration(
                                             color: sheetColor,
                                             borderRadius:
-                                                BorderRadius.circular(20)),
+                                                BorderRadius.circular(28)),
                                         child: Column(
                                           children: [
                                             const SizedBox(height: 8),
@@ -5614,7 +5785,7 @@ class _SettingsTabState extends State<SettingsTab>
                           child: Container(
                             padding: const EdgeInsets.all(14),
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(18),
+                              borderRadius: BorderRadius.circular(28),
                               color: Theme.of(context)
                                   .colorScheme
                                   .primary
@@ -6127,14 +6298,14 @@ class _SettingsTabState extends State<SettingsTab>
                 Widget preview;
                 if (videoPath != null && File(videoPath).existsSync()) {
                   preview = ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(28),
                     child: AspectRatio(
                         aspectRatio: aspect,
                         child: _VideoPreviewWidget(path: videoPath)),
                   );
                 } else if (path != null && File(path).existsSync()) {
                   preview = ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(28),
                     child: AspectRatio(
                       aspectRatio: aspect,
                       child: ValueListenableBuilder<bool>(
@@ -6160,7 +6331,7 @@ class _SettingsTabState extends State<SettingsTab>
                   );
                 } else {
                   preview = ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(28),
                     child: AspectRatio(
                       aspectRatio: aspect,
                       child: ValueListenableBuilder<double>(
@@ -7173,17 +7344,17 @@ class _ChangePasswordFormState extends State<_ChangePasswordForm> {
       fillColor: fillColor.withValues(alpha: 0.5),
       contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(28),
         borderSide: BorderSide(
             color: cs.outlineVariant.withValues(alpha: 0.15), width: 1.0),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(28),
         borderSide: BorderSide(
             color: cs.outlineVariant.withValues(alpha: 0.15), width: 1.0),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(28),
         borderSide: BorderSide(color: cs.primary, width: 1.4),
       ),
     );
@@ -7531,7 +7702,7 @@ class _WardLinkQrDialogState extends State<_WardLinkQrDialog> {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(28),
               ),
               // QrImageView regenerates its QR matrix (Reed-Solomon ECC etc.)
               // in paint(), not just build() — without this boundary, the
@@ -8142,7 +8313,7 @@ class _PresetsSheetState extends State<_PresetsSheet> {
           margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           decoration: BoxDecoration(
             color: cs.surface,
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(28),
           ),
           child: Column(
             children: [
@@ -8278,7 +8449,7 @@ class _PresetsSheetState extends State<_PresetsSheet> {
                             decoration: BoxDecoration(
                               color: cs.surfaceContainerHighest
                                   .withValues(alpha: 0.5),
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(28),
                               border: Border.all(
                                   color:
                                       cs.outlineVariant.withValues(alpha: 0.2)),
@@ -8752,7 +8923,7 @@ class _BackupSectionState extends State<_BackupSection>
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
           decoration: BoxDecoration(
             color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(28),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -8988,12 +9159,12 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
     final isExpanded = _expandedSubsectionKey == key;
     final cs = Theme.of(context).colorScheme;
     return AdaptiveGlassCard(
-      borderRadius: 12,
+      borderRadius: 28,
       padding: EdgeInsets.zero,
       child: Column(
         children: [
           InkWell(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(28),
             onTap: () => setState(
                 () => _expandedSubsectionKey = isExpanded ? null : key),
             child: Padding(
@@ -9225,7 +9396,7 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
             final totalMsgs = TrashManager.instance.deletedMessages.length;
             final isEmpty = totalChats == 0 && totalMsgs == 0;
             return AdaptiveGlassCard(
-              borderRadius: 12,
+              borderRadius: 28,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -9304,7 +9475,7 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
                           decoration: BoxDecoration(
                             color: cs.surfaceContainerHighest
                                 .withValues(alpha: 0.5),
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(28),
                           ),
                           child: Row(
                             children: [
@@ -9386,7 +9557,7 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
                           decoration: BoxDecoration(
                             color: cs.surfaceContainerHighest
                                 .withValues(alpha: 0.5),
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(28),
                           ),
                           child: Row(
                             children: [
@@ -9478,7 +9649,7 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
                     decoration: BoxDecoration(
                       border:
                           Border.all(color: cs.outline.withValues(alpha: 0.3)),
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(28),
                     ),
                     child: DropdownButton<int>(
                       value: days,
@@ -9526,7 +9697,7 @@ class _RecycleBinSectionState extends State<_RecycleBinSection> {
                               decoration: BoxDecoration(
                                 color:
                                     cs.errorContainer.withValues(alpha: 0.25),
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(28),
                                 border: Border.all(
                                     color: cs.error.withValues(alpha: 0.3)),
                               ),

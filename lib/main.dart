@@ -41,6 +41,7 @@ import 'models/app_themes.dart';
 import 'widgets/debug_overlay_v2.dart';
 import 'widgets/wardlink_bubble.dart';
 import 'widgets/wardlink_sync_bubble.dart';
+import 'services/wardlink/wardlink_sync_service.dart';
 import 'widgets/pending_device_bubble.dart';
 import 'widgets/vinyl_player_button.dart';
 import 'utils/global_audio_controller.dart';
@@ -598,6 +599,12 @@ class _ElegantMessengerState extends State<ElegantMessenger> with WindowListener
     } else {
       debugPrint('[Tray]  Show window FAILED - RootScreen not ready (currentState is null)');
     }
+
+    // The window coming back to front is also the best signal that the
+    // machine may just have woken from sleep or the network adapter reset
+    // while we were backgrounded — re-bind WardLink's discovery socket /
+    // daemon right away instead of waiting up to 5s for the watchdog tick.
+    unawaited(WardLinkSyncService.instance.ensureHealthy());
   }
 
   @override

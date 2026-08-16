@@ -609,11 +609,11 @@ class _ForwardScreenState extends State<ForwardScreen> {
                 constraints:
                     const BoxConstraints(maxWidth: 480, maxHeight: 560),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(28),
                   child: Container(
                     decoration: BoxDecoration(
                       color: bgColor,
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(28),
                       border: Border.all(
                         color: scheme.outlineVariant.withValues(alpha: 0.2),
                         width: 1,

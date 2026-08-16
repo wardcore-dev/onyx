@@ -16,6 +16,29 @@ List<Group> _parseGroupsJson(String json) {
   return list.map((j) => Group.fromJson(j as Map<String, dynamic>)).toList();
 }
 
+/// Thrown by [ExternalServerManager.sendMessage] when the server rejects a
+/// message (e.g. mute or slow-mode) so the caller can show the server's own
+/// explanation instead of a generic "failed to send" message.
+class ExternalSendException implements Exception {
+  final String message;
+  const ExternalSendException(this.message);
+
+  static final RegExp _muteExpiryPattern =
+      RegExp(r'^You are muted until (\d+)$');
+
+  bool get isMute => _muteExpiryPattern.hasMatch(message);
+
+  /// The mute's expiry as epoch milliseconds, if [message] is the server's
+  /// "You are muted until <ms>" rejection (see rust server messages.rs).
+  int? get muteExpiresAt {
+    final match = _muteExpiryPattern.firstMatch(message);
+    return match != null ? int.tryParse(match.group(1)!) : null;
+  }
+
+  @override
+  String toString() => message;
+}
+
 class ExternalServerManager {
   static const _serversKey = 'external_servers';
   static const _groupsKey = 'external_groups';
@@ -576,6 +599,16 @@ class ExternalServerManager {
 
     if (resp.statusCode != 200) {
       debugPrint('[ext-send] FAILED ${resp.statusCode}: ${resp.body}');
+      try {
+        final error = jsonDecode(resp.body)['error']?.toString();
+        if (error != null && error.isNotEmpty) {
+          throw ExternalSendException(error);
+        }
+      } on ExternalSendException {
+        rethrow;
+      } catch (_) {
+        // Response body wasn't the expected {"error": "..."} shape — fall through to null.
+      }
       return null;
     }
     return jsonDecode(resp.body) as Map<String, dynamic>;
@@ -773,7 +806,18 @@ class ExternalServerManager {
       } else if (type == 'group_msg' ||
                  type == 'group_msg_edited' ||
                  type == 'group_msg_deleted' ||
-                 type == 'reaction_update') {
+                 type == 'reaction_update' ||
+                 type == 'poll_created' ||
+                 type == 'poll_vote_update' ||
+                 type == 'role_changed' ||
+                 type == 'kicked' ||
+                 type == 'banned' ||
+                 type == 'unbanned' ||
+                 type == 'comment_added' ||
+                 type == 'comment_deleted' ||
+                 type == 'comment_reaction_update' ||
+                 type == 'member_muted' ||
+                 type == 'member_unmuted') {
         final groupId = (obj['group_id'] as num).toInt();
         final key = '$serverId:$groupId';
         debugPrint('[ext-ws] Received $type for $key');
@@ -782,6 +826,17 @@ class ExternalServerManager {
           listener(obj);
         } else {
           debugPrint('[ext-ws] WARNING: No listener for $key');
+        }
+      } else if (type == 'member_role_updated' ||
+                 type == 'role_updated' ||
+                 type == 'role_deleted') {
+        // These carry no group_id (each external server hosts exactly one
+        // group), so route to every group listener registered for this server.
+        debugPrint('[ext-ws] Received $type, broadcasting to server $serverId listeners');
+        for (final entry in _groupListeners.entries) {
+          if (entry.key.startsWith('$serverId:')) {
+            entry.value(obj);
+          }
         }
       } else if (type == 'group_joined' || type == 'group_member_left') {
         debugPrint('[ext-ws] Group membership changed: $type');
@@ -817,15 +872,9 @@ class ExternalServerManager {
     final currentGroups = externalGroups.value;
     final updatedGroups = currentGroups.map((g) {
       if (g.id == groupId && g.externalServerId == serverId) {
-        return Group(
-          id: g.id,
-          name: name ?? g.name,
-          isChannel: g.isChannel,
-          owner: g.owner,
-          inviteLink: g.inviteLink,
-          avatarVersion: avatarVersion ?? g.avatarVersion,
-          externalServerId: g.externalServerId,
-          myRole: g.myRole,
+        return g.copyWith(
+          name: name,
+          avatarVersion: avatarVersion,
         );
       }
       return g;

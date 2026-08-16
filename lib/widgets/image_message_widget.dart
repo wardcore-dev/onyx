@@ -19,6 +19,7 @@ import '../utils/image_size_cache.dart';
 import '../utils/image_file_cache.dart';
 import '../utils/blurhash_cache.dart';
 import '../utils/wallpaper_util.dart';
+import '../utils/file_utils.dart' show showSavedToSnack;
 import '../l10n/app_localizations.dart';
 
 enum _ImageMenuAction { download, setWallpaper }
@@ -330,7 +331,7 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
 
         final nonNullDest = destPath!;
         await file.copy(nonNullDest);
-        rootScreenKey.currentState?.showSnack('Saved to: $nonNullDest');
+        showSavedToSnack(nonNullDest);
         return;
       }
 

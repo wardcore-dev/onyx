@@ -9,7 +9,7 @@ import 'package:http/http.dart' as http;
 import '../utils/onyx_base_dir.dart'
     show getOnyxDocumentsDirectory, getOnyxSupportDirectory;
 import 'package:path/path.dart' as p;
-import '../utils/file_utils.dart' show getOnyxSaveDirectory;
+import '../utils/file_utils.dart' show getOnyxSaveDirectory, showSavedToSnack;
 import 'package:file_picker/file_picker.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:visibility_detector/visibility_detector.dart';
@@ -154,7 +154,15 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
         final ar = w / h;
         final entry = _globalPlayerCache[widget.filename];
         if (entry != null) entry.aspectRatio = ar;
-        setState(() => _aspectRatio = ar);
+        // videoParams can re-emit the same (or near-identical, due to float
+        // rounding) dimensions repeatedly during playback — every such
+        // setState resizes the AspectRatio box the player + its controls
+        // live in, which was restarting media_kit_video's own animated
+        // seek-bar/toolbar positioning mid-flight and showed up as controls
+        // visibly drifting. Only relayout when the ratio actually changed.
+        if ((ar - _aspectRatio).abs() > 0.001) {
+          setState(() => _aspectRatio = ar);
+        }
         // First decoded frame is available now — capture a poster so future
         // views (and the unloaded placeholder) show a blurred preview.
         _capturePosterIfNeeded(player);
@@ -475,7 +483,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
         }
         final savedFile = File(destPath);
         await _cachedFile!.copy(savedFile.path);
-        rootScreenKey.currentState?.showSnack('Saved to: ${savedFile.path}');
+        showSavedToSnack(savedFile.path);
         return;
       }
 
@@ -506,7 +514,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
       }
       final savedFile = File('${onyxDir.path}/$safeName');
       await _cachedFile!.copy(savedFile.path);
-      rootScreenKey.currentState?.showSnack('Saved to: ${savedFile.path}');
+      showSavedToSnack(savedFile.path);
     } catch (e, st) {
       debugPrint(' _saveVideo error: $e\n$st');
       rootScreenKey.currentState?.showSnack(' Save failed: $e');
@@ -564,7 +572,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
           destPath = '${onyxDir.path}/$filename';
         }
         await File(destPath).writeAsBytes(bytes);
-        rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+        showSavedToSnack(destPath);
         return;
       }
 
@@ -594,7 +602,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
       }
       final savedFile = File('${onyxDir.path}/$filename');
       await savedFile.writeAsBytes(bytes);
-      rootScreenKey.currentState?.showSnack('Saved to: ${savedFile.path}');
+      showSavedToSnack(savedFile.path);
     } catch (e, st) {
       debugPrint(' _saveCurrentFrame error: $e\n$st');
       rootScreenKey.currentState?.showSnack(' Save frame failed: $e');
@@ -899,6 +907,17 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
           seekBarThumbColor: primary,
           seekBarPositionColor: primary,
           seekBarBufferColor: primary.withValues(alpha: 0.3),
+          // Inline bubble preview only: drop the volume button and the
+          // timecode readout — neither is useful at bubble width, and
+          // their layout was what visibly glitched/drifted in the
+          // cramped control bar. Fullscreen keeps the full default set.
+          bottomButtonBar: const [
+            MaterialDesktopSkipPreviousButton(),
+            MaterialDesktopPlayOrPauseButton(),
+            MaterialDesktopSkipNextButton(),
+            Spacer(),
+            MaterialDesktopFullscreenButton(),
+          ],
         ),
         fullscreen: MaterialDesktopVideoControlsThemeData(
           seekBarThumbColor: primary,
@@ -927,6 +946,13 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
           seekBarThumbColor: primary,
           seekBarPositionColor: primary,
           seekBarBufferColor: primary.withValues(alpha: 0.3),
+          // Inline bubble preview only: drop the timecode readout, same
+          // reasoning as the desktop branch above. Fullscreen keeps the
+          // full default set.
+          bottomButtonBar: const [
+            Spacer(),
+            MaterialFullscreenButton(),
+          ],
         ),
         fullscreen: MaterialVideoControlsThemeData(
           seekBarThumbColor: primary,

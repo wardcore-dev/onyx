@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform, kIsWeb;
 import 'package:flutter/services.dart';
 
 class SwipeableMessageWrapper extends StatefulWidget {
@@ -29,9 +30,14 @@ class _SwipeableMessageWrapperState extends State<SwipeableMessageWrapper>
   bool _isDragging = false;
   bool _actionFired = false;
 
-  static const double _maxDrag = 72.0;
-  static const double _triggerVelocity = 300.0;
-  static const double _triggerDistance = 48.0;
+  static const double _maxDrag = 96.0;
+  static const double _triggerDistance = 30.0;
+  // Rubber-band constant for _onDragUpdate's resistance curve: at
+  // |_dragOffset| == this value, a further finger-pixel of delta only moves
+  // the bubble half a pixel. Without this the bubble tracked the finger
+  // 1:1, so raising _triggerDistance alone just moved the finish line
+  // further away without the swipe ever feeling any heavier to pull.
+  static const double _resistance = 28.0;
 
   @override
   void initState() {
@@ -54,7 +60,9 @@ class _SwipeableMessageWrapperState extends State<SwipeableMessageWrapper>
   void _onDragUpdate(DragUpdateDetails details) {
     if (widget.disabled) return;
     setState(() {
-      _dragOffset += details.delta.dx;
+      final resistedDelta =
+          details.delta.dx * _resistance / (_resistance + _dragOffset.abs());
+      _dragOffset += resistedDelta;
       _dragOffset = _dragOffset.clamp(-_maxDrag, _maxDrag);
     });
 
@@ -72,7 +80,6 @@ class _SwipeableMessageWrapperState extends State<SwipeableMessageWrapper>
 
   void _onDragEnd(DragEndDetails details) {
     if (widget.disabled) return;
-    final v = details.primaryVelocity ?? 0;
     final capturedOffset = _dragOffset;
     final fired = _actionFired;
     _actionFired = false;
@@ -83,18 +90,17 @@ class _SwipeableMessageWrapperState extends State<SwipeableMessageWrapper>
     );
     _controller.forward(from: 0);
 
+    // Only a drag that actually crossed _triggerDistance (tracked live by
+    // _onDragUpdate as _actionFired) may fire the action. A fast horizontal
+    // flick during vertical scrolling can produce a high release velocity
+    // with negligible _dragOffset — that used to fire the action on
+    // velocity alone, opening the reply/menu panel by accident mid-scroll.
     if (fired) {
-      if (capturedOffset > 0 || v > _triggerVelocity) {
+      if (capturedOffset > 0) {
         widget.onSwipeRight?.call();
       } else {
         widget.onSwipeLeft?.call();
       }
-    } else if (v > _triggerVelocity && widget.onSwipeRight != null) {
-      HapticFeedback.selectionClick();
-      widget.onSwipeRight!();
-    } else if (v < -_triggerVelocity && widget.onSwipeLeft != null) {
-      HapticFeedback.selectionClick();
-      widget.onSwipeLeft!();
     }
 
     setState(() {
@@ -112,10 +118,11 @@ class _SwipeableMessageWrapperState extends State<SwipeableMessageWrapper>
     });
   }
 
-  static bool get _isDesktop => !kIsWeb && (
-    defaultTargetPlatform == TargetPlatform.windows ||
-    defaultTargetPlatform == TargetPlatform.macOS ||
-    defaultTargetPlatform == TargetPlatform.linux);
+  static bool get _isDesktop =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.linux);
 
   @override
   Widget build(BuildContext context) {
@@ -127,8 +134,7 @@ class _SwipeableMessageWrapperState extends State<SwipeableMessageWrapper>
       child: AnimatedBuilder(
         animation: _offsetAnimation,
         builder: (context, child) {
-          final offset =
-              _isDragging ? _dragOffset : _offsetAnimation.value;
+          final offset = _isDragging ? _dragOffset : _offsetAnimation.value;
           return Transform.translate(
             offset: Offset(offset, 0),
             child: child,

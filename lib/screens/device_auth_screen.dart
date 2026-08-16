@@ -115,7 +115,10 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
         // Desktop has no camera → show qr_auth QR (receives session)
         await _startAuthServer();
       } else {
-        _startMobileScanner();
+        // Mobile: don't touch the camera yet — _buildMobileScannerView shows
+        // a "Scan QR" placeholder first; the camera only turns on once the
+        // user taps it (see _startMobileScanner call site below).
+        setState(() => _step = _Step.ready);
       }
     }
   }
@@ -222,11 +225,12 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
   // ── Mobile scanner ───────────────────────────────────────────────────────────
 
   void _startMobileScanner() {
-    _scanCtrl = MobileScannerController(
-      detectionSpeed: DetectionSpeed.normal,
-      facing: CameraFacing.back,
-    );
-    setState(() => _step = _Step.ready);
+    setState(() {
+      _scanCtrl = MobileScannerController(
+        detectionSpeed: DetectionSpeed.normal,
+        facing: CameraFacing.back,
+      );
+    });
   }
 
   void _onDetect(BarcodeCapture capture) {
@@ -326,6 +330,16 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
   }
 
   // ── Build ────────────────────────────────────────────────────────────────────
+  //
+  // Chrome matches AboutOnyxDialog (lib/widgets/about_onyx_dialog.dart):
+  // transparent Dialog + Material(borderRadius:28) card, tinted/bordered
+  // header strip, rounded-square close button — so device linking reads as
+  // the same app, not a bolted-on system dialog.
+
+  static const _btnShape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.all(Radius.circular(50)),
+  );
+  static const _btnPadding = EdgeInsets.symmetric(vertical: 13);
 
   @override
   Widget build(BuildContext context) {
@@ -333,49 +347,82 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
     final cs = Theme.of(context).colorScheme;
 
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      clipBehavior: Clip.antiAlias,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
       child: ConstrainedBox(
         constraints: BoxConstraints(
           maxWidth: 400,
           maxHeight: MediaQuery.sizeOf(context).height * 0.85,
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildHeader(l, cs),
-            if (_isLoggedIn) _buildTabBar(l, cs),
-            if (_isLoggedIn) const SizedBox(height: 4),
-            _buildLanNote(l, cs),
-            _buildBody(l, cs),
-          ],
+        child: Material(
+          color: cs.surface,
+          clipBehavior: Clip.antiAlias,
+          borderRadius: BorderRadius.circular(28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildHeader(l, cs),
+              if (_isLoggedIn) const SizedBox(height: 10),
+              if (_isLoggedIn) _buildTabBar(l, cs),
+              if (_isLoggedIn) const SizedBox(height: 4),
+              _buildLanNote(l, cs),
+              Flexible(child: SingleChildScrollView(child: _buildBody(l, cs))),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildHeader(AppLocalizations l, ColorScheme cs) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 20, 16, 16),
+      decoration: BoxDecoration(
+        color: cs.primary.withValues(alpha: 0.06),
+        border: Border(
+          bottom: BorderSide(
+            color: cs.primary.withValues(alpha: 0.10),
+            width: 0.8,
+          ),
+        ),
+      ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(Icons.devices_rounded, color: cs.primary, size: 22),
-          const SizedBox(width: 10),
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: cs.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(Icons.devices_rounded, color: cs.primary, size: 24),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
               l.deviceAuthTitle,
               style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.w600),
+                  fontSize: 16, fontWeight: FontWeight.bold),
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.close, size: 20),
-            onPressed: () => Navigator.of(context).pop(),
-            padding: EdgeInsets.zero,
-            visualDensity: VisualDensity.compact,
-            tooltip: l.close,
+          GestureDetector(
+            onTap: () => Navigator.of(context).pop(),
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: cs.onSurface.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                Icons.close_rounded,
+                size: 18,
+                color: cs.onSurface.withValues(alpha: 0.55),
+              ),
+            ),
           ),
         ],
       ),
@@ -425,7 +472,7 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
           color: selected
               ? cs.primary.withValues(alpha: 0.13)
               : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(28),
           border: Border.all(
             color: selected
                 ? cs.primary.withValues(alpha: 0.45)
@@ -521,10 +568,17 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
                   ),
                 ],
                 const SizedBox(height: 24),
-                FilledButton.icon(
-                  onPressed: _retry,
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: Text(l.ok),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _retry,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: Text(l.ok),
+                    style: FilledButton.styleFrom(
+                      shape: _btnShape,
+                      padding: _btnPadding,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -600,6 +654,7 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
         ? l.authorizeDeviceScanHint
         : l.scanFromPcHint;
 
+    final scanCtrl = _scanCtrl;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -609,10 +664,12 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
             aspectRatio: 1.0,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(16),
-              child: MobileScanner(
-                controller: _scanCtrl!,
-                onDetect: _onDetect,
-              ),
+              child: scanCtrl == null
+                  ? _buildScanPlaceholder(l, cs)
+                  : MobileScanner(
+                      controller: scanCtrl,
+                      onDetect: _onDetect,
+                    ),
             ),
           ),
         ),
@@ -635,6 +692,48 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  // Shown inside the camera-preview square before the user taps to scan —
+  // the camera itself only turns on once _startMobileScanner() runs, so the
+  // permission prompt/hardware light never fires just from opening this
+  // screen.
+  Widget _buildScanPlaceholder(AppLocalizations l, ColorScheme cs) {
+    return Container(
+      color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.qr_code_scanner_rounded,
+                  size: 40, color: cs.primary.withValues(alpha: 0.7)),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: _startMobileScanner,
+                icon: const Icon(Icons.photo_camera_rounded, size: 18),
+                label: Text(l.deviceAuthTabScan),
+                style: FilledButton.styleFrom(
+                  shape: _btnShape,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 12),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                l.deviceAuthTapToScan,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: cs.onSurface.withValues(alpha: 0.55),
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

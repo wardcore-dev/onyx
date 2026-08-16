@@ -173,7 +173,7 @@ class _SimpleCropperDialogState extends State<_SimpleCropperDialog> {
               width: _viewportSize,
               decoration: BoxDecoration(
                 color: surfaceColor.withValues(alpha: 1.0),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(28),
               ),
           padding: const EdgeInsets.all(12),
           child: Column(

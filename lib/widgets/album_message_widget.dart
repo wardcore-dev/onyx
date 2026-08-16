@@ -848,7 +848,7 @@ class _AlbumGalleryState extends State<AlbumGallery> {
         }
 
         await file.copy(destPath);
-        rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+        showSavedToSnack(destPath);
         return;
       }
 

@@ -480,6 +480,21 @@ class AppLocalizationsDe extends AppLocalizations {
   String get resetFailed => 'Zurücksetzen fehlgeschlagen';
 
   @override
+  String get resetConfirmStep1Title =>
+      'Sind Sie sicher, dass Sie das tun möchten?';
+
+  @override
+  String get resetConfirmStep1Message =>
+      'Dadurch werden die ausgewählten Daten dauerhaft gelöscht. Dies kann nicht rückgängig gemacht werden.';
+
+  @override
+  String get resetConfirmStep2Title => 'Sind Sie sicher?';
+
+  @override
+  String get resetConfirmStep2Message =>
+      'Dies ist Ihre letzte Möglichkeit zum Abbrechen. Die Bestätigung startet den Reset sofort.';
+
+  @override
   String get connectionTitle => 'Verbindung';
 
   @override
@@ -763,6 +778,9 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get deviceAuthTabScan => 'Scannen';
+
+  @override
+  String get deviceAuthTapToScan => 'Tippen, um den QR-Code zu scannen';
 
   @override
   String get deviceAuthLanNote =>
@@ -1143,6 +1161,19 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get chatBgCleared => 'Hintergrund entfernt';
+
+  @override
+  String get sendAsCodeTitle => 'Als Code senden?';
+
+  @override
+  String get sendAsCodeContent =>
+      'Diese Nachricht sieht wie Code aus. Als formatierten Codeblock senden?';
+
+  @override
+  String get sendAsCode => 'Als Code senden';
+
+  @override
+  String get sendAsPlainText => 'Als Text senden';
 
   @override
   String get allMessagesLeft => 'Alle Nachrichten: Links';
@@ -1623,6 +1654,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get failedEdit => 'Nachricht konnte nicht bearbeitet werden';
 
   @override
+  String get failedReaction => 'Reaktion konnte nicht hinzugefügt werden';
+
+  @override
   String get noInternetCached =>
       'Kein Internet — zwischengespeicherte Nachrichten werden angezeigt';
 
@@ -1726,6 +1760,12 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get editChannelTitle => 'Kanal bearbeiten';
+
+  @override
+  String get groupInfoTitle => 'Group';
+
+  @override
+  String get channelInfoTitle => 'Channel';
 
   @override
   String get channelNameLabel => 'Kanalname';
@@ -2012,6 +2052,9 @@ class AppLocalizationsDe extends AppLocalizations {
       'Für Gruppen ist ein Passwort erforderlich';
 
   @override
+  String get passwordRequired => 'Passwort ist erforderlich';
+
+  @override
   String connectionFailed(String e) {
     return 'Verbindung fehlgeschlagen: $e';
   }
@@ -2064,6 +2107,67 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get serverInfoMaxFile => 'Maximale Dateigröße';
+
+  @override
+  String get profilePresets => 'Identität';
+
+  @override
+  String get profilePresetsSubtitle =>
+      'Gespeicherte Identitäten für externe Server';
+
+  @override
+  String get newPreset => 'Neue Identität';
+
+  @override
+  String get editPreset => 'Identität bearbeiten';
+
+  @override
+  String get deletePreset => 'Identität löschen';
+
+  @override
+  String deletePresetConfirm(String label) {
+    return 'Identität \"$label\" löschen?';
+  }
+
+  @override
+  String get presetLabel => 'Name der Identität';
+
+  @override
+  String get presetLabelHint => 'z. B. Arbeit, Gaming';
+
+  @override
+  String get presetNote => 'Notiz';
+
+  @override
+  String get presetNoteHint => 'Wofür ist diese Identität? (optional)';
+
+  @override
+  String get presetColor => 'Etikettenfarbe';
+
+  @override
+  String get presetLabelRequired => 'Gib einen Namen für die Identität ein';
+
+  @override
+  String get noPresetsYet => 'Noch keine Identitäten';
+
+  @override
+  String get noPresetsYetSubtitle =>
+      'Speichere eine Benutzername-Passwort-Kombination einmal und nutze sie auf jedem externen Server';
+
+  @override
+  String get myPresets => 'Meine Identitäten';
+
+  @override
+  String get usePreset => 'Identität verwenden';
+
+  @override
+  String get saveAsPreset => 'Als Identität speichern';
+
+  @override
+  String get presetSaved => 'Identität gespeichert';
+
+  @override
+  String get presetDeleted => 'Identität gelöscht';
 
   @override
   String get thirdPartyServer => 'DRITTANBIETER-SERVER';
@@ -2513,6 +2617,15 @@ class AppLocalizationsDe extends AppLocalizations {
   String get wardLinkUpToDate => 'Aktuell';
 
   @override
+  String syncedFromDevice(String device) {
+    return 'Synchronisiert von $device';
+  }
+
+  @override
+  String get syncedFromUnknownDevice =>
+      'Von einem anderen Gerät synchronisiert';
+
+  @override
   String wardLinkFilesDone(int n) {
     return 'Übertragene Dateien: $n';
   }
@@ -2561,6 +2674,20 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get wardLinkBubbleSize => 'Blasengröße';
+
+  @override
+  String get wardLinkSyncFavoritesToggle => 'Favoriten synchronisieren';
+
+  @override
+  String get wardLinkSyncFavoritesToggleDesc =>
+      'Synchronisiert deine Favoriten — deren Nachrichten und Medien';
+
+  @override
+  String get wardLinkSyncPersonalToggle => 'Meine Nachrichten synchronisieren';
+
+  @override
+  String get wardLinkSyncPersonalToggleDesc =>
+      'Synchronisiert auf deine anderen Geräte nur die Nachrichten, die DU in persönlichen Chats gesendet hast — die Nachrichten des Kontakts kommen bereits über den Server an und werden nie auf diesem Weg synchronisiert';
 
   @override
   String get meshSubtitle => 'Offline-Mesh-Netzwerk';
@@ -3758,4 +3885,351 @@ class AppLocalizationsDe extends AppLocalizations {
     );
     return '$_temp0, $_temp1';
   }
+
+  @override
+  String get muteAction => 'Stummschalten';
+
+  @override
+  String get unmuteAction => 'Stummschaltung aufheben';
+
+  @override
+  String muteUserTitle(String name) {
+    return '$name stummschalten';
+  }
+
+  @override
+  String get durationLabel => 'Dauer';
+
+  @override
+  String get duration15Min => '15 Min.';
+
+  @override
+  String get duration1Hour => '1 Stunde';
+
+  @override
+  String get duration1Day => '1 Tag';
+
+  @override
+  String get duration1Week => '1 Woche';
+
+  @override
+  String get muteReasonLabel => 'Grund (optional)';
+
+  @override
+  String userMuted(String name) {
+    return '$name stummgeschaltet';
+  }
+
+  @override
+  String get failedMute => 'Stummschalten fehlgeschlagen';
+
+  @override
+  String failedMuteUser(String name) {
+    return 'Stummschalten von $name fehlgeschlagen';
+  }
+
+  @override
+  String get mutedUsersTitle => 'Stummgeschaltete Nutzer';
+
+  @override
+  String get noMutedUsers => 'Keine stummgeschalteten Nutzer';
+
+  @override
+  String mutedByLabel(String name) {
+    return 'Stummgeschaltet von: $name';
+  }
+
+  @override
+  String mutedUntilLabel(String date) {
+    return 'Bis: $date';
+  }
+
+  @override
+  String userUnmuted(String name) {
+    return 'Stummschaltung von $name aufgehoben';
+  }
+
+  @override
+  String get failedUnmute => 'Aufheben der Stummschaltung fehlgeschlagen';
+
+  @override
+  String failedUnmuteUser(String name) {
+    return 'Aufheben der Stummschaltung von $name fehlgeschlagen';
+  }
+
+  @override
+  String get youAreMutedTitle => 'Du bist stummgeschaltet';
+
+  @override
+  String mutedUntilMessage(String date) {
+    return 'Du kannst in diesem Chat bis $date keine Nachrichten senden.';
+  }
+
+  @override
+  String get slowModeLabel => 'Slow-Modus (Sekunden, 0 = aus)';
+
+  @override
+  String get slowModeHelper =>
+      'Mindestabstand zwischen Nachrichten für normale Mitglieder. Gilt nicht für Admins.';
+
+  @override
+  String slowModeSetTo(int seconds) {
+    String _temp0 = intl.Intl.pluralLogic(
+      seconds,
+      locale: localeName,
+      other: 'Slow-Modus auf $seconds Sekunden eingestellt',
+      one: 'Slow-Modus auf $seconds Sekunde eingestellt',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get slowModeDisabled => 'Slow-Modus deaktiviert';
+
+  @override
+  String get failedSetSlowMode => 'Aktivieren des Slow-Modus fehlgeschlagen';
+
+  @override
+  String get failedUpdateSlowMode =>
+      'Aktualisieren des Slow-Modus fehlgeschlagen';
+
+  @override
+  String get donateMenuLabel => 'Spenden';
+
+  @override
+  String get pollsMenuLabel => 'Umfragen';
+
+  @override
+  String get supportThisCommunityTitle => 'Diese Community unterstützen';
+
+  @override
+  String get donationDisclaimer =>
+      'ONYX verarbeitet diese Zahlungen nicht und kann sie nicht zurückerstatten. Sende Krypto nur an Adressen, denen du vertraust.';
+
+  @override
+  String get noDonationsOwnerHint =>
+      'Noch keine Spendenadressen. Tippe auf „Bearbeiten“, um welche hinzuzufügen.';
+
+  @override
+  String get noDonationsMemberHint =>
+      'Diese Community hat noch keine Spenden eingerichtet.';
+
+  @override
+  String get editDonationsTitle => 'Spendenadressen bearbeiten';
+
+  @override
+  String get donationCoinLabel => 'Coin (z. B. BTC)';
+
+  @override
+  String get donationAddressLabel => 'Adresse';
+
+  @override
+  String get addDonationAddress => 'Adresse hinzufügen';
+
+  @override
+  String get donationsSaved => 'Spendenadressen gespeichert';
+
+  @override
+  String get failedSaveDonations =>
+      'Speichern der Spendenadressen fehlgeschlagen';
+
+  @override
+  String get noPollsOwnerHint =>
+      'Noch keine Umfragen. Tippe auf „Neue Umfrage“, um eine zu erstellen.';
+
+  @override
+  String get noPollsHint => 'Noch keine Umfragen.';
+
+  @override
+  String get newPollAction => 'Neue Umfrage';
+
+  @override
+  String get addPollOption => 'Option hinzufügen';
+
+  @override
+  String get pollQuestionLabel => 'Frage';
+
+  @override
+  String pollOptionLabel(int number) {
+    return 'Option $number';
+  }
+
+  @override
+  String get multipleChoiceLabel => 'Mehrfachauswahl';
+
+  @override
+  String get pollQuestionEmpty => 'Frage darf nicht leer sein';
+
+  @override
+  String get pollNeedsTwoOptions => 'Füge mindestens 2 Optionen hinzu';
+
+  @override
+  String get failedCreatePoll => 'Erstellen der Umfrage fehlgeschlagen';
+
+  @override
+  String get failedVote => 'Abstimmung konnte nicht gesendet werden';
+
+  @override
+  String pollVoteCountAnonymous(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count Stimmen',
+      one: '$count Stimme',
+    );
+    return '$_temp0 • anonym';
+  }
+
+  @override
+  String get descriptionLabel => 'Description';
+
+  @override
+  String get descriptionHint => 'What is this group about?';
+
+  @override
+  String get noDescriptionSet => 'No description set.';
+
+  @override
+  String get limitsHeader => 'Limits';
+
+  @override
+  String get maxMembersLabel => 'Max members';
+
+  @override
+  String get maxMessageLengthLabel => 'Max message length';
+
+  @override
+  String get maxMessagesPerMinuteLabel => 'Max messages per minute';
+
+  @override
+  String get invalidLimitValue => 'Enter a valid number';
+
+  @override
+  String get defaultRoleLabel => 'Default role for new members';
+
+  @override
+  String get rolesHeader => 'Roles';
+
+  @override
+  String get addRoleAction => 'Add role';
+
+  @override
+  String get deleteRoleConfirmTitle => 'Delete role?';
+
+  @override
+  String get deleteRoleConfirmContent =>
+      'Members with this role will be moved to Member.';
+
+  @override
+  String get roleEditorCreateTitle => 'Create role';
+
+  @override
+  String get roleEditorEditTitle => 'Edit role';
+
+  @override
+  String get roleNameLabel => 'Role name';
+
+  @override
+  String get roleColorLabel => 'Color';
+
+  @override
+  String get rolePermissionsLabel => 'Permissions';
+
+  @override
+  String roleSubtitle(int count, int members) {
+    return '$count permissions · $members members';
+  }
+
+  @override
+  String get settingsUpdated => 'Settings updated';
+
+  @override
+  String get failedUpdateSettings => 'Failed to update settings';
+
+  @override
+  String get roleSaved => 'Role saved';
+
+  @override
+  String get failedSaveRole => 'Failed to save role';
+
+  @override
+  String get roleDeleted => 'Role deleted';
+
+  @override
+  String get failedDeleteRole => 'Failed to delete role';
+
+  @override
+  String get addCommentAction => 'Comment';
+
+  @override
+  String commentsCount(int count) {
+    return '$count comments';
+  }
+
+  @override
+  String get commentsTitle => 'Comments';
+
+  @override
+  String get writeCommentHint => 'Write a comment...';
+
+  @override
+  String get failedLoadComments => 'Failed to load comments';
+
+  @override
+  String get failedPostComment => 'Failed to post comment';
+
+  @override
+  String get failedDeleteComment => 'Failed to delete comment';
+
+  @override
+  String get failedEditComment => 'Failed to edit comment';
+
+  @override
+  String get noCommentsYet => 'No comments yet';
+
+  @override
+  String get permKickMembers => 'Kick members';
+
+  @override
+  String get permBanMembers => 'Ban members';
+
+  @override
+  String get permMuteMembers => 'Mute members';
+
+  @override
+  String get permManageRoles => 'Manage roles';
+
+  @override
+  String get permManageSettings => 'Manage settings';
+
+  @override
+  String get permManageDonations => 'Manage donations';
+
+  @override
+  String get permCreatePolls => 'Create polls';
+
+  @override
+  String get permPostInChannel => 'Post in channel';
+
+  @override
+  String get permDeleteMessages => 'Delete messages';
+
+  @override
+  String get permManageMembers => 'Manage members';
+
+  @override
+  String get permManageSlowMode => 'Manage slow mode';
+
+  @override
+  String get permViewBanList => 'Manage ban list';
+
+  @override
+  String get permViewMuteList => 'Manage mute list';
+
+  @override
+  String get permViewInviteLink => 'View invite link';
+
+  @override
+  String get manageMembersRequiresChild =>
+      'Select at least one of Manage Ban List, Manage Mute List, or Manage Roles';
 }

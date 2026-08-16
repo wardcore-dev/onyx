@@ -66,6 +66,32 @@ class _ReminderTimeDialogState extends State<_ReminderTimeDialog> {
       firstDate: today,
       lastDate: today.add(const Duration(days: 365)),
       helpText: l.reminderPickDate,
+      // Lock to the calendar grid — calendarOnly also removes the header's
+      // pencil icon that toggles to manual text-entry mode.
+      initialEntryMode: DatePickerEntryMode.calendarOnly,
+      // Match the app's own dialog chrome (OnyxDialogShell: rounded-28 card,
+      // tinted header) instead of the stock Material date picker look.
+      builder: (ctx, child) {
+        final colorScheme = Theme.of(ctx).colorScheme;
+        return Theme(
+          data: Theme.of(ctx).copyWith(
+            dialogTheme: DialogThemeData(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(28),
+              ),
+            ),
+            datePickerTheme: DatePickerThemeData(
+              backgroundColor: colorScheme.surface,
+              headerBackgroundColor: colorScheme.primary.withValues(alpha: 0.06),
+              headerForegroundColor: colorScheme.onSurface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(28),
+              ),
+            ),
+          ),
+          child: child!,
+        );
+      },
     );
     if (date != null && mounted) {
       setState(() {

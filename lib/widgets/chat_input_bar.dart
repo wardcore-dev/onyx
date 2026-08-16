@@ -86,6 +86,27 @@ class _ChatInputBarState extends State<ChatInputBar>
     with TickerProviderStateMixin {
   final FocusNode _keyboardNode = FocusNode();
 
+  // Shift+Enter below splices a '\n' directly into the controller's text
+  // (see _handleKeyEvent) instead of going through the normal IME input
+  // path. EditableText only auto-scrolls the caret into view when the edit
+  // arrives via the platform's TextInputClient — a direct controller
+  // mutation skips that, so once the field had grown past its visible
+  // height the caret could end up below the fold with no way to see it.
+  // Owning the field's scroll controller lets us explicitly snap it to the
+  // bottom right after each manual newline insertion.
+  final ScrollController _textScrollController = ScrollController();
+
+  void _scrollCaretIntoView() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_textScrollController.hasClients) return;
+      _textScrollController.animateTo(
+        _textScrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
   // Drives the joined/detached (focus) transition explicitly instead of via
   // TweenAnimationBuilder, which rebuilds a brand new Tween object on every
   // build. This widget's ListenableBuilder rebuilds on every keystroke (it
@@ -200,6 +221,7 @@ class _ChatInputBarState extends State<ChatInputBar>
     _focusController.dispose();
     _recordAnimController.dispose();
     _keyboardNode.dispose();
+    _textScrollController.dispose();
     super.dispose();
   }
 
@@ -276,6 +298,7 @@ class _ChatInputBarState extends State<ChatInputBar>
         widget.controller.selection = TextSelection.fromPosition(
           TextPosition(offset: selection.start + 1),
         );
+        _scrollCaretIntoView();
       }
     }
   }
@@ -575,9 +598,33 @@ class _ChatInputBarState extends State<ChatInputBar>
                           ),
                         ),
 
-                      // Spacer that appears when focused (Liquid detaching effect)
+                      // Seam filler: at rest (focusT≈0) the plus button and
+                      // field pieces sit edge-to-edge with zero layout gap,
+                      // but each paints its own translucent fill in a
+                      // separate compositing pass — two independently
+                      // anti-aliased edges of the *same* translucent color,
+                      // placed exactly adjacent with nothing painted between
+                      // them, don't blend into one continuous fill the way a
+                      // single shape would; a hairline seam of whatever's
+                      // behind the bar shows through at that exact boundary.
+                      // This small filler physically occupies that boundary
+                      // with the same fill color, closing the gap by
+                      // construction instead of relying on two separate
+                      // anti-aliased edges to align pixel-perfectly. It
+                      // fades out as focusT rises so it never shows once the
+                      // pieces are meant to look genuinely detached (where a
+                      // real gap is the whole point).
                       if (!widget.meshMode)
-                        SizedBox(width: widget.glassMode ? 0 : 8 * focusT),
+                        Container(
+                          width: widget.glassMode
+                              ? 0
+                              : 8 * focusT + 2 * (1 - focusT).clamp(0.0, 1.0),
+                          color: widget.glassMode
+                              ? null
+                              : bgColor.withValues(
+                                  alpha: bgColor.a *
+                                      (1 - focusT).clamp(0.0, 1.0)),
+                        ),
 
                       // Main Input Area
                       Expanded(
@@ -655,6 +702,7 @@ class _ChatInputBarState extends State<ChatInputBar>
                                         child: TextField(
                                           focusNode: widget.textFocusNode,
                                           controller: widget.controller,
+                                          scrollController: _textScrollController,
                                           minLines: 1,
                                           maxLines: null,
                                           readOnly: widget.readOnly,
@@ -679,7 +727,10 @@ class _ChatInputBarState extends State<ChatInputBar>
                                               horizontal: 0,
                                             ),
                                           ),
-                                          onChanged: widget.onChanged,
+                                          onChanged: (value) {
+                                            widget.onChanged?.call(value);
+                                            _scrollCaretIntoView();
+                                          },
                                           textInputAction: TextInputAction.none,
                                           contentInsertionConfiguration: widget
                                               .contentInsertionConfiguration,

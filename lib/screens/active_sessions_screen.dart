@@ -289,7 +289,7 @@ class _ActiveDevicesPanelState extends State<ActiveDevicesPanel> {
                   elevation: 0,
                   color: glassSurfaceColor(colorScheme),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(28),
                     side: BorderSide(
                       color: isPending
                           ? Colors.orange.withValues(alpha: 0.7)
@@ -565,11 +565,11 @@ class _SecurityLevelSectionState extends State<SecurityLevelSection> {
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       decoration: BoxDecoration(
         color: glassSurfaceColor(cs),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(28),
         border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.25)),
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(28),
         onTap: _openDialog,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),

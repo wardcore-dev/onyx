@@ -408,11 +408,19 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
             ..sort((a, b) => (b.lastModified ?? DateTime(0))
                 .compareTo(a.lastModified ?? DateTime(0)));
         }
-        int? usedBytes;
+        // "Used" is derived from the real per-file listing above (same
+        // source the per-type subtitles use) rather than the server's
+        // /me/storage-quota `used_bytes`, which is a separately-maintained
+        // running counter that can drift out of sync with what's actually
+        // stored — that mismatch is exactly what showed up as e.g. a 56.3 MB
+        // "Images" group next to a "194 KB / 100 MB" quota bar. Avatars are
+        // excluded, matching the server's own quota accounting.
+        final usedBytes = map.entries
+            .where((e) => e.key != 'avatar')
+            .fold<int>(0, (sum, e) => sum + e.value.fold(0, (s, f) => s + f.size));
         int? limitBytes;
         if (quotaRes.statusCode == 200) {
           final q = jsonDecode(quotaRes.body) as Map<String, dynamic>;
-          usedBytes = (q['used_bytes'] as num?)?.toInt();
           limitBytes = (q['quota_bytes'] as num?)?.toInt();
         }
         setState(() {
@@ -799,7 +807,7 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
         color: cs.surfaceContainerHighest.withValues(alpha: isEmpty ? 0.18 : 0.35),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(28),
         clipBehavior: Clip.antiAlias,
         child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1210,7 +1218,7 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
         color: cs.surfaceContainerHighest.withValues(alpha: isEmpty ? 0.18 : 0.35),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(28),
         clipBehavior: Clip.antiAlias,
         child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

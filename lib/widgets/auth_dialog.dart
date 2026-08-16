@@ -124,21 +124,21 @@ class AuthDialogState extends State<AuthDialog> {
         fillColor: surfaceHighestColor.withValues(alpha: 0.5),
         contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(28),
           borderSide: BorderSide(
             color: colorScheme.outlineVariant.withValues(alpha: 0.15),
             width: 1.0,
           ),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(28),
           borderSide: BorderSide(
             color: colorScheme.outlineVariant.withValues(alpha: 0.15),
             width: 1.0,
           ),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(28),
           borderSide: BorderSide(color: colorScheme.primary, width: 1.4),
         ),
       );
@@ -308,7 +308,7 @@ class AuthDialogState extends State<AuthDialog> {
                                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                         decoration: BoxDecoration(
                                           color: Colors.orange.withValues(alpha: 0.12),
-                                          borderRadius: BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(28),
                                           border: Border.all(color: Colors.orange.withValues(alpha: 0.35)),
                                         ),
                                         child: Row(
@@ -546,7 +546,7 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
                       decoration: BoxDecoration(
                         color: Colors.orange.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(28),
                         border: Border.all(color: Colors.orange.withValues(alpha: 0.35), width: 0.8),
                       ),
                       child: Row(
@@ -575,7 +575,7 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
                         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(28),
                         border: Border.all(
                           color: colorScheme.outlineVariant.withValues(alpha: 0.3),
                           width: 0.8,
@@ -589,7 +589,7 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                             decoration: BoxDecoration(
                               color: colorScheme.primaryContainer,
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(28),
                             ),
                             child: Text(
                               '${e.key + 1}. ${e.value}',

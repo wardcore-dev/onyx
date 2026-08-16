@@ -249,10 +249,17 @@ class WardLinkSyncService {
       await WardLinkPairedDevices.load(username);
       await WardLinkPendingDeletions.load(username);
 
-      _server = await HttpServer.bind(InternetAddress.anyIPv4, syncPort);
-      _syncPort = _server!.port;
-      _server!.listen(_handleRequest, onError: (e) {
+      final server = await HttpServer.bind(InternetAddress.anyIPv4, syncPort);
+      _server = server;
+      _syncPort = server.port;
+      server.listen(_handleRequest, onError: (e) {
         if (kDebugMode) print('[WardLink] server error: $e');
+      }, onDone: () {
+        // The listening socket died underneath us (rare, but seen after a
+        // long sleep/resume cycle) — clear the reference so isRunning goes
+        // false and the watchdog in _tick() restarts the daemon instead of
+        // leaving WardLink stuck thinking it's still active.
+        if (identical(_server, server)) _server = null;
       });
 
       // On Windows, auto-add an inbound firewall rule for the sync port so the
@@ -265,7 +272,7 @@ class WardLinkSyncService {
 
       _seenThisSession.clear();
       _broadcastTimer =
-          Timer.periodic(const Duration(seconds: 5), (_) => _broadcast());
+          Timer.periodic(const Duration(seconds: 5), (_) => _tick());
 
       // On joining the network, solicit a few times in the first seconds so we
       // and every paired peer discover each other and sync right away, instead
@@ -291,6 +298,18 @@ class WardLinkSyncService {
   }
 
   Future<void> stop() async {
+    // Clear FIRST, synchronously, before any await below. A _syncWithPeer
+    // coroutine already in flight for the account being torn down captured
+    // its own username in `syncUsername` and re-checks staleAccount()
+    // (_username != syncUsername) at every write checkpoint. Previously
+    // _username was left holding the old account's value until start() for
+    // the NEW account got around to overwriting it — a gap during which an
+    // in-flight sync from the old account could sail through every
+    // staleAccount() check and write its data into the new account's
+    // already-active `root.chats`. Nulling it here closes that window: from
+    // the instant stop() is called, every outstanding coroutine's next check
+    // sees `null != '<old username>'` and aborts.
+    _username = null;
     chatsVersion.removeListener(_onLocalChange);
     favoritesVersion.removeListener(_onLocalChange);
     _pokeDebounce?.cancel();
@@ -308,6 +327,11 @@ class WardLinkSyncService {
     _lastSyncByPeer.clear();
     _seenThisSession.clear();
     _peerMissingFiles.clear();
+    // Cached peer LAN addresses must not survive an account switch — they
+    // could otherwise let triggerResync() (settings_tab.dart) dial a peer
+    // directly for the new account using a location learned under the old
+    // one's discovery session, bypassing the _onDiscovery username filter.
+    _peerAddresses.clear();
     _setStatus(running: false, message: '');
   }
 
@@ -428,18 +452,57 @@ class WardLinkSyncService {
 
   Future<void> _startDiscovery() async {
     try {
-      _discoverySocket =
+      final socket =
           await RawDatagramSocket.bind(InternetAddress.anyIPv4, discoveryPort);
-      _discoverySocket!.broadcastEnabled = true;
-      _discoverySocket!.listen((event) {
-        if (event != RawSocketEvent.read) return;
-        final dg = _discoverySocket!.receive();
-        if (dg == null) return;
-        _onDiscovery(dg.address, dg.data);
+      _discoverySocket = socket;
+      socket.broadcastEnabled = true;
+      socket.listen((event) {
+        if (event == RawSocketEvent.read) {
+          final dg = socket.receive();
+          if (dg == null) return;
+          _onDiscovery(dg.address, dg.data);
+        }
+      }, onError: (e) {
+        // A dropped/reset network adapter (sleep-wake, Wi-Fi flap, VPN
+        // toggle) delivers an error here rather than quietly going silent.
+        // Without clearing the reference the periodic health check in
+        // _tick() would never notice the socket is dead and rebind it.
+        if (kDebugMode) print('[WardLink] discovery socket error: $e');
+        if (identical(_discoverySocket, socket)) _discoverySocket = null;
+        socket.close();
+      }, onDone: () {
+        if (identical(_discoverySocket, socket)) _discoverySocket = null;
       });
     } catch (e) {
       if (kDebugMode) print('[WardLink] discovery bind failed: $e');
     }
+  }
+
+  /// Re-binds the discovery socket and restarts the HTTP daemon if either
+  /// died silently underneath us (network adapter reset during sleep/wake,
+  /// Wi-Fi reconnect, VPN toggle). Cheap to call often — no-ops when both
+  /// are already healthy. Called from the periodic watchdog and from the
+  /// window-focus/restore hooks so recovery is immediate when the user
+  /// brings the app back, not just on the next 5s tick.
+  Future<void> ensureHealthy() async {
+    if (!isRunning || _username == null) return;
+    if (DecoyManager.isActive.value) return;
+    if (_discoverySocket == null) {
+      if (kDebugMode) print('[WardLink] discovery socket missing — rebinding');
+      await _startDiscovery();
+    }
+    if (_server == null) {
+      if (kDebugMode) print('[WardLink] http daemon missing — restarting');
+      final u = _username!;
+      unawaited(start(u));
+    }
+  }
+
+  // Fired every 5s by _broadcastTimer: check the daemon is still alive
+  // before doing the normal presence announce.
+  Future<void> _tick() async {
+    await ensureHealthy();
+    await _broadcast();
   }
 
   Future<void> _broadcast({bool poke = false, bool solicit = false}) async {
@@ -808,6 +871,9 @@ class WardLinkSyncService {
       }
       final chatsManifest =
           (manifestResp['chats'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      final personalChatsManifest =
+          (manifestResp['personalChats'] as List?)?.cast<Map<String, dynamic>>() ??
+              [];
 
       // The manifest fetch above awaited a network round trip — bail if the
       // local account changed while we were waiting, so this peer's data
@@ -823,9 +889,15 @@ class WardLinkSyncService {
       if (root == null) return;
 
       // Auto-mesh: adopt trusted peers the hub introduced us to so we form a
-      // full mesh without requiring additional QR scans.
-      final meshPeers =
-          (manifestResp['meshPeers'] as List?)?.cast<Map<String, dynamic>>();
+      // full mesh without requiring additional QR scans. Gated on
+      // staleAccount() — this was previously the one write path in the sync
+      // loop with no such check, so a sync racing an account switch could
+      // persist a device to the WRONG account's trusted-peers list
+      // (wardlink_paired_<username>) even after every other checkpoint had
+      // been added.
+      final meshPeers = staleAccount()
+          ? null
+          : (manifestResp['meshPeers'] as List?)?.cast<Map<String, dynamic>>();
       if (meshPeers != null) {
         for (final p in meshPeers) {
           final pub = p['pub'] as String?;
@@ -1091,10 +1163,118 @@ class WardLinkSyncService {
         }
       }
 
+      // ── Personal-outgoing scope ───────────────────────────────────────────
+      // Isolated from the Favorites loop above: separate manifest key
+      // (personalChatsManifest), own counters, no fav bookkeeping (no
+      // meta/avatar/favStructure/isFavDeleted touched here at all) — so this
+      // scope can never merge state with, or be affected by, Favorites sync.
+      int importedPersonalMsgs = 0;
+      int importedPersonalEdits = 0;
+      if (SettingsManager.wardLinkSyncPersonalOutgoing.value) {
+        for (final cm in personalChatsManifest) {
+          final chatId = cm['chatId'] as String?;
+          if (chatId == null || chatId.startsWith('fav:')) continue;
+
+          final watermarkMs = paired.syncFromBeginning
+              ? 0
+              : paired.pairedAt.millisecondsSinceEpoch;
+          final localMsgs = root.chats[chatId] ?? const <ChatMessage>[];
+          final localIds = localMsgs.map((m) => m.id).toSet();
+          final localMsgById = {for (final m in localMsgs) m.id: m};
+          final manifestMsgs =
+              (cm['msgs'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+          final missingIds = <String>[
+            for (final m in manifestMsgs)
+              if (m['id'] != null &&
+                  !localIds.contains(m['id'].toString()) &&
+                  _msgMillis(m['t']) >= watermarkMs &&
+                  !WardLinkTombstones.isMsgDeleted(chatId, m['id'].toString()))
+                m['id'].toString(),
+          ];
+
+          // Detect peer-side edits to messages we already have, same as Favorites.
+          final editedIds = <String>[];
+          for (final m in manifestMsgs) {
+            final id = m['id']?.toString();
+            if (id == null || missingIds.contains(id)) continue;
+            final remoteEtMs = (m['et'] as num?)?.toInt() ?? 0;
+            if (remoteEtMs == 0) continue;
+            final localMsg = localMsgById[id];
+            if (localMsg == null) continue;
+            final localEtMs = localMsg.editedAt?.millisecondsSinceEpoch ?? 0;
+            if (remoteEtMs > localEtMs) editedIds.add(id);
+          }
+
+          if (missingIds.isEmpty && editedIds.isEmpty) continue;
+
+          final peerLabel = (cm['peer'] as String?) ?? chatId;
+          _chatBegin(chatId, peerLabel, missingIds.length);
+
+          List<ChatMessage> newMsgs = const [];
+          if (missingIds.isNotEmpty) {
+            final msgsResp = await _post(base, '/wardlink/messages', key, {
+              'chatId': chatId,
+              'ids': missingIds,
+            });
+            final rawList = (msgsResp?['messages'] as List?)
+                    ?.cast<Map<String, dynamic>>() ??
+                [];
+            // _serveMessages already filters to outgoing==true server-side
+            // (defense in depth) — re-assert it here too so a
+            // malicious/compromised peer could never inject a message that
+            // would display as if it came from the contact.
+            newMsgs = rawList
+                .map(ChatMessage.fromJson)
+                .where((m) => m.outgoing)
+                // This device didn't send it — it only has a synced copy, so
+                // it must never offer edit/delete for it (only the
+                // originating device can change/delete a message), and the
+                // UI shows a small badge naming the device it came from.
+                .map((m) => m
+                  ..isWardLinkCopy = true
+                  ..syncedFromDeviceName = paired.name
+                  ..syncedFromDeviceOs = paired.os)
+                .toList();
+          }
+
+          List<ChatMessage> editedMsgs = const [];
+          if (editedIds.isNotEmpty) {
+            final editResp = await _post(base, '/wardlink/messages', key, {
+              'chatId': chatId,
+              'ids': editedIds,
+            });
+            final rawEdited = (editResp?['messages'] as List?)
+                    ?.cast<Map<String, dynamic>>() ??
+                [];
+            editedMsgs = rawEdited
+                .map(ChatMessage.fromJson)
+                .where((m) => m.outgoing)
+                .toList();
+          }
+
+          if (staleAccount()) {
+            _log(WardLinkLogLevel.info,
+                'Aborting sync with ${paired.name}: account switched mid-sync');
+            return;
+          }
+
+          if (newMsgs.isNotEmpty) {
+            final chatChanged = root.importPersonalMessages({chatId: newMsgs});
+            if (chatChanged) importedPersonalMsgs += newMsgs.length;
+          }
+          if (editedMsgs.isNotEmpty) {
+            root.applyMessageEdits(chatId, editedMsgs);
+            importedPersonalEdits += editedMsgs.length;
+          }
+        }
+      }
+      importedMsgs += importedPersonalMsgs;
+      importedEdits += importedPersonalEdits;
+
       // Signal that a cascade poke is needed — fired after finally so the peer
       // is no longer in _activeSyncs, preventing the poke response from landing
       // in _pendingResync and triggering an immediate re-sync loop.
-      pokeAfterSync = importedFavs > 0;
+      pokeAfterSync = importedFavs > 0 || importedPersonalMsgs > 0;
 
       // Merge the peer's folder layout: adds new folders and chat assignments
       // from the peer without removing anything that exists locally.
@@ -1308,7 +1488,7 @@ class WardLinkSyncService {
       HttpRequest req, SecretKey key, Map<String, dynamic> payload) async {
     final root = rootScreenKey.currentState;
     final chats = <Map<String, dynamic>>[];
-    if (root != null) {
+    if (root != null && SettingsManager.wardLinkSyncFavorites.value) {
       // Build an ordered id list that matches the actual display order:
       // top-level items in favTopOrder sequence, then folder items in folder order.
       // Orphaned entries (in _favorites but not in topOrder / any folder) are
@@ -1320,8 +1500,10 @@ class WardLinkSyncService {
         ...root.favTopOrder,
         for (final folder in root.favFolders) ...folder.chatIds,
       ];
-      // WardLink only shares Favorites. Each favourite carries its meta so the
-      // peer can recreate it, plus the list of message ids it holds.
+      // This block only ever shares Favorites. Each favourite carries its meta
+      // so the peer can recreate it, plus the list of message ids it holds.
+      // Gated by wardLinkSyncFavorites so it's fully independent of the
+      // personal-outgoing scope below — offering nothing when disabled.
       for (final favId in orderedFavIds) {
         final fav = favById[favId];
         if (fav == null) continue;
@@ -1346,6 +1528,38 @@ class WardLinkSyncService {
         chats.add(entry);
       }
     }
+
+    // Personal-outgoing scope: only OUR OWN sent messages in non-favourite
+    // 1:1 chats — never the peer's incoming messages (those already arrive
+    // on every device via the server). Fully independent of the Favorites
+    // block above: separate top-level key, separate gate, no fav bookkeeping
+    // (no meta/avatar/folder structure) so the two scopes can never merge.
+    final personalChats = <Map<String, dynamic>>[];
+    if (root != null && SettingsManager.wardLinkSyncPersonalOutgoing.value) {
+      final me = root.currentUsername;
+      for (final chatId in root.chats.keys) {
+        if (chatId.startsWith('fav:') || !chatId.contains(':')) continue;
+        final outgoingMsgs = (root.chats[chatId] ?? const <ChatMessage>[])
+            .where((m) => m.outgoing)
+            .toList();
+        if (outgoingMsgs.isEmpty) continue;
+        final peer =
+            chatId.split(':').firstWhere((part) => part != me, orElse: () => chatId);
+        personalChats.add({
+          'kind': 'personal',
+          'chatId': chatId,
+          'peer': peer,
+          'msgs': [
+            for (final m in outgoingMsgs)
+              {
+                'id': m.id,
+                't': m.time.millisecondsSinceEpoch,
+                if (m.editedAt != null) 'et': m.editedAt!.millisecondsSinceEpoch,
+              },
+          ],
+        });
+      }
+    }
     // Share our trusted-peer list so the requester can auto-mesh with devices
     // it doesn't yet know about (hub-and-spoke → full mesh without extra QR).
     final meshPeers = WardLinkPairedDevices.devices.value.map((d) {
@@ -1363,6 +1577,9 @@ class WardLinkSyncService {
     await _reply(req, key, {
       'v': _protocolVersion,
       'chats': chats,
+      // Personal-outgoing scope — separate top-level key from 'chats' so the
+      // two scopes are structurally isolated on the wire, not just filtered.
+      'personalChats': personalChats,
       // The favourites arrangement (order + folders) travels with the manifest
       // so the peer can mirror it, newest-layout-wins.
       if (root != null) 'favStructure': root.exportFavStructure(),
@@ -1381,8 +1598,17 @@ class WardLinkSyncService {
         <String>{};
     final out = <Map<String, dynamic>>[];
     if (root != null && chatId != null) {
-      for (final m in root.chats[chatId] ?? const <ChatMessage>[]) {
-        if (ids.contains(m.id)) out.add(m.toJson());
+      // Defense in depth: for non-favourite (personal) chats, never serve a
+      // message unless it's one WE sent, and never at all unless the local
+      // personal-outgoing scope is enabled — regardless of what the peer
+      // claims to be requesting or what its own manifest looked like.
+      final isFav = chatId.startsWith('fav:');
+      if (isFav || SettingsManager.wardLinkSyncPersonalOutgoing.value) {
+        for (final m in root.chats[chatId] ?? const <ChatMessage>[]) {
+          if (!ids.contains(m.id)) continue;
+          if (!isFav && !m.outgoing) continue;
+          out.add(m.toJson());
+        }
       }
     }
     await _reply(req, key, {'messages': out});

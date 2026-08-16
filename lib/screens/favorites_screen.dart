@@ -2,6 +2,7 @@
 import '../widgets/marquee_text.dart';
 import '../widgets/empty_chat_placeholder.dart';
 import '../widgets/onyx_dialog.dart';
+import '../utils/code_heuristic.dart';
 import '../utils/chat_image_preloader.dart';
 import '../utils/gallery_extractor.dart';
 import 'media_gallery_screen.dart';
@@ -1026,7 +1027,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     _typingDebounce = Timer(const Duration(milliseconds: 150), () {});
   }
 
-  void _submitMessage(String value) {
+  Future<void> _submitMessage(String value) async {
     if (value.trim().isEmpty) return;
 
     if (_editingMessage != null) {
@@ -1047,6 +1048,24 @@ class _FavoritesScreenState extends State<FavoritesScreen>
       return;
     }
 
+    var content = value.trim();
+    if (looksLikeCode(content)) {
+      final l = AppLocalizations.of(context);
+      final sendAsCode = await showOnyxConfirmDialog(
+        context: context,
+        title: l.sendAsCodeTitle,
+        message: l.sendAsCodeContent,
+        confirmLabel: l.sendAsCode,
+        cancelLabel: l.sendAsPlainText,
+        icon: Icons.code_rounded,
+      );
+      if (!mounted) return;
+      if (sendAsCode == null) return;
+      if (sendAsCode) {
+        content = '```${detectCodeLanguage(content)}\n$content\n```';
+      }
+    }
+
     final localId = generateLocalMessageId();
     final int? replyId =
         _replyingToMessage != null && _replyingToMessage!['id'] != null
@@ -1056,7 +1075,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
       id: localId,
       from: 'me',
       to: 'fav:${widget.favoriteId}',
-      content: value.trim(),
+      content: content,
       outgoing: true,
       delivered: true,
       time: DateTime.now(),
@@ -1412,7 +1431,15 @@ class _FavoritesScreenState extends State<FavoritesScreen>
 
     try {
       final localId = task.id;
-      final contentJson = jsonEncode({'filename': basename, 'orig': basename});
+      // Storage/content key must never be the picker's original basename
+      // alone — two different files with the same original name (very
+      // common with camera/screenshot filenames) would otherwise collide
+      // and silently overwrite each other in the shared cache dir. Stamp it
+      // with a unique prefix, same pattern as voice recordings and LAN
+      // transfers use, and keep the real name only in 'orig' for display.
+      final storageName = '${DateTime.now().microsecondsSinceEpoch}_$basename';
+      final contentJson =
+          jsonEncode({'filename': storageName, 'orig': basename});
 
       late String content;
       late String cachePath;
@@ -1424,7 +1451,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
             ? await computeBlurHash(task.previewBytes!)
             : null;
         content = 'IMAGEv1:${jsonEncode({
-              'filename': basename,
+              'filename': storageName,
               'orig': basename,
               if (blur != null) 'blur': blur.hash,
               if (blur != null) 'ar': blur.aspectRatio,
@@ -1433,7 +1460,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         cacheDir = '${(await getOnyxSupportDirectory()).path}/video_cache';
         final videoInfo = await extractVideoInfo(filePath);
         content = 'VIDEOv1:${jsonEncode({
-              'filename': basename,
+              'filename': storageName,
               'orig': basename,
               if (videoInfo?.hash != null) 'blur': videoInfo!.hash,
               if (videoInfo != null) 'ar': videoInfo.ar,
@@ -1454,7 +1481,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
 
       await Directory(cacheDir).create(recursive: true);
       final localFile = File(filePath);
-      cachePath = '$cacheDir/$basename';
+      cachePath = '$cacheDir/$storageName';
       await localFile.copy(cachePath);
 
       final int? replyId =
@@ -1545,9 +1572,19 @@ class _FavoritesScreenState extends State<FavoritesScreen>
       // Copy + blurhash every image concurrently instead of one-by-one —
       // sequential isolate spawns per image were causing multi-second
       // delays between albums on large batches.
-      final albumItems = await Future.wait(filePaths.map((filePath) async {
+      // Storage key must be unique per file, not just the original basename
+      // (camera/screenshot names collide constantly, and this batch itself
+      // can contain duplicates) — otherwise two images silently overwrite
+      // each other in the shared image_cache dir. Index disambiguates within
+      // the batch; the timestamp disambiguates across batches.
+      final albumStamp = DateTime.now().microsecondsSinceEpoch;
+      final albumItems =
+          await Future.wait(filePaths.asMap().entries.map((entry) async {
+        final index = entry.key;
+        final filePath = entry.value;
         final basename = p.basename(filePath);
-        final cachePath = '${cacheDir.path}/$basename';
+        final storageName = '${albumStamp}_${index}_$basename';
+        final cachePath = '${cacheDir.path}/$storageName';
         final srcFile = File(filePath);
         await srcFile.copy(cachePath);
         BlurResult? blur;
@@ -1557,7 +1594,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         albumTask.albumDone++;
         albumTask.progress = albumTask.albumDone / albumTask.albumTotal;
         return {
-          'filename': basename,
+          'filename': storageName,
           'orig': basename,
           if (blur != null) 'blur': blur.hash,
           if (blur != null) 'ar': blur.aspectRatio,
@@ -2036,7 +2073,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           }
           final destPath = '${onyxDir.path}/$originalName';
           await file.copy(destPath);
-          rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+          showSavedToSnack(destPath);
         }
         return;
       }
@@ -2064,7 +2101,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           return;
         }
         await file.copy(destPath);
-        rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+        showSavedToSnack(destPath);
       }
     } catch (e) {
       rootScreenKey.currentState?.showSnack('Save failed: $e');
@@ -2428,16 +2465,16 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                     fillColor: baseColor.withValues(alpha: 0.3),
                                     border: OutlineInputBorder(
                                         borderRadius:
-                                            BorderRadius.circular(14)),
+                                            BorderRadius.circular(28)),
                                     enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(28),
                                       borderSide: BorderSide(
                                           color: cs.outlineVariant
                                               .withValues(alpha: 0.3),
                                           width: 0.8),
                                     ),
                                     focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(28),
                                       borderSide: BorderSide(
                                           color: cs.primary, width: 1.4),
                                     ),
@@ -3669,7 +3706,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                               color: baseColor.withValues(
                                                   alpha: opacity),
                                               borderRadius:
-                                                  BorderRadius.circular(16),
+                                                  BorderRadius.circular(28),
                                               border: Border.all(
                                                 color: colorScheme
                                                     .outlineVariant
@@ -3767,7 +3804,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                               color: baseColor.withValues(
                                                   alpha: opacity),
                                               borderRadius:
-                                                  BorderRadius.circular(16),
+                                                  BorderRadius.circular(28),
                                               border: Border.all(
                                                 color: Theme.of(context)
                                                     .colorScheme
@@ -4071,7 +4108,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                       quality: glassQuality,
                                       padding: EdgeInsets.zero,
                                       shape: LiquidRoundedRectangle(
-                                          borderRadius: 24),
+                                          borderRadius: 28),
                                       clipBehavior: Clip.antiAlias,
                                       child: bar,
                                     );

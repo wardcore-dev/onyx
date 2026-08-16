@@ -95,7 +95,7 @@ class _MigrationDialogState extends State<_MigrationDialog> {
     return PopScope(
       canPop: false, // prevent back-button dismiss during migration
       child: AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
         content: SizedBox(
           width: 420,
           child: AnimatedSwitcher(

@@ -777,7 +777,7 @@ class _DecoySetupSheetState extends State<_DecoySetupSheet> {
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 10),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(50)),
                   ),
                 ),
               ),
@@ -791,7 +791,7 @@ class _DecoySetupSheetState extends State<_DecoySetupSheet> {
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 10),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(50)),
                   ),
                 ),
               ),
@@ -874,7 +874,7 @@ class _DecoySetupSheetState extends State<_DecoySetupSheet> {
       style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(vertical: 12),
         shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
         minimumSize: const Size(double.infinity, 0),
       ),
     );

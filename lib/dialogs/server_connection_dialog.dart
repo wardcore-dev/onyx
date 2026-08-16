@@ -2,8 +2,14 @@
 import 'package:flutter/material.dart';
 import '../managers/external_server_manager.dart';
 import '../managers/account_manager.dart';
+import '../managers/profile_preset_manager.dart';
 import '../managers/settings_manager.dart';
+import '../models/app_themes.dart';
+import '../models/profile_preset.dart';
+import 'profile_presets_dialog.dart';
+import '../widgets/adaptive_glass_card.dart';
 import '../widgets/security_warning_card.dart';
+import '../widgets/onyx_dialog.dart';
 import '../l10n/app_localizations.dart';
 
 class ServerConnectionDialog extends StatefulWidget {
@@ -52,6 +58,21 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
     super.dispose();
   }
 
+  void _applyPreset(ProfilePreset preset) {
+    setState(() {
+      _usernameController.text = preset.username;
+      _nicknameController.text = preset.username;
+      _passwordController.text = preset.password;
+    });
+  }
+
+  void _openPresetManager() {
+    showOnyxDialog(
+      context: context,
+      builder: (_) => const ProfilePresetsDialog(),
+    );
+  }
+
   void _parseHostPort() {
     final input = _hostController.text.trim();
     if (input.isEmpty) return;
@@ -94,8 +115,6 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
   }
 
   Future<void> _connect() async {
-    final isChannel = _serverInfo?['is_channel'] == true;
-
     var username = _usernameController.text.trim();
     if (username.isEmpty) {
       await _loadDefaultUsername();
@@ -110,8 +129,8 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
     final effectiveName = nickname.isEmpty ? username : nickname;
 
     final password = _passwordController.text;
-    if (!isChannel && password.isEmpty) {
-      setState(() => _error = lookupAppLocalizations(SettingsManager.appLocale.value).passwordRequiredForGroups);
+    if (password.isEmpty) {
+      setState(() => _error = lookupAppLocalizations(SettingsManager.appLocale.value).passwordRequired);
       return;
     }
 
@@ -123,7 +142,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
         port: _parsedPort,
         username: effectiveName,
         displayName: effectiveName,
-        password: isChannel ? '' : password,
+        password: password,
         serverInfo: _serverInfo!,
       );
 
@@ -278,21 +297,21 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
                     contentPadding: const EdgeInsets.symmetric(
                         vertical: 14, horizontal: 16),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(28),
                       borderSide: BorderSide(
                           color: colorScheme.outlineVariant
                               .withValues(alpha: 0.15),
                           width: 1.0),
                     ),
                     enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(28),
                       borderSide: BorderSide(
                           color: colorScheme.outlineVariant
                               .withValues(alpha: 0.15),
                           width: 1.0),
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(28),
                       borderSide:
                           BorderSide(color: colorScheme.primary, width: 1.4),
                     ),
@@ -311,6 +330,8 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
                   const SecurityWarningCard(),
                   const SizedBox(height: 16),
 
+                  _buildPresetPicker(),
+
                   TextField(
                     controller: _nicknameController,
                     decoration: InputDecoration(
@@ -326,21 +347,21 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
                       contentPadding: const EdgeInsets.symmetric(
                           vertical: 14, horizontal: 16),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(28),
                         borderSide: BorderSide(
                             color: colorScheme.outlineVariant
                                 .withValues(alpha: 0.15),
                             width: 1.0),
                       ),
                       enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(28),
                         borderSide: BorderSide(
                             color: colorScheme.outlineVariant
                                 .withValues(alpha: 0.15),
                             width: 1.0),
                       ),
                       focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(28),
                         borderSide: BorderSide(
                             color: colorScheme.primary, width: 1.4),
                       ),
@@ -348,99 +369,66 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
                   ),
                   const SizedBox(height: 12),
 
-                  if (_serverInfo!['is_channel'] != true) ...[
-                    Text(
-                      AppLocalizations.of(context).passwordLabel,
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: colorScheme.onSurface),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _passwordController,
-                      obscureText: _obscurePassword,
-                      decoration: InputDecoration(
-                        labelText: AppLocalizations.of(context).passwordLabel,
-                        labelStyle: TextStyle(
-                            color:
-                                colorScheme.onSurface.withValues(alpha: 0.7)),
-                        prefixIcon: Icon(Icons.lock_outline,
-                            color:
-                                colorScheme.onSurface.withValues(alpha: 0.6)),
-                        filled: true,
-                        fillColor: SettingsManager.getElementColor(
-                                colorScheme.surfaceContainerHighest, brightness)
-                            .withValues(alpha: 0.5),
-                        contentPadding: const EdgeInsets.symmetric(
-                            vertical: 14, horizontal: 16),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide(
-                              color: colorScheme.outlineVariant
-                                  .withValues(alpha: 0.15),
-                              width: 1.0),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide(
-                              color: colorScheme.outlineVariant
-                                  .withValues(alpha: 0.15),
-                              width: 1.0),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide(
-                              color: colorScheme.primary, width: 1.4),
-                        ),
-                        suffixIcon: IconButton(
-                          icon: Icon(_obscurePassword
-                              ? Icons.visibility_off
-                              : Icons.visibility,
-                              color: colorScheme.onSurface
-                                  .withValues(alpha: 0.6)),
-                          onPressed: () =>
-                              setState(() => _obscurePassword = !_obscurePassword),
-                        ),
+                  Text(
+                    AppLocalizations.of(context).passwordLabel,
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: colorScheme.onSurface),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _passwordController,
+                    obscureText: _obscurePassword,
+                    decoration: InputDecoration(
+                      labelText: AppLocalizations.of(context).passwordLabel,
+                      labelStyle: TextStyle(
+                          color:
+                              colorScheme.onSurface.withValues(alpha: 0.7)),
+                      prefixIcon: Icon(Icons.lock_outline,
+                          color:
+                              colorScheme.onSurface.withValues(alpha: 0.6)),
+                      filled: true,
+                      fillColor: SettingsManager.getElementColor(
+                              colorScheme.surfaceContainerHighest, brightness)
+                          .withValues(alpha: 0.5),
+                      contentPadding: const EdgeInsets.symmetric(
+                          vertical: 14, horizontal: 16),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(28),
+                        borderSide: BorderSide(
+                            color: colorScheme.outlineVariant
+                                .withValues(alpha: 0.15),
+                            width: 1.0),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(28),
+                        borderSide: BorderSide(
+                            color: colorScheme.outlineVariant
+                                .withValues(alpha: 0.15),
+                            width: 1.0),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(28),
+                        borderSide: BorderSide(
+                            color: colorScheme.primary, width: 1.4),
+                      ),
+                      suffixIcon: IconButton(
+                        icon: Icon(_obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                            color: colorScheme.onSurface
+                                .withValues(alpha: 0.6)),
+                        onPressed: () =>
+                            setState(() => _obscurePassword = !_obscurePassword),
                       ),
                     ),
-                    const SizedBox(height: 20),
-                  ] else ...[
-                    
-                    ValueListenableBuilder<double>(
-                      valueListenable: SettingsManager.elementBrightness,
-                      builder: (context, brightness, child) {
-                        final baseColor = SettingsManager.getElementColor(
-                          colorScheme.surfaceContainerHighest,
-                          brightness,
-                        );
-                        return Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: baseColor.withValues(alpha: 0.5),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(Icons.info_outline, size: 16, color: colorScheme.onSurface.withValues(alpha: 0.6)),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  AppLocalizations.of(context).noPasswordForChannels,
-                                  style: TextStyle(fontSize: 11, color: colorScheme.onSurface.withValues(alpha: 0.7)),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 20),
-                  ],
+                  ),
+                  const SizedBox(height: 20),
                 ] else ...[
-                  
+
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: colorScheme.primaryContainer.withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(28),
                     ),
                     child: Row(
                       children: [
@@ -465,7 +453,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: Colors.red.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(28),
                   ),
                   child: Text(
                     _error!,
@@ -537,6 +525,57 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
     );
   }
 
+  Widget _buildPresetPicker() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<List<ProfilePreset>>(
+      valueListenable: ProfilePresetManager.presets,
+      builder: (context, presets, __) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final preset in presets) ...[
+                  _PresetChip(
+                    preset: preset,
+                    onTap: () => _applyPreset(preset),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                InkWell(
+                  borderRadius: BorderRadius.circular(28),
+                  onTap: _openPresetManager,
+                  child: AdaptiveGlassCard(
+                    borderRadius: 28,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 10),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.add, size: 16, color: colorScheme.primary),
+                        const SizedBox(width: 6),
+                        Text(
+                          presets.isEmpty
+                              ? AppLocalizations.of(context).newPreset
+                              : AppLocalizations.of(context).profilePresets,
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: colorScheme.primary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildServerInfoCard() {
     final info = _serverInfo!;
     final colorScheme = Theme.of(context).colorScheme;
@@ -552,7 +591,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             color: baseColor.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(28),
             border: Border.all(
               color: colorScheme.outlineVariant.withValues(alpha: 0.3),
               width: 0.8,
@@ -640,6 +679,45 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
           Text(label, style: TextStyle(fontSize: 11, color: colorScheme.onSurface.withValues(alpha: 0.7))),
           Text(value, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: colorScheme.onSurface)),
         ],
+      ),
+    );
+  }
+}
+
+class _PresetChip extends StatelessWidget {
+  final ProfilePreset preset;
+  final VoidCallback onTap;
+  const _PresetChip({required this.preset, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final tagColor =
+        AppTheme.values[preset.colorIndex % AppTheme.values.length].color;
+    return InkWell(
+      borderRadius: BorderRadius.circular(28),
+      onTap: onTap,
+      child: AdaptiveGlassCard(
+        borderRadius: 28,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: tagColor),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              preset.label,
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: colorScheme.onSurface),
+            ),
+          ],
+        ),
       ),
     );
   }

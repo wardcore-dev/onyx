@@ -245,7 +245,10 @@ class MessageDao extends DatabaseAccessor<AppDatabase> with _$MessageDaoMixin {
         msg.meshFileSize == null &&
         msg.meshFileLocalPath == null &&
         msg.meshTransportUsed == null &&
-        msg.meshDeliveryStatus == null) {
+        msg.meshDeliveryStatus == null &&
+        !msg.isWardLinkCopy &&
+        msg.syncedFromDeviceName == null &&
+        msg.syncedFromDeviceOs == null) {
       return const Value(null);
     }
     return Value(jsonEncode({
@@ -256,6 +259,14 @@ class MessageDao extends DatabaseAccessor<AppDatabase> with _$MessageDaoMixin {
       if (msg.meshFileLocalPath != null) 'localPath': msg.meshFileLocalPath,
       if (msg.meshTransportUsed != null) 'transport': msg.meshTransportUsed,
       if (msg.meshDeliveryStatus != null) 'deliveryStatus': msg.meshDeliveryStatus!.name,
+      // WardLink sync badge — piggybacks on this same opaque JSON blob
+      // rather than adding dedicated columns, so no schema migration is
+      // needed. Previously these were only ever kept in memory (never
+      // wrote through to SQLite at all), which is why the badge vanished
+      // on every app restart.
+      if (msg.isWardLinkCopy) 'wlCopy': true,
+      if (msg.syncedFromDeviceName != null) 'wlDeviceName': msg.syncedFromDeviceName,
+      if (msg.syncedFromDeviceOs != null) 'wlDeviceOs': msg.syncedFromDeviceOs,
     }));
   }
 
@@ -315,6 +326,9 @@ class MessageDao extends DatabaseAccessor<AppDatabase> with _$MessageDaoMixin {
       meshFileLocalPath: meshMeta['localPath'] as String?,
       meshTransportUsed: meshMeta['transport'] as String?,
       meshDeliveryStatus: meshDeliveryStatus,
+      isWardLinkCopy: meshMeta['wlCopy'] == true,
+      syncedFromDeviceName: meshMeta['wlDeviceName'] as String?,
+      syncedFromDeviceOs: meshMeta['wlDeviceOs'] as String?,
     )..pendingSend = row.pendingSend;
   }
 }

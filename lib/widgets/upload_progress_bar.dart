@@ -121,7 +121,7 @@ class UploadProgressBar extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             color: baseColor.withValues(alpha: opacity),
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(28),
             border: Border.all(
               color: cs.outlineVariant.withValues(alpha: 0.15),
               width: 1,

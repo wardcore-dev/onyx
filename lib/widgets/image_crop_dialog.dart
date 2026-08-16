@@ -55,7 +55,7 @@ Future<Uint8List?> showImageCropDialog(BuildContext context, Uint8List bytes) as
               child: Material(
                 color: Colors.transparent,
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(28),
                   child: Container(
                     width: displaySize,
                     padding: const EdgeInsets.all(12),

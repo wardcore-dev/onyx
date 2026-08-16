@@ -12,7 +12,6 @@ import '../managers/account_manager.dart';
 import '../managers/external_server_manager.dart';
 import '../widgets/external_server_badge.dart';
 import '../dialogs/server_connection_dialog.dart';
-import 'external_group_chat_screen.dart';
 import '../l10n/app_localizations.dart';
 import '../managers/decoy_manager.dart';
 import '../managers/decoy_data_manager.dart';
@@ -25,6 +24,7 @@ import '../dialogs/pin_lock_dialog.dart';
 import '../utils/onyx_base_dir.dart' show getOnyxSupportDirectory, getOnyxDocumentsDirectory;
 import '../managers/trash_manager.dart';
 import '../widgets/onyx_dialog.dart';
+import '../dialogs/profile_presets_dialog.dart';
 
 /// Reads and scans group-history JSON files for a content match — run via
 /// `compute` so the (potentially large) `jsonDecode` doesn't block the UI
@@ -282,7 +282,7 @@ class _GroupsTabState extends State<GroupsTab>
               margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               decoration: BoxDecoration(
                 color: sheetColor,
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(28),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -519,17 +519,67 @@ class _GroupsTabState extends State<GroupsTab>
     }
   }
 
-  void _openExternalGroup(Group group) {
-    final server = ExternalServerManager.servers.value
-        .where((s) => s.id == group.externalServerId)
-        .firstOrNull;
-    if (server == null) return;
-
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ExternalGroupChatScreen(group: group, server: server),
-      ),
+  void _openProfilePresets() {
+    showOnyxDialog(
+      context: context,
+      builder: (_) => const ProfilePresetsDialog(),
     );
+  }
+
+  /// The top bar shown above the group list: a wide "+" pill to add a
+  /// group/channel/external server, plus a compact button to the profile
+  /// presets screen (saved username/password combos for external servers).
+  Widget _buildTopActionsBar() {
+    return Builder(builder: (context) {
+      final colorScheme = Theme.of(context).colorScheme;
+      return Row(
+        children: [
+          Expanded(
+            child: AdaptiveGlassCard(
+              borderRadius: 22,
+              padding: EdgeInsets.zero,
+              onTap: _showAddGroupSheet,
+              child: Container(
+                height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: colorScheme.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: Icon(
+                  Icons.add,
+                  size: 20,
+                  color: colorScheme.primary,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          AdaptiveGlassCard(
+            borderRadius: 22,
+            padding: EdgeInsets.zero,
+            onTap: _openProfilePresets,
+            child: Tooltip(
+              message: AppLocalizations.of(context).profilePresets,
+              child: Container(
+                width: 44,
+                height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: colorScheme.onSurface.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: Icon(
+                  Icons.badge_outlined,
+                  size: 20,
+                  color: colorScheme.onSurface.withValues(alpha: 0.75),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    });
   }
 
   Future<void> _createGroup() async {
@@ -638,22 +688,22 @@ class _GroupsTabState extends State<GroupsTab>
                                     fillColor: baseColor.withValues(alpha: 0.5),
                                     border: OutlineInputBorder(
                                         borderRadius:
-                                            BorderRadius.circular(14)),
+                                            BorderRadius.circular(50)),
                                     enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(50),
                                       borderSide: BorderSide(
                                           color: cs.outlineVariant
                                               .withValues(alpha: 0.3),
                                           width: 0.8),
                                     ),
                                     focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(50),
                                       borderSide: BorderSide(
                                           color: cs.primary, width: 1.4),
                                     ),
                                     contentPadding:
                                         const EdgeInsets.symmetric(
-                                            vertical: 14, horizontal: 16),
+                                            vertical: 14, horizontal: 20),
                                   ),
                                 );
                               },
@@ -822,21 +872,21 @@ class _GroupsTabState extends State<GroupsTab>
                                   filled: true,
                                   fillColor: baseColor.withValues(alpha: 0.5),
                                   border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(14)),
+                                      borderRadius: BorderRadius.circular(50)),
                                   enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(50),
                                     borderSide: BorderSide(
                                         color: cs.outlineVariant
                                             .withValues(alpha: 0.3),
                                         width: 0.8),
                                   ),
                                   focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(50),
                                     borderSide: BorderSide(
                                         color: cs.primary, width: 1.4),
                                   ),
                                   contentPadding: const EdgeInsets.symmetric(
-                                      vertical: 14, horizontal: 16),
+                                      vertical: 14, horizontal: 20),
                                 ),
                               );
                             },
@@ -1072,11 +1122,13 @@ class _GroupsTabState extends State<GroupsTab>
 
   void _doOpenGroup(BuildContext ctx, Group g) {
     if (g.isExternal) {
-      if (isDesktop) {
-        widget.onOpenGroup(g);
-      } else {
-        _openExternalGroup(g);
-      }
+      // Route through the same onOpenGroup callback as internal groups
+      // (root_screen.dart) instead of pushing our own MaterialPageRoute —
+      // that callback already uses root_screen's shared _chatRoute slide
+      // transition for external groups too, so both take the identical
+      // entrance animation instead of external falling back to the
+      // platform-default push.
+      widget.onOpenGroup(g);
     } else if (isDesktop) {
       rootScreenKey.currentState?.setState(() {
         rootScreenKey.currentState?.selectedGroup = g;
@@ -1107,7 +1159,7 @@ class _GroupsTabState extends State<GroupsTab>
                   margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   decoration: BoxDecoration(
                     color: sheetColor,
-                    borderRadius: BorderRadius.circular(20),
+                    borderRadius: BorderRadius.circular(28),
                   ),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -1289,27 +1341,7 @@ class _GroupsTabState extends State<GroupsTab>
                     children: [
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                        child: Builder(builder: (context) {
-                          final colorScheme = Theme.of(context).colorScheme;
-                          return AdaptiveGlassCard(
-                            borderRadius: 22,
-                            padding: EdgeInsets.zero,
-                            onTap: _showAddGroupSheet,
-                            child: Container(
-                              height: 44,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: colorScheme.primary.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(22),
-                              ),
-                              child: Icon(
-                                Icons.add,
-                                size: 20,
-                                color: colorScheme.primary,
-                              ),
-                            ),
-                          );
-                        }),
+                        child: _buildTopActionsBar(),
                       ),
                       Expanded(
                         child: Center(
@@ -1351,27 +1383,7 @@ class _GroupsTabState extends State<GroupsTab>
                           children: [
                             Padding(
                               padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                              child: Builder(builder: (context) {
-                                final colorScheme = Theme.of(context).colorScheme;
-                                return AdaptiveGlassCard(
-                                  borderRadius: 22,
-                                  padding: EdgeInsets.zero,
-                                  onTap: _showAddGroupSheet,
-                                  child: Container(
-                                    height: 44,
-                                    alignment: Alignment.center,
-                                    decoration: BoxDecoration(
-                                      color: colorScheme.primary.withValues(alpha: 0.12),
-                                      borderRadius: BorderRadius.circular(22),
-                                    ),
-                                    child: Icon(
-                                      Icons.add,
-                                      size: 20,
-                                      color: colorScheme.primary,
-                                    ),
-                                  ),
-                                );
-                              }),
+                              child: _buildTopActionsBar(),
                             ),
                             Expanded(
                               child: Builder(builder: (context) {
@@ -1403,7 +1415,7 @@ class _GroupsTabState extends State<GroupsTab>
                                               child: Container(
                                                 decoration: BoxDecoration(
                                                   color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
-                                                  borderRadius: BorderRadius.circular(14),
+                                                  borderRadius: BorderRadius.circular(28),
                                                 ),
                                                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                                                 child: Row(
@@ -1467,10 +1479,11 @@ class _GroupsTabState extends State<GroupsTab>
                                     ? (d) => _showGroupDesktopContextMenu(context, d.globalPosition, g)
                                     : null,
                                 child: InkWell(
-                                borderRadius: BorderRadius.circular(16),
+                                borderRadius: BorderRadius.circular(28),
                                 onTap: () => _openGroupWithLockCheck(context, g),
                                 onLongPress: () => _showGroupActionsSheet(context, g),
                                 child: AdaptiveGlassCard(
+                                  borderRadius: 28,
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
                                         vertical: 8, horizontal: 10),
@@ -1574,7 +1587,7 @@ class _GroupsTabState extends State<GroupsTab>
                                               children: [
                                                 Icon(
                                                   g.isChannel
-                                                      ? Icons.ondemand_video_outlined
+                                                      ? Icons.campaign_outlined
                                                       : Icons.group_outlined,
                                                   size: 16,
                                                   color: Theme.of(context)

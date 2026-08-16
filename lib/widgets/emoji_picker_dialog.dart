@@ -213,7 +213,7 @@ class _EmojiPickerDialogState extends State<EmojiPickerDialog>
             height: sheetHeight + mq.viewInsets.bottom,
             decoration: BoxDecoration(
               color: bg,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
             ),
             child: Column(
               children: [
@@ -226,50 +226,106 @@ class _EmojiPickerDialogState extends State<EmojiPickerDialog>
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: _quickReactions
-                        .map((e) => _EmojiButton(emoji: e, size: 32, onTap: () => _pick(e)))
-                        .toList(),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    decoration: BoxDecoration(
+                      color: sBg,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: _quickReactions
+                          .map((e) => _EmojiButton(emoji: e, size: 28, onTap: () => _pick(e)))
+                          .toList(),
+                    ),
                   ),
                 ),
-                const Divider(height: 1),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  child: TextField(
-                    controller: _searchCtrl,
-                    decoration: InputDecoration(
-                      hintText: l.searchEmoji,
-                      prefixIcon: const Icon(Icons.search, size: 20),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                  child: Container(
+                    height: 1,
+                    color: colorScheme.onSurface.withValues(alpha: 0.08),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+                  child: SizedBox(
+                    height: 40,
+                    child: TextField(
+                      controller: _searchCtrl,
+                      style: const TextStyle(fontSize: 14),
+                      decoration: InputDecoration(
+                        hintText: l.searchEmoji,
+                        hintStyle: TextStyle(
+                          fontSize: 14,
+                          color: colorScheme.onSurface.withValues(alpha: 0.4),
+                        ),
+                        prefixIcon: Icon(Icons.search_rounded,
+                            size: 18, color: colorScheme.onSurface.withValues(alpha: 0.45)),
+                        prefixIconConstraints:
+                            const BoxConstraints(minWidth: 36, minHeight: 36),
+                        suffixIcon: _query.isNotEmpty
+                            ? GestureDetector(
+                                onTap: _searchCtrl.clear,
+                                child: Icon(Icons.close_rounded,
+                                    size: 16,
+                                    color: colorScheme.onSurface.withValues(alpha: 0.45)),
+                              )
+                            : null,
+                        suffixIconConstraints:
+                            const BoxConstraints(minWidth: 32, minHeight: 32),
+                        contentPadding:
+                            const EdgeInsets.symmetric(vertical: 0, horizontal: 4),
+                        filled: true,
+                        fillColor: sBg,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(28),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(28),
+                          borderSide: BorderSide.none,
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(28),
+                          borderSide: BorderSide.none,
+                        ),
                       ),
-                      filled: true,
-                      fillColor: sBg,
                     ),
-                    style: const TextStyle(fontSize: 14),
                   ),
                 ),
                 if (_query.isEmpty)
-                  TabBar(
-                    controller: _tabController,
-                    isScrollable: true,
-                    padding: EdgeInsets.zero,
-                    tabAlignment: TabAlignment.start,
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    tabs: _categories
-                        .map((c) => Tab(
-                              child: Tooltip(
-                                message: c.label,
-                                child: Icon(c.icon, size: 20),
-                              ),
-                            ))
-                        .toList(),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: TabBar(
+                      controller: _tabController,
+                      isScrollable: true,
+                      padding: EdgeInsets.zero,
+                      tabAlignment: TabAlignment.start,
+                      indicatorSize: TabBarIndicatorSize.tab,
+                      indicator: BoxDecoration(
+                        color: colorScheme.primary.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      indicatorPadding:
+                          const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
+                      dividerColor: Colors.transparent,
+                      splashBorderRadius: BorderRadius.circular(999),
+                      labelColor: colorScheme.primary,
+                      unselectedLabelColor: colorScheme.onSurface.withValues(alpha: 0.45),
+                      tabs: _categories
+                          .map((c) => Tab(
+                                height: 40,
+                                child: Tooltip(
+                                  message: c.label,
+                                  child: Icon(c.icon, size: 20),
+                                ),
+                              ))
+                          .toList(),
+                    ),
                   ),
                 Expanded(
                   child: _query.isNotEmpty
@@ -301,11 +357,11 @@ class _EmojiPickerDialogState extends State<EmojiPickerDialog>
       );
     }
     return GridView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 8,
-        mainAxisSpacing: 2,
-        crossAxisSpacing: 2,
+        mainAxisSpacing: 4,
+        crossAxisSpacing: 4,
       ),
       itemCount: emojis.length,
       itemBuilder: (_, i) => _EmojiButton(
@@ -330,11 +386,16 @@ class _EmojiButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Center(
-        child: Text(emoji, style: TextStyle(fontSize: size)),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        highlightColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.10),
+        splashColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.14),
+        child: Center(
+          child: Text(emoji, style: TextStyle(fontSize: size)),
+        ),
       ),
     );
   }

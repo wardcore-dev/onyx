@@ -14,6 +14,7 @@ import 'package:flutter/gestures.dart';
 import 'dart:async';
 import '../widgets/chat_background_layer.dart';
 import '../widgets/onyx_dialog.dart';
+import '../utils/code_heuristic.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:io';
@@ -60,6 +61,7 @@ import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/gallery_extractor.dart';
 import 'media_gallery_screen.dart';
+import 'post_comments_screen.dart';
 
 const List<String> _randomHints = [
   'Say something!',
@@ -136,6 +138,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
   Map<String, dynamic>? _replyingToMessage;
   Map<String, dynamic>? _pinnedMessage;
+
+  // Tracks whichever post's comment thread is currently pushed on top of
+  // this screen, so incoming comment_added/comment_deleted/
+  // comment_reaction_update WS events can be routed straight into it
+  // instead of only updating the badge underneath the post bubble.
+  int? _openCommentsPostId;
+  GlobalKey<PostCommentsScreenState>? _openCommentsKey;
 
   // ── in-chat search ──────────────────────────────────────────────────────────
   bool _showSearch = false;
@@ -1006,18 +1015,19 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                       ),
                     ),
                     const SizedBox(height: 8),
-                    actionTile(
-                        Icons.reply_rounded, AppLocalizations.of(context).reply,
-                        () {
-                      Navigator.pop(ctx);
-                      _startReplyingToMessage(msg);
-                    }),
+                    if (widget.group.canPost)
+                      actionTile(Icons.reply_rounded,
+                          AppLocalizations.of(context).reply, () {
+                        Navigator.pop(ctx);
+                        _startReplyingToMessage(msg);
+                      }),
                     actionTile(Icons.add_reaction_outlined, 'React', () {
                       Navigator.pop(ctx);
                       final rMsgId = int.tryParse(msg['id']?.toString() ?? '');
                       final reactionKey = 'gm_${msg['id']}';
                       openEmojiPicker(
                           context, reactionKey, _currentUsername ?? '',
+                          anonymous: true,
                           onAfterToggle: (emoji, wasReacted) {
                         if (rMsgId != null)
                           _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
@@ -1155,11 +1165,12 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         content.startsWith('[cannot-decrypt');
     final l = AppLocalizations.of(context);
     return [
-      DesktopMenuItem(
-        icon: Icons.reply_rounded,
-        label: l.reply,
-        onPressed: () => _startReplyingToMessage(msg),
-      ),
+      if (widget.group.canPost)
+        DesktopMenuItem(
+          icon: Icons.reply_rounded,
+          label: l.reply,
+          onPressed: () => _startReplyingToMessage(msg),
+        ),
       DesktopMenuItem(
         icon: Icons.add_reaction_outlined,
         label: l.react,
@@ -1167,6 +1178,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           final rMsgId = int.tryParse(msg['id']?.toString() ?? '');
           final reactionKey = 'gm_${msg['id']}';
           openEmojiPicker(context, reactionKey, _currentUsername ?? '',
+              anonymous: true,
               onAfterToggle: (emoji, wasReacted) {
             if (rMsgId != null)
               _serverToggleGroupReaction(rMsgId, emoji, wasReacted);
@@ -1553,7 +1565,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           }
           final destPath = '${onyxDir.path}/$originalName';
           await file.copy(destPath);
-          rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+          showSavedToSnack(destPath);
         }
         return;
       }
@@ -1582,7 +1594,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           return;
         }
         await file.copy(destPath);
-        rootScreenKey.currentState?.showSnack('Saved to: $destPath');
+        showSavedToSnack(destPath);
       }
     } catch (e) {
       rootScreenKey.currentState?.showSnack('Save failed: $e');
@@ -1927,6 +1939,12 @@ class _GroupChatScreenState extends State<GroupChatScreen>
             if (item['reply_to_content'] != null)
               'reply_to_content': item['reply_to_content']?.toString(),
             if (item['reactions'] != null) 'reactions': item['reactions'],
+            if (item['comment_count'] != null)
+              'comment_count': item['comment_count'],
+            if (item['last_comment_sender'] != null)
+              'last_comment_sender': item['last_comment_sender']?.toString(),
+            if (item['last_comment_content'] != null)
+              'last_comment_content': item['last_comment_content']?.toString(),
           };
           newMessages.add(msg);
         }
@@ -2000,6 +2018,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
               if (item['reply_to_content'] != null)
                 'reply_to_content': item['reply_to_content']?.toString(),
               if (item['reactions'] != null) 'reactions': item['reactions'],
+              if (item['comment_count'] != null)
+                'comment_count': item['comment_count'],
+              if (item['last_comment_sender'] != null)
+                'last_comment_sender': item['last_comment_sender']?.toString(),
+              if (item['last_comment_content'] != null)
+                'last_comment_content':
+                    item['last_comment_content']?.toString(),
             });
           }
         }
@@ -2195,6 +2220,23 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       _cancelEditingGroupMessage();
       await _submitGroupMessageEdit(editId, text.trim());
       return;
+    }
+
+    if (looksLikeCode(text)) {
+      final l = AppLocalizations.of(context);
+      final sendAsCode = await showOnyxConfirmDialog(
+        context: context,
+        title: l.sendAsCodeTitle,
+        message: l.sendAsCodeContent,
+        confirmLabel: l.sendAsCode,
+        cancelLabel: l.sendAsPlainText,
+        icon: Icons.code_rounded,
+      );
+      if (!mounted) return;
+      if (sendAsCode == null) return;
+      if (sendAsCode) {
+        text = '```${detectCodeLanguage(text)}\n$text\n```';
+      }
     }
 
     final token = await AccountManager.getToken(_currentUsername ?? '');
@@ -2745,7 +2787,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         });
         // Update mixin state if message is currently rendered
         final key = _msgIdToReactionKey[msgId];
-        if (key != null) applyReactionUpdate(key, reactions);
+        if (key != null) applyReactionCounts(key, reactions);
         unawaited(_saveHistoryToCache(_messages));
       }
       return;
@@ -2772,6 +2814,28 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           _allMessageIds.remove(deletedId);
         });
         unawaited(_saveHistoryToCache(_messages));
+      }
+      return;
+    }
+
+    if (typ == 'comment_added' ||
+        typ == 'comment_deleted' ||
+        typ == 'comment_reaction_update') {
+      final postIdRaw = msg['post_id'];
+      final postId =
+          postIdRaw is int ? postIdRaw : int.tryParse(postIdRaw?.toString() ?? '');
+      if (postId != null) {
+        if (typ == 'comment_added') {
+          final comment = msg['comment'] as Map<String, dynamic>?;
+          _updateCommentCountLocal(postId, 1,
+              lastSender: comment?['sender']?.toString(),
+              lastContent: comment?['content']?.toString());
+        } else if (typ == 'comment_deleted') {
+          _updateCommentCountLocal(postId, -1);
+        }
+        if (_openCommentsPostId == postId) {
+          _openCommentsKey?.currentState?.handleWsEvent(msg);
+        }
       }
       return;
     }
@@ -2852,6 +2916,222 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         _bufferIncomingMessage(newMsg);
       }
     }
+  }
+
+  // Mutates the cached comment_count (and, on a new comment, the
+  // last-comment preview) on a loaded channel post in-place so the "N
+  // comments" badge under its bubble stays live without a full history
+  // refetch.
+  void _updateCommentCountLocal(int postId, int delta,
+      {String? lastSender, String? lastContent}) {
+    if (!mounted) return;
+    setState(() {
+      final idx =
+          _messages.indexWhere((m) => m['id']?.toString() == postId.toString());
+      if (idx >= 0) {
+        final current = (_messages[idx]['comment_count'] as num?)?.toInt() ?? 0;
+        _messages[idx]['comment_count'] = (current + delta).clamp(0, 1 << 31);
+        if (delta > 0) {
+          _messages[idx]['last_comment_sender'] = lastSender;
+          _messages[idx]['last_comment_content'] = lastContent;
+        }
+      }
+    });
+    unawaited(_saveHistoryToCache(_messages));
+  }
+
+  // A Telegram-style "N comments" bar under a channel post bubble — a
+  // distinct card (not just an inline label) showing the count plus a
+  // one-line preview of the most recent comment, if any. Kept pixel-identical
+  // to ExternalGroupChatScreen._buildCommentsAffordance so internal and
+  // external channels look the same.
+  Widget _buildCommentsAffordance(
+      BuildContext context, ColorScheme colorScheme, Map<String, dynamic> msg) {
+    final l = AppLocalizations.of(context);
+    final count = (msg['comment_count'] as num?)?.toInt() ?? 0;
+    final lastSender = msg['last_comment_sender']?.toString();
+    final lastContent = msg['last_comment_content']?.toString();
+    final hasPreview = count > 0 &&
+        lastSender != null &&
+        lastSender.isNotEmpty &&
+        lastContent != null;
+
+    return GestureDetector(
+      onTap: () => _openCommentsThread(msg),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        // IntrinsicWidth makes the pill hug its content (ending right after
+        // "Comment"/the preview text) instead of stretching to the bubble's
+        // full width; the ConstrainedBox below still caps it so a long
+        // preview ellipsizes rather than growing the pill unbounded.
+        child: IntrinsicWidth(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+              // Full stadium/pill shape rather than a soft-rounded card.
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.15),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.mode_comment_rounded,
+                    size: 13, color: colorScheme.primary),
+                const SizedBox(width: 6),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 200),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        count == 0
+                            ? l.addCommentAction
+                            : l.commentsCount(count),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: colorScheme.onSurface.withValues(alpha: 0.85),
+                        ),
+                      ),
+                      if (hasPreview) ...[
+                        const SizedBox(height: 1),
+                        Text(
+                          '$lastSender: ${getPreviewText(lastContent)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color:
+                                colorScheme.onSurface.withValues(alpha: 0.55),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Icon(Icons.chevron_right_rounded,
+                    size: 14,
+                    color: colorScheme.onSurface.withValues(alpha: 0.35)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openCommentsThread(Map<String, dynamic> msg) async {
+    final postIdRaw = msg['id'];
+    final postId =
+        postIdRaw is int ? postIdRaw : int.tryParse(postIdRaw?.toString() ?? '');
+    if (postId == null) return;
+
+    final key = GlobalKey<PostCommentsScreenState>();
+    _openCommentsPostId = postId;
+    _openCommentsKey = key;
+    await showPostCommentsDialog(
+      context: context,
+      groupId: widget.group.id,
+      postId: postId,
+      postSender: widget.group.name,
+      postContent: msg['content']?.toString() ?? '',
+      canDeleteAny: _isOwner,
+      onPickAttachment: pickAndUploadCommentAttachment,
+      onUploadVoice: uploadCommentVoiceBytes,
+      key: key,
+    );
+    _openCommentsPostId = null;
+    _openCommentsKey = null;
+  }
+
+  // Pick a single image/video and upload it, returning the encoded
+  // MEDIA_PROXYv1 content string ready to post — used by the comment thread
+  // dialog's attach button, which posts to a comments endpoint instead of
+  // the main chat's /send. Deliberately skips the bulk/album/drag-drop paths
+  // _pickAndUploadMedia supports: a comment only ever carries one attachment.
+  // Mirrors ExternalGroupChatScreen.pickAndUploadCommentAttachment.
+  Future<String?> pickAndUploadCommentAttachment() async {
+    if (kIsWeb) {
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .mediaUploadNotSupportedWeb);
+      return null;
+    }
+
+    String? path;
+    if (Platform.isAndroid || Platform.isIOS) {
+      final paths = await showMediaPickerSheet(context);
+      path = (paths != null && paths.isNotEmpty) ? paths.first : null;
+    } else {
+      try {
+        final result = await FilePicker.platform.pickFiles(type: FileType.media);
+        path = result?.files.first.path;
+      } catch (e) {
+        debugPrint('[comment-attach] FilePicker error: $e');
+        rootScreenKey.currentState?.showSnack('File picker error: $e');
+        return null;
+      }
+    }
+    if (path == null) return null;
+
+    final fileType = FileTypeDetector.getFileType(path);
+    if (fileType != 'IMAGE' && fileType != 'VIDEO') {
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .unsupportedFileType(p.extension(path)));
+      return null;
+    }
+
+    final bytes = await File(path).readAsBytes();
+    final basename = p.basename(path);
+    const provider = MediaProvider.catbox;
+    final link = await _uploadToProvider(bytes, basename, provider);
+    if (link == null) {
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .uploadFailed);
+      return null;
+    }
+
+    final type = fileType == 'IMAGE' ? 'image' : 'video';
+    final payload = jsonEncode({
+      'url': link,
+      'orig': basename,
+      'provider': provider.name,
+      'type': type,
+    });
+    return 'MEDIA_PROXYv1:$payload';
+  }
+
+  // Uploads already-recorded voice bytes and returns the encoded
+  // MEDIA_PROXYv1 content string — mirrors _stopRecordingAndUpload but
+  // returns the content instead of sending it as a main-chat message, so the
+  // comment dialog can post it to the comments endpoint itself.
+  Future<String?> uploadCommentVoiceBytes(Uint8List bytes) async {
+    final recordedPath = rootScreenKey.currentState?.lastRecordedPathForUpload;
+    final ext = recordedPath != null ? p.extension(recordedPath) : '.wav';
+    final basename = 'voice_${DateTime.now().millisecondsSinceEpoch}$ext';
+    const provider = MediaProvider.catbox;
+
+    final link = await _uploadToProvider(bytes, basename, provider);
+    if (link == null) {
+      rootScreenKey.currentState?.showSnack(
+          lookupAppLocalizations(SettingsManager.appLocale.value)
+              .voiceUploadFailed);
+      return null;
+    }
+    final payload = jsonEncode({
+      'url': link,
+      'orig': basename,
+      'provider': provider.name,
+      'type': 'voice',
+    });
+    return 'MEDIA_PROXYv1:$payload';
   }
 
   void _bufferIncomingMessage(Map<String, dynamic> msg) {
@@ -3466,18 +3746,20 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                     counterText: '',
                                     filled: true,
                                     fillColor: baseColor.withValues(alpha: 0.3),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                        horizontal: 20, vertical: 14),
                                     border: OutlineInputBorder(
                                         borderRadius:
-                                            BorderRadius.circular(14)),
+                                            BorderRadius.circular(50)),
                                     enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(50),
                                       borderSide: BorderSide(
                                           color: cs.outlineVariant
                                               .withValues(alpha: 0.3),
                                           width: 0.8),
                                     ),
                                     focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(50),
                                       borderSide: BorderSide(
                                           color: cs.primary, width: 1.4),
                                     ),
@@ -3669,7 +3951,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                 horizontal: 12, vertical: 10),
                             decoration: BoxDecoration(
                               color: baseColor.withValues(alpha: opacity),
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(28),
                               border: Border.all(
                                 color: colorScheme.outlineVariant
                                     .withValues(alpha: 0.15),
@@ -3742,7 +4024,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                 horizontal: 12, vertical: 10),
                             decoration: BoxDecoration(
                               color: baseColor.withValues(alpha: opacity),
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(28),
                               border: Border.all(
                                 color: colorScheme.outlineVariant
                                     .withValues(alpha: 0.15),
@@ -3960,7 +4242,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                       settings: settings,
                       quality: glassQuality,
                       padding: EdgeInsets.zero,
-                      shape: LiquidRoundedRectangle(borderRadius: 24),
+                      shape: LiquidRoundedRectangle(borderRadius: 28),
                       clipBehavior: Clip.antiAlias,
                       child: bar,
                     );
@@ -4882,15 +5164,18 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                               0.7),
                                   child: SwipeableMessageWrapper(
                                     onSwipeRight: () => _onGroupLongPress(msg),
-                                    onSwipeLeft: () {
-                                      final preview = {
-                                        'id': msg['id']?.toString(),
-                                        'sender': rawSender,
-                                        'senderDisplayName': sender,
-                                        'content': getPreviewText(content),
-                                      };
-                                      _startReplyingToMessage(preview);
-                                    },
+                                    onSwipeLeft: widget.group.canPost
+                                        ? () {
+                                            final preview = {
+                                              'id': msg['id']?.toString(),
+                                              'sender': rawSender,
+                                              'senderDisplayName': sender,
+                                              'content':
+                                                  getPreviewText(content),
+                                            };
+                                            _startReplyingToMessage(preview);
+                                          }
+                                        : null,
                                     child: GestureDetector(
                                       onTapDown: (tap) {
                                         debugPrint(
@@ -5114,7 +5399,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                             emoji,
                                             _currentUsername ?? '');
                                         toggleReaction(reactionKey, emoji,
-                                            _currentUsername ?? '');
+                                            _currentUsername ?? '',
+                                            anonymous: true);
                                         if (rMsgId != null)
                                           _serverToggleGroupReaction(
                                               rMsgId, emoji, wasReacted);
@@ -5123,12 +5409,19 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                           ctx2,
                                           reactionKey,
                                           _currentUsername ?? '',
+                                          anonymous: true,
                                           onAfterToggle: (emoji, wasReacted) {
                                         if (rMsgId != null)
                                           _serverToggleGroupReaction(
                                               rMsgId, emoji, wasReacted);
                                       }),
                                     ),
+                                    if (widget.group.isChannel)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4),
+                                        child: _buildCommentsAffordance(
+                                            context, colorScheme, msg),
+                                      ),
                                   ],
                                 );
 
@@ -5322,8 +5615,15 @@ class _GroupChatScreenState extends State<GroupChatScreen>
               right: 16,
               child: Center(
                 child: _isReadOnlyChannel
-                    ? ListenableBuilder(
-                        listenable: Listenable.merge([
+                    ? MeasureSize(
+                        onChange: (size) {
+                          if ((_bottomBarHeight.value - size.height).abs() >
+                              0.5) {
+                            _bottomBarHeight.value = size.height;
+                          }
+                        },
+                        child: ListenableBuilder(
+                          listenable: Listenable.merge([
                           SettingsManager.elementOpacity,
                           SettingsManager.inputBarMaxWidth,
                           SettingsManager.elementBrightness,
@@ -5366,7 +5666,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                                     ),
                                   ),
                             child: Text(
-                              'This is a channel. You cannot send messages here.',
+                              'You cannot send messages here.',
                               style: TextStyle(
                                 color: colorScheme.onSurface
                                     .withValues(alpha: 0.6),
@@ -5423,6 +5723,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                             child: label,
                           );
                         },
+                      ),
                       )
                     : ValueListenableBuilder<double>(
                         valueListenable: SettingsManager.inputBarMaxWidth,
