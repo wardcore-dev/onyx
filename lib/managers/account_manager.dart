@@ -245,6 +245,11 @@ class AccountManager {
   static Future<Map<String, Map<String, dynamic>>> getAccountsMeta() =>
       _loadMeta();
 
+  static Future<String?> getCachedDisplayName(String username) async {
+    final meta = await _loadMeta();
+    return meta[username]?['displayName'] as String?;
+  }
+
   static Future<void> addAccount(String username) async {
     try {
       final list = await getAccountsList();

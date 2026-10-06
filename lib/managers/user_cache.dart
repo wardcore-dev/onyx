@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../globals.dart';
+import '../services/onion/onion_paired_peers.dart';
+import '../utils/onion_names.dart';
 import 'account_manager.dart';
 
 class UserProfile {
@@ -48,7 +50,27 @@ class UserCache {
   }
 
   static UserProfile? getSync(String username) {
-    return _cache[username];
+    final cached = _cache[username];
+    if (cached != null) return cached;
+    // Tor contacts: the nickname they advertise (or a compact address when
+    // they never set one) — never the raw onion address.
+    final devices = OnionPairedPeers.allByUsername(username);
+    if (devices.isNotEmpty) {
+      // Prefer the newest entry that carries a real nickname; fall back to the
+      // newest one (whose "name" may just be their address).
+      devices.sort((a, b) => b.pairedAt.compareTo(a.pairedAt));
+      final named = devices.firstWhere((d) => !looksLikeOnionAddress(d.name),
+          orElse: () => devices.first);
+      final p = UserProfile(
+        username: username,
+        displayName: friendlyContactName(named.name),
+        description: '',
+      );
+      // Not cached: derived live from the paired-contact list so a fresh
+      // pairing / nickname is never shadowed by an old snapshot.
+      return p;
+    }
+    return null;
   }
 
   static String? getDescription(String username) {
@@ -58,8 +80,18 @@ class UserCache {
 
   static Future<UserProfile> get(String username) async {
     
-    if (_cache.containsKey(username)) {
-      return _cache[username]!;
+    final local = getSync(username);
+    if (local != null) return local;
+
+    if (kCentralServerRemoved) {
+      // Deliberately NOT cached: on a cold start this can run before
+      // OnionPairedPeers has loaded, and a cached ID-derived fallback would
+      // then shadow the contact's real nickname in getSync() for the rest of
+      // the session.
+      return UserProfile(
+          username: username,
+          displayName: friendlyContactName(username),
+          description: '');
     }
 
     if (_pendingFetches.contains(username)) {

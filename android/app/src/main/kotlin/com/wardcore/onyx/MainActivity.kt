@@ -74,6 +74,40 @@ class MainActivity : AudioServiceFragmentActivity() {
                 }
             }
 
+        val callChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger, "onyx/call_notification")
+        callChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "show" -> {
+                    CallNotifications.show(
+                        applicationContext,
+                        call.argument<String>("callId") ?: "",
+                        call.argument<String>("name") ?: "",
+                        call.argument<String>("subtitle") ?: "",
+                        call.argument<ByteArray>("avatar"),
+                    )
+                    result.success(null)
+                }
+                "cancel" -> {
+                    CallNotifications.cancel(applicationContext)
+                    result.success(null)
+                }
+                // An Accept/Decline that arrived before Dart was listening.
+                "takePending" -> {
+                    val p = CallNotifications.pending
+                    CallNotifications.pending = null
+                    result.success(p?.let { mapOf("action" to it.first, "callId" to it.second) })
+                }
+                // On while a call is ringing/active, so it shows over the lock screen.
+                "setShowOverLock" -> {
+                    setShowOverLock(call.argument<Boolean>("on") ?: false)
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+        CallNotifications.channel = callChannel
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CLIPBOARD_CHANNEL)
             .setMethodCallHandler { call: MethodCall, result: MethodChannel.Result ->
                 when (call.method) {
@@ -207,6 +241,44 @@ class MainActivity : AudioServiceFragmentActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "resetAudioMode exception: $e")
             return false
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        handleCallIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleCallIntent(intent)
+    }
+
+    /** Accept / tap on the incoming-call notification. */
+    private fun handleCallIntent(intent: Intent?) {
+        val action = when (intent?.action) {
+            CallNotifications.ACTION_ACCEPT -> "accept"
+            CallNotifications.ACTION_OPEN -> "open"
+            else -> return
+        }
+        val id = intent.getStringExtra(CallNotifications.EXTRA_CALL_ID) ?: ""
+        setShowOverLock(true)
+        if (action == "accept") CallNotifications.cancel(applicationContext)
+        CallNotifications.deliver(applicationContext, action, id)
+        // Don't replay it on the next configuration change.
+        intent.action = Intent.ACTION_MAIN
+    }
+
+    private fun setShowOverLock(on: Boolean) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(on)
+            setTurnScreenOn(on)
+        } else {
+            @Suppress("DEPRECATION")
+            val f = android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            @Suppress("DEPRECATION")
+            if (on) window.addFlags(f) else window.clearFlags(f)
         }
     }
 

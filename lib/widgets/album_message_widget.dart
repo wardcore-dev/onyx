@@ -479,6 +479,13 @@ Route<T> buildGalleryRoute<T>(Widget page) {
   );
 }
 
+/// Height of the desktop window's custom title bar (see main.dart's builder),
+/// which sits on top of every screen.
+double get _galleryTopInset =>
+    (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS))
+        ? 42.0
+        : 0.0;
+
 class AlbumGallery extends StatefulWidget {
   final List<AlbumItem> allItems;
   final int initialIndex;
@@ -507,6 +514,22 @@ class _AlbumGalleryState extends State<AlbumGallery> {
 
   static const double _thumbSize = 60.0;
   static const double _thumbGap = 4.0;
+
+  // Swiping between photos and pinch-to-zoom on a photo both start as a
+  // gesture on the same PageView area, so they compete in the same gesture
+  // arena. Disable the page swipe (a) while a page is actually zoomed in,
+  // and (b) the instant a second finger touches down — that second case
+  // matters because PageView's single-pointer drag recognizer can otherwise
+  // claim the very first finger of a pinch before the second one lands,
+  // turning an intended zoom into an accidental swipe.
+  bool _isZoomed = false;
+  int _activePointers = 0;
+
+  bool get _pageSwipeEnabled => !_isZoomed && _activePointers < 2;
+
+  void _setZoomed(bool zoomed) {
+    if (_isZoomed != zoomed) setState(() => _isZoomed = zoomed);
+  }
 
   @override
   void initState() {
@@ -642,7 +665,12 @@ class _AlbumGalleryState extends State<AlbumGallery> {
         }
         return KeyEventResult.ignored;
       },
-      child: Scaffold(
+      // On desktop the app's own 42 px window title bar (the three dots) is
+      // drawn on top of every screen; without this inset it covered this
+      // AppBar -- the back arrow, the "N / M" counter and the menu.
+      child: Padding(
+        padding: EdgeInsets.only(top: _galleryTopInset),
+        child: Scaffold(
         backgroundColor: Colors.black,
         appBar: AppBar(
           backgroundColor: Colors.black,
@@ -693,10 +721,21 @@ class _AlbumGalleryState extends State<AlbumGallery> {
         body: Column(
           children: [
             Expanded(
-              child: Stack(
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: (_) =>
+                    setState(() => _activePointers++),
+                onPointerUp: (_) => setState(
+                    () => _activePointers = (_activePointers - 1).clamp(0, 10)),
+                onPointerCancel: (_) => setState(
+                    () => _activePointers = (_activePointers - 1).clamp(0, 10)),
+                child: Stack(
                 children: [
                   PageView.builder(
                     controller: _ctrl,
+                    physics: _pageSwipeEnabled
+                        ? const PageScrollPhysics()
+                        : const NeverScrollableScrollPhysics(),
                     itemCount: widget.allItems.length,
                     onPageChanged: (i) {
                       setState(() => _current = i);
@@ -707,6 +746,7 @@ class _AlbumGalleryState extends State<AlbumGallery> {
                       item: widget.allItems[i],
                       peerUsername: widget.peerUsername,
                       isOutgoing: widget.isOutgoing,
+                      onZoomChanged: _setZoomed,
                     ),
                   ),
                   if (!kIsWeb &&
@@ -735,11 +775,13 @@ class _AlbumGalleryState extends State<AlbumGallery> {
                       ),
                   ],
                 ],
+                ),
               ),
             ),
             _buildThumbnailStrip(),
           ],
         ),
+      ),
       ),
     );
   }
@@ -1049,19 +1091,36 @@ class _GalleryPage extends StatefulWidget {
   final AlbumItem item;
   final String peerUsername;
   final bool isOutgoing;
+  // Notified whenever this page's zoom level crosses in/out of "zoomed"
+  // (scale > 1), so the parent PageView can disable page-swiping while the
+  // user is zoomed into a photo.
+  final ValueChanged<bool> onZoomChanged;
 
   const _GalleryPage({
     required this.item,
     required this.peerUsername,
     required this.isOutgoing,
+    required this.onZoomChanged,
   });
 
   @override
   State<_GalleryPage> createState() => _GalleryPageState();
 }
 
-class _GalleryPageState extends State<_GalleryPage> {
+class _GalleryPageState extends State<_GalleryPage>
+    with SingleTickerProviderStateMixin {
   File? _file;
+  final TransformationController _transformCtrl = TransformationController();
+  TapDownDetails? _doubleTapDetails;
+  bool _reportedZoomed = false;
+
+  late final AnimationController _zoomAnimController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+  );
+  Animation<Matrix4>? _zoomAnimation;
+
+  static const double _doubleTapScale = 2.5;
 
   @override
   void initState() {
@@ -1070,13 +1129,75 @@ class _GalleryPageState extends State<_GalleryPage> {
     if (cached != null && cached.file.existsSync()) {
       _file = cached.file;
     }
+    _transformCtrl.addListener(_onTransformChanged);
+  }
+
+  void _onTransformChanged() {
+    final zoomed = _transformCtrl.value.getMaxScaleOnAxis() > 1.01;
+    if (zoomed != _reportedZoomed) {
+      _reportedZoomed = zoomed;
+      widget.onZoomChanged(zoomed);
+    }
+  }
+
+  // Tweens smoothly from the current transform to [end] instead of jumping
+  // straight there, so double-tap zoom feels the same as Telegram/WhatsApp.
+  void _animateTransformTo(Matrix4 end) {
+    _zoomAnimation?.removeListener(_onZoomTick);
+    final animation = Matrix4Tween(begin: _transformCtrl.value, end: end)
+        .animate(CurvedAnimation(
+      parent: _zoomAnimController,
+      curve: Curves.easeOutCubic,
+    ));
+    _zoomAnimation = animation..addListener(_onZoomTick);
+    _zoomAnimController
+      ..reset()
+      ..forward();
+  }
+
+  void _onZoomTick() {
+    final animation = _zoomAnimation;
+    if (animation != null) _transformCtrl.value = animation.value;
+  }
+
+  void _handleDoubleTap() {
+    final details = _doubleTapDetails;
+    if (details == null) return;
+    final isZoomedIn = _transformCtrl.value.getMaxScaleOnAxis() > 1.01;
+    if (isZoomedIn) {
+      _animateTransformTo(Matrix4.identity());
+      return;
+    }
+    final tapPos = details.localPosition;
+    final zoomed = Matrix4.identity()
+      ..translateByDouble(-tapPos.dx * (_doubleTapScale - 1),
+          -tapPos.dy * (_doubleTapScale - 1), 0, 1)
+      ..scaleByDouble(_doubleTapScale, _doubleTapScale, 1, 1);
+    _animateTransformTo(zoomed);
+  }
+
+  @override
+  void dispose() {
+    if (_reportedZoomed) widget.onZoomChanged(false);
+    _zoomAnimation?.removeListener(_onZoomTick);
+    _zoomAnimController.dispose();
+    _transformCtrl.removeListener(_onTransformChanged);
+    _transformCtrl.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     if (_file != null) {
-      return InteractiveViewer(
-        child: Center(child: Image.file(_file!, fit: BoxFit.contain)),
+      return GestureDetector(
+        onDoubleTapDown: (details) => _doubleTapDetails = details,
+        onDoubleTap: _handleDoubleTap,
+        child: InteractiveViewer(
+          transformationController: _transformCtrl,
+          minScale: 1.0,
+          maxScale: 4.0,
+          child: Center(child: Image.file(_file!, fit: BoxFit.contain)),
+        ),
       );
     }
 

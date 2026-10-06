@@ -57,6 +57,7 @@ class AppPaths {
   static String get imageCache => '$_support/image_cache';
   static String get favMedia => '$_docs/fav_media';
   static String get lanMedia => '$_docs/lan_media';
+  static String get onionMedia => '$_docs/onion_media';
 
   // Display dirs — temp, cleaned by OS; always check .enc fallback.
   static String get imageDisplay => '$_temp/onyx_display/image';

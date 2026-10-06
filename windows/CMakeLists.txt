@@ -113,3 +113,11 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
+
+# Bundle the vendored Tor Expert Bundle (tor.exe + pluggable_transports/) next
+# to the executable, so onyx_tor's TorBootstrap._resolveBinaryPath() finds it
+# at "<exeDir>/tor/tor.exe" without any manual per-build copy step. See
+# packages/onyx_tor/README.md for how this was fetched/verified.
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tor"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  COMPONENT Runtime)

@@ -137,10 +137,16 @@ class _PendingDeviceBubbleState extends State<PendingDeviceBubble>
                           border: Border.all(color: cs.surface, width: 1.5),
                         ),
                         constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                        child: Text(
-                          '$count',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: cs.onError),
+                        // Floating above the Navigator, outside any Material:
+                        // a bare Text gets the debug style (yellow double
+                        // underline). A transparent Material fixes that.
+                        child: Material(
+                          type: MaterialType.transparency,
+                          child: Text(
+                            '$count',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: cs.onError),
+                          ),
                         ),
                       ),
                     ),

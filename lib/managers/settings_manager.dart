@@ -51,10 +51,6 @@ class SettingsManager {
   static const _liquidGlassBlurKey       = 'liquid_glass_blur';
   static const _liquidGlassTintKey       = 'liquid_glass_tint';
   static const _liquidGlassSaturationKey = 'liquid_glass_saturation';
-  static const _liquidGlassOnCardsKey        = 'liquid_glass_on_cards';
-  static const _liquidGlassCardsBlurKey      = 'liquid_glass_cards_blur';
-  static const _liquidGlassCardsTintKey      = 'liquid_glass_cards_tint';
-  static const _liquidGlassCardsSaturationKey= 'liquid_glass_cards_saturation';
   static const _liquidGlassJellyEnabledKey     = 'liquid_glass_jelly_enabled';
   static const _liquidGlassOnInputKey          = 'liquid_glass_on_input';
   static const _liquidGlassInputBlurKey        = 'liquid_glass_input_blur';
@@ -73,10 +69,6 @@ class SettingsManager {
   static const _liquidGlassRefractiveKey       = 'liquid_glass_refractive';
   static const _liquidGlassLightIntensityKey   = 'liquid_glass_light_intensity';
   static const _liquidGlassThicknessKey        = 'liquid_glass_thickness';
-  static const _liquidGlassCardsChromaticKey        = 'liquid_glass_cards_chromatic';
-  static const _liquidGlassCardsRefractiveKey       = 'liquid_glass_cards_refractive';
-  static const _liquidGlassCardsLightIntensityKey   = 'liquid_glass_cards_light_intensity';
-  static const _liquidGlassCardsThicknessKey        = 'liquid_glass_cards_thickness';
   static const _liquidGlassInputChromaticKey        = 'liquid_glass_input_chromatic';
   static const _liquidGlassInputRefractiveKey       = 'liquid_glass_input_refractive';
   static const _liquidGlassInputLightIntensityKey   = 'liquid_glass_input_light_intensity';
@@ -90,8 +82,10 @@ class SettingsManager {
   static const _liquidGlassAppBarLightIntensityKey  = 'liquid_glass_appbar_light_intensity';
   static const _liquidGlassAppBarThicknessKey       = 'liquid_glass_appbar_thickness';
   static const _liquidGlassOnNavBarKey      = 'liquid_glass_on_navbar';
+  static const _liquidGlassMasterKey        = 'liquid_glass_master';
+  static const _liquidGlassAdvancedModeKey  = 'liquid_glass_advanced_mode';
+  static const _liquidGlassSavedFlagsKey    = 'liquid_glass_saved_flags';
   static const _liquidGlassNavBarQualityKey = 'liquid_glass_navbar_quality';
-  static const _liquidGlassCardsQualityKey  = 'liquid_glass_cards_quality';
   static const _liquidGlassInputQualityKey  = 'liquid_glass_input_quality';
   static const _liquidGlassSearchQualityKey = 'liquid_glass_search_quality';
   static const _liquidGlassAppBarQualityKey = 'liquid_glass_appbar_quality';
@@ -114,12 +108,16 @@ class SettingsManager {
   static const _notifHideContentKey = 'notif_hide_content';
   static const _backgroundServiceEnabledKey = 'background_service_enabled';
   static const _backgroundServiceTextKey = 'background_service_text';
-  static const _proxyEnabledKey = 'proxy_enabled';
-  static const _proxyTypeKey = 'proxy_type';
-  static const _proxyHostKey = 'proxy_host';
-  static const _proxyPortKey = 'proxy_port';
-  static const _proxyUsernameKey = 'proxy_username';
-  static const _proxyPasswordKey = 'proxy_password';
+  // The proxy feature was removed; these keys only exist so leftovers from
+  // older versions (host/port and, notably, the stored credentials) get wiped.
+  static const _legacyProxyPrefsKeys = [
+    'proxy_enabled',
+    'proxy_type',
+    'proxy_host',
+    'proxy_port',
+    'proxy_username',
+    'proxy_password',
+  ];
   static const _enableLoggingKey = 'enable_logging';
   static const _showDisplayNameInGroupsKey = 'show_display_name_in_groups';
   static const _pinEnabledKey = 'pin_lock_enabled';
@@ -150,6 +148,15 @@ class SettingsManager {
   // Mesh Mode — offline BLE mesh transport.
   static const _meshModeEnabledKey = 'mesh_mode_enabled';
 
+  // Onion Mode — per-peer 1:1 chat transport directly over Tor hidden
+  // services, bypassing the central server for onion-paired chats. The
+  // name advertised to onion peers is the profile display name (see
+  // OnionTransportService._getDisplayName) -- there is no separate
+  // onion-only nickname/identity.
+  static const _onionModeEnabledKey = 'onion_mode_enabled';
+  static const _onionRetryIntervalKey = 'onion_retry_interval_seconds';
+  static const _onionOfflineNoticeSeenKey = 'onion_offline_notice_seen';
+
   // WardLink — passive local-network sync of Favorites between trusted devices.
   static const _wardLinkEnabledKey          = 'wardlink_enabled';
   static const _wardLinkMaxFileSizeMbKey    = 'wardlink_max_file_size_mb';
@@ -159,6 +166,7 @@ class SettingsManager {
   // toggled on/off without affecting the other.
   static const _wardLinkSyncFavoritesKey        = 'wardlink_sync_favorites';
   static const _wardLinkSyncPersonalOutgoingKey = 'wardlink_sync_personal_outgoing';
+  static const _wardLinkSyncPersonalIncomingKey = 'wardlink_sync_personal_incoming';
   // Download folder — custom save directory for received files (null = Downloads/ONYX).
   static const _downloadFolderPathKey     = 'download_folder_path';
   // Chat viewport render buffer beyond the visible area (px). Higher = smoother
@@ -262,10 +270,6 @@ class SettingsManager {
   static final ValueNotifier<double> liquidGlassBlur        = ValueNotifier<double>(7.0);
   static final ValueNotifier<double> liquidGlassTint        = ValueNotifier<double>(0.10);
   static final ValueNotifier<double> liquidGlassSaturation  = ValueNotifier<double>(1.0);
-  static final ValueNotifier<bool>   liquidGlassOnCards        = ValueNotifier<bool>(false);
-  static final ValueNotifier<double> liquidGlassCardsBlur       = ValueNotifier<double>(7.0);
-  static final ValueNotifier<double> liquidGlassCardsTint        = ValueNotifier<double>(0.10);
-  static final ValueNotifier<double> liquidGlassCardsSaturation  = ValueNotifier<double>(1.0);
   static final ValueNotifier<bool>   liquidGlassJellyEnabled      = ValueNotifier<bool>(true);
   static final ValueNotifier<bool>   liquidGlassOnInput           = ValueNotifier<bool>(true);
   static final ValueNotifier<double> liquidGlassInputBlur         = ValueNotifier<double>(7.0);
@@ -284,30 +288,31 @@ class SettingsManager {
   static final ValueNotifier<double> liquidGlassRefractive      = ValueNotifier<double>(1.59);
   static final ValueNotifier<double> liquidGlassLightIntensity  = ValueNotifier<double>(0.60);
   static final ValueNotifier<double> liquidGlassThickness       = ValueNotifier<double>(30.0);
-  // Advanced per-element: Cards
-  static final ValueNotifier<double> liquidGlassCardsChromatic       = ValueNotifier<double>(0.15);
-  static final ValueNotifier<double> liquidGlassCardsRefractive      = ValueNotifier<double>(1.40);
-  static final ValueNotifier<double> liquidGlassCardsLightIntensity  = ValueNotifier<double>(0.50);
-  static final ValueNotifier<double> liquidGlassCardsThickness       = ValueNotifier<double>(20.0);
   // Advanced per-element: Input
-  static final ValueNotifier<double> liquidGlassInputChromatic       = ValueNotifier<double>(0.15);
-  static final ValueNotifier<double> liquidGlassInputRefractive      = ValueNotifier<double>(1.40);
-  static final ValueNotifier<double> liquidGlassInputLightIntensity  = ValueNotifier<double>(0.50);
-  static final ValueNotifier<double> liquidGlassInputThickness       = ValueNotifier<double>(20.0);
+  static final ValueNotifier<double> liquidGlassInputChromatic       = ValueNotifier<double>(0.30);
+  static final ValueNotifier<double> liquidGlassInputRefractive      = ValueNotifier<double>(1.59);
+  static final ValueNotifier<double> liquidGlassInputLightIntensity  = ValueNotifier<double>(0.60);
+  static final ValueNotifier<double> liquidGlassInputThickness       = ValueNotifier<double>(30.0);
   // Advanced per-element: Search
-  static final ValueNotifier<double> liquidGlassSearchChromatic       = ValueNotifier<double>(0.15);
-  static final ValueNotifier<double> liquidGlassSearchRefractive      = ValueNotifier<double>(1.40);
-  static final ValueNotifier<double> liquidGlassSearchLightIntensity  = ValueNotifier<double>(0.50);
-  static final ValueNotifier<double> liquidGlassSearchThickness       = ValueNotifier<double>(24.0);
+  static final ValueNotifier<double> liquidGlassSearchChromatic       = ValueNotifier<double>(0.30);
+  static final ValueNotifier<double> liquidGlassSearchRefractive      = ValueNotifier<double>(1.59);
+  static final ValueNotifier<double> liquidGlassSearchLightIntensity  = ValueNotifier<double>(0.60);
+  static final ValueNotifier<double> liquidGlassSearchThickness       = ValueNotifier<double>(30.0);
   // Advanced per-element: AppBar buttons
-  static final ValueNotifier<double> liquidGlassAppBarChromatic       = ValueNotifier<double>(0.15);
-  static final ValueNotifier<double> liquidGlassAppBarRefractive      = ValueNotifier<double>(1.40);
-  static final ValueNotifier<double> liquidGlassAppBarLightIntensity  = ValueNotifier<double>(0.50);
-  static final ValueNotifier<double> liquidGlassAppBarThickness       = ValueNotifier<double>(20.0);
+  static final ValueNotifier<double> liquidGlassAppBarChromatic       = ValueNotifier<double>(0.30);
+  static final ValueNotifier<double> liquidGlassAppBarRefractive      = ValueNotifier<double>(1.59);
+  static final ValueNotifier<double> liquidGlassAppBarLightIntensity  = ValueNotifier<double>(0.60);
+  static final ValueNotifier<double> liquidGlassAppBarThickness       = ValueNotifier<double>(30.0);
   // Per-element on/off and quality
   static final ValueNotifier<bool>               liquidGlassOnNavBar       = ValueNotifier<bool>(true);
+  /// Big "Liquid Glass effects" switch. Off = every element's flag is off.
+  static final ValueNotifier<bool>               liquidGlassMaster         = ValueNotifier<bool>(true);
+  /// false = "General" tab (one set of values for all elements), true = "Advanced".
+  static final ValueNotifier<bool>               liquidGlassAdvancedMode   = ValueNotifier<bool>(false);
+  /// Which elements were on before the master switch was turned off
+  /// (bit 1 nav bar, 2 input, 4 search, 8 app bar); restored when it is turned on.
+  static int                                     liquidGlassSavedFlags     = 15;
   static final ValueNotifier<LiquidGlassQuality> liquidGlassNavBarQuality  = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
-  static final ValueNotifier<LiquidGlassQuality> liquidGlassCardsQuality   = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
   static final ValueNotifier<LiquidGlassQuality> liquidGlassInputQuality   = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
   static final ValueNotifier<LiquidGlassQuality> liquidGlassSearchQuality  = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
   static final ValueNotifier<LiquidGlassQuality> liquidGlassAppBarQuality  = ValueNotifier<LiquidGlassQuality>(LiquidGlassQuality.quality);
@@ -375,12 +380,6 @@ class SettingsManager {
   static final ValueNotifier<String> backgroundServiceNotificationText =
       ValueNotifier<String>('');
 
-  static final ValueNotifier<bool> proxyEnabled = ValueNotifier<bool>(false);
-  static final ValueNotifier<String> proxyType = ValueNotifier<String>('http');
-  static final ValueNotifier<String> proxyHost = ValueNotifier<String>('');
-  static final ValueNotifier<String> proxyPort = ValueNotifier<String>('');
-  static final ValueNotifier<String> proxyUsername = ValueNotifier<String>('');
-  static final ValueNotifier<String> proxyPassword = ValueNotifier<String>('');
 
   static final ValueNotifier<Locale> appLocale =
       ValueNotifier<Locale>(const Locale('en'));
@@ -396,6 +395,18 @@ class SettingsManager {
 
   // Mesh Mode — BLE offline mesh transport. Disconnects from server when active.
   static final ValueNotifier<bool> meshModeEnabled = ValueNotifier<bool>(false);
+  // Onion Mode is now the app's only transport for direct messages — there
+  // is no UI toggle to disable it (see settings_tab.dart's onion section),
+  // so this defaults to true and stays true unless explicitly cleared
+  // (e.g. by a future migration step, not by user action).
+  static final ValueNotifier<bool> onionModeEnabled = ValueNotifier<bool>(true);
+
+  /// How often the onion send queue retries messages whose recipient was
+  /// unreachable, in seconds.
+  static final ValueNotifier<int> onionRetryIntervalSeconds =
+      ValueNotifier<int>(20);
+  static final ValueNotifier<bool> onionOfflineNoticeSeen =
+      ValueNotifier<bool>(false);
 
   // WardLink — passive local-network sync of Favorites. Master toggle is off by
   // default; sync only ever happens between manually-paired (QR-confirmed) devices.
@@ -411,6 +422,7 @@ class SettingsManager {
   // personal-outgoing defaults off (new, opt-in).
   static final ValueNotifier<bool> wardLinkSyncFavorites        = ValueNotifier<bool>(true);
   static final ValueNotifier<bool> wardLinkSyncPersonalOutgoing = ValueNotifier<bool>(false);
+  static final ValueNotifier<bool> wardLinkSyncPersonalIncoming = ValueNotifier<bool>(false);
 
   // Custom download folder (null/empty = use system Downloads/ONYX).
   static final ValueNotifier<String> downloadFolderPath = ValueNotifier<String>('');
@@ -473,10 +485,6 @@ class SettingsManager {
     final liquidBlur        = prefs.getDouble(_liquidGlassBlurKey)        ?? 7.0;
     final liquidTint        = prefs.getDouble(_liquidGlassTintKey)        ?? 0.10;
     final liquidSaturation  = prefs.getDouble(_liquidGlassSaturationKey)  ?? 1.0;
-    final liquidOnCards          = prefs.getBool(_liquidGlassOnCardsKey)           ?? false;
-    final liquidCardsBlur        = prefs.getDouble(_liquidGlassCardsBlurKey)        ?? 7.0;
-    final liquidCardsTint        = prefs.getDouble(_liquidGlassCardsTintKey)        ?? 0.10;
-    final liquidCardsSaturation  = prefs.getDouble(_liquidGlassCardsSaturationKey)  ?? 1.0;
     final liquidJellyEnabled     = prefs.getBool(_liquidGlassJellyEnabledKey)        ?? false;
     final liquidOnInput          = prefs.getBool(_liquidGlassOnInputKey)             ?? false;
     final liquidInputBlur        = prefs.getDouble(_liquidGlassInputBlurKey)         ?? 7.0;
@@ -495,27 +503,25 @@ class SettingsManager {
     final liquidRefractive      = prefs.getDouble(_liquidGlassRefractiveKey)      ?? 1.59;
     final liquidLightIntensity  = prefs.getDouble(_liquidGlassLightIntensityKey)  ?? 0.60;
     final liquidThickness       = prefs.getDouble(_liquidGlassThicknessKey)       ?? 30.0;
-    final liquidCardsChromatic       = prefs.getDouble(_liquidGlassCardsChromaticKey)       ?? 0.15;
-    final liquidCardsRefractive      = prefs.getDouble(_liquidGlassCardsRefractiveKey)      ?? 1.40;
-    final liquidCardsLightIntensity  = prefs.getDouble(_liquidGlassCardsLightIntensityKey)  ?? 0.50;
-    final liquidCardsThickness       = prefs.getDouble(_liquidGlassCardsThicknessKey)       ?? 20.0;
-    final liquidInputChromatic       = prefs.getDouble(_liquidGlassInputChromaticKey)       ?? 0.15;
-    final liquidInputRefractive      = prefs.getDouble(_liquidGlassInputRefractiveKey)      ?? 1.40;
-    final liquidInputLightIntensity  = prefs.getDouble(_liquidGlassInputLightIntensityKey)  ?? 0.50;
-    final liquidInputThickness       = prefs.getDouble(_liquidGlassInputThicknessKey)       ?? 20.0;
-    final liquidSearchChromatic       = prefs.getDouble(_liquidGlassSearchChromaticKey)       ?? 0.15;
-    final liquidSearchRefractive      = prefs.getDouble(_liquidGlassSearchRefractiveKey)      ?? 1.40;
-    final liquidSearchLightIntensity  = prefs.getDouble(_liquidGlassSearchLightIntensityKey)  ?? 0.50;
-    final liquidSearchThickness       = prefs.getDouble(_liquidGlassSearchThicknessKey)       ?? 24.0;
-    final liquidAppBarChromatic       = prefs.getDouble(_liquidGlassAppBarChromaticKey)       ?? 0.15;
-    final liquidAppBarRefractive      = prefs.getDouble(_liquidGlassAppBarRefractiveKey)      ?? 1.40;
-    final liquidAppBarLightIntensity  = prefs.getDouble(_liquidGlassAppBarLightIntensityKey)  ?? 0.50;
-    final liquidAppBarThickness       = prefs.getDouble(_liquidGlassAppBarThicknessKey)       ?? 20.0;
+    final liquidInputChromatic       = prefs.getDouble(_liquidGlassInputChromaticKey)       ?? 0.30;
+    final liquidInputRefractive      = prefs.getDouble(_liquidGlassInputRefractiveKey)      ?? 1.59;
+    final liquidInputLightIntensity  = prefs.getDouble(_liquidGlassInputLightIntensityKey)  ?? 0.60;
+    final liquidInputThickness       = prefs.getDouble(_liquidGlassInputThicknessKey)       ?? 30.0;
+    final liquidSearchChromatic       = prefs.getDouble(_liquidGlassSearchChromaticKey)       ?? 0.30;
+    final liquidSearchRefractive      = prefs.getDouble(_liquidGlassSearchRefractiveKey)      ?? 1.59;
+    final liquidSearchLightIntensity  = prefs.getDouble(_liquidGlassSearchLightIntensityKey)  ?? 0.60;
+    final liquidSearchThickness       = prefs.getDouble(_liquidGlassSearchThicknessKey)       ?? 30.0;
+    final liquidAppBarChromatic       = prefs.getDouble(_liquidGlassAppBarChromaticKey)       ?? 0.30;
+    final liquidAppBarRefractive      = prefs.getDouble(_liquidGlassAppBarRefractiveKey)      ?? 1.59;
+    final liquidAppBarLightIntensity  = prefs.getDouble(_liquidGlassAppBarLightIntensityKey)  ?? 0.60;
+    final liquidAppBarThickness       = prefs.getDouble(_liquidGlassAppBarThicknessKey)       ?? 30.0;
     final liquidOnNavBar          = prefs.getBool(_liquidGlassOnNavBarKey) ?? false;
+    final liquidMaster            = prefs.getBool(_liquidGlassMasterKey) ??
+        (liquidOnNavBar || liquidOnInput || liquidOnSearch || liquidOnAppBar);
+    final liquidAdvancedMode      = prefs.getBool(_liquidGlassAdvancedModeKey) ?? false;
+    final liquidSavedFlags        = prefs.getInt(_liquidGlassSavedFlagsKey) ?? 15;
     final liquidNavBarQualityStr  = prefs.getString(_liquidGlassNavBarQualityKey) ?? 'quality';
     final liquidNavBarQualityVal  = LiquidGlassQuality.values.firstWhere((e) => e.name == liquidNavBarQualityStr, orElse: () => LiquidGlassQuality.quality);
-    final liquidCardsQualityStr   = prefs.getString(_liquidGlassCardsQualityKey)  ?? 'quality';
-    final liquidCardsQualityVal   = LiquidGlassQuality.values.firstWhere((e) => e.name == liquidCardsQualityStr,  orElse: () => LiquidGlassQuality.quality);
     final liquidInputQualityStr   = prefs.getString(_liquidGlassInputQualityKey)  ?? 'quality';
     final liquidInputQualityVal   = LiquidGlassQuality.values.firstWhere((e) => e.name == liquidInputQualityStr,  orElse: () => LiquidGlassQuality.quality);
     final liquidSearchQualityStr  = prefs.getString(_liquidGlassSearchQualityKey) ?? 'quality';
@@ -561,28 +567,9 @@ class SettingsManager {
     final backgroundServiceText_ =
         prefs.getString(_backgroundServiceTextKey) ?? '';
 
-    final proxyEnabled_ = prefs.getBool(_proxyEnabledKey) ?? false;
-    final proxyType_ = prefs.getString(_proxyTypeKey) ?? 'http';
-    final proxyHost_ = prefs.getString(_proxyHostKey) ?? '';
-    final proxyPort_ = prefs.getString(_proxyPortKey) ?? '';
-
-    String proxyUsername_ = await SecureStore.read( _proxyUsernameKey) ?? '';
-    String proxyPassword_ = await SecureStore.read( _proxyPasswordKey) ?? '';
-    if (proxyUsername_.isEmpty) {
-      final legacy = prefs.getString(_proxyUsernameKey) ?? '';
-      if (legacy.isNotEmpty) {
-        proxyUsername_ = legacy;
-        await SecureStore.write( _proxyUsernameKey, legacy);
-        await prefs.remove(_proxyUsernameKey);
-      }
-    }
-    if (proxyPassword_.isEmpty) {
-      final legacy = prefs.getString(_proxyPasswordKey) ?? '';
-      if (legacy.isNotEmpty) {
-        proxyPassword_ = legacy;
-        await SecureStore.write( _proxyPasswordKey, legacy);
-        await prefs.remove(_proxyPasswordKey);
-      }
+    for (final k in _legacyProxyPrefsKeys) {
+      await prefs.remove(k);
+      await SecureStore.delete(k);
     }
 
     chatBackground.value = path;
@@ -620,10 +607,6 @@ class SettingsManager {
     SettingsManager.liquidGlassBlur.value       = liquidBlur;
     SettingsManager.liquidGlassTint.value       = liquidTint;
     SettingsManager.liquidGlassSaturation.value = liquidSaturation;
-    SettingsManager.liquidGlassOnCards.value           = liquidOnCards;
-    SettingsManager.liquidGlassCardsBlur.value          = liquidCardsBlur;
-    SettingsManager.liquidGlassCardsTint.value          = liquidCardsTint;
-    SettingsManager.liquidGlassCardsSaturation.value    = liquidCardsSaturation;
     SettingsManager.liquidGlassJellyEnabled.value        = liquidJellyEnabled;
     SettingsManager.liquidGlassOnInput.value             = liquidOnInput;
     SettingsManager.liquidGlassInputBlur.value           = liquidInputBlur;
@@ -641,10 +624,6 @@ class SettingsManager {
     SettingsManager.liquidGlassRefractive.value          = liquidRefractive;
     SettingsManager.liquidGlassLightIntensity.value      = liquidLightIntensity;
     SettingsManager.liquidGlassThickness.value           = liquidThickness;
-    SettingsManager.liquidGlassCardsChromatic.value      = liquidCardsChromatic;
-    SettingsManager.liquidGlassCardsRefractive.value     = liquidCardsRefractive;
-    SettingsManager.liquidGlassCardsLightIntensity.value = liquidCardsLightIntensity;
-    SettingsManager.liquidGlassCardsThickness.value      = liquidCardsThickness;
     SettingsManager.liquidGlassInputChromatic.value      = liquidInputChromatic;
     SettingsManager.liquidGlassInputRefractive.value     = liquidInputRefractive;
     SettingsManager.liquidGlassInputLightIntensity.value = liquidInputLightIntensity;
@@ -659,8 +638,10 @@ class SettingsManager {
     SettingsManager.liquidGlassAppBarThickness.value      = liquidAppBarThickness;
     SettingsManager.navBarStyle.value                  = NavBarStyle.liquid;
     SettingsManager.liquidGlassOnNavBar.value          = liquidOnNavBar;
+    SettingsManager.liquidGlassMaster.value            = liquidMaster;
+    SettingsManager.liquidGlassAdvancedMode.value      = liquidAdvancedMode;
+    SettingsManager.liquidGlassSavedFlags              = liquidSavedFlags;
     SettingsManager.liquidGlassNavBarQuality.value     = liquidNavBarQualityVal;
-    SettingsManager.liquidGlassCardsQuality.value      = liquidCardsQualityVal;
     SettingsManager.liquidGlassInputQuality.value      = liquidInputQualityVal;
     SettingsManager.liquidGlassSearchQuality.value     = liquidSearchQualityVal;
     SettingsManager.liquidGlassAppBarQuality.value     = liquidAppBarQualityVal;
@@ -687,12 +668,6 @@ class SettingsManager {
     SettingsManager.backgroundServiceEnabled.value = backgroundServiceEnabled_;
     SettingsManager.backgroundServiceNotificationText.value =
         backgroundServiceText_;
-    SettingsManager.proxyEnabled.value = proxyEnabled_;
-    SettingsManager.proxyType.value = proxyType_;
-    SettingsManager.proxyHost.value = proxyHost_;
-    SettingsManager.proxyPort.value = proxyPort_;
-    SettingsManager.proxyUsername.value = proxyUsername_;
-    SettingsManager.proxyPassword.value = proxyPassword_;
     SettingsManager.enableLogging.value = enableLogging_;
     SettingsManager.showDisplayNameInGroups.value = showDisplayNameInGroups_;
     SettingsManager.pinEnabled.value = prefs.getBool(_pinEnabledKey) ?? false;
@@ -713,7 +688,14 @@ class SettingsManager {
     SettingsManager.graphPreservePosition.value = prefs.getBool(_graphPreservePositionKey) ?? true;
 
     SettingsManager.meshModeEnabled.value          = prefs.getBool(_meshModeEnabledKey) ?? false;
-    SettingsManager.wardLinkEnabled.value          = prefs.getBool(_wardLinkEnabledKey) ?? false;
+    // Onion mode is the only transport now; the toggle is gone, so a stale
+    // stored `false` must not leave the app without any network link.
+    SettingsManager.onionModeEnabled.value         = true;
+    SettingsManager.onionRetryIntervalSeconds.value =
+        (prefs.getInt(_onionRetryIntervalKey) ?? 20).clamp(5, 600);
+    SettingsManager.onionOfflineNoticeSeen.value =
+        prefs.getBool(_onionOfflineNoticeSeenKey) ?? false;
+    SettingsManager.wardLinkEnabled.value         = prefs.getBool(_wardLinkEnabledKey) ?? false;
     SettingsManager.wardLinkMaxFileSizeMb.value    = prefs.getInt(_wardLinkMaxFileSizeMbKey) ?? 2048;
     SettingsManager.wardLinkBubbleOnlyErrors.value = prefs.getBool(_wardLinkBubbleOnlyErrorsKey) ?? false;
     SettingsManager.wardLinkBubbleSize.value       = prefs.getInt(_wardLinkBubbleSizeKey) ?? 48;
@@ -721,6 +703,8 @@ class SettingsManager {
         prefs.getBool(_wardLinkSyncFavoritesKey) ?? true;
     SettingsManager.wardLinkSyncPersonalOutgoing.value =
         prefs.getBool(_wardLinkSyncPersonalOutgoingKey) ?? false;
+    SettingsManager.wardLinkSyncPersonalIncoming.value =
+        prefs.getBool(_wardLinkSyncPersonalIncomingKey) ?? false;
 
     SettingsManager.autoLoadVideoEnabled.value = prefs.getBool(_autoLoadVideoKey) ?? false;
 
@@ -989,6 +973,24 @@ class SettingsManager {
     liquidGlassQuality.value = val;
   }
 
+  static Future<void> setLiquidGlassMaster(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_liquidGlassMasterKey, val);
+    liquidGlassMaster.value = val;
+  }
+
+  static Future<void> setLiquidGlassAdvancedMode(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_liquidGlassAdvancedModeKey, val);
+    liquidGlassAdvancedMode.value = val;
+  }
+
+  static Future<void> setLiquidGlassSavedFlags(int val) async {
+    final prefs = await _getPrefs();
+    await prefs.setInt(_liquidGlassSavedFlagsKey, val);
+    liquidGlassSavedFlags = val;
+  }
+
   static Future<void> setLiquidGlassOnNavBar(bool val) async {
     final prefs = await _getPrefs();
     await prefs.setBool(_liquidGlassOnNavBarKey, val);
@@ -999,12 +1001,6 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setString(_liquidGlassNavBarQualityKey, val.name);
     liquidGlassNavBarQuality.value = val;
-  }
-
-  static Future<void> setLiquidGlassCardsQuality(LiquidGlassQuality val) async {
-    final prefs = await _getPrefs();
-    await prefs.setString(_liquidGlassCardsQualityKey, val.name);
-    liquidGlassCardsQuality.value = val;
   }
 
   static Future<void> setLiquidGlassInputQuality(LiquidGlassQuality val) async {
@@ -1047,30 +1043,6 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setDouble(_liquidGlassSaturationKey, val);
     liquidGlassSaturation.value = val;
-  }
-
-  static Future<void> setLiquidGlassOnCards(bool val) async {
-    final prefs = await _getPrefs();
-    await prefs.setBool(_liquidGlassOnCardsKey, val);
-    liquidGlassOnCards.value = val;
-  }
-
-  static Future<void> setLiquidGlassCardsBlur(double val) async {
-    final prefs = await _getPrefs();
-    await prefs.setDouble(_liquidGlassCardsBlurKey, val);
-    liquidGlassCardsBlur.value = val;
-  }
-
-  static Future<void> setLiquidGlassCardsTint(double val) async {
-    final prefs = await _getPrefs();
-    await prefs.setDouble(_liquidGlassCardsTintKey, val);
-    liquidGlassCardsTint.value = val;
-  }
-
-  static Future<void> setLiquidGlassCardsSaturation(double val) async {
-    final prefs = await _getPrefs();
-    await prefs.setDouble(_liquidGlassCardsSaturationKey, val);
-    liquidGlassCardsSaturation.value = val;
   }
 
   static Future<void> setLiquidGlassJellyEnabled(bool val) async {
@@ -1173,30 +1145,6 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setDouble(_liquidGlassThicknessKey, val);
     liquidGlassThickness.value = val;
-  }
-
-  static Future<void> setLiquidGlassCardsChromatic(double val) async {
-    final prefs = await _getPrefs();
-    await prefs.setDouble(_liquidGlassCardsChromaticKey, val);
-    liquidGlassCardsChromatic.value = val;
-  }
-
-  static Future<void> setLiquidGlassCardsRefractive(double val) async {
-    final prefs = await _getPrefs();
-    await prefs.setDouble(_liquidGlassCardsRefractiveKey, val);
-    liquidGlassCardsRefractive.value = val;
-  }
-
-  static Future<void> setLiquidGlassCardsLightIntensity(double val) async {
-    final prefs = await _getPrefs();
-    await prefs.setDouble(_liquidGlassCardsLightIntensityKey, val);
-    liquidGlassCardsLightIntensity.value = val;
-  }
-
-  static Future<void> setLiquidGlassCardsThickness(double val) async {
-    final prefs = await _getPrefs();
-    await prefs.setDouble(_liquidGlassCardsThicknessKey, val);
-    liquidGlassCardsThickness.value = val;
   }
 
   static Future<void> setLiquidGlassInputChromatic(double val) async {
@@ -1397,40 +1345,6 @@ class SettingsManager {
     backgroundServiceNotificationText.value = val;
   }
 
-  static Future<void> setProxyEnabled(bool val) async {
-    final prefs = await _getPrefs();
-    await prefs.setBool(_proxyEnabledKey, val);
-    proxyEnabled.value = val;
-  }
-
-  static Future<void> setProxyType(String val) async {
-    final prefs = await _getPrefs();
-    await prefs.setString(_proxyTypeKey, val);
-    proxyType.value = val;
-  }
-
-  static Future<void> setProxyHost(String val) async {
-    final prefs = await _getPrefs();
-    await prefs.setString(_proxyHostKey, val);
-    proxyHost.value = val;
-  }
-
-  static Future<void> setProxyPort(String val) async {
-    final prefs = await _getPrefs();
-    await prefs.setString(_proxyPortKey, val);
-    proxyPort.value = val;
-  }
-
-  static Future<void> setProxyUsername(String val) async {
-    await SecureStore.write( _proxyUsernameKey, val);
-    proxyUsername.value = val;
-  }
-
-  static Future<void> setProxyPassword(String val) async {
-    await SecureStore.write( _proxyPasswordKey, val);
-    proxyPassword.value = val;
-  }
-
   static Future<void> setEnableLogging(bool val) async {
     final prefs = await _getPrefs();
     await prefs.setBool(_enableLoggingKey, val);
@@ -1616,6 +1530,25 @@ class SettingsManager {
     meshModeEnabled.value = val;
   }
 
+  static Future<void> setOnionModeEnabled(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_onionModeEnabledKey, val);
+    onionModeEnabled.value = val;
+  }
+
+  static Future<void> setOnionRetryIntervalSeconds(int val) async {
+    final v = val.clamp(5, 600);
+    final prefs = await _getPrefs();
+    await prefs.setInt(_onionRetryIntervalKey, v);
+    onionRetryIntervalSeconds.value = v;
+  }
+
+  static Future<void> setOnionOfflineNoticeSeen(bool val) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(_onionOfflineNoticeSeenKey, val);
+    onionOfflineNoticeSeen.value = val;
+  }
+
   // ── WardLink ────────────────────────────────────────────────────────────────
 
   static Future<void> setWardLinkEnabled(bool val) async {
@@ -1646,6 +1579,12 @@ class SettingsManager {
     final prefs = await _getPrefs();
     await prefs.setBool(_wardLinkSyncFavoritesKey, val);
     wardLinkSyncFavorites.value = val;
+  }
+
+  static Future<void> setWardLinkSyncPersonalIncoming(bool val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_wardLinkSyncPersonalIncomingKey, val);
+    wardLinkSyncPersonalIncoming.value = val;
   }
 
   static Future<void> setWardLinkSyncPersonalOutgoing(bool val) async {

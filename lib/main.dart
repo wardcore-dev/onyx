@@ -37,6 +37,7 @@ import 'managers/lock_manager.dart';
 import 'managers/trash_manager.dart';
 import 'managers/account_manager.dart';
 import 'managers/onyx_tray_manager.dart';
+import 'services/onion/onion_transport_service.dart';
 import 'models/app_themes.dart';
 import 'widgets/debug_overlay_v2.dart';
 import 'widgets/wardlink_bubble.dart';
@@ -52,7 +53,7 @@ import 'screens/call_overlay.dart';
 import 'utils/fps_booster.dart';
 import 'utils/performance_initializer.dart';
 import 'utils/performance_config.dart';
-import 'utils/proxy_manager.dart';
+import 'utils/tor_routing.dart';
 import 'utils/cert_pinning.dart';
 import 'utils/app_paths.dart';
 import 'utils/media_cache.dart';
@@ -263,15 +264,10 @@ void main() async {
   await MediaCache.instance.init();
   await AppPaths.ensureInit();
 
-  if (SettingsManager.proxyEnabled.value) {
-    ProxyManager.deferToFirstConnect();
-    applyCertPinning();
-    appLog('[proxy] Proxy deferred — will apply after first WS connect');
-  } else {
-    ProxyManager.applyFromSettings();
-    applyCertPinning();
-    appLog('[proxy] Proxy settings applied (enabled=false)');
-  }
+  applyCertPinning();
+  // External servers / .onion hosts go through Tor; the old central-server
+  // hosts are refused (see utils/tor_routing.dart).
+  TorRouting.install();
   try {
     final cur = await AccountManager.getCurrentAccount();
     await SettingsManager.setAccountContext(cur);
@@ -585,6 +581,17 @@ class _ElegantMessengerState extends State<ElegantMessenger> with WindowListener
       debugPrint('[Tray] Offline status sent before close');
     } else {
       debugPrint('[Tray]  Before close FAILED - RootScreen not ready (currentState is null)');
+    }
+
+    // Stop the bundled tor.exe subprocess (if Onion Mode is on) on a normal
+    // app exit, so it doesn't linger as an orphaned process after ONYX.exe
+    // closes. This only covers the graceful-exit path (tray "Close"); an
+    // abrupt kill is covered separately by the Windows job-object guard in
+    // onyx_tor's tor_bootstrap.dart.
+    try {
+      await OnionTransportService.instance.stop();
+    } catch (e) {
+      debugPrint('[Tray] Failed to stop Onion Mode before close: $e');
     }
   }
 

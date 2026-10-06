@@ -2,7 +2,7 @@
 import 'dart:io';
 import 'package:crypto/crypto.dart' as dart_crypto;
 import 'package:flutter/foundation.dart';
-import 'proxy_manager.dart';
+import 'tor_routing.dart';
 
 const String kPinnedHost = 'api-onyx.wardcore.com';
 
@@ -14,7 +14,8 @@ void applyCertPinning() {
     return;
   }
   
-  HttpOverrides.global = _CertPinningOverrides(ProxyManager.lastApplied);
+  HttpOverrides.global = _CertPinningOverrides(null);
+  TorRouting.install();
   debugPrint('[cert-pin] Enabled — pinning $kPinnedHost');
 }
 

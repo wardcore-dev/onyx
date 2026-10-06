@@ -1,34 +1,15 @@
 // lib/screens/cache_manager_screen.dart
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import '../utils/onyx_base_dir.dart' show getOnyxSupportDirectory;
-import '../globals.dart';
 import '../l10n/app_localizations.dart';
-import '../managers/settings_manager.dart';
 import '../utils/media_cache.dart';
-import '../widgets/apple_segmented_tabs.dart';
 import '../widgets/onyx_dialog.dart';
 
 // ─── Data models ──────────────────────────────────────────────────────────────
-
-class _MediaEntry {
-  final String filename;
-  final int size;
-  final DateTime? lastModified;
-  const _MediaEntry({required this.filename, required this.size, this.lastModified});
-  factory _MediaEntry.fromJson(Map<String, dynamic> j) => _MediaEntry(
-        filename: j['filename'] as String,
-        size: (j['size'] as num?)?.toInt() ?? 0,
-        lastModified: j['last_modified'] != null
-            ? DateTime.tryParse(j['last_modified'] as String)
-            : null,
-      );
-}
 
 class _LocalFile {
   final String filename; // without .enc suffix
@@ -66,8 +47,6 @@ const _localTypes = [
   _LocalType('archive_cache',  Icons.folder_zip_outlined),
   _LocalType('data_cache',     Icons.storage_outlined),
 ];
-
-const _serverTypes = ['image', 'voice', 'video', 'file', 'avatar'];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -123,7 +102,7 @@ List<_LocalTypeInfo> _scanLocalCacheDirs(String basePath) {
 
 // ─── Public entry point ────────────────────────────────────────────────────────
 
-Future<void> showCacheManagerSheet(BuildContext context, {String? token}) {
+Future<void> showCacheManagerSheet(BuildContext context) {
   return showGeneralDialog(
     context: context,
     barrierDismissible: true,
@@ -140,24 +119,20 @@ Future<void> showCacheManagerSheet(BuildContext context, {String? token}) {
         ),
       );
     },
-    pageBuilder: (_, __, ___) => _CacheManagerSheet(token: token),
+    pageBuilder: (_, __, ___) => const _CacheManagerSheet(),
   );
 }
 
 // ─── Sheet widget ──────────────────────────────────────────────────────────────
 
 class _CacheManagerSheet extends StatefulWidget {
-  final String? token;
-  const _CacheManagerSheet({this.token});
+  const _CacheManagerSheet();
 
   @override
   State<_CacheManagerSheet> createState() => _CacheManagerSheetState();
 }
 
-class _CacheManagerSheetState extends State<_CacheManagerSheet>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabController;
-
+class _CacheManagerSheetState extends State<_CacheManagerSheet> {
   // Local state
   bool _localLoading = true;
   List<_LocalTypeInfo> _localInfo = [];
@@ -172,30 +147,9 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
   // Image thumbnail cache (only for image_cache type)
   final Map<String, Uint8List?> _thumbnailCache = {};
 
-  // Server state
-  bool _serverLoading = false;
-  String? _serverError;
-  Map<String, List<_MediaEntry>> _serverFiles = {};
-  int? _quotaUsedBytes;
-  int? _quotaLimitBytes;
-
-  // Server expand/select
-  String? _expandedServerType;
-  final Set<String> _selectedServer = {};
-  bool _deletingServerSelected = false;
-
-  // Avatar preview
-  Uint8List? _cachedAvatarBytes;
-
   // Deferred loading — starts only after the sheet opening animation completes
   bool _loadingStarted = false;
   Animation<double>? _routeAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-  }
 
   @override
   void didChangeDependencies() {
@@ -222,13 +176,11 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
     if (_loadingStarted || !mounted) return;
     _loadingStarted = true;
     _loadLocal();
-    if (widget.token != null) _loadServer();
   }
 
   @override
   void dispose() {
     _routeAnimation?.removeStatusListener(_onRouteAnimation);
-    _tabController.dispose();
     super.dispose();
   }
 
@@ -376,195 +328,6 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
     }
   }
 
-  // ── Server loading ───────────────────────────────────────────────────────────
-
-  Future<void> _loadServer() async {
-    if (widget.token == null) return;
-    setState(() { _serverLoading = true; _serverError = null; });
-    try {
-      final results = await Future.wait([
-        http.get(
-          Uri.parse('$serverBase/me/media-list'),
-          headers: {'authorization': 'Bearer ${widget.token}'},
-        ),
-        http.get(
-          Uri.parse('$serverBase/me/storage-quota'),
-          headers: {'authorization': 'Bearer ${widget.token}'},
-        ),
-      ]);
-      if (!mounted) return;
-
-      final mediaRes = results[0];
-      final quotaRes = results[1];
-
-      if (mediaRes.statusCode == 200) {
-        final data = jsonDecode(mediaRes.body) as Map<String, dynamic>;
-        final map = <String, List<_MediaEntry>>{};
-        for (final type in _serverTypes) {
-          final raw = (data[type] as List?) ?? [];
-          map[type] = raw
-              .map((e) => _MediaEntry.fromJson(e as Map<String, dynamic>))
-              .toList()
-            ..sort((a, b) => (b.lastModified ?? DateTime(0))
-                .compareTo(a.lastModified ?? DateTime(0)));
-        }
-        // "Used" is derived from the real per-file listing above (same
-        // source the per-type subtitles use) rather than the server's
-        // /me/storage-quota `used_bytes`, which is a separately-maintained
-        // running counter that can drift out of sync with what's actually
-        // stored — that mismatch is exactly what showed up as e.g. a 56.3 MB
-        // "Images" group next to a "194 KB / 100 MB" quota bar. Avatars are
-        // excluded, matching the server's own quota accounting.
-        final usedBytes = map.entries
-            .where((e) => e.key != 'avatar')
-            .fold<int>(0, (sum, e) => sum + e.value.fold(0, (s, f) => s + f.size));
-        int? limitBytes;
-        if (quotaRes.statusCode == 200) {
-          final q = jsonDecode(quotaRes.body) as Map<String, dynamic>;
-          limitBytes = (q['quota_bytes'] as num?)?.toInt();
-        }
-        setState(() {
-          _serverFiles = map;
-          _quotaUsedBytes = usedBytes;
-          _quotaLimitBytes = limitBytes;
-          _serverLoading = false;
-        });
-      } else {
-        final detail =
-            (jsonDecode(mediaRes.body) as Map?)?['detail'] ?? 'Error ${mediaRes.statusCode}';
-        setState(() { _serverError = detail.toString(); _serverLoading = false; });
-      }
-    } catch (e) {
-      if (mounted) setState(() { _serverError = e.toString(); _serverLoading = false; });
-    }
-  }
-
-  Future<void> _clearServerType(String type, String typeName) async {
-    final l = AppLocalizations.of(context);
-    final ok = await _confirm(l.cacheClearTabTitle, l.cacheClearTabContent(typeName));
-    if (!ok || !mounted) return;
-    final entries = List<_MediaEntry>.from(_serverFiles[type] ?? []);
-    int deleted = 0;
-    for (final entry in entries) {
-      try {
-        final res = type == 'avatar'
-            ? await http.delete(Uri.parse('$serverBase/media/avatar/me'),
-                headers: {'authorization': 'Bearer ${widget.token}'})
-            : await http.delete(Uri.parse('$serverBase/media/single'),
-                headers: {
-                  'authorization': 'Bearer ${widget.token}',
-                  'content-type': 'application/json',
-                },
-                body: jsonEncode({'filename': entry.filename, 'type': type}));
-        if (res.statusCode == 200) {
-          deleted++;
-          if (mounted) setState(() => _serverFiles[type]?.remove(entry));
-        }
-      } catch (_) {}
-    }
-    if (mounted) _showSnack(AppLocalizations.of(context).cacheFilesDeleted(deleted));
-  }
-
-  void _toggleExpandServer(String type) {
-    setState(() {
-      if (_expandedServerType == type) {
-        _selectedServer.removeWhere((k) => k.startsWith('${type}__'));
-        _expandedServerType = null;
-      } else {
-        if (_expandedServerType != null) {
-          _selectedServer.removeWhere((k) => k.startsWith('${_expandedServerType}__'));
-        }
-        _expandedServerType = type;
-      }
-    });
-    if (type == 'avatar' && _cachedAvatarBytes == null) {
-      _loadAvatarBytes();
-    }
-  }
-
-  void _toggleSelectServer(String key) {
-    setState(() {
-      if (_selectedServer.contains(key)) {
-        _selectedServer.remove(key);
-      } else {
-        _selectedServer.add(key);
-      }
-    });
-  }
-
-  Future<void> _deleteSelectedServer() async {
-    if (_selectedServer.isEmpty) return;
-    setState(() => _deletingServerSelected = true);
-    final toDelete = Set<String>.from(_selectedServer);
-    setState(() => _selectedServer.clear());
-    int deleted = 0;
-    for (final key in toDelete) {
-      final idx = key.indexOf('__');
-      if (idx < 0) continue;
-      final type = key.substring(0, idx);
-      final filename = key.substring(idx + 2);
-      try {
-        final res = type == 'avatar'
-            ? await http.delete(
-                Uri.parse('$serverBase/media/avatar/me'),
-                headers: {'authorization': 'Bearer ${widget.token}'},
-              )
-            : await http.delete(
-                Uri.parse('$serverBase/media/single'),
-                headers: {
-                  'authorization': 'Bearer ${widget.token}',
-                  'content-type': 'application/json',
-                },
-                body: jsonEncode({'filename': filename, 'type': type}),
-              );
-        if (res.statusCode == 200) {
-          deleted++;
-          if (mounted) {
-            setState(() => _serverFiles[type]?.removeWhere((e) => e.filename == filename));
-          }
-        }
-      } catch (_) {}
-    }
-    if (mounted) {
-      setState(() => _deletingServerSelected = false);
-      _showSnack(AppLocalizations.of(context).cacheFilesDeleted(deleted));
-    }
-  }
-
-  Future<void> _loadAvatarBytes() async {
-    if (_cachedAvatarBytes != null || widget.token == null) return;
-    try {
-      final res = await http.get(
-        Uri.parse('$serverBase/media/avatar/me'),
-        headers: {'authorization': 'Bearer ${widget.token}'},
-      );
-      if (res.statusCode == 200 && res.bodyBytes.isNotEmpty && mounted) {
-        setState(() => _cachedAvatarBytes = res.bodyBytes);
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _clearAllServer() async {
-    final l = AppLocalizations.of(context);
-    final ok = await _confirm(l.clearServerCacheTitle, l.clearServerCacheContent);
-    if (!ok || !mounted) return;
-    try {
-      final res = await http.post(
-        Uri.parse('$serverBase/me/cleanup'),
-        headers: {'authorization': 'Bearer ${widget.token}'},
-      );
-      if (!mounted) return;
-      if (res.statusCode == 200) {
-        setState(() {
-          for (final t in _serverTypes) {
-            _serverFiles[t] = [];
-          }
-        });
-        _showSnack(l.serverMediaCleared);
-      }
-    } catch (_) {}
-  }
-
   // ── Shared helpers ───────────────────────────────────────────────────────────
 
   Future<bool> _confirm(String title, String content) async {
@@ -580,35 +343,6 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
     return confirmed ?? false;
   }
 
-  void _showSnack(String text) {
-    if (!mounted) return;
-    final cs = Theme.of(context).colorScheme;
-    final bg = SettingsManager.getElementColor(
-      cs.surfaceContainerHighest,
-      SettingsManager.elementBrightness.value,
-    ).withValues(alpha: SettingsManager.elementOpacity.value);
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(text,
-          style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14),
-          textAlign: TextAlign.center),
-      backgroundColor: bg,
-      behavior: SnackBarBehavior.floating,
-      duration: const Duration(seconds: 2),
-    ));
-  }
-
-  String _serverTypeLabel(String type, AppLocalizations l) {
-    switch (type) {
-      case 'image':  return l.cacheTabImages;
-      case 'voice':  return l.cacheTabVoice;
-      case 'video':  return l.cacheTabVideo;
-      case 'file':   return l.cacheTabFiles;
-      case 'avatar': return l.cacheTabAvatars;
-      default:       return type;
-    }
-  }
-
   String _localTypeLabel(String dirName, AppLocalizations l) {
     switch (dirName) {
       case 'image_cache': return l.cacheTabImages;
@@ -620,17 +354,6 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
       case 'archive_cache': return l.cacheTabArchives;
       case 'data_cache': return l.cacheTabData;
       default: return dirName;
-    }
-  }
-
-  IconData _serverTypeIcon(String type) {
-    switch (type) {
-      case 'image':  return Icons.image_outlined;
-      case 'voice':  return Icons.mic_outlined;
-      case 'video':  return Icons.videocam_outlined;
-      case 'file':   return Icons.insert_drive_file_outlined;
-      case 'avatar': return Icons.account_circle_outlined;
-      default:       return Icons.attach_file;
     }
   }
 
@@ -704,32 +427,9 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
                     ],
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-                  child: AppleSegmentedTabs(
-                    controller: _tabController,
-                    segments: [
-                      AppleSegment(
-                        icon: (Platform.isAndroid || Platform.isIOS)
-                            ? Icons.phone_android
-                            : Icons.computer,
-                        label: l.localCacheTab,
-                      ),
-                      AppleSegment(
-                        icon: Icons.cloud_outlined,
-                        label: l.serverCacheTab,
-                      ),
-                    ],
-                  ),
-                ),
+                const SizedBox(height: 6),
                 Flexible(
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: [
-                      _buildLocalTab(l, cs),
-                      _buildServerTab(l, cs),
-                    ],
-                  ),
+                  child: _buildLocalTab(l, cs),
                 ),
               ],
             ),
@@ -1068,324 +768,4 @@ class _CacheManagerSheetState extends State<_CacheManagerSheet>
     );
   }
 
-  // ── Quota bar ────────────────────────────────────────────────────────────────
-
-  Widget _buildQuotaBar(ColorScheme cs) {
-    final used = _quotaUsedBytes ?? 0;
-    final limit = _quotaLimitBytes ?? 1;
-    final fraction = (used / limit).clamp(0.0, 1.0);
-    final pct = (fraction * 100).toStringAsFixed(1);
-    final Color barColor = fraction >= 0.9
-        ? Colors.red
-        : fraction >= 0.7
-            ? Colors.orange
-            : cs.primary;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.storage_outlined, size: 13,
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
-              const SizedBox(width: 4),
-              Text(
-                '${_fmtSize(used)} / ${_fmtSize(limit)}',
-                style: TextStyle(
-                    fontSize: 12,
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.85)),
-              ),
-              const Spacer(),
-              Text(
-                '$pct%',
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: barColor),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(
-              value: fraction,
-              minHeight: 5,
-              backgroundColor: cs.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation<Color>(barColor),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Server tab ───────────────────────────────────────────────────────────────
-
-  Widget _buildServerTab(AppLocalizations l, ColorScheme cs) {
-    if (widget.token == null) {
-      return Center(
-          child: Text(l.notLoggedIn,
-              style: const TextStyle(color: Colors.grey)));
-    }
-    if (_serverLoading) return const Center(child: CircularProgressIndicator());
-    if (_serverError != null) {
-      return Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.error_outline,
-              size: 40, color: Colors.red.withValues(alpha: 0.7)),
-          const SizedBox(height: 10),
-          Text(_serverError!,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.grey)),
-          const SizedBox(height: 14),
-          FilledButton.tonal(onPressed: _loadServer, child: Text(l.retry)),
-        ]),
-      );
-    }
-
-    final totalFiles =
-        _serverFiles.values.fold<int>(0, (s, l) => s + l.length);
-
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '$totalFiles ${totalFiles == 1 ? 'file' : 'files'} on server',
-                  style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.refresh, size: 18),
-                tooltip: 'Refresh',
-                visualDensity: VisualDensity.compact,
-                onPressed: _loadServer,
-              ),
-              if (totalFiles > 0)
-                TextButton.icon(
-                  icon: const Icon(Icons.delete_forever, size: 16),
-                  label: Text(l.clearAll),
-                  style: TextButton.styleFrom(
-                      foregroundColor: Colors.red,
-                      visualDensity: VisualDensity.compact),
-                  onPressed: _clearAllServer,
-                ),
-            ],
-          ),
-        ),
-        if (_quotaLimitBytes != null) _buildQuotaBar(cs),
-        Expanded(
-          child: totalFiles == 0
-              ? Center(
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.cloud_done_outlined,
-                        size: 40,
-                        color: Colors.green.withValues(alpha: 0.7)),
-                    const SizedBox(height: 10),
-                    Text(l.cacheNoFiles,
-                        style: const TextStyle(color: Colors.grey)),
-                  ]),
-                )
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                  children: _serverTypes
-                      .map((t) => _buildServerGroup(t, l, cs))
-                      .toList(),
-                ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildServerGroup(String type, AppLocalizations l, ColorScheme cs) {
-    final entries = _serverFiles[type] ?? [];
-    final totalBytes = entries.fold<int>(0, (s, e) => s + e.size);
-    final label = _serverTypeLabel(type, l);
-    final isExpanded = _expandedServerType == type;
-    final isEmpty = entries.isEmpty;
-    final selectedInType =
-        _selectedServer.where((k) => k.startsWith('${type}__')).length;
-    final allSelected =
-        !isEmpty && isExpanded && selectedInType == entries.length;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Material(
-        color: cs.surfaceContainerHighest.withValues(alpha: isEmpty ? 0.18 : 0.35),
-        borderRadius: BorderRadius.circular(28),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ListTile(
-          leading: Icon(_serverTypeIcon(type), size: 22,
-              color: isEmpty ? cs.onSurfaceVariant.withValues(alpha: 0.35) : null),
-          title: Text(label,
-              style: TextStyle(
-                  color: isEmpty
-                      ? cs.onSurfaceVariant.withValues(alpha: 0.4)
-                      : null)),
-          subtitle: Text(
-            isEmpty
-                ? l.cacheNoFiles
-                : '${entries.length} ${entries.length == 1 ? 'file' : 'files'} · ${_fmtSize(totalBytes)}',
-            style: const TextStyle(fontSize: 12, color: Colors.grey),
-          ),
-          onTap: isEmpty ? null : () => _toggleExpandServer(type),
-          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-            if (!isEmpty)
-              IconButton(
-                icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-                color: Colors.red.withValues(alpha: 0.7),
-                tooltip: l.cacheClearTab,
-                visualDensity: VisualDensity.compact,
-                onPressed: () => _clearServerType(type, label),
-              ),
-            if (!isEmpty)
-              AnimatedRotation(
-                turns: isExpanded ? 0.5 : 0.0,
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeInOut,
-                child: Icon(Icons.expand_more,
-                    size: 20, color: cs.onSurfaceVariant),
-              ),
-          ]),
-        ),
-
-        // ── Expandable content (lazy + animated) ──
-        ClipRect(
-          child: AnimatedSize(
-            duration: const Duration(milliseconds: 240),
-            curve: Curves.easeInOut,
-            alignment: Alignment.topCenter,
-            child: (isExpanded && !isEmpty)
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 4),
-                        color: cs.surfaceContainerHighest
-                            .withValues(alpha: 0.45),
-                        child: Row(children: [
-                          TextButton(
-                            style: TextButton.styleFrom(
-                                visualDensity: VisualDensity.compact),
-                            onPressed: () => setState(() {
-                              if (allSelected) {
-                                _selectedServer.removeWhere(
-                                    (k) => k.startsWith('${type}__'));
-                              } else {
-                                _selectedServer.removeWhere(
-                                    (k) => k.startsWith('${type}__'));
-                                _selectedServer.addAll(entries
-                                    .map((e) => '${type}__${e.filename}'));
-                              }
-                            }),
-                            child: Text(
-                                allSelected
-                                    ? l.cacheDeselectAll
-                                    : l.cacheSelectAll,
-                                style: const TextStyle(fontSize: 12)),
-                          ),
-                          const Spacer(),
-                          if (selectedInType > 0) ...[
-                            Text('$selectedInType ${l.cacheSelected}',
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    color: cs.onSurfaceVariant)),
-                            const SizedBox(width: 8),
-                            _deletingServerSelected
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2))
-                                : FilledButton.tonal(
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor: Colors.red
-                                          .withValues(alpha: 0.12),
-                                      foregroundColor: Colors.red,
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                    onPressed: _deleteSelectedServer,
-                                    child: Text(
-                                        '${l.delete} ($selectedInType)',
-                                        style:
-                                            const TextStyle(fontSize: 12)),
-                                  ),
-                          ],
-                        ]),
-                      ),
-                      ...entries.map((e) => _buildServerFileTile(type, e, cs)),
-                    ],
-                  )
-                : const SizedBox(),
-          ),
-        ),
-      ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildServerFileTile(String type, _MediaEntry entry, ColorScheme cs) {
-    final key = '${type}__${entry.filename}';
-    final isSelected = _selectedServer.contains(key);
-    final label = _labelForFilename(entry.filename);
-
-    Widget? leadingWidget;
-    if (type == 'avatar' && _cachedAvatarBytes != null) {
-      leadingWidget = SizedBox(
-        width: 36,
-        height: 36,
-        child: ClipOval(
-          child: Image.memory(_cachedAvatarBytes!,
-              fit: BoxFit.cover, gaplessPlayback: true),
-        ),
-      );
-    } else if (type == 'image' &&
-        _localBasePath != null &&
-        File('$_localBasePath/image_cache/${entry.filename}.enc').existsSync()) {
-      leadingWidget = SizedBox(
-        width: 36,
-        height: 36,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: FutureBuilder<Uint8List?>(
-            future: _loadThumbnail(entry.filename),
-            builder: (_, snap) => snap.data != null
-                ? Image.memory(snap.data!, fit: BoxFit.cover, gaplessPlayback: true)
-                : Icon(_serverTypeIcon(type), size: 20),
-          ),
-        ),
-      );
-    }
-
-    return ListTile(
-      contentPadding: const EdgeInsets.only(left: 56, right: 16),
-      leading: leadingWidget,
-      title: Text(label,
-          style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        _fmtSize(entry.size) +
-            (entry.lastModified != null
-                ? '  ·  ${_fmtDate(entry.lastModified!)}'
-                : ''),
-        style: const TextStyle(fontSize: 11, color: Colors.grey),
-      ),
-      onTap: () => _toggleSelectServer(key),
-      trailing: isSelected
-          ? Icon(Icons.check_circle, color: cs.primary, size: 20)
-          : Icon(Icons.radio_button_unchecked,
-              size: 20, color: cs.onSurfaceVariant.withValues(alpha: 0.35)),
-    );
-  }
 }
-

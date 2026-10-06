@@ -334,6 +334,10 @@ class ImageLoader {
       final f = File('${AppPaths.lanMedia}/${filename.substring(6)}');
       return await f.exists() ? f : null;
 
+    } else if (filename.startsWith('onion://')) {
+      final f = File('${AppPaths.onionMedia}/${filename.substring(8)}');
+      return await f.exists() ? f : null;
+
     } else if (filename.startsWith('file://')) {
       final f = File(filename.substring(7));
       return await f.exists() ? f : null;
@@ -374,6 +378,17 @@ class ImageLoader {
     // fav:// / lan:// / file:// never download — they're local-only.
     if (filename.startsWith('fav://') || filename.startsWith('lan://') || filename.startsWith('file://')) {
       return null;
+    }
+    if (filename.startsWith('onion://')) {
+      // Onion media arrives inline over its own Tor stream, sent separately
+      // from (and not strictly ordered with) the pointer message that names
+      // it -- poll briefly instead of failing immediately, mirroring
+      // ImageMessageWidget's onion handling.
+      final f = File('${AppPaths.onionMedia}/${filename.substring(8)}');
+      for (var i = 0; i < 10 && !(await f.exists()); i++) {
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+      return await f.exists() ? f : null;
     }
     final root = rootScreenKey.currentState;
     if (root == null) return null;

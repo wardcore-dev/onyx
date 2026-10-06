@@ -8,6 +8,10 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 
 const double kOnyxDialogRadius = 28.0;
+
+/// Corner radius of the panels/cards inside the newer file-sync dialogs (and
+/// of those dialogs themselves).
+const double kOnyxPanelRadius = 27.0;
 const kOnyxDialogButtonShape = RoundedRectangleBorder(
   borderRadius: BorderRadius.all(Radius.circular(50)),
 );
@@ -20,11 +24,13 @@ class OnyxDialogShell extends StatelessWidget {
   final Widget child;
   final double maxWidth;
   final EdgeInsets insetPadding;
+  final double radius;
 
   const OnyxDialogShell({
     super.key,
     required this.child,
     this.maxWidth = 400,
+    this.radius = kOnyxDialogRadius,
     this.insetPadding =
         const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
   });
@@ -46,7 +52,7 @@ class OnyxDialogShell extends StatelessWidget {
         child: Material(
           color: colorScheme.surface,
           clipBehavior: Clip.antiAlias,
-          borderRadius: BorderRadius.circular(kOnyxDialogRadius),
+          borderRadius: BorderRadius.circular(radius),
           child: child,
         ),
       ),
@@ -126,8 +132,38 @@ class OnyxDialogHeader extends StatelessWidget {
   }
 }
 
-/// Pushes [builder] through the standard ONYX scale+fade entrance (the same
-/// transition used by About ONYX / profile dialogs).
+/// Small square icon button for a header's leading slot (e.g. "back"),
+/// looking like the close button on the right-hand side.
+class OnyxHeaderIconButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const OnyxHeaderIconButton({super.key, required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: colorScheme.onSurface.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon,
+            size: 18, color: colorScheme.onSurface.withValues(alpha: 0.55)),
+      ),
+    );
+  }
+}
+
+/// Pushes [builder] through the standard ONYX entrance (a plain fade — the
+/// same transition used by About ONYX / profile dialogs and every dialog
+/// built on this file). Kept deliberately simple: a single fade reads as
+/// snappier than a fade+scale combo and has one less curve to keep in sync
+/// when a dialog's content size changes mid-transition.
 Future<T?> showOnyxDialog<T>({
   required BuildContext context,
   required WidgetBuilder builder,
@@ -139,15 +175,11 @@ Future<T?> showOnyxDialog<T>({
     barrierDismissible: barrierDismissible,
     barrierLabel: barrierLabel,
     barrierColor: Colors.black.withValues(alpha: 0.55),
-    transitionDuration: const Duration(milliseconds: 187),
+    transitionDuration: const Duration(milliseconds: 140),
     transitionBuilder: (ctx, anim, _, child) {
-      final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
       return FadeTransition(
-        opacity: CurvedAnimation(parent: anim, curve: Curves.easeIn),
-        child: ScaleTransition(
-          scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
-          child: child,
-        ),
+        opacity: CurvedAnimation(parent: anim, curve: Curves.easeOut),
+        child: child,
       );
     },
     pageBuilder: (ctx, _, __) => builder(ctx),
@@ -316,4 +348,154 @@ Future<bool?> showOnyxConfirmDialog({
       );
     },
   );
+}
+
+/// Rounded panel used inside the media-send dialogs: a small caption plus
+/// label/value rows (file name, size, duration ...).
+class OnyxDetailsPanel extends StatelessWidget {
+  final String title;
+  final List<(String, String)> rows;
+
+  const OnyxDetailsPanel({super.key, required this.title, required this.rows});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cs.onSurface.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: cs.onSurface.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.3,
+              color: cs.onSurface.withValues(alpha: 0.55),
+            ),
+          ),
+          for (final (label, value) in rows) ...[
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: cs.onSurface.withValues(alpha: 0.55),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    value,
+                    textAlign: TextAlign.end,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Header leading badge: round tinted icon, as in the other ONYX dialogs.
+class OnyxHeaderBadge extends StatelessWidget {
+  final IconData icon;
+  const OnyxHeaderBadge(this.icon, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: cs.primary.withValues(alpha: 0.12),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(icon, size: 20, color: cs.primary),
+    );
+  }
+}
+
+/// Bold 16px header title.
+class OnyxHeaderTitle extends StatelessWidget {
+  final String text;
+  const OnyxHeaderTitle(this.text, {super.key});
+
+  @override
+  Widget build(BuildContext context) => Text(
+        text,
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
+      );
+}
+
+/// Footer of a confirm dialog: full-width pill "confirm" + pill "cancel".
+class OnyxConfirmButtons extends StatelessWidget {
+  final String confirmLabel;
+  final VoidCallback onConfirm;
+  final String cancelLabel;
+  final VoidCallback onCancel;
+  final IconData? confirmIcon;
+
+  const OnyxConfirmButtons({
+    super.key,
+    required this.confirmLabel,
+    required this.onConfirm,
+    required this.cancelLabel,
+    required this.onCancel,
+    this.confirmIcon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style = FilledButton.styleFrom(
+      padding: kOnyxDialogButtonPadding,
+      shape: kOnyxDialogButtonShape,
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          confirmIcon == null
+              ? FilledButton(
+                  onPressed: onConfirm, style: style, child: Text(confirmLabel))
+              : FilledButton.icon(
+                  onPressed: onConfirm,
+                  style: style,
+                  icon: Icon(confirmIcon, size: 18),
+                  label: Text(confirmLabel)),
+          const SizedBox(height: 8),
+          OutlinedButton(
+            onPressed: onCancel,
+            style: OutlinedButton.styleFrom(
+              padding: kOnyxDialogButtonPadding,
+              shape: kOnyxDialogButtonShape,
+            ),
+            child: Text(cancelLabel),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -17,6 +17,9 @@ import 'dart:math' show min, max;
 import 'package:image/image.dart' as img;
 
 import '../globals.dart';
+import '../services/onion/onion_transport_service.dart';
+import '../services/profile_store.dart';
+import '../services/wardlink/wardlink_sync_service.dart';
 import '../managers/settings_manager.dart';
 import '../managers/account_manager.dart';
 import '../utils/lazy_image_cache.dart';
@@ -74,6 +77,13 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
     _avatarExplicitlyDeleted = false; 
     
     _updateCanEdit();
+    // Load as soon as we're built and follow avatar changes for as long as we
+    // live -- not only on route push/pop, which a widget created under a
+    // covered route (or one that never gets a push event) would miss.
+    avatarVersion.addListener(_onAvatarVersionChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_tryLoadFromCacheOrFetch());
+    });
   }
 
   @override
@@ -127,7 +137,9 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
         String? chosen;
         DateTime? latest;
         await for (final f in avatarDir.list()) {
-          if (f is File && f.path.contains(prefix)) {
+          if (f is File &&
+              f.path.contains(prefix) &&
+              !f.path.contains('.tmp_')) {
             try {
               final stat = await f.stat();
               if (latest == null || stat.modified.isAfter(latest)) {
@@ -168,7 +180,6 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
   Future<void> _onRouteEnter() async {
     if (!mounted) return;
     
-    avatarVersion.addListener(_onAvatarVersionChanged);
     try {
       
       if (!_loading && _cachedFilePath == null) {
@@ -180,10 +191,7 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
   }
 
   void _onRouteExit() {
-    
-    try {
-      avatarVersion.removeListener(_onAvatarVersionChanged);
-    } catch (e) {}
+    // The avatarVersion listener stays (removed in dispose).
   }
 
   void _onAvatarVersionChanged() {
@@ -256,20 +264,29 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
     if (mounted) setState(() => _loading = true);
 
     try {
-      if (_cachedFilePath == null) {
-        final existing = await _findExistingCacheFile();
-        if (existing != null) {
+      final existing = await _findExistingCacheFile();
+      debugPrint('[avatar] ${widget.username}: '
+          '${existing ?? 'no cached file'}');
+      if (existing != null) {
+        if (existing != _cachedFilePath) {
           if (mounted) setState(() => _cachedFilePath = existing);
-          
-          if (!_globalAvatarBytesCache.containsKey(widget.username)) {
-            try {
-              final bytes = await File(existing).readAsBytes();
-              _globalAvatarBytesCache[widget.username] = bytes;
-            } catch (e) {}
-          }
+          try {
+            _globalAvatarBytesCache[widget.username] =
+                await File(existing).readAsBytes();
+          } catch (e) {}
         }
+      } else if (_cachedFilePath != null) {
+        // The avatar was removed (locally or by the contact).
+        _globalAvatarBytesCache.remove(widget.username);
+        if (mounted) setState(() => _cachedFilePath = null);
       }
     } catch (e) {}
+
+    // No central server to fetch avatars from; they arrive over Tor / WardLink.
+    if (kCentralServerRemoved) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
 
     try {
       final uri = Uri.parse(_avatarRawUrl);
@@ -440,47 +457,24 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
 
       final bytes = cropped;
 
-      final token = await widget.tokenProvider();
-      if (token == null) {
-        _showStyledSnack('Unauthorized', isError: true);
-        return;
-      }
-
-      final uri = Uri.parse(
-        '${widget.avatarBaseUrl.replaceAll(RegExp(r'/$'), '')}/avatar/upload',
-      );
-      final req = http.MultipartRequest('POST', uri);
-      req.headers['authorization'] = 'Bearer $token';
-      req.files.add(
-        http.MultipartFile.fromBytes('file', bytes, filename: filename),
-      );
-
-      final streamed = await req.send();
-      final resp = await http.Response.fromStream(streamed);
-
-      if (resp.statusCode == 200) {
-        
-        try {
-          if (bytes.isNotEmpty) {
-            await _writeBytesAtomically(bytes);
-          }
-        } catch (e) {}
-        avatarVersion.value++;
-        widget.onUploaded?.call(_avatarRawUrl);
-        _showStyledSnack('Avatar uploaded');
-      } else {
-        String msg = 'Upload error: (${resp.statusCode})';
-        try {
-          final j = jsonDecode(resp.body);
-          if (j is Map && j['detail'] != null) msg = j['detail'].toString();
-        } catch (e) {}
-        _showStyledSnack(msg, isError: true);
-      }
+      await _writeBytesAtomically(bytes);
+      await ProfileStore.touch(widget.username);
+      avatarVersion.value++;
+      widget.onUploaded?.call('');
+      _showStyledSnack('Avatar updated');
+      _shareProfile();
     } catch (e) {
       _showStyledSnack('Upload error: $e', isError: true);
     } finally {
       setState(() => _uploading = false);
     }
+  }
+
+  /// Pushes the changed profile to contacts (Tor) and our other devices
+  /// (WardLink) — best effort, never blocks the UI.
+  void _shareProfile() {
+    unawaited(OnionTransportService.instance.syncProfileToPeers());
+    WardLinkSyncService.instance.pokeNow();
   }
 
   Future<void> _deleteAvatar() async {
@@ -493,27 +487,13 @@ class _AvatarWidgetState extends State<AvatarWidget> with RouteAware {
 
     setState(() => _deleting = true);
     try {
-      final token = await widget.tokenProvider();
-      if (token == null) {
-        _showStyledSnack('Unauthorized', isError: true);
-        return;
-      }
-      final uri = Uri.parse(
-        '${widget.avatarBaseUrl.replaceAll(RegExp(r'/$'), '')}/avatar/me',
-      );
-      final resp = await http.delete(
-        uri,
-        headers: {'authorization': 'Bearer $token'},
-      );
-      if (resp.statusCode == 200) {
-        await _deleteCache();
-        _avatarExplicitlyDeleted = true; 
-        avatarVersion.value++;
-        widget.onDeleted?.call();
-        _showStyledSnack('Avatar deleted');
-      } else {
-        _showStyledSnack('Delete error: ${resp.statusCode}', isError: true);
-      }
+      await _deleteCache();
+      _avatarExplicitlyDeleted = true;
+      await ProfileStore.touch(widget.username);
+      avatarVersion.value++;
+      widget.onDeleted?.call();
+      _showStyledSnack('Avatar deleted');
+      _shareProfile();
     } catch (e) {
       _showStyledSnack('Delete error: $e', isError: true);
     } finally {

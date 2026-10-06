@@ -95,6 +95,10 @@ dependencies:
   sqlite3_flutter_libs: ^0.5.4
   connectivity_plus: ^7.1.1
   flutter_blue_plus: ^1.35.5
+  bip39: ^1.0.6
+
+  onyx_tor:
+    path: packages/onyx_tor
 
 dev_dependencies:
   flutter_test:

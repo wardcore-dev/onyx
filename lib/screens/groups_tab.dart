@@ -64,36 +64,6 @@ List<List<Map<String, String>>> _findGroupContentMatchesInBackground(Map<String,
   }).toList();
 }
 
-List<Group> _parseGroupsJsonInBackground(Map<String, String?> params) {
-  final jsonBody = params['jsonBody'] ?? '[]';
-  final currentUsername = params['currentUsername'];
-
-  final decoded = jsonDecode(jsonBody);
-  List<Group> groups = [];
-  if (decoded is List) {
-    groups = decoded.map<Group>((g) {
-      final ownerUsername =
-          g['owner'] ?? g['owner_id']?.toString() ?? 'unknown';
-
-      final myRole =
-          (currentUsername != null && ownerUsername == currentUsername)
-              ? 'owner'
-              : 'member';
-
-      return Group.fromJson({
-        'id': g['id'],
-        'name': g['name'] ?? 'Unknown Group',
-        'is_channel': g['is_channel'] ?? false,
-        'owner': ownerUsername,
-        'invite_link': g['invite_link'] ?? g['invite_token'] ?? '',
-        'avatar_version': g['avatar_version'] ?? 0,
-        'my_role': myRole,
-      });
-    }).toList();
-  }
-  return groups;
-}
-
 class GroupsTab extends StatefulWidget {
   final Function(Group) onOpenGroup;
   const GroupsTab({super.key, required this.onOpenGroup});
@@ -264,156 +234,31 @@ class _GroupsTabState extends State<GroupsTab>
     }
   }
 
+  /// Groups live on external servers now (there is no central server to create
+  /// groups on or look them up by token), so "add" goes straight to joining by IP.
+  /// Groups live on external servers now (no central server to create groups
+  /// on or to look them up by token), so "add" goes straight to joining by IP.
   Future<void> _showAddGroupSheet() async {
-    final colorScheme = Theme.of(context).colorScheme;
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      useRootNavigator: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => ValueListenableBuilder<double>(
-        valueListenable: SettingsManager.elementBrightness,
-        builder: (_, brightness, __) {
-          final sheetColor = SettingsManager.getElementColor(
-            colorScheme.surfaceContainerHighest,
-            brightness,
-          );
-          return SafeArea(
-            child: Container(
-              margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              decoration: BoxDecoration(
-                color: sheetColor,
-                borderRadius: BorderRadius.circular(28),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(height: 8),
-                  Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: colorScheme.onSurface.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  ListTile(
-                    leading: Icon(
-                      Icons.add_circle_outline_rounded,
-                      color: colorScheme.primary,
-                    ),
-                    title: Text(AppLocalizations.of(ctx).createGroupOrChannel),
-                    onTap: () => Navigator.pop(ctx, 'create'),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  ListTile(
-                    leading: Icon(
-                      Icons.link_rounded,
-                      color: colorScheme.primary,
-                    ),
-                    title: Text(AppLocalizations.of(ctx).viewByToken),
-                    onTap: () => Navigator.pop(ctx, 'join'),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  ListTile(
-                    leading: Icon(
-                      Icons.dns_outlined,
-                      color: colorScheme.primary,
-                    ),
-                    title: Text(AppLocalizations.of(ctx).viewByIp),
-                    onTap: () => Navigator.pop(ctx, 'external'),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-    if (choice == 'create') {
-      _createGroup();
-    } else if (choice == 'join') {
-      _joinGroup();
-    } else if (choice == 'external') {
-      _joinExternalServer();
-    }
+    _joinExternalServer();
   }
 
+  /// There's no central server to list groups from anymore (groups live on
+  /// external servers, see ExternalServerManager.externalGroups): the old
+  /// GET $serverBase/groups had no timeout, so with the server gone it hung
+  /// -- the tab sat on a spinner, hiding the "+" -- and it went out over the
+  /// clearnet, outside Tor. What the cache has is what there is.
   Future<void> _loadGroupsFromNetwork() async {
     if (DecoyManager.isActive.value) return;
-    final username = rootScreenKey.currentState?.currentUsername ?? '';
-
-    final token = await AccountManager.getToken(username);
-    if (token == null) {
-      if (mounted) setState(() => _loading = false);
-      return;
-    }
-
-    if ((rootScreenKey.currentState?.currentUsername ?? '') != username) {
-      debugPrint(
-          '[groups_tab] account changed before HTTP fetch, aborting for $username');
-      return;
-    }
-
-    try {
-      final res = await http.get(
-        Uri.parse('$serverBase/groups'),
-        headers: {'authorization': 'Bearer $token'},
-      );
-
-      if ((rootScreenKey.currentState?.currentUsername ?? '') != username) {
-        debugPrint(
-            '[groups_tab] account changed after HTTP response, discarding results for $username');
-        return;
-      }
-
-      if (res.statusCode == 200) {
-        final groups = await compute(_parseGroupsJsonInBackground, {
-          'jsonBody': res.body,
-          'currentUsername': username,
-        });
-
-        if ((rootScreenKey.currentState?.currentUsername ?? '') != username) {
-          debugPrint(
-              '[groups_tab] account changed after parse, discarding results for $username');
-          return;
-        }
-
-        await AccountManager.saveGroupsCache(username, groups);
-        groupsCacheVersion.value++;
-
-        if (mounted) {
-          setState(() {
-            _groups = groups;
-            _loading = false;
-            _hasInternet = true;
-          });
-          _listAnimController.forward();
-        }
-      } else {
-        debugPrint(
-            '[groups_tab] GET /groups failed: ${res.statusCode} ${res.body}');
-        throw Exception('HTTP ${res.statusCode}');
-      }
-    } catch (e) {
-      debugPrint('[groups_tab] Network error: $e');
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _hasInternet = false;
-        });
-        // Network failed — fall back to whatever the cache loaded.
-        if (_groups.isNotEmpty) _listAnimController.forward();
-      }
-    }
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _hasInternet = true;
+    });
+    // Always: the list branch of build() sits under _listFadeAnim, and
+    // _ensureLoadedForCurrentAccount resets it to 0 on every account switch.
+    // Playing it only for a non-empty local list left the whole tab (the "+"
+    // bar included) invisible when only external groups were present.
+    _listAnimController.forward();
   }
 
   Future<void> _leaveGroup(Group group) async {

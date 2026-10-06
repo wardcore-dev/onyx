@@ -127,7 +127,7 @@
   "updateAvailableLabel": "Update available",
   "updateDownload": "Download",
   "cacheTitle": "Cache",
-  "cacheSubtitle": "Manage local & server media cache",
+  "cacheSubtitle": "Manage local media cache",
   "mediaCacheSize": "Media messages cache: ",
   "clearLocalCache": "Clear Local Cache",
   "clearLocalCacheTitle": "Clear local cache",
@@ -137,7 +137,7 @@
   "serverMediaCacheSubtitle": "Stored on server: images, voice, video.",
   "clearServerCache": "Clear Server Cache",
   "dangerZone": "Danger Zone",
-  "dangerZoneSubtitle": "Delete account from server and/or wipe local data.",
+  "dangerZoneSubtitle": "Wipe local data.",
   "factoryReset": "Factory Reset",
   "factoryResetHint": "Select what to reset. At least one option must be chosen.",
   "resetDeleteAccount": "Delete account from server",
@@ -160,26 +160,6 @@
   "resetConfirmStep2Message": "This is your last chance to cancel. Confirming starts the reset immediately.",
   "connectionTitle": "Connection",
   "connectionSubtitle": "WebSocket status & controls",
-  "proxyTitle": "Proxy",
-  "proxySubtitle": "Route traffic through HTTP or SOCKS5 proxy",
-  "enableProxy": "Enable Proxy",
-  "proxyType": "Proxy Type",
-  "proxyHost": "Host",
-  "proxyPort": "Port",
-  "proxyUsername": "Username",
-  "proxyPassword": "Password",
-  "testProxy": "Test Proxy",
-  "proxyTesting": "Testing...",
-  "proxyOk": " Proxy OK",
-  "proxyFailed": " Proxy unreachable",
-  "useProxy": "Use proxy",
-  "proxyDirectConnection": "Direct connection",
-  "proxyRouted": "Traffic routed through proxy",
-  "proxyConnectedStatus": "Connected",
-  "proxyNotConnectedStatus": "Not connected",
-  "proxyLoginOptional": "Login (optional)",
-  "proxyPasswordOptional": "Password (optional)",
-  "proxyApplyReconnect": "Apply & Reconnect",
   "appDataTitle": "ONYX data folder",
   "appDataSubtitle": "Move the app data folder to another drive",
   "appDataCurrentPath": "Current folder",
@@ -225,6 +205,7 @@
   "languageChanged": "Language changed",
   "noChatsYet": "No chats yet",
   "deleteChatTitle": "Delete chat?",
+  "removeFromContacts": "Remove from contacts",
   "blockUserLabel": "Block user",
   "unblockUserLabel": "Unblock",
   "muteUserLabel": "Mute notifications",
@@ -257,9 +238,41 @@
   "editProfile": "Edit Profile",
   "displayName": "Display Name",
   "addAccount": "Add Account",
+  "identityNewIdentityButton": "New Identity",
+  "identityInfoTooltip": "How does this work?",
+  "identityInfoTitle": "A new way to message",
+  "identityInfoBody": "ONYX is moving to a fully decentralized model. Instead of an account on a central server, your identity is now a cryptographic key generated on your own device — a Tor address only you control.\n\nThere is no password and no server that knows who you are. A 12-word seed phrase is the only way to restore this identity on a new device.\n\nMessages to contacts who already have your new address are delivered directly over Tor, peer-to-peer, without passing through any central server. Contacts still on the old system will need to share their new address with you once, the same way you'd share a phone number.",
+  "identityTitleChoose": "Create an identity",
+  "identityChooseSubtitle": "The key and address are generated locally on this device.",
+  "identityCreateNewButton": "New Identity",
+  "identityRestoreLinkButton": "I already have a seed phrase",
+  "identityTitleMnemonic": "Your seed phrase",
+  "identityMnemonicIntro": "Write down these 12 words and keep them somewhere safe.",
+  "identityMnemonicRestoreNote": "This is the only way to restore your identity on a new device.",
+  "identityCopyButton": "Copy",
+  "identityCopiedSnack": "Copied",
+  "identitySavedConfirm": "I saved the phrase somewhere safe",
+  "identityContinueButton": "Continue",
+  "identityTitleRestore": "Restore identity",
+  "identityRestoreHint": "Enter your seed phrase (12 words separated by spaces).",
+  "identityRestoreButton": "Restore",
+  "identityBackButton": "Back",
+  "identityTitleDone": "Identity ready",
+  "identityAccountIdLabel": "Account ID",
+  "identityAccountIdExplain": "A stable identifier derived from your key — this is what ties your devices and messages together instead of a username.",
+  "identityFingerprintLabel": "Fingerprint",
+  "identityFingerprintExplain": "A short code your contacts can use to verify it's really you.",
+  "identityDoneButton": "Done",
+  "tapToCopyAddress": "Tap to copy address",
+  "identityErrorCreatePrefix": "Couldn't create identity",
+  "identityErrorRestorePrefix": "Couldn't restore identity",
+  "identityTitleSetup": "Set up your profile",
+  "identityDisplayNameLabel": "Display name",
+  "identityDisplayNameHint": "How contacts will see you",
+  "identityCreateAccountButton": "Create account",
   "welcomeTitle": "Welcome",
   "welcomeTagline": "Secure end-to-end encrypted messenger",
-  "otherAccounts": "Other Accounts",
+  "otherAccounts": "Other Identities",
   "tapToSwitch": "Tap to switch",
   "deleteFromRecentTitle": "Delete account from recent?",
   "authUsernameLabel": "Username (3-16 chars)",
@@ -311,7 +324,7 @@
     }
   },
   "iSavedIt": "I've saved it",
-  "deleteFromRecentContent": "Are you sure you want to remove \"{acc}\" from the recent list?nThis does not delete the account from the server.",
+  "deleteFromRecentContent": "Are you sure you want to remove \"{acc}\" from the recent list?",
   "@deleteFromRecentContent": {
     "placeholders": {
       "acc": {
@@ -403,7 +416,7 @@
   "cacheDeselectAll": "Deselect all",
   "cacheSelected": "selected",
   "clearLocalCacheDialogTitle": "Clear local cache",
-  "clearLocalCacheDialogContent": "Are you sure you want to delete all cached media (voice, images, videos)?nThis does NOT affect server uploads or chat history.",
+  "clearLocalCacheDialogContent": "Are you sure you want to delete all cached media (voice, images, videos)?\nThis does NOT affect chat history.",
   "deleteAllLogsTitle": "Delete all logs?",
   "deleteAllLogsContent": "This will permanently delete all app log files from disk.\nThis action cannot be undone.",
   "noLogsFound": "No log files found.",
@@ -455,8 +468,6 @@
   "liquidGlassSubtitle": "Configure glass effects and quality per element",
   "liquidGlassNavBarLabel": "Navigation Bar",
   "liquidGlassNavBarDesc": "Glass effect on the bottom navigation bar",
-  "liquidGlassCardsLabel": "Cards & List Items",
-  "liquidGlassCardsDesc": "Glass effect on chat list and settings cards",
   "liquidGlassInputLabel": "Input Bar",
   "liquidGlassInputDesc": "Glass effect on the message composition bar",
   "liquidGlassSearchLabel": "Search",
@@ -530,6 +541,8 @@
   "avatarRemoved": "Avatar removed",
   "uinCopied": "UIN copied",
   "displayNameLength": "Display name must be 1–16 characters",
+  "displayNameRequired": "Display name can't be empty",
+  "displayNameUpdated": "Display name updated",
   "failedSendLan": "Failed to send via LAN",
   "fileCancelled": "File cancelled",
   "doneRestarting": "Done! Restarting...",
@@ -538,6 +551,14 @@
   "cannotDeleteMsg": "Cannot delete: message not yet saved on server",
   "deleteForMeTitle": "Delete for me?",
   "deleteForMeContent": "This will only remove the message from your device. The other person will still see it.",
+  "deleteSelectedTitle": "{count, plural, =1{Delete message?} other{Delete {count} messages?}}",
+  "@deleteSelectedTitle": {"placeholders":{"count":{"type":"int"}}},
+  "deleteSelectedForBoth": "{count, plural, =1{This message will be deleted for both sides.} other{These messages will be deleted for both sides.}}",
+  "@deleteSelectedForBoth": {"placeholders":{"count":{"type":"int"}}},
+  "deleteSelectedForMe": "{count, plural, =1{This message will be deleted only for you. The other person will still see it.} other{These messages will be deleted only for you. The other person will still see them.}}",
+  "@deleteSelectedForMe": {"placeholders":{"count":{"type":"int"}}},
+  "deleteSelectedMixed": "Your messages ({mine}) will be deleted for both sides. Messages from the other person ({theirs}) will be deleted only for you.",
+  "@deleteSelectedMixed": {"placeholders":{"mine":{"type":"int"},"theirs":{"type":"int"}}},
   "deleteFavMessageContent": "This message will be removed from favorites.",
   "pinnedMessage": "Pinned Message",
   "setReminder": "Set Reminder",
@@ -595,7 +616,7 @@
   "message": "Message",
   "noMessagesYet": "No messages yet",
   "voiceCallsTitle": "Voice Calls",
-  "voiceCallsContent": "Voice calls currently work only over LAN (local network).\n\nWe are raising funds for central server maintenance and development of an alternative.",
+  "voiceCallsContent": "Voice calls currently work only over LAN (local network).",
   "supportOnyxBtn": "Support ONYX",
   "call": "Call",
   "securityCheckTitle": "Security check",
@@ -1022,9 +1043,13 @@
   "favTitleHint": "Title",
   "generateAll": "Generate All",
   "generateAllConfirm": "Random content will be generated, replacing existing data.",
+  "sendFavoritesSendChat": "Send chat",
+  "sendFavoritesQrTitle": "Show to receiver device",
+  "sendFavoritesQrInstruction": "Open Favorites on the other device → Sync → Receive, then scan this code",
+  "sendFavoritesWaitingScan": "Waiting for the other device to scan the QR code…",
   "sendFavoritesTitle": "Send Favorites",
   "sendFavoritesShowQrToReceiver": "Show QR to Receiver",
-  "sendFavoritesScanReceiver": "Scan Receiver QR",
+  "sendFavoritesScanReceiver": "Scan QR\nof the Receiver",
   "sendFavoritesSending": "Sending Favorites",
   "sendFavoritesSelectTitle": "Select chats to send",
   "sendFavoritesHintDesktop": "The receiver must press \"Receive\" first. Then scan the QR code shown here.",
@@ -1042,7 +1067,7 @@
   "sendFavoritesShowQrBtn": "Show QR",
   "sendFavoritesScanQrBtn": "Scan QR",
   "receiveFavoritesTitle": "Receive Favorites",
-  "receiveFavoritesScanSender": "Scan Sender QR",
+  "receiveFavoritesScanSender": "Scan QR\nof the Sender",
   "receiveFavoritesScanOnSender": "Scan on sender device",
   "receiveFavoritesInstruction": "Open Favorites on the sender, tap Sync → Send, then scan this code",
   "receiveFavoritesE2E": "End-to-end encrypted · local network only",
@@ -1119,7 +1144,70 @@
   "wardLinkSyncFavoritesToggle": "Sync Favorites",
   "wardLinkSyncFavoritesToggleDesc": "Sync your Favorites — their messages and media",
   "wardLinkSyncPersonalToggle": "Sync my personal messages",
-  "wardLinkSyncPersonalToggleDesc": "Sync only the messages YOU sent in personal chats to your other devices — the contact's messages already arrive via the server and are never synced this way",
+  "wardLinkSyncIncomingToggle": "Sync incoming messages",
+  "pairOverTor": "Pair over Tor",
+  "addContactQr": "Add contact · QR",
+  "contactsTitle": "Contacts",
+  "contactsEmpty": "No contacts yet.",
+  "myDevicesTitle": "My devices",
+  "myDevicesThisDevice": "This device",
+  "myDevicesHint": "Link another device with “Link device” on its login screen. Each device has its own Tor address, and your messages reach all of them.",
+  "myDevicesUnlink": "Unlink",
+  "myDevicesUnlinkConfirm": "Unlink this device from your account? It stops receiving your messages, and your contacts drop it too.",
+  "contactsRemoveConfirm": "Remove {username} from your contacts?",
+  "@contactsRemoveConfirm": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "contactsRemoveDeviceConfirm": "Remove this pairing with {name}'s device? Their other paired device is unaffected.",
+  "@contactsRemoveDeviceConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "pairScanTitle": "Scan their pairing code",
+  "pairScanHint": "Point the camera at the other person's pairing QR code",
+  "pairShowHint": "Have the other person scan this code with their Onyx app",
+  "pairEncrypted": "End-to-end encrypted, direct over Tor",
+  "pairScanCode": "Scan code",
+  "pairedOverTor": "Paired over Tor",
+  "pairing": "Pairing...",
+  "pairFailedWith": "Pairing failed: {error}",
+  "@pairFailedWith": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "pairStartFailed": "Could not start Tor: {error}",
+  "@pairStartFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "pairRetry": "Still trying to reach them ({attempt}/{max}) — their address may still be publishing on Tor...",
+  "@pairRetry": {
+    "placeholders": {
+      "attempt": {
+        "type": "int"
+      },
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "peerShowQr": "Show QR",
+  "peerHideQr": "Hide QR",
+  "peerAddressCopied": "Address copied",
+  "wardLinkSyncPersonalToggleDesc": "Sync only the messages YOU sent in personal chats to your other devices",
   "meshSubtitle": "Offline mesh network",
   "meshEnable": "Enable Mesh network",
   "meshEnableDesc": "Direct messaging without internet via Wi-Fi or Bluetooth.\nWorks only in direct messages.",
@@ -1546,57 +1634,132 @@
   "quotaExceeded": "Quota exceeded",
   "openSettingsAction": "Open Settings",
   "trashIsEmpty": "Trash is empty",
-
   "languageEnglish": "English",
   "languageRussian": "Русский",
   "deviceAuthTabQr": "QR",
   "meshTitle": "Mesh",
   "meshMenuModeWifi": "Wi-Fi",
   "meshMenuModeBluetooth": "Bluetooth",
-
   "mediaCachesCleared": "{n, plural, one{ Cleared {n} media cache} other{ Cleared {n} media caches}}",
-  "@mediaCachesCleared": {"placeholders": {"n": {"type": "int"}}},
-
+  "@mediaCachesCleared": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "leaveGroupTitle": "Leave {isChannel, select, true{channel} other{group}}?",
-  "@leaveGroupTitle": {"placeholders": {"isChannel": {"type": "String"}}},
-
+  "@leaveGroupTitle": {
+    "placeholders": {
+      "isChannel": {
+        "type": "String"
+      }
+    }
+  },
   "cacheFilesDeleted": "{n, plural, one{Deleted {n} file} other{Deleted {n} files}}",
-  "@cacheFilesDeleted": {"placeholders": {"n": {"type": "int"}}},
-
+  "@cacheFilesDeleted": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "orphanedCleanupDeleted": "{files, plural, one{Deleted {files} unused file} other{Deleted {files} unused files}} ({freedMb} MB freed)",
-  "@orphanedCleanupDeleted": {"placeholders": {"files": {"type": "int"}, "freedMb": {"type": "String"}}},
-
+  "@orphanedCleanupDeleted": {
+    "placeholders": {
+      "files": {
+        "type": "int"
+      },
+      "freedMb": {
+        "type": "String"
+      }
+    }
+  },
   "deletedLogsCount": "{n, plural, one{Deleted {n} log file.} other{Deleted {n} log files.}}",
-  "@deletedLogsCount": {"placeholders": {"n": {"type": "int"}}},
-
+  "@deletedLogsCount": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "notifEnabledSubtitle": "{enabled, select, true{You will be alerted for new messages} other{All notifications are silenced}}",
-  "@notifEnabledSubtitle": {"placeholders": {"enabled": {"type": "String"}}},
-
+  "@notifEnabledSubtitle": {
+    "placeholders": {
+      "enabled": {
+        "type": "String"
+      }
+    }
+  },
   "notifHideContentSubtitle": "{hidden, select, true{Notifications without message text} other{Show message text in notifications}}",
-  "@notifHideContentSubtitle": {"placeholders": {"hidden": {"type": "String"}}},
-
+  "@notifHideContentSubtitle": {
+    "placeholders": {
+      "hidden": {
+        "type": "String"
+      }
+    }
+  },
   "notifSoundEnabledSubtitle": "{enabled, select, true{Sound enabled} other{Sound disabled}}",
-  "@notifSoundEnabledSubtitle": {"placeholders": {"enabled": {"type": "String"}}},
-
+  "@notifSoundEnabledSubtitle": {
+    "placeholders": {
+      "enabled": {
+        "type": "String"
+      }
+    }
+  },
   "sessionExpiresInDays": "{n, plural, one{Session expires in {n} day} other{Session expires in {n} days}}",
-  "@sessionExpiresInDays": {"placeholders": {"n": {"type": "int"}}},
-
+  "@sessionExpiresInDays": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "sessionExpiresInHours": "{n, plural, one{Session expires in {n} hour} other{Session expires in {n} hours}}",
-  "@sessionExpiresInHours": {"placeholders": {"n": {"type": "int"}}},
-
+  "@sessionExpiresInHours": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "sessionActiveForDays": "{n, plural, one{Session valid for {n} more day} other{Session valid for {n} more days}}",
-  "@sessionActiveForDays": {"placeholders": {"n": {"type": "int"}}},
-
+  "@sessionActiveForDays": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "meshRadarFound": "{n, plural, one{{n} device in range} other{{n} devices in range}}",
-  "@meshRadarFound": {"placeholders": {"n": {"type": "int"}}},
-
+  "@meshRadarFound": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "trashSummary": "{chats, plural, one{{chats} chat} other{{chats} chats}}, {messages, plural, one{{messages} message} other{{messages} messages}}",
-  "@trashSummary": {"placeholders": {"chats": {"type": "int"}, "messages": {"type": "int"}}},
-
+  "@trashSummary": {
+    "placeholders": {
+      "chats": {
+        "type": "int"
+      },
+      "messages": {
+        "type": "int"
+      }
+    }
+  },
   "muteAction": "Mute",
   "unmuteAction": "Unmute",
   "muteUserTitle": "Mute {name}",
-  "@muteUserTitle": {"placeholders": {"name": {"type": "String"}}},
+  "@muteUserTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "durationLabel": "Duration",
   "duration15Min": "15 min",
   "duration1Hour": "1 hour",
@@ -1604,33 +1767,79 @@
   "duration1Week": "1 week",
   "muteReasonLabel": "Reason (optional)",
   "userMuted": "{name} muted",
-  "@userMuted": {"placeholders": {"name": {"type": "String"}}},
+  "@userMuted": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "failedMute": "Failed to mute",
   "failedMuteUser": "Failed to mute {name}",
-  "@failedMuteUser": {"placeholders": {"name": {"type": "String"}}},
+  "@failedMuteUser": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "mutedUsersTitle": "Muted Users",
   "noMutedUsers": "No muted users",
   "mutedByLabel": "Muted by: {name}",
-  "@mutedByLabel": {"placeholders": {"name": {"type": "String"}}},
+  "@mutedByLabel": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "mutedUntilLabel": "Until: {date}",
-  "@mutedUntilLabel": {"placeholders": {"date": {"type": "String"}}},
+  "@mutedUntilLabel": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
   "userUnmuted": "{name} unmuted",
-  "@userUnmuted": {"placeholders": {"name": {"type": "String"}}},
+  "@userUnmuted": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "failedUnmute": "Failed to unmute",
   "failedUnmuteUser": "Failed to unmute {name}",
-  "@failedUnmuteUser": {"placeholders": {"name": {"type": "String"}}},
+  "@failedUnmuteUser": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "youAreMutedTitle": "You are muted",
   "mutedUntilMessage": "You can't send messages in this chat until {date}.",
-  "@mutedUntilMessage": {"placeholders": {"date": {"type": "String"}}},
-
+  "@mutedUntilMessage": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
   "slowModeLabel": "Slow mode (seconds, 0 = off)",
   "slowModeHelper": "Minimum delay between messages for regular members. Admins are never limited.",
   "slowModeSetTo": "{seconds, plural, one{Slow mode set to {seconds} second} other{Slow mode set to {seconds} seconds}}",
-  "@slowModeSetTo": {"placeholders": {"seconds": {"type": "int"}}},
+  "@slowModeSetTo": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
   "slowModeDisabled": "Slow mode disabled",
   "failedSetSlowMode": "Failed to set slow mode",
   "failedUpdateSlowMode": "Failed to update slow mode",
-
   "donateMenuLabel": "Donate",
   "pollsMenuLabel": "Polls",
   "supportThisCommunityTitle": "Support this community",
@@ -1643,22 +1852,32 @@
   "addDonationAddress": "Add address",
   "donationsSaved": "Donation addresses saved",
   "failedSaveDonations": "Failed to save donation addresses",
-
   "noPollsOwnerHint": "No polls yet. Tap \"New poll\" to create one.",
   "noPollsHint": "No polls yet.",
   "newPollAction": "New poll",
   "addPollOption": "Add option",
   "pollQuestionLabel": "Question",
   "pollOptionLabel": "Option {number}",
-  "@pollOptionLabel": {"placeholders": {"number": {"type": "int"}}},
+  "@pollOptionLabel": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
+  },
   "multipleChoiceLabel": "Multiple choice",
   "pollQuestionEmpty": "Question cannot be empty",
   "pollNeedsTwoOptions": "Add at least 2 options",
   "failedCreatePoll": "Failed to create poll",
   "failedVote": "Failed to submit vote",
   "pollVoteCountAnonymous": "{count, plural, one{{count} vote} other{{count} votes}} • anonymous",
-  "@pollVoteCountAnonymous": {"placeholders": {"count": {"type": "int"}}},
-
+  "@pollVoteCountAnonymous": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "descriptionLabel": "Description",
   "descriptionHint": "What is this group about?",
   "noDescriptionSet": "No description set.",
@@ -1678,7 +1897,16 @@
   "roleColorLabel": "Color",
   "rolePermissionsLabel": "Permissions",
   "roleSubtitle": "{count} permissions · {members} members",
-  "@roleSubtitle": {"placeholders": {"count": {"type": "int"}, "members": {"type": "int"}}},
+  "@roleSubtitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "members": {
+        "type": "int"
+      }
+    }
+  },
   "settingsUpdated": "Settings updated",
   "failedUpdateSettings": "Failed to update settings",
   "roleSaved": "Role saved",
@@ -1687,7 +1915,13 @@
   "failedDeleteRole": "Failed to delete role",
   "addCommentAction": "Comment",
   "commentsCount": "{count} comments",
-  "@commentsCount": {"placeholders": {"count": {"type": "int"}}},
+  "@commentsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "commentsTitle": "Comments",
   "writeCommentHint": "Write a comment...",
   "failedLoadComments": "Failed to load comments",
@@ -1709,5 +1943,218 @@
   "permViewBanList": "Manage ban list",
   "permViewMuteList": "Manage mute list",
   "permViewInviteLink": "View invite link",
-  "manageMembersRequiresChild": "Select at least one of Manage Ban List, Manage Mute List, or Manage Roles"
+  "manageMembersRequiresChild": "Select at least one of Manage Ban List, Manage Mute List, or Manage Roles",
+  "onionRetryWaiting": "Not connected · will send when connected",
+  "onionRetryNow": "Sending… (attempt #{n})",
+  "@onionRetryNow": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "onionRetryIn": "Not online · retry #{n} in {s}s",
+  "@onionRetryIn": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      },
+      "s": {
+        "type": "int"
+      }
+    }
+  },
+  "onionOfflineTitle": "Contact is not online",
+  "onionOfflineMessage": "Your message could not be delivered right now because your contact is not online. It is saved on this device and will be resent automatically every {seconds} seconds until they come online. Keep the app open for retries to continue.\n\nYou can change the retry interval in Settings → Interaction → Messages.",
+  "@onionOfflineMessage": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "messagesSectionTitle": "Messages",
+  "messagesSectionSubtitle": "Delivery retries when a contact is offline",
+  "retryIntervalTitle": "Retry interval",
+  "retryIntervalDesc": "When a contact is not online, undelivered messages are resent automatically at this interval until they arrive.",
+  "intervalSeconds": "{n} seconds",
+  "@intervalSeconds": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "intervalMinutes": "{n} min",
+  "@intervalMinutes": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "statusOnlineLabel": "online",
+  "statusOfflineLabel": "offline",
+  "statusConnectingLabel": "connecting…",
+  "onionCallTitle": "Call over Tor",
+  "onionCallHideIp": "Don't reveal my IP address",
+  "onionCallHideIpHint": "The call goes through Tor: your IP address stays hidden, but expect a delay of about a second. Video is not available.",
+  "onionCallDirectHint": "Lower delay, but the other person will see your IP address. A direct connection is only used if they allow it too; otherwise the call still goes through Tor.",
+  "onionCallStart": "Call",
+  "onionCallPeerOffline": "Contact is not connected — calling is not possible right now",
+  "onionCallNoAnswer": "No answer",
+  "onionCallFailed": "Could not establish the call connection",
+  "callIncomingTitle": "Incoming call",
+  "callAccept": "Accept",
+  "callDecline": "Decline",
+  "callLogOutgoing": "Outgoing call",
+  "callLogIncoming": "Incoming call",
+  "callLogMissed": "Missed call",
+  "callLogCancelled": "Cancelled call",
+  "callLogDeclined": "Declined call",
+  "callLogBusy": "Line busy",
+  "callLogNoAnswer": "No answer",
+  "callStatusCalling": "Calling",
+  "callStatusConnecting": "Connecting",
+  "callPathRelay": "Via server",
+  "callEnd": "End call",
+  "callMinimize": "Minimize",
+  "callRestore": "Open call",
+  "callFallbackName": "Call",
+  "contactRequestNew": "{name} wants to chat with you",
+  "@contactRequestNew": {"placeholders": {"name": {"type": "String"}}},
+  "contactRequestsEntry": "Contact requests",
+  "contactRequestsTitle": "Requests",
+  "contactRequestsEmpty": "No requests",
+  "contactRequestAccept": "Accept",
+  "contactRequestDecline": "Decline",
+  "contactRequestDeclineTitle": "Decline request?",
+  "contactRequestDeclineBody": "They won't be able to message you or send you a new request. You can still add them yourself later.",
+  "contactRequestNoMessages": "No comment",
+  "contactRequestNameClash": "You already have a contact @{username} with a different key. It may be their new device, or someone impersonating them. Accept only if you are sure.",
+  "@contactRequestNameClash": {"placeholders": {"username": {"type": "String"}}},
+  "contactRequestInfo": "Until you accept, they can't see when you're online, can't see your profile and can't call you.",
+  "contactRequestAddress": "Onion address",
+  "contactRequestKey": "Key fingerprint",
+  "contactRequestAccepted": "{name} added to contacts",
+  "@contactRequestAccepted": {"placeholders": {"name": {"type": "String"}}},
+  "contactRequestFileHidden": "File (not accepted from non-contacts)",
+  "contactRequestMessages": "Messages",
+  "forwardDone": "Message forwarded",
+  "forwardFileUnavailable": "The file isn't on this device, so it can't be forwarded",
+  "contactRequestDeclineChoiceBody": "Decline: the request disappears, but they can send a new one later. Decline and block: they will never be able to message you or send requests again.",
+  "contactRequestDeclineAndBlock": "Decline and block",
+  "blockedFromRequests": "blocked request",
+  "contactRequestComposeTitle": "Contact request",
+  "contactRequestComposeBody": "Add a comment to your request — {name} will see it in their requests. You can write to each other once they accept.",
+  "@contactRequestComposeBody": {"placeholders": {"name": {"type": "String"}}},
+  "contactRequestComposeHint": "Comment…",
+  "contactRequestSend": "Send request",
+  "contactRequestSkip": "Without a comment",
+  "contactRequestSent": "Request sent",
+  "contactRequestAttached": "Comment",
+  "contactRequestPendingSnack": "Your request hasn't been accepted yet — you can write once it is.",
+  "contactRequestPendingCall": "You can call once they accept your request",
+  "contactRequestQueued": "They're offline — the request will be sent as soon as they're online",
+  "contactRequestDelivered": "Your request to {name} was delivered",
+  "@contactRequestDelivered": {"placeholders": {"name": {"type": "String"}}},
+  "contactRequestResend": "Send the request again",
+  "contactRequestUpdated": "Request updated",
+  "contactRecordAcceptedBoth": "Contact request accepted",
+  "contactRequestAlreadySent": "You already sent a request — it's waiting for their approval",
+  "contactRequestAlreadySentShort": "Request already sent",
+  "contactRecordAccepted": "You accepted the contact request",
+  "contactRecordAcceptedByThem": "Your contact request was accepted",
+  "contactRecordPreview": "Contact added",
+  "contactRequestAcceptedByThem": "{name} accepted your request",
+  "@contactRequestAcceptedByThem": {"placeholders": {"name": {"type": "String"}}},
+  "searchOnionHint": "Paste an xxxx.onion address to send a request",
+  "searchNeedOnionAddress": "That's not an onion address — paste one like xxxx.onion",
+  "searchConnectingTor": "Connecting over Tor…",
+  "searchStillTrying": "Still trying to reach them ({attempt}/{max})…",
+  "@searchStillTrying": {"placeholders": {"attempt": {"type": "int"}, "max": {"type": "int"}}},
+  "contactRemovedYou": "You're not in this person's contacts anymore — the message can't be delivered",
+  "contactNotInContacts": "This person isn't in your contacts — the message wasn't sent",
+  "contactRequestCommentFailed": "Request sent, but the comment didn't get through — they went offline",
+  "callMute": "Mute",
+  "callVideo": "Video",
+  "callSpeaker": "Speaker",
+  "callPathDirect": "Direct connection",
+  "callPathTor": "Through Tor",
+  "callVideoUnavailable": "Connection too weak — video is not available",
+  "callVideoPaused": "Video turned off because the connection got weak",
+  "statusShowMyStatus": "Show my online status",
+  "statusShowMyStatusHint": "Contacts see when you are online. When off, they see nothing and you also stop sharing your status.",
+  "viewCircuitTitle": "View Circuit",
+  "viewCircuitSubtitle": "The Tor relays your traffic is currently routed through",
+  "viewCircuitEmpty": "No active circuits yet. Try again in a moment.",
+  "circuitThisDevice": "This device",
+  "circuitRoleGuard": "guard",
+  "circuitRoleIntro": "introduction point",
+  "circuitRoleRend": "rendezvous point",
+  "circuitUnknownRelay": "Unknown relay",
+  "circuitOnionRelay": "Onion service relay",
+  "circuitModeSimple": "Simple",
+  "circuitModeAdvanced": "Advanced",
+  "mediaSendFileTitle": "Send File",
+  "mediaSendFileDetails": "FILE DETAILS",
+  "mediaSendAlbumHeading": "ALBUM",
+  "mediaSendName": "Name",
+  "mediaSendSize": "Size",
+  "mediaSendType": "Type",
+  "mediaSendUnknown": "Unknown",
+  "mediaSendImagesLabel": "Images",
+  "mediaSendImagesCount": "{count, plural, =1{1 image} other{{count} images}}",
+  "@mediaSendImagesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mediaSendConfirmAlbum": "Are you sure you want to send these images as an album?",
+  "mediaSendConfirmFile": "Are you sure you want to send this file?",
+  "mediaSendVoiceTitle": "Send Voice Message",
+  "mediaSendVoiceHeading": "VOICE MESSAGE",
+  "mediaSendDuration": "Duration",
+  "mediaSendConfirmVoice": "Send this voice message?",
+  "glassSimpleTitle": "Glass settings",
+  "glassSimpleDesc": "One set of values for the navigation bar, input bar, search and app-bar buttons",
+  "glassResetAll": "Reset all to defaults",
+  "favDeleteSelectedTitle": "{count, plural, =1{Delete 1 chat?} other{Delete {count} chats?}}",
+  "@favDeleteSelectedTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "favDeleteSelectedMessage": "The selected chats and all their messages will be removed from favorites.",
+  "glassMasterTitle": "Liquid Glass effects",
+  "glassMasterDesc": "Turn all glass effects on or off",
+  "glassTabGeneral": "General",
+  "glassTabAdvanced": "Advanced",
+  "glassBlur": "Blur",
+  "glassBlurDesc": "Frosted blur intensity behind the glass",
+  "glassTint": "Tint",
+  "glassTintDesc": "Adaptive tint opacity (auto dark/light)",
+  "glassSaturation": "Saturation",
+  "glassSaturationDesc": "Color vibrancy picked up from background",
+  "glassChromatic": "Chromatic Aberration",
+  "glassChromaticDesc": "Color fringing on glass edges (lens effect)",
+  "glassRefractive": "Refractive Index",
+  "glassRefractiveDesc": "How much the glass bends light behind it",
+  "glassLight": "Light Intensity",
+  "glassLightDesc": "Strength of the specular highlight on glass",
+  "glassThickness": "Thickness",
+  "glassThicknessDesc": "Glass depth — affects refraction and edge glow",
+  "glassJelly": "Jelly Stretch Amount",
+  "glassJellyDesc": "Indicator expansion when dragging between tabs",
+  "glassQualityTitle": "Glass Quality",
+  "glassQualityFast": "Fast",
+  "glassQualityFastDesc": "Lightweight\nBest perf",
+  "glassQualityMedium": "Medium",
+  "glassQualityMediumDesc": "No shaders\nBlur only",
+  "glassQualityHigh": "Quality",
+  "glassQualityHighDesc": "Full shaders\nBest visuals"
 }

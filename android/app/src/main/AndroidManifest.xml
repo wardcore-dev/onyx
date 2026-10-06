@@ -12,6 +12,8 @@
 
     <!-- === Уведомления (обязательно для Android 13+) === -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Входящий звонок поверх экрана блокировки (CallNotifications.kt) -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <!-- === Микрофон и аудио === -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -110,6 +112,11 @@
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
+        <!-- Кнопка «Отклонить» в уведомлении о звонке -->
+        <receiver
+            android:name=".CallActionReceiver"
+            android:exported="false" />
+
         <receiver
             android:name="com.ryanheise.audioservice.MediaButtonReceiver"
             android:exported="true"

@@ -10,11 +10,28 @@ class ChatMessage {
   bool delivered;
   bool isRead;
   bool pendingSend = false; // true = WS was offline when sent, queued for retry
+
+  /// True when the last send attempt over this message's [deliveryMode]
+  /// hard-failed (currently only set for onion-mode sends, which have no
+  /// offline queue/retry). Transient/in-memory only -- resets to showing
+  /// as merely "not delivered" across an app restart.
+  bool sendFailed = false;
   final DateTime time;
   final String? rawEnvelopePreview;
   final String? encryptedForDevice;
   int? serverMessageId;
-  
+
+  /// Onion-mode analogue of [serverMessageId] -- there's no server to hand
+  /// out a shared id, so the sender's own local message id doubles as the
+  /// cross-device reference: for an outgoing onion message this equals
+  /// [id] itself (see OnionTransportService.sendMessage's `mid`); for an
+  /// incoming one it's the id the *sender* used, carried in the 'msg'
+  /// frame's `mid` field, distinct from this device's own freshly-generated
+  /// [id]. A "delete for everyone" notice references this so the receiving
+  /// side can find the matching local message despite the two devices
+  /// never agreeing on one id for it any other way.
+  final String? onionMid;
+
   final int? replyToId;
   final String? replyToSender;
   final String? replyToContent;
@@ -80,6 +97,7 @@ class ChatMessage {
     this.rawEnvelopePreview,
     this.encryptedForDevice,
     this.serverMessageId,
+    this.onionMid,
     this.replyToId,
     this.replyToSender,
     this.replyToContent,
@@ -138,6 +156,7 @@ class ChatMessage {
     'rawEnvelopePreview': rawEnvelopePreview,
     'encryptedForDevice': encryptedForDevice,
     'serverMessageId': serverMessageId,
+    if (onionMid != null) 'onionMid': onionMid,
     'replyToId': replyToId,
     'replyToSender': replyToSender,
     'replyToContent': replyToContent,
@@ -177,6 +196,7 @@ class ChatMessage {
           : (j['serverMessageId'] != null
                 ? int.tryParse(j['serverMessageId'].toString())
                 : null),
+      onionMid: j['onionMid']?.toString(),
       replyToId: _parseInt(j['replyToId'] ?? j['reply_to_id']),
       replyToSender: (j['replyToSender'] ?? j['reply_to_sender'])?.toString(),
       replyToContent: (j['replyToContent'] ?? j['reply_to_content'])?.toString(),
@@ -219,6 +239,7 @@ class ChatMessage {
     final str = value.toString().toLowerCase();
     if (str == 'lan') return DeliveryMode.lan;
     if (str == 'blemesh' || str == 'mesh') return DeliveryMode.bleMesh;
+    if (str == 'onion') return DeliveryMode.onion;
     return DeliveryMode.internet;
   }
 

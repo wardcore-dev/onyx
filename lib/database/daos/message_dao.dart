@@ -314,7 +314,9 @@ class MessageDao extends DatabaseAccessor<AppDatabase> with _$MessageDaoMixin {
           ? DeliveryMode.lan
           : row.deliveryMode == 'bleMesh'
               ? DeliveryMode.bleMesh
-              : DeliveryMode.internet,
+              : row.deliveryMode == 'onion'
+                  ? DeliveryMode.onion
+                  : DeliveryMode.internet,
       deliveredAt: row.deliveredAtMs != null
           ? DateTime.fromMillisecondsSinceEpoch(row.deliveredAtMs!)
           : null,

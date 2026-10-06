@@ -112,6 +112,29 @@ install(DIRECTORY "${NATIVE_ASSETS_DIR}"
    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
    COMPONENT Runtime)
 
+# Bundle the Tor Expert Bundle (the whole "tor" folder: the binary AND the
+# libraries next to it) beside the executable, where onyx_tor's
+# TorBootstrap._resolveBinaryPath() looks first: "<exeDir>/tor/tor". Note: the
+# bundle root, not INSTALL_BUNDLE_LIB_DIR (that one is the "lib" subfolder).
+# See packages/onyx_tor/README.md for where to get it and how to verify it.
+set(ONYX_TOR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tor")
+if(EXISTS "${ONYX_TOR_DIR}/tor")
+  install(DIRECTORY "${ONYX_TOR_DIR}"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}"
+    USE_SOURCE_PERMISSIONS
+    COMPONENT Runtime)
+  # The executable bit can be lost on the way here (checkout on a filesystem
+  # without Unix modes); PROGRAMS installs it executable regardless.
+  install(PROGRAMS "${ONYX_TOR_DIR}/tor"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/tor"
+    COMPONENT Runtime)
+else()
+  message(WARNING
+    "linux/tor/tor not found: this build will NOT contain Tor and will only "
+    "work on machines with a system-wide tor installed. "
+    "See packages/onyx_tor/README.md.")
+endif()
+
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.
 set(FLUTTER_ASSET_DIR_NAME "flutter_assets")

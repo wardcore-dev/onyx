@@ -40,9 +40,18 @@ class _CachedPlayerEntry {
   _CachedPlayerEntry(this.player, this.controller, this.file, this.aspectRatio);
 }
 
-const int _kMaxCachedPlayers = 6;
+// Each Player is a full libmpv instance (demuxer buffer + decoder + GL
+// texture) living in native memory that the Dart GC can't see. With big
+// videos (100-300 MB) several live players at once get the process killed
+// by the OS (out of memory), so only a couple are kept.
+const int _kMaxCachedPlayers = 2;
+const int _kPlayerBufferBytes = 16 * 1024 * 1024;
 final Map<String, _CachedPlayerEntry> _globalPlayerCache = {};
 final List<String> _playerCacheOrder = [];
+
+/// Widgets register here so a player evicted from the cache can send them
+/// back to the tap-to-load state instead of drawing a disposed player.
+final Map<String, VoidCallback> _playerEvictCallbacks = {};
 
 void _touchPlayerLru(String key) {
   _playerCacheOrder.remove(key);
@@ -52,8 +61,61 @@ void _touchPlayerLru(String key) {
 void _evictOldestPlayer() {
   if (_playerCacheOrder.isNotEmpty) {
     final key = _playerCacheOrder.removeAt(0);
-    _globalPlayerCache.remove(key)?.player.dispose();
+    final entry = _globalPlayerCache.remove(key);
+    if (entry == null) return;
+    _resumePositions[key] = entry.player.state.position;
+    _playerEvictCallbacks[key]?.call();
+    entry.player.dispose();
   }
+}
+
+// -- Background recovery ------------------------------------------------------
+// After the app sits in the background for a while the OS reclaims the GL
+// textures / surfaces behind cached players; they still report "ready" but
+// render black. On resume after a long pause we drop every cached player and
+// tell live widgets to re-open theirs (restoring the playback position).
+
+const Duration _kStalePlayerAfter = Duration(seconds: 60);
+final Map<String, Duration> _resumePositions = {};
+final ValueNotifier<int> _playerEpoch = ValueNotifier<int>(0);
+
+class _PlayerLifecycle with WidgetsBindingObserver {
+  DateTime? _pausedAt;
+  bool _registered = false;
+
+  void ensureRegistered() {
+    if (_registered) return;
+    _registered = true;
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _pausedAt ??= DateTime.now();
+    } else if (state == AppLifecycleState.resumed) {
+      final at = _pausedAt;
+      _pausedAt = null;
+      if (at != null && DateTime.now().difference(at) >= _kStalePlayerAfter) {
+        _invalidateAllPlayers();
+      }
+    }
+  }
+}
+
+final _playerLifecycle = _PlayerLifecycle();
+
+void _invalidateAllPlayers() {
+  for (final e in _globalPlayerCache.entries) {
+    _resumePositions[e.key] = e.value.player.state.position;
+    try {
+      e.value.player.dispose();
+    } catch (_) {}
+  }
+  _globalPlayerCache.clear();
+  _playerCacheOrder.clear();
+  _playerEpoch.value++;
 }
 
 class VideoMessageWidget extends StatefulWidget {
@@ -118,6 +180,9 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
   @override
   void initState() {
     super.initState();
+    _playerLifecycle.ensureRegistered();
+    _playerEpoch.addListener(_onPlayerEpoch);
+    _playerEvictCallbacks[widget.filename] = _onPlayerEvicted;
     // Seed from metadata so the bubble has the right shape before the video plays.
     if (widget.initialAspectRatio != null && widget.initialAspectRatio! > 0) {
       _aspectRatio = widget.initialAspectRatio!;
@@ -133,6 +198,34 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
     } else {
       _needsTap = true;
     }
+  }
+
+  void _onPlayerEpoch() {
+    if (!mounted || _player == null) return;
+    _videoParamsSub?.cancel();
+    _videoParamsSub = null;
+    setState(() {
+      _player = null;
+      _videoController = null;
+      _initialized = false;
+      _loading = true;
+    });
+    _loadOrDownload();
+  }
+
+  /// Our player was dropped from the global cache to free memory for another
+  /// video: go back to the poster so a tap re-opens it (position restored).
+  void _onPlayerEvicted() {
+    if (!mounted) return;
+    _videoParamsSub?.cancel();
+    _videoParamsSub = null;
+    setState(() {
+      _player = null;
+      _videoController = null;
+      _initialized = false;
+      _loading = false;
+      _needsTap = true;
+    });
   }
 
   void _startLoadFromTap() {
@@ -208,12 +301,20 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
 
     // ── Cold path: create new player ──────────────────────────────────────────
     try {
-      final player = Player();
+      final player = Player(
+        configuration: const PlayerConfiguration(bufferSize: _kPlayerBufferBytes),
+      );
       final controller = VideoController(player);
 
       _attachParamsListener(player);
 
       await player.open(Media(file.path), play: false);
+      final resumeAt = _resumePositions.remove(widget.filename);
+      if (resumeAt != null && resumeAt > Duration.zero) {
+        try {
+          await player.seek(resumeAt);
+        } catch (_) {}
+      }
 
       // Also check state synchronously after open
       final w = player.state.videoParams.dw;
@@ -296,6 +397,24 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
         cachedFile = File('${appDocuments.path}/fav_media/$favFilename');
         if (!(await cachedFile.exists())) {
           throw Exception('Favorites file not found: $favFilename');
+        }
+      } else if (widget.filename.startsWith('onion://')) {
+        // Same reasoning as ImageMessageWidget's onion:// branch: the bytes
+        // arrive over their own Tor stream, separately from (and not
+        // strictly ordered with) this pointer message, and for a chunked
+        // video can still be mid-transfer when the pointer is first shown
+        // -- poll briefly instead of failing immediately.
+        final onionFilename = widget.filename.substring(8);
+        final appDocuments = await getOnyxDocumentsDirectory();
+        cachedFile =
+            File('${appDocuments.path}/onion_media/$onionFilename');
+        if (!(await cachedFile.exists())) {
+          for (var i = 0; i < 20 && !(await cachedFile.exists()); i++) {
+            await Future.delayed(const Duration(milliseconds: 500));
+          }
+        }
+        if (!(await cachedFile.exists())) {
+          throw Exception('Onion media file not found: $onionFilename');
         }
       } else if (widget.filename.startsWith('http')) {
         var url = widget.filename;
@@ -623,37 +742,23 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
   }
 
   /// Three-dot menu (Download / Save current frame / Set as wallpaper) shown
-  /// while the video is fullscreen — a persistent top-right button like
-  /// every other messenger's fullscreen media viewer, NOT wired through
-  /// media_kit's `topButtonBar`.
-  ///
-  /// `topButtonBar` lives inside the player's auto-hiding controls layer:
-  /// the same tap that opened our menu was also seen by the video's own
-  /// tap-to-toggle-controls handler underneath, hiding (unmounting) the
-  /// whole control bar — and with it our just-opened menu — causing it to
-  /// flash open and immediately vanish. Inserting our own [OverlayEntry]
-  /// directly via [onEnterFullscreen]/[onExitFullscreen] keeps the button
-  /// completely independent of that auto-hide timer.
+  /// while the video is fullscreen. The *button* lives in media_kit's own
+  /// `topButtonBar`, so it fades/mounts in lockstep with the bottom controls
+  /// (one mechanism, no desync). The *panel* it opens is an independent
+  /// root [OverlayEntry] owned by this state: the tap on the button is also
+  /// seen by media_kit's tap-to-toggle handler, which may unmount the control
+  /// layer - a panel parented to the button would vanish with it.
   OverlayEntry? _fullscreenMenuEntry;
 
   void _showFullscreenMenuOverlay() {
-    if (!mounted) return;
-    _fullscreenMenuEntry?.remove();
+    if (!mounted || _fullscreenMenuEntry != null) return;
     final overlay = Overlay.of(context, rootOverlay: true);
     final entry = OverlayEntry(
-      builder: (_) => Positioned(
-        top: 0,
-        right: 0,
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: _VideoFullscreenMenuButton(
-              onDownload: _saveVideoWithState,
-              onSaveFrame: _saveCurrentFrameWithState,
-              onSetWallpaper: _setVideoAsWallpaper,
-            ),
-          ),
-        ),
+      builder: (_) => _FullscreenMenuPanel(
+        onClose: _hideFullscreenMenuOverlay,
+        onDownload: _saveVideoWithState,
+        onSaveFrame: _saveCurrentFrameWithState,
+        onSetWallpaper: _setVideoAsWallpaper,
       ),
     );
     _fullscreenMenuEntry = entry;
@@ -690,6 +795,10 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
 
   @override
   void dispose() {
+    _playerEpoch.removeListener(_onPlayerEpoch);
+    if (_playerEvictCallbacks[widget.filename] == _onPlayerEvicted) {
+      _playerEvictCallbacks.remove(widget.filename);
+    }
     _hideFullscreenMenuOverlay();
     _videoParamsSub?.cancel();
     _videoParamsSub = null;
@@ -894,6 +1003,59 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
     );
   }
 
+  /// Onyx-styled floating rounded "pill" bottom bar for fullscreen playback
+  /// — a translucent glass capsule with the primary color as accent border,
+  /// matching the app's visual language, instead of media_kit's default bare
+  /// row of icons pinned flush to the screen edge.
+  Widget _buildFullscreenPillBar(Color primary, {required bool desktop}) {
+    final skipPrev = desktop
+        ? const MaterialDesktopSkipPreviousButton(iconSize: 20)
+        : const MaterialSkipPreviousButton(iconSize: 20);
+    final playPause = desktop
+        ? const MaterialDesktopPlayOrPauseButton(iconSize: 24)
+        : const MaterialPlayOrPauseButton(iconSize: 24);
+    final skipNext = desktop
+        ? const MaterialDesktopSkipNextButton(iconSize: 20)
+        : const MaterialSkipNextButton(iconSize: 20);
+    final position = desktop
+        ? const MaterialDesktopPositionIndicator(
+            style: TextStyle(color: Colors.white70, fontSize: 12))
+        : const MaterialPositionIndicator(
+            style: TextStyle(color: Colors.white70, fontSize: 12));
+    final fullscreenBtn = desktop
+        ? const MaterialDesktopFullscreenButton(iconSize: 20)
+        : const MaterialFullscreenButton(iconSize: 20);
+    // Desktop only: mobile has its own OS volume hardware/gesture, so — per
+    // earlier explicit direction — it intentionally has no on-screen volume
+    // control. Desktop has neither, so it needs one; the default fullscreen
+    // bottomButtonBar included MaterialDesktopVolumeButton and it was
+    // dropped when this pill replaced that default list wholesale.
+    const volumeBtn = MaterialDesktopVolumeButton(iconSize: 20);
+
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: primary.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          skipPrev,
+          playPause,
+          skipNext,
+          if (desktop) volumeBtn,
+          const SizedBox(width: 6),
+          position,
+          const SizedBox(width: 2),
+          fullscreenBtn,
+        ],
+      ),
+    );
+  }
+
   Widget _buildPlayer(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
 
@@ -923,6 +1085,39 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
           seekBarThumbColor: primary,
           seekBarPositionColor: primary,
           seekBarBufferColor: primary.withValues(alpha: 0.3),
+          // Package default falls back to MediaQuery.padding, which
+          // collapses toward zero once immersiveSticky hides the system UI —
+          // pinning the bottom bar under the phone's screen frame/notch.
+          // viewPadding stays correct even with system UI hidden.
+          padding: MediaQuery.of(context).viewPadding,
+          // Onyx-styled floating rounded pill instead of the package's bare
+          // row of icons pinned flush to the screen edge.
+          bottomButtonBar: [
+            Expanded(
+              child: Center(
+                child: _buildFullscreenPillBar(primary, desktop: true),
+              ),
+            ),
+          ],
+          topButtonBar: [
+            const Spacer(),
+            _VideoFullscreenMenuButton(onPressed: _showFullscreenMenuOverlay),
+          ],
+          // Package default is horizontal-only, so the button sits flush
+          // against the very top edge (behind/above the video's visible
+          // frame once viewPadding pushes the whole bar down for the
+          // status bar/notch). A matching vertical inset brings it down to
+          // sit at a comfortable level over the video itself.
+          topButtonBarMargin: const EdgeInsets.symmetric(horizontal: 16.0)
+              .copyWith(top: _kMenuButtonTop),
+          bottomButtonBarMargin: const EdgeInsets.only(bottom: 16),
+          buttonBarHeight: 48.0,
+          // The seek bar is a separate widget the package stacks BEHIND
+          // bottomButtonBar at a shared bottom anchor — with equal margins
+          // it renders directly under the pill's opaque background and is
+          // invisible. Push it up above the pill's full height (16 margin +
+          // 48 tall) plus a small gap instead.
+          seekBarMargin: const EdgeInsets.only(left: 16, right: 16, bottom: 74),
         ),
         child: Video(
           controller: _videoController!,
@@ -932,7 +1127,6 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
           // fullscreen) ourselves alongside showing our persistent menu.
           onEnterFullscreen: () async {
             await defaultEnterNativeFullscreen();
-            _showFullscreenMenuOverlay();
           },
           onExitFullscreen: () async {
             _hideFullscreenMenuOverlay();
@@ -958,6 +1152,39 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
           seekBarThumbColor: primary,
           seekBarPositionColor: primary,
           seekBarBufferColor: primary.withValues(alpha: 0.3),
+          // Package default falls back to MediaQuery.padding, which
+          // collapses toward zero once immersiveSticky hides the system UI —
+          // pinning the bottom bar under the phone's screen frame/notch.
+          // viewPadding stays correct even with system UI hidden.
+          padding: MediaQuery.of(context).viewPadding,
+          // Onyx-styled floating rounded pill instead of the package's bare
+          // row of icons pinned flush to the screen edge.
+          bottomButtonBar: [
+            Expanded(
+              child: Center(
+                child: _buildFullscreenPillBar(primary, desktop: false),
+              ),
+            ),
+          ],
+          topButtonBar: [
+            const Spacer(),
+            _VideoFullscreenMenuButton(onPressed: _showFullscreenMenuOverlay),
+          ],
+          // Package default is horizontal-only, so the button sits flush
+          // against the very top edge (behind/above the video's visible
+          // frame once viewPadding pushes the whole bar down for the
+          // status bar/notch). A matching vertical inset brings it down to
+          // sit at a comfortable level over the video itself.
+          topButtonBarMargin: const EdgeInsets.symmetric(horizontal: 16.0)
+              .copyWith(top: _kMenuButtonTop),
+          bottomButtonBarMargin: const EdgeInsets.only(bottom: 16),
+          buttonBarHeight: 48.0,
+          // The seek bar is a separate widget the package stacks BEHIND
+          // bottomButtonBar at a shared bottom anchor — with equal margins
+          // it renders directly under the pill's opaque background and is
+          // invisible. Push it up above the pill's full height (16 margin +
+          // 48 tall) plus a small gap instead.
+          seekBarMargin: const EdgeInsets.only(left: 16, right: 16, bottom: 74),
         ),
         child: Video(
           controller: _videoController!,
@@ -969,7 +1196,6 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
               overlays: [],
             );
             // No setPreferredOrientations call → system auto-rotate stays active
-            _showFullscreenMenuOverlay();
           },
           onExitFullscreen: () async {
             _hideFullscreenMenuOverlay();
@@ -1040,90 +1266,50 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget>
   }
 }
 
-/// Self-contained three-dot menu for the fullscreen video controls. Must own
-/// its own State (rather than reading state from the outer
-/// [_VideoMessageWidgetState]) because media_kit snapshots `topButtonBar`'s
-/// widget instances into the fullscreen route once, at the moment fullscreen
-/// is entered — only a widget that manages its own open/closed flag keeps
-/// responding to taps after that snapshot is taken.
-class _VideoFullscreenMenuButton extends StatefulWidget {
+/// Top inset of the fullscreen three-dot button (both the mobile and the
+/// desktop controls). The dropdown panel is offset by the same amount so it
+/// keeps opening just below the button.
+const double _kMenuButtonTop = 36;
+
+/// Three-dot button placed in media_kit's `topButtonBar` (fullscreen only).
+class _VideoFullscreenMenuButton extends StatelessWidget {
+  final VoidCallback onPressed;
+  const _VideoFullscreenMenuButton({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: const Icon(Icons.more_vert, color: Colors.white),
+      tooltip: 'More',
+      onPressed: onPressed,
+    );
+  }
+}
+
+/// Dropdown panel + tap-outside barrier, inserted as a root overlay entry.
+class _FullscreenMenuPanel extends StatelessWidget {
+  final VoidCallback onClose;
   final VoidCallback onDownload;
   final VoidCallback onSaveFrame;
   final VoidCallback onSetWallpaper;
 
-  const _VideoFullscreenMenuButton({
+  const _FullscreenMenuPanel({
+    required this.onClose,
     required this.onDownload,
     required this.onSaveFrame,
     required this.onSetWallpaper,
   });
 
   @override
-  State<_VideoFullscreenMenuButton> createState() =>
-      _VideoFullscreenMenuButtonState();
-}
-
-class _VideoFullscreenMenuButtonState
-    extends State<_VideoFullscreenMenuButton> {
-  // Renders the dropdown into the app's root Overlay (full-screen sized)
-  // instead of as a Positioned child of a small Stack: a Stack only
-  // hit-tests within its own layout size, so a Positioned child that merely
-  // *paints* outside those bounds via Clip.none is visible but untappable.
-  // OverlayPortal mounts the panel as real Overlay content, sized to the
-  // whole screen, so taps on it hit-test correctly.
-  final _controller = OverlayPortalController();
-  final _layerLink = LayerLink();
-
-  void _select(VoidCallback action) {
-    _controller.hide();
-    action();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return CompositedTransformTarget(
-      link: _layerLink,
-      child: OverlayPortal.targetsRootOverlay(
-        controller: _controller,
-        overlayChildBuilder: (context) => Stack(
-          children: [
-            // Invisible full-screen barrier — tap outside the panel to close
-            // it. Opaque (not translucent): a translucent barrier let taps
-            // fall through to the video underneath, which toggled
-            // play/pause and the controls' own show/hide timer — fighting
-            // with our menu's visibility and causing it to flicker.
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _controller.hide,
-              ),
-            ),
-            CompositedTransformFollower(
-              link: _layerLink,
-              targetAnchor: Alignment.bottomRight,
-              followerAnchor: Alignment.topRight,
-              showWhenUnlinked: false,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: _buildPanel(),
-              ),
-            ),
-          ],
-        ),
-        child: IconButton(
-          icon: const Icon(Icons.more_vert, color: Colors.white),
-          tooltip: 'More',
-          onPressed: _controller.toggle,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPanel() {
     final cs = Theme.of(context).colorScheme;
 
-    Widget item(IconData icon, String label, VoidCallback onTap) {
+    Widget item(IconData icon, String label, VoidCallback action) {
       return InkWell(
-        onTap: () => _select(onTap),
+        onTap: () {
+          onClose();
+          action();
+        },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
@@ -1144,30 +1330,45 @@ class _VideoFullscreenMenuButtonState
       );
     }
 
-    return Material(
-      color: cs.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(12),
-      clipBehavior: Clip.antiAlias,
-      elevation: 8,
-      child: SizedBox(
-        // Fixed (not just minimum) width — combined with the stretch below,
-        // an unbounded ConstrainedBox(minWidth:...) let the Column expand to
-        // fill the entire screen instead of staying a compact dropdown.
-        width: 240,
-        // stretch so each item's InkWell hover/ripple fills the full panel
-        // width instead of just hugging the icon+text content.
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            item(Icons.download_rounded, 'Download', widget.onDownload),
-            item(Icons.camera_alt_rounded, 'Save current frame',
-                widget.onSaveFrame),
-            item(Icons.wallpaper_rounded, 'Set as wallpaper',
-                widget.onSetWallpaper),
-          ],
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onClose,
+          ),
         ),
-      ),
+        Positioned(
+          top: 0,
+          right: 0,
+          child: SafeArea(
+            child: Padding(
+              // 32 = the panel's old gap below a button at top: 24.
+              padding: const EdgeInsets.fromLTRB(8, _kMenuButtonTop + 32, 8, 8),
+              child: Material(
+                color: cs.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+                clipBehavior: Clip.antiAlias,
+                elevation: 8,
+                child: SizedBox(
+                  width: 240,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      item(Icons.download_rounded, 'Download', onDownload),
+                      item(Icons.camera_alt_rounded, 'Save current frame',
+                          onSaveFrame),
+                      item(Icons.wallpaper_rounded, 'Set as wallpaper',
+                          onSetWallpaper),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -9,6 +9,23 @@ extension AppLocalizationsExtra on AppLocalizations {
   bool get _ru => localeName == 'ru';
 
   String localizePreview(String key) {
+    // Call records (see getPreviewText's CALLv1): every language.
+    switch (key) {
+      case 'Outgoing call':
+        return callLogOutgoing;
+      case 'Incoming call':
+        return callLogIncoming;
+      case 'Missed call':
+        return callLogMissed;
+      case 'Cancelled call':
+        return callLogCancelled;
+      case 'Declined call':
+        return callLogDeclined;
+      case 'Call':
+        return call;
+      case 'Contact added':
+        return contactRecordPreview;
+    }
     if (!_ru) return key;
 
     if (key.startsWith('Album · ') && key.endsWith(' photos')) {

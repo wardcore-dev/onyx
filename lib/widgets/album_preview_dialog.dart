@@ -2,7 +2,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../managers/settings_manager.dart';
 import '../l10n/app_localizations.dart';
 import 'onyx_dialog.dart';
 
@@ -63,151 +62,60 @@ class _AlbumPreviewDialogState extends State<AlbumPreviewDialog> {
     final thumbPaths = widget.filePaths.take(_maxThumb).toList();
     final extra = count - _maxThumb;
 
-    return ValueListenableBuilder<double>(
-      valueListenable: SettingsManager.elementOpacity,
-      builder: (_, elemOpacity, __) {
-        return ValueListenableBuilder<double>(
-          valueListenable: SettingsManager.elementBrightness,
-          builder: (_, brightness, ___) {
-            final surfaceColor = SettingsManager.getElementColor(
-              cs.surfaceContainerHighest,
-              brightness,
-            );
-            return Dialog(
-              constraints: const BoxConstraints(maxWidth: 500),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: cs.primary.withValues(alpha: 0.1 * elemOpacity),
-                        border: Border(
-                          bottom: BorderSide(
-                            color: cs.outline.withValues(alpha: 0.2 * elemOpacity),
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.photo_library_outlined,
-                              color: cs.primary),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              l.sendAlbum,
-                              style: theme.textTheme.headlineSmall?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+    void cancel() {
+      Navigator.pop(context);
+      widget.onCancel();
+    }
+
+    return OnyxDialogShell(
+      maxWidth: 480,
+      radius: kOnyxPanelRadius,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OnyxDialogHeader(
+            leading: const OnyxHeaderBadge(Icons.photo_library_outlined),
+            title: OnyxHeaderTitle(l.sendAlbum),
+            onClose: cancel,
+          ),
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(child: _buildGrid(thumbPaths, extra, cs)),
+                  const SizedBox(height: 16),
+                  OnyxDetailsPanel(
+                    title: l.mediaSendAlbumHeading,
+                    rows: [
+                      (l.mediaSendImagesLabel, l.mediaSendImagesCount(count)),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    l.mediaSendConfirmAlbum,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.4,
+                      color: cs.onSurface.withValues(alpha: 0.6),
                     ),
-
-                    Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          
-                          _buildGrid(thumbPaths, extra, cs),
-
-                          const SizedBox(height: 24),
-
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: surfaceColor,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: cs.outline.withValues(
-                                    alpha: 0.2 * elemOpacity),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.collections_outlined,
-                                    size: 20, color: cs.primary),
-                                const SizedBox(width: 12),
-                                Text(
-                                  '$count ${count == 1 ? 'image' : 'images'} selected',
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 16),
-
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: cs.primary.withValues(
-                                  alpha: 0.1 * elemOpacity),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: cs.primary.withValues(
-                                    alpha: 0.3 * elemOpacity),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.info,
-                                    size: 18, color: cs.primary),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    'Are you sure you want to send these images as an album?',
-                                    style: theme.textTheme.bodySmall
-                                        ?.copyWith(color: cs.onSurface),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          top: BorderSide(
-                            color: cs.outline.withValues(alpha: 0.2 * elemOpacity),
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          TextButton(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              widget.onCancel();
-                            },
-                            child: Text(l.cancel),
-                          ),
-                          const SizedBox(width: 12),
-                          FilledButton.tonal(
-                            onPressed: _confirmSend,
-                            child: Text(l.sendAlbum),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            );
-          },
-        );
-      },
+            ),
+          ),
+          OnyxConfirmButtons(
+            confirmLabel: l.sendAlbum,
+            onConfirm: _confirmSend,
+            cancelLabel: l.cancel,
+            onCancel: cancel,
+          ),
+        ],
+      ),
     );
   }
 
@@ -218,7 +126,7 @@ class _AlbumPreviewDialogState extends State<AlbumPreviewDialog> {
         height: 120,
         decoration: BoxDecoration(
           color: cs.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(20),
         ),
         child: Icon(Icons.photo_library_outlined,
             size: 48, color: cs.primary),
@@ -258,7 +166,7 @@ class _AlbumPreviewDialogState extends State<AlbumPreviewDialog> {
     required ColorScheme cs,
   }) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(w > 150 ? 20 : 14),
       child: SizedBox(
         width: w,
         height: h,

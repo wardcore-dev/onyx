@@ -31,6 +31,8 @@ class WardLinkMedia {
       '$doc/fav_media',
       '$doc/voice_cache',
       '$doc/lan_media',
+      // Media of Tor (onion://) messages, sent or received.
+      '$doc/onion_media',
       '$sup/voice_cache',
       '$sup/audio_cache',
       '$sup/video_cache',
@@ -48,15 +50,25 @@ class WardLinkMedia {
   }
 
   /// Find the plain local file for [fullFilename] (which may carry a `fav://` /
-  /// `lan://` prefix), or null if it isn't stored locally.
+  /// `lan://` / `onion://` prefix), or null if it isn't stored locally.
+  /// An empty file (an aborted write) doesn't count -- it would never render
+  /// and would block the download that fixes it.
   static Future<String?> resolveLocal(String fullFilename) async {
     final base = p.basename(fullFilename);
     if (base.isEmpty) return null;
     for (final dir in await _searchDirs()) {
       final f = File('$dir/$base');
-      if (await f.exists()) return f.path;
+      if (await f.exists() && await f.length() > 0) return f.path;
     }
     return null;
+  }
+
+  /// Whether the widget for [fullFilename] will find it here: a prefixed
+  /// file must be in its own directory (a copy elsewhere isn't looked at).
+  static Future<bool> isWhereWidgetLooks(String fullFilename, String type) async {
+    final target = await saveTarget(fullFilename, type);
+    final f = File(target);
+    return await f.exists() && await f.length() > 0;
   }
 
   /// Where the receiver must write a file of [type] for [fullFilename] so the
@@ -70,6 +82,11 @@ class WardLinkMedia {
     String dir;
     if (type == 'avatar') {
       dir = '$sup/fav_avatars';
+    } else if (fullFilename.startsWith('onion://')) {
+      // Every onion:// widget (image, video, voice, file) reads from here.
+      dir = '$doc/onion_media';
+    } else if (fullFilename.startsWith('lan://')) {
+      dir = '$doc/lan_media';
     } else if (isFav) {
       dir = type == 'voice' ? '$doc/voice_cache' : '$doc/fav_media';
     } else {

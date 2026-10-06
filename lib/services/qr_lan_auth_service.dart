@@ -7,7 +7,8 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:crypto/crypto.dart' as dart_crypto;
 import 'package:flutter/foundation.dart' show kDebugMode;
-import 'package:http/http.dart' as http;
+
+import 'onion/onion_account_sync.dart';
 
 class QrAuthCredentials {
   final String token;
@@ -16,12 +17,17 @@ class QrAuthCredentials {
   final String serverBase;
   final bool isPrimary;
 
+  /// Onion identity of the account (see OnionAccountSync). The central server
+  /// is gone, so linking a device now hands over the account itself.
+  final Map<String, dynamic>? onionBundle;
+
   const QrAuthCredentials({
     required this.token,
     required this.username,
     required this.uin,
     required this.serverBase,
     required this.isPrimary,
+    this.onionBundle,
   });
 }
 
@@ -182,11 +188,12 @@ class QrLanAuthService {
           }
 
           final creds = QrAuthCredentials(
-            token: plain['token'] as String,
+            token: (plain['token'] as String?) ?? '',
             username: plain['username'] as String,
-            uin: plain['uin'] as String,
-            serverBase: plain['server_base'] as String,
+            uin: (plain['uin'] ?? '').toString(),
+            serverBase: (plain['server_base'] as String?) ?? '',
             isPrimary: plain['is_primary'] as bool? ?? false,
+            onionBundle: plain['onion'] as Map<String, dynamic>?,
           );
 
           req.response.statusCode = 200;
@@ -220,15 +227,13 @@ class QrLanAuthService {
     );
   }
 
-  /// Send credentials to the waiting desktop over LAN.
-  /// [token] and [serverBase] belong to the phone's existing session.
-  /// The method calls POST /api/new-device on the server to obtain a fresh
-  /// independent token for the desktop, then sends it over the encrypted
-  /// LAN channel. Returns null on success, or an error string on failure.
+  /// Send this account to the waiting device over LAN. The receiver shows the
+  /// QR ([qr_auth]); we hand over the username and the account's onion
+  /// identity so both devices share one Tor address. Returns null on success,
+  /// or an error string on failure.
   static Future<String?> sendCredentials({
     required String qrJson,
-    required String token,
-    required String serverBase,
+    required String username,
   }) async {
     Map<String, dynamic> qr;
     try {
@@ -251,46 +256,11 @@ class QrLanAuthService {
     }
     final port = qr['port'] as int? ?? 0;
 
-    // --- Step 1: get a fresh token for the desktop from the server ---
-    final deviceName = (qr['device_name'] as String?) ?? '';
-    final deviceOs   = (qr['device_os']   as String?) ?? '';
-
-    final String desktopToken;
-    final String desktopUsername;
-    final String desktopUin;
-
-    try {
-      final newDeviceUrl = Uri.parse('$serverBase/api/new-device');
-      if (kDebugMode) print('[QrAuth] Calling new-device at $newDeviceUrl');
-      final resp = await http
-          .post(
-            newDeviceUrl,
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({
-              'device_name': deviceName,
-              'device_os': deviceOs,
-            }),
-          )
-          .timeout(const Duration(seconds: 10));
-
-      if (resp.statusCode != 200) {
-        final detail = _extractDetail(resp.body);
-        return 'Server rejected new-device request (${resp.statusCode}): $detail';
-      }
-
-      final data = jsonDecode(resp.body) as Map<String, dynamic>;
-      desktopToken    = data['token']    as String;
-      desktopUsername = data['username'] as String;
-      desktopUin      = data['uin'].toString();
-    } catch (e) {
-      if (kDebugMode) print('[QrAuth] new-device error: $e');
-      return 'Failed to issue desktop token: $e';
+    final bundle = await OnionAccountSync.exportBundle(username);
+    if (bundle == null) {
+      return 'This device has no Tor address yet. Turn on Onion mode first.';
     }
 
-    // --- Step 2: encrypt and deliver over LAN ---
     try {
       final theirPubBytes = base64Decode(qr['pub'] as String);
       final nonceB64 = qr['nonce'] as String;
@@ -300,11 +270,9 @@ class QrLanAuthService {
       final sharedKey = await _deriveSharedKey(myKeyPair, theirPubBytes);
 
       final plaintext = utf8.encode(jsonEncode({
-        'token': desktopToken,
-        'username': desktopUsername,
-        'uin': desktopUin,
-        'server_base': serverBase,
+        'username': username,
         'is_primary': false,
+        'onion': bundle,
         'nonce': nonceB64,
       }));
 
@@ -343,38 +311,10 @@ class QrLanAuthService {
           if (kDebugMode) print('[QrAuth] $ip http error: ${e.message}');
         }
       }
-
-      // LAN delivery failed — revoke the unused desktop token so it doesn't
-      // occupy a session slot.
-      _revokeToken(serverBase, desktopToken);
       return lastError ?? 'All addresses unreachable';
     } catch (e) {
       if (kDebugMode) print('[QrAuth] sendCredentials error: $e');
       return e.toString();
-    }
-  }
-
-  static void _revokeToken(String serverBase, String token) {
-    http
-        .post(
-          Uri.parse('$serverBase/api/logout'),
-          headers: {'Authorization': 'Bearer $token'},
-        )
-        .timeout(const Duration(seconds: 10))
-        .then((_) {
-          if (kDebugMode) print('[QrAuth] Dead token revoked');
-        })
-        .catchError((e) {
-          if (kDebugMode) print('[QrAuth] Token revoke failed: $e');
-        });
-  }
-
-  static String _extractDetail(String body) {
-    try {
-      final m = jsonDecode(body) as Map<String, dynamic>;
-      return (m['detail'] ?? m['message'] ?? body).toString();
-    } catch (_) {
-      return body;
     }
   }
 
@@ -384,8 +324,7 @@ class QrLanAuthService {
   /// Call on the authenticated desktop that wants to grant access to a phone.
   /// The phone scans the returned QR, connects, and receives its encrypted token.
   static Future<QrGrantSession> startGrantServer({
-    required String token,
-    required String serverBase,
+    required String username,
   }) async {
     final nonce =
         Uint8List.fromList(List.generate(16, (_) => Random.secure().nextInt(256)));
@@ -436,32 +375,14 @@ class QrLanAuthService {
           }
 
           final phonePubBytes = base64Decode(json['pub'] as String);
-          final phoneName = (json['device_name'] as String?) ?? '';
-          final phoneOs = (json['device_os'] as String?) ?? '';
 
-          // Issue fresh token for the phone via server
-          final resp = await http
-              .post(
-                Uri.parse('$serverBase/api/new-device'),
-                headers: {
-                  'Authorization': 'Bearer $token',
-                  'Content-Type': 'application/json',
-                },
-                body: jsonEncode({'device_name': phoneName, 'device_os': phoneOs}),
-              )
-              .timeout(const Duration(seconds: 10));
-
-          if (resp.statusCode != 200) {
-            if (kDebugMode) print('[QrGrant] new-device failed: ${resp.statusCode}');
-            req.response.statusCode = 502;
+          final bundle = await OnionAccountSync.exportBundle(username);
+          if (bundle == null) {
+            if (kDebugMode) print('[QrGrant] no onion identity to hand over');
+            req.response.statusCode = 409;
             await req.response.close();
             return;
           }
-
-          final data = jsonDecode(resp.body) as Map<String, dynamic>;
-          final phoneToken = data['token'] as String;
-          final phoneUsername = data['username'] as String;
-          final phoneUin = data['uin'].toString();
 
           // Encrypt response with phone's ephemeral pub key
           final ephemeralKeyPair = await _x25519.newKeyPair();
@@ -469,11 +390,9 @@ class QrLanAuthService {
           final sharedKey = await _deriveSharedKey(ephemeralKeyPair, phonePubBytes);
 
           final plaintext = utf8.encode(jsonEncode({
-            'token': phoneToken,
-            'username': phoneUsername,
-            'uin': phoneUin,
-            'server_base': serverBase,
+            'username': username,
             'is_primary': false,
+            'onion': bundle,
             'nonce': nonceB64,
           }));
 
@@ -495,7 +414,7 @@ class QrLanAuthService {
           controller.add(true);
           await controller.close();
           await server.close();
-          if (kDebugMode) print('[QrGrant] Session granted to $phoneUsername');
+          if (kDebugMode) print('[QrGrant] Account granted to $username');
         } catch (e) {
           if (kDebugMode) print('[QrGrant] Error: $e');
           req.response.statusCode = 500;
@@ -578,11 +497,12 @@ class QrLanAuthService {
 
           if (kDebugMode) print('[QrGrant] Received session for ${plain['username']}');
           return QrAuthCredentials(
-            token: plain['token'] as String,
+            token: (plain['token'] as String?) ?? '',
             username: plain['username'] as String,
-            uin: plain['uin'].toString(),
-            serverBase: plain['server_base'] as String,
+            uin: (plain['uin'] ?? '').toString(),
+            serverBase: (plain['server_base'] as String?) ?? '',
             isPrimary: plain['is_primary'] as bool? ?? false,
+            onionBundle: plain['onion'] as Map<String, dynamic>?,
           );
         }
         lastError = 'Server at $ip returned ${resp.statusCode}';

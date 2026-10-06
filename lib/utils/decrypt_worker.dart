@@ -17,6 +17,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:crypto/crypto.dart' as dart_crypto;
+import 'package:flutter/foundation.dart' show debugPrint;
 
 /// A single decrypt request handed to a worker isolate.
 class _DecryptJob {
@@ -137,8 +138,25 @@ class DecryptWorker {
       aeadKey: aeadKey,
       prefixLen: prefixLen,
     ));
-    return completer.future;
+    return completer.future.timeout(_jobTimeout, onTimeout: () {
+      // If this job's worker never replies, its round-robin slot would
+      // otherwise be lost forever -- every later call routed to the same
+      // index hangs identically, silently taking down 1-in-[_poolSize] of
+      // *all* media/message decrypts app-wide. Dropping the completer here
+      // (and letting the caller's existing "null = failed" handling take
+      // over) turns that into a bounded, recoverable failure instead.
+      _pending.remove(id);
+      debugPrint(
+          '[DecryptWorker] job $id (media) timed out after $_jobTimeout -- worker ${id % _poolSize} may be stuck/dead');
+      return null;
+    });
   }
+
+  /// Generous relative to how long a single XChaCha20-Poly1305/X25519 job
+  /// should ever realistically take (well under a second even for large
+  /// media on a slow device) -- this only exists to bound the damage from a
+  /// stuck or dead worker isolate, not to cut off legitimately slow work.
+  static const Duration _jobTimeout = Duration(seconds: 20);
 
   /// Decrypts one E2EE chat message (X25519 ECDH + HKDF-SHA256 +
   /// XChaCha20-Poly1305) on a pooled isolate. Returns the plaintext bytes, or
@@ -183,7 +201,12 @@ class DecryptWorker {
       cipherText: cipherText,
       tag: tag,
     ));
-    return completer.future;
+    return completer.future.timeout(_jobTimeout, onTimeout: () {
+      _pending.remove(id);
+      debugPrint(
+          '[DecryptWorker] job $id (message) timed out after $_jobTimeout -- worker ${id % _poolSize} may be stuck/dead');
+      return null;
+    });
   }
 
   // ── Worker isolate ──────────────────────────────────────────────────────────

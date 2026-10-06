@@ -45,6 +45,15 @@ class ExternalServerManager {
 
   static final ValueNotifier<List<ExternalServer>> servers = ValueNotifier([]);
 
+  /// Lower-cased hosts of external servers. All traffic to them is sent
+  /// through Tor (see utils/tor_routing.dart) so the server never sees the
+  /// user's real IP. A host is added as soon as we're about to contact it
+  /// (before it's even saved as a server) and when saved servers are loaded.
+  static final Set<String> torHosts = {};
+
+  static void routeHostViaTor(String host) =>
+      torHosts.add(host.trim().toLowerCase());
+
   static final Map<String, WebSocketChannel> _wsConnections = {};
   static final Map<String, StreamSubscription> _wsSubscriptions = {};
 
@@ -161,6 +170,9 @@ class ExternalServerManager {
     }
     if (json != null && json.isNotEmpty) {
       final loadedServers = ExternalServer.decodeList(json);
+      for (final s in loadedServers) {
+        routeHostViaTor(s.host);
+      }
       servers.value = loadedServers;
     } else {
       servers.value = [];
@@ -245,6 +257,7 @@ class ExternalServerManager {
   }
 
   static Future<Map<String, dynamic>> fetchServerInfo(String host, int port) async {
+    routeHostViaTor(host);
     final url = Uri.parse('http://$host:$port/info');
     final resp = await http.get(url).timeout(const Duration(seconds: 10));
     if (resp.statusCode != 200) {
@@ -261,7 +274,8 @@ class ExternalServerManager {
     String password = '',
     required Map<String, dynamic> serverInfo,
   }) async {
-    
+    routeHostViaTor(host);
+
     final random = Random.secure();
     final pubKeyBytes = List<int>.generate(32, (_) => random.nextInt(256));
     final privKeyBytes = List<int>.generate(64, (_) => random.nextInt(256));

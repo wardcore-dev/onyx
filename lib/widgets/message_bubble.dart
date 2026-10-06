@@ -13,13 +13,18 @@ import '../widgets/voice_message_widget.dart';
 import '../widgets/video_message_widget.dart';
 import '../widgets/code_block_widget.dart';
 import '../widgets/file_message_widget.dart';
-import '../widgets/link_preview_card.dart';
 import '../models/chat_message.dart';
 import '../globals.dart';
 import '../models/font_family.dart';
 import '../enums/delivery_mode.dart';
 import '../services/mesh/mesh_file_transfer.dart';
+import '../services/onion/onion_send_queue.dart';
+import '../services/onion/onion_transport_service.dart';
 import '../l10n/app_localizations.dart';
+import '../call/call_manager.dart';
+import '../l10n/app_localizations_extra.dart';
+import '../screens/chats_tab.dart' show getPreviewText, isAccentPreview;
+import '../services/onion/onion_paired_peers.dart';
 
 /// A menu item for the desktop right-click context menu, with optional icon.
 class DesktopMenuItem {
@@ -46,6 +51,125 @@ IconData? _standardIcon(ContextMenuButtonType type) => switch (type) {
       ContextMenuButtonType.delete => Icons.delete_outline_rounded,
       _ => null,
     };
+
+/// A call record in the chat (CALLv1, written by RootScreen.addCallRecord):
+/// "Outgoing call · 2:14", "Missed call", ... Tap to call back.
+class _CallRecordContent extends StatelessWidget {
+  final Map<String, dynamic> data;
+  final String peerUsername;
+  final double fontSizeMultiplier;
+
+  const _CallRecordContent({
+    required this.data,
+    required this.peerUsername,
+    required this.fontSizeMultiplier,
+  });
+
+  static String _duration(int s) {
+    final h = s ~/ 3600, m = (s % 3600) ~/ 60, sec = s % 60;
+    final ss = sec.toString().padLeft(2, '0');
+    return h > 0 ? '$h:${m.toString().padLeft(2, '0')}:$ss' : '$m:$ss';
+  }
+
+  /// Calls only go over Tor.
+  void _callBack() {
+    if (callManager.isInCall.value || callManager.isIncomingCall.value) return;
+    if (!OnionPairedPeers.isTrusted(peerUsername)) return;
+    callManager.startOnionCall(peerUsername);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final cs = Theme.of(context).colorScheme;
+    final outgoing = data['dir'] == 'out';
+    final status = data['st'] as String? ?? 'ended';
+    final dur = (data['dur'] as num?)?.toInt() ?? 0;
+    final missed = status == 'missed';
+    final failed = missed || (status == 'declined' && !outgoing);
+
+    final title = switch (status) {
+      'missed' => l.callLogMissed,
+      'declined' => l.callLogDeclined,
+      'cancelled' || 'busy' || 'no_answer' => l.callLogCancelled,
+      _ => outgoing ? l.callLogOutgoing : l.callLogIncoming,
+    };
+    final String? detail = switch (status) {
+      'busy' => l.callLogBusy,
+      'no_answer' => l.callLogNoAnswer,
+      'ended' when dur > 0 => _duration(dur),
+      _ => null,
+    };
+
+    final accent = failed ? const Color(0xFFEF5350) : cs.primary;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _callBack,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.call_rounded, size: 20, color: accent),
+              ),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: cs.onSurface,
+                        fontSize: 15 * fontSizeMultiplier,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          outgoing
+                              ? Icons.call_made_rounded
+                              : Icons.call_received_rounded,
+                          size: 14,
+                          color: failed
+                              ? accent
+                              : const Color(0xFF34C759),
+                        ),
+                        if (detail != null) ...[
+                          const SizedBox(width: 4),
+                          Text(
+                            detail,
+                            style: TextStyle(
+                              color: cs.onSurface.withValues(alpha: 0.6),
+                              fontSize: 13 * fontSizeMultiplier,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 Widget _menuRow({
   required IconData? icon,
@@ -252,6 +376,10 @@ class MessageBubble extends StatelessWidget {
   /// the long-press can be handled by the caller (e.g. message selection mode).
   final VoidCallback? onLongPress;
 
+  /// False for text from a stranger (contact requests): a preview would
+  /// fetch whatever URL they put in.
+  final bool allowLinkPreview;
+
   const MessageBubble({
     Key? key,
     required this.text,
@@ -271,6 +399,7 @@ class MessageBubble extends StatelessWidget {
     this.desktopMenuItems,
     this.onRightClick,
     this.onLongPress,
+    this.allowLinkPreview = true,
   }) : super(key: key);
 
   bool get isDiagnostic => text.startsWith('[cannot-decrypt');
@@ -315,7 +444,6 @@ class MessageBubble extends StatelessWidget {
     final Color textRaw = colorScheme.onSurface;
     final Color textColor = textRaw;
     Widget primaryContent;
-    String? linkPreviewUrl;
 
     final bool isLight = colorScheme.surface.computeLuminance() > 0.5;
     final Color outgoingBase = isLight
@@ -673,6 +801,49 @@ class MessageBubble extends StatelessWidget {
       } catch (e) {
         primaryContent = Text(' Invalid ALBUM: $e');
       }
+    } else if (text.startsWith('CALLv1:')) {
+      Map<String, dynamic> data;
+      try {
+        data = jsonDecode(text.substring('CALLv1:'.length))
+            as Map<String, dynamic>;
+      } catch (_) {
+        data = const {};
+      }
+      primaryContent = _CallRecordContent(
+        data: data,
+        peerUsername: peerUsername,
+        fontSizeMultiplier: fontSizeMultiplier,
+      );
+    } else if (text.startsWith('CONTACTv1:')) {
+      // "Contact request accepted" note (RootScreen.addContactRecord) --
+      // the same words on both sides.
+      final l = AppLocalizations.of(context);
+      primaryContent = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: colorScheme.primary.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.person_add_alt_1_rounded,
+                size: 20, color: colorScheme.primary),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              l.contactRecordAcceptedBoth,
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontSize: 14 * fontSizeMultiplier,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      );
     } else if (text.startsWith('MEDIA_PROXYv1:')) {
       try {
         final jsonPart = text.substring('MEDIA_PROXYv1:'.length);
@@ -767,16 +938,6 @@ class MessageBubble extends StatelessWidget {
         primaryContent = Text(' Invalid MEDIA_PROXY: $e');
       }
     } else {
-      final _urlRx = RegExp(
-        r'\bhttps?://[^\s<>"{}|\\^`\[\]]+|\bwww\.[^\s<>"{}|\\^`\[\]]+',
-        caseSensitive: false,
-      );
-      final _firstMatch = _urlRx.firstMatch(text);
-      if (_firstMatch != null) {
-        final _raw = _firstMatch.group(0)!;
-        linkPreviewUrl = _raw.startsWith('http') ? _raw : 'https://$_raw';
-      }
-
       primaryContent = Builder(
         builder: (context) {
           final codeMatches = _codeBlockRegex.allMatches(text).toList();
@@ -912,12 +1073,32 @@ class MessageBubble extends StatelessWidget {
                             color: textColorFinal.withValues(alpha: 0.85),
                           )
                           .copyWith(fontStyle: FontStyle.italic);
+                      // Media / call: accent color, like the chat list.
+                      final accentStyle = fontFamily.getBodyTextStyle(
+                        fontSize: 12 * fontSizeMultiplier,
+                        fontWeight: FontWeight.w500,
+                        color: colorScheme.primary,
+                      );
                       if (special != null) {
                         return Text(
-                          special.label,
+                          AppLocalizations.of(context).localizePreview(
+                              special.label == 'Photo'
+                                  ? 'Image'
+                                  : special.label),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: labelStyle,
+                          style: accentStyle,
+                        );
+                      }
+                      final preview =
+                          getPreviewText((replyToContent ?? '').trim());
+                      if (isAccentPreview(preview)) {
+                        return Text(
+                          AppLocalizations.of(context)
+                              .localizePreview(preview),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: accentStyle,
                         );
                       }
                       return Text(
@@ -933,7 +1114,6 @@ class MessageBubble extends StatelessWidget {
             ),
           ],
           primaryContent,
-          if (linkPreviewUrl != null) LinkPreviewCard(url: linkPreviewUrl!),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -944,6 +1124,25 @@ class MessageBubble extends StatelessWidget {
                   color: textColorFinal.withOpacity(0.55),
                 ),
                 const SizedBox(width: 3),
+              ],
+              if (chatMessage?.deliveryMode.isOnion == true) ...[
+                Icon(
+                  chatMessage?.sendFailed == true
+                      ? Icons.error_outline
+                      : (chatMessage?.delivered == true
+                          ? Icons.done
+                          : Icons.schedule),
+                  size: 10 * fontSizeMultiplier,
+                  color: chatMessage?.sendFailed == true
+                      ? Colors.redAccent
+                      : (chatMessage?.delivered == true
+                          ? Theme.of(context)
+                              .colorScheme
+                              .primary
+                              .withOpacity(0.85)
+                          : textColorFinal.withOpacity(0.55)),
+                ),
+                const SizedBox(width: 4),
               ],
               if (chatMessage?.deliveryMode.isLAN == true) ...[
                 Icon(
@@ -1565,4 +1764,78 @@ Widget _meshFilePlaceholder(
       ],
     ),
   );
+}
+
+/// Status line shown under an outgoing onion message's bubble while it sits in
+/// the send queue because the recipient could not be reached: which retry is
+/// next and a live countdown to it.
+class OnionRetryStatus extends StatefulWidget {
+  final ChatMessage message;
+  const OnionRetryStatus({super.key, required this.message});
+
+  @override
+  State<OnionRetryStatus> createState() => _OnionRetryStatusState();
+}
+
+class _OnionRetryStatusState extends State<OnionRetryStatus> {
+  @override
+  Widget build(BuildContext context) {
+    final m = widget.message;
+    if (!m.outgoing || !m.deliveryMode.isOnion) return const SizedBox.shrink();
+    return ValueListenableBuilder<List<QueuedOnionSend>>(
+      valueListenable: OnionSendQueue.items,
+      builder: (_, queue, __) {
+        final matches = queue.where((q) => q.localId == m.id);
+        if (m.delivered == true || m.sendFailed == true || matches.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        // Only the newest still-queued message of this chat carries the
+        // label; one line under the last bubble instead of one per bubble.
+        final mine = matches.first;
+        for (final q in queue) {
+          if (q.localId == null ||
+              q.peerUsername != mine.peerUsername ||
+              q.localId == m.id) {
+            continue;
+          }
+          if (q.enqueuedAt.isAfter(mine.enqueuedAt)) {
+            return const SizedBox.shrink();
+          }
+        }
+        // Retry number the next tick will be (attempts counts failed ticks).
+        final attempt =
+            matches.map((q) => q.attempts).reduce((a, b) => a < b ? a : b) + 1;
+        final color =
+            Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.45);
+        // Queued messages go out the moment a channel to the contact opens
+        // (not on a timer), so the label just says whether that's now.
+        return ValueListenableBuilder<Set<String>>(
+          valueListenable: onlineUsersNotifier,
+          builder: (_, __, ___) {
+            final l = AppLocalizations.of(context);
+            final label = OnionTransportService.instance.isConnected(m.to)
+                ? l.onionRetryNow(attempt)
+                : l.onionRetryWaiting;
+            return Padding(
+              padding: const EdgeInsets.only(top: 2, left: 4, right: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.cloud_off_rounded, size: 11, color: color),
+                  const SizedBox(width: 3),
+                  Text(
+                    label,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: color,
+                        fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
 }

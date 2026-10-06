@@ -413,7 +413,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get cacheTitle => 'Caché';
 
   @override
-  String get cacheSubtitle => 'Gestionar caché de medios local y del servidor';
+  String get cacheSubtitle => 'Gestionar la caché de medios local';
 
   @override
   String get mediaCacheSize => 'Caché de mensajes multimedia: ';
@@ -445,8 +445,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get dangerZone => 'Zona de peligro';
 
   @override
-  String get dangerZoneSubtitle =>
-      'Elimina la cuenta del servidor o borra los datos locales.';
+  String get dangerZoneSubtitle => 'Borrar los datos locales.';
 
   @override
   String get factoryReset => 'Restablecer de fábrica';
@@ -498,67 +497,6 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get connectionSubtitle => 'Estado y controles del WebSocket';
-
-  @override
-  String get proxyTitle => 'Proxy';
-
-  @override
-  String get proxySubtitle =>
-      'Enrutar el tráfico a través de un proxy HTTP o SOCKS5';
-
-  @override
-  String get enableProxy => 'Activar proxy';
-
-  @override
-  String get proxyType => 'Tipo de proxy';
-
-  @override
-  String get proxyHost => 'Host';
-
-  @override
-  String get proxyPort => 'Puerto';
-
-  @override
-  String get proxyUsername => 'Usuario';
-
-  @override
-  String get proxyPassword => 'Contraseña';
-
-  @override
-  String get testProxy => 'Probar proxy';
-
-  @override
-  String get proxyTesting => 'Probando...';
-
-  @override
-  String get proxyOk => ' Proxy correcto';
-
-  @override
-  String get proxyFailed => ' Proxy inaccesible';
-
-  @override
-  String get useProxy => 'Usar proxy';
-
-  @override
-  String get proxyDirectConnection => 'Conexión directa';
-
-  @override
-  String get proxyRouted => 'Tráfico enrutado por proxy';
-
-  @override
-  String get proxyConnectedStatus => 'Conectado';
-
-  @override
-  String get proxyNotConnectedStatus => 'No conectado';
-
-  @override
-  String get proxyLoginOptional => 'Usuario (opcional)';
-
-  @override
-  String get proxyPasswordOptional => 'Contraseña (opcional)';
-
-  @override
-  String get proxyApplyReconnect => 'Aplicar y reconectar';
 
   @override
   String get appDataTitle => 'Carpeta de datos de ONYX';
@@ -705,6 +643,9 @@ class AppLocalizationsEs extends AppLocalizations {
   String get deleteChatTitle => '¿Eliminar chat?';
 
   @override
+  String get removeFromContacts => 'Quitar de contactos';
+
+  @override
   String get blockUserLabel => 'Bloquear usuario';
 
   @override
@@ -745,6 +686,109 @@ class AppLocalizationsEs extends AppLocalizations {
   String get addAccount => 'Añadir cuenta';
 
   @override
+  String get identityNewIdentityButton => 'Nueva identidad';
+
+  @override
+  String get identityInfoTooltip => '¿Cómo funciona esto?';
+
+  @override
+  String get identityInfoTitle => 'Una nueva forma de comunicarse';
+
+  @override
+  String get identityInfoBody =>
+      'ONYX está pasando a un modelo totalmente descentralizado. En lugar de una cuenta en un servidor central, tu identidad ahora es una clave criptográfica generada localmente en tu dispositivo: una dirección Tor que solo tú controlas.\n\nNo hay contraseña ni servidor que sepa quién eres. Una frase semilla de 12 palabras es la única forma de restaurar esta identidad en un nuevo dispositivo.\n\nLos mensajes a contactos que ya tienen tu nueva dirección se entregan directamente por Tor, sin pasar por ningún servidor central. Los contactos que sigan en el sistema antiguo deberán compartir contigo su nueva dirección una vez, igual que compartirías un número de teléfono.';
+
+  @override
+  String get identityTitleChoose => 'Crear una identidad';
+
+  @override
+  String get identityChooseSubtitle =>
+      'La clave y la dirección se generan localmente en este dispositivo.';
+
+  @override
+  String get identityCreateNewButton => 'Nueva identidad';
+
+  @override
+  String get identityRestoreLinkButton => 'Ya tengo una frase semilla';
+
+  @override
+  String get identityTitleMnemonic => 'Tu frase semilla';
+
+  @override
+  String get identityMnemonicIntro =>
+      'Anota estas 12 palabras y guárdalas en un lugar seguro.';
+
+  @override
+  String get identityMnemonicRestoreNote =>
+      'Esta es la única forma de restaurar tu identidad en un nuevo dispositivo.';
+
+  @override
+  String get identityCopyButton => 'Copiar';
+
+  @override
+  String get identityCopiedSnack => 'Copiado';
+
+  @override
+  String get identitySavedConfirm => 'Guardé la frase en un lugar seguro';
+
+  @override
+  String get identityContinueButton => 'Continuar';
+
+  @override
+  String get identityTitleRestore => 'Restaurar identidad';
+
+  @override
+  String get identityRestoreHint =>
+      'Introduce tu frase semilla (12 palabras separadas por espacios).';
+
+  @override
+  String get identityRestoreButton => 'Restaurar';
+
+  @override
+  String get identityBackButton => 'Atrás';
+
+  @override
+  String get identityTitleDone => 'Identidad lista';
+
+  @override
+  String get identityAccountIdLabel => 'ID de cuenta';
+
+  @override
+  String get identityAccountIdExplain =>
+      'Un identificador estable derivado de tu clave: es lo que vincula tus dispositivos y mensajes en lugar de un nombre de usuario.';
+
+  @override
+  String get identityFingerprintLabel => 'Huella';
+
+  @override
+  String get identityFingerprintExplain =>
+      'Un código corto que tus contactos pueden usar para verificar que realmente eres tú.';
+
+  @override
+  String get identityDoneButton => 'Listo';
+
+  @override
+  String get tapToCopyAddress => 'Toca para copiar la dirección';
+
+  @override
+  String get identityErrorCreatePrefix => 'No se pudo crear la identidad';
+
+  @override
+  String get identityErrorRestorePrefix => 'No se pudo restaurar la identidad';
+
+  @override
+  String get identityTitleSetup => 'Configura tu perfil';
+
+  @override
+  String get identityDisplayNameLabel => 'Nombre visible';
+
+  @override
+  String get identityDisplayNameHint => 'Así te verán tus contactos';
+
+  @override
+  String get identityCreateAccountButton => 'Crear cuenta';
+
+  @override
   String get welcomeTitle => 'Bienvenido';
 
   @override
@@ -752,7 +796,7 @@ class AppLocalizationsEs extends AppLocalizations {
       'Mensajería segura con cifrado de extremo a extremo';
 
   @override
-  String get otherAccounts => 'Otras cuentas';
+  String get otherAccounts => 'Otras identidades';
 
   @override
   String get tapToSwitch => 'Toca para cambiar';
@@ -901,7 +945,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String deleteFromRecentContent(String acc) {
-    return '¿Seguro que quieres quitar \"$acc\" de la lista de recientes?nEsto no elimina la cuenta del servidor.';
+    return '¿Quitar \"$acc\" de la lista reciente?';
   }
 
   @override
@@ -1105,7 +1149,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get clearLocalCacheDialogContent =>
-      '¿Seguro que quieres eliminar todos los medios en caché (voz, imágenes, videos)?nEsto NO afecta a lo subido al servidor ni al historial de chats.';
+      '¿Eliminar todos los medios en caché (voz, imágenes, vídeos)?\nEl historial de chats no se ve afectado.';
 
   @override
   String get deleteAllLogsTitle => '¿Eliminar todos los registros?';
@@ -1274,13 +1318,6 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get liquidGlassNavBarDesc =>
       'Efecto de cristal en la barra de navegación inferior';
-
-  @override
-  String get liquidGlassCardsLabel => 'Tarjetas y elementos de lista';
-
-  @override
-  String get liquidGlassCardsDesc =>
-      'Efecto de cristal en la lista de chats y las tarjetas de ajustes';
 
   @override
   String get liquidGlassInputLabel => 'Barra de entrada';
@@ -1459,6 +1496,12 @@ class AppLocalizationsEs extends AppLocalizations {
       'El nombre visible debe tener entre 1 y 16 caracteres';
 
   @override
+  String get displayNameRequired => 'El nombre visible no puede estar vacío';
+
+  @override
+  String get displayNameUpdated => 'Nombre actualizado';
+
+  @override
   String get failedSendLan => 'Error al enviar por LAN';
 
   @override
@@ -1484,6 +1527,46 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get deleteForMeContent =>
       'Esto solo eliminará el mensaje de tu dispositivo. La otra persona seguirá viéndolo.';
+
+  @override
+  String deleteSelectedTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '¿Eliminar $count mensajes?',
+      one: '¿Eliminar mensaje?',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String deleteSelectedForBoth(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Estos mensajes se eliminarán para ambas partes.',
+      one: 'Este mensaje se eliminará para ambas partes.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String deleteSelectedForMe(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Estos mensajes se eliminarán solo para ti. La otra persona seguirá viéndolos.',
+      one:
+          'Este mensaje se eliminará solo para ti. La otra persona seguirá viéndolo.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String deleteSelectedMixed(int mine, int theirs) {
+    return 'Tus mensajes ($mine) se eliminarán para ambas partes. Los mensajes de la otra persona ($theirs) se eliminarán solo para ti.';
+  }
 
   @override
   String get deleteFavMessageContent =>
@@ -1602,7 +1685,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get voiceCallsContent =>
-      'Actualmente las llamadas de voz solo funcionan por LAN (red local).\n\nEstamos recaudando fondos para el mantenimiento del servidor central y el desarrollo de una alternativa.';
+      'Las llamadas de voz solo funcionan por LAN (red local) por ahora.';
 
   @override
   String get supportOnyxBtn => 'Apoyar a ONYX';
@@ -2453,13 +2536,27 @@ class AppLocalizationsEs extends AppLocalizations {
       'Se generará contenido aleatorio, reemplazando los datos existentes.';
 
   @override
+  String get sendFavoritesSendChat => 'Enviar chat';
+
+  @override
+  String get sendFavoritesQrTitle => 'Muéstralo al dispositivo receptor';
+
+  @override
+  String get sendFavoritesQrInstruction =>
+      'Abre Favoritos en el otro dispositivo → Sincronizar → Recibir y escanea este código';
+
+  @override
+  String get sendFavoritesWaitingScan =>
+      'Esperando a que el otro dispositivo escanee el código QR…';
+
+  @override
   String get sendFavoritesTitle => 'Enviar favoritos';
 
   @override
   String get sendFavoritesShowQrToReceiver => 'Mostrar QR al receptor';
 
   @override
-  String get sendFavoritesScanReceiver => 'Escanear QR del receptor';
+  String get sendFavoritesScanReceiver => 'Escanear QR\ndel receptor';
 
   @override
   String get sendFavoritesSending => 'Enviando favoritos';
@@ -2496,7 +2593,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get receiveFavoritesTitle => 'Recibir favoritos';
 
   @override
-  String get receiveFavoritesScanSender => 'Escanear QR del remitente';
+  String get receiveFavoritesScanSender => 'Escanear QR\ndel remitente';
 
   @override
   String get receiveFavoritesScanOnSender =>
@@ -2688,8 +2785,97 @@ class AppLocalizationsEs extends AppLocalizations {
   String get wardLinkSyncPersonalToggle => 'Sincronizar mis mensajes';
 
   @override
+  String get wardLinkSyncIncomingToggle => 'Sync incoming messages';
+
+  @override
+  String get pairOverTor => 'Emparejar por Tor';
+
+  @override
+  String get addContactQr => 'Añadir contacto · QR';
+
+  @override
+  String get contactsTitle => 'Contactos';
+
+  @override
+  String get contactsEmpty => 'Aún no hay contactos.';
+
+  @override
+  String get myDevicesTitle => 'Mis dispositivos';
+
+  @override
+  String get myDevicesThisDevice => 'Este dispositivo';
+
+  @override
+  String get myDevicesHint =>
+      'Vincula otro dispositivo con «Vincular dispositivo» en su pantalla de inicio de sesión. Cada dispositivo tiene su propia dirección Tor y tus mensajes llegan a todos.';
+
+  @override
+  String get myDevicesUnlink => 'Desvincular';
+
+  @override
+  String get myDevicesUnlinkConfirm =>
+      '¿Desvincular este dispositivo de tu cuenta? Dejará de recibir tus mensajes y tus contactos también lo quitarán.';
+
+  @override
+  String contactsRemoveConfirm(String username) {
+    return '¿Quitar a $username de tus contactos?';
+  }
+
+  @override
+  String contactsRemoveDeviceConfirm(String name) {
+    return '¿Quitar el emparejamiento con el dispositivo de $name? Su otro dispositivo no se ve afectado.';
+  }
+
+  @override
+  String get pairScanTitle => 'Escanear su código de emparejamiento';
+
+  @override
+  String get pairScanHint =>
+      'Apunta la cámara al código QR de emparejamiento de la otra persona';
+
+  @override
+  String get pairShowHint =>
+      'Pide a la otra persona que escanee este código con su app Onyx';
+
+  @override
+  String get pairEncrypted => 'Cifrado de extremo a extremo, directo por Tor';
+
+  @override
+  String get pairScanCode => 'Escanear código';
+
+  @override
+  String get pairedOverTor => 'Emparejado por Tor';
+
+  @override
+  String get pairing => 'Emparejando...';
+
+  @override
+  String pairFailedWith(String error) {
+    return 'Error al emparejar: $error';
+  }
+
+  @override
+  String pairStartFailed(String error) {
+    return 'No se pudo iniciar Tor: $error';
+  }
+
+  @override
+  String pairRetry(int attempt, int max) {
+    return 'Sigo intentando conectar ($attempt/$max) — su dirección puede estar aún publicándose en Tor...';
+  }
+
+  @override
+  String get peerShowQr => 'Mostrar QR';
+
+  @override
+  String get peerHideQr => 'Ocultar QR';
+
+  @override
+  String get peerAddressCopied => 'Dirección copiada';
+
+  @override
   String get wardLinkSyncPersonalToggleDesc =>
-      'Sincroniza solo los mensajes que TÚ enviaste en chats personales a tus otros dispositivos — los mensajes del contacto ya llegan por el servidor y nunca se sincronizan de esta forma';
+      'Sincroniza solo los mensajes que TÚ enviaste en chats personales a tus otros dispositivos';
 
   @override
   String get meshSubtitle => 'Red mesh sin conexión';
@@ -4233,4 +4419,542 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get manageMembersRequiresChild =>
       'Select at least one of Manage Ban List, Manage Mute List, or Manage Roles';
+
+  @override
+  String get onionRetryWaiting => 'Sin conexión · se enviará al conectar';
+
+  @override
+  String onionRetryNow(int n) {
+    return 'Enviando… (intento n.º $n)';
+  }
+
+  @override
+  String onionRetryIn(int n, int s) {
+    return 'Sin conexión · reintento n.º $n en $s s';
+  }
+
+  @override
+  String get onionOfflineTitle => 'El contacto no está en línea';
+
+  @override
+  String onionOfflineMessage(int seconds) {
+    return 'Tu mensaje no se pudo entregar ahora porque tu contacto no está en línea. Se guardó en este dispositivo y se reenviará automáticamente cada $seconds segundos hasta que se conecte. Mantén la app abierta para que continúen los reintentos.\n\nPuedes cambiar el intervalo en Ajustes → Interacción → Mensajes.';
+  }
+
+  @override
+  String get messagesSectionTitle => 'Mensajes';
+
+  @override
+  String get messagesSectionSubtitle =>
+      'Reintentos de entrega cuando un contacto está desconectado';
+
+  @override
+  String get retryIntervalTitle => 'Intervalo de reintento';
+
+  @override
+  String get retryIntervalDesc =>
+      'Cuando un contacto no está en línea, los mensajes no entregados se reenvían automáticamente con este intervalo hasta que lleguen.';
+
+  @override
+  String intervalSeconds(int n) {
+    return '$n segundos';
+  }
+
+  @override
+  String intervalMinutes(int n) {
+    return '$n min';
+  }
+
+  @override
+  String get statusOnlineLabel => 'en línea';
+
+  @override
+  String get statusOfflineLabel => 'desconectado';
+
+  @override
+  String get statusConnectingLabel => 'conectando…';
+
+  @override
+  String get onionCallTitle => 'Llamada por Tor';
+
+  @override
+  String get onionCallHideIp => 'No revelar mi dirección IP';
+
+  @override
+  String get onionCallHideIpHint =>
+      'La llamada va por Tor: tu dirección IP queda oculta, pero habrá un retraso de alrededor de un segundo. El vídeo no está disponible.';
+
+  @override
+  String get onionCallDirectHint =>
+      'Menos retraso, pero la otra persona verá tu dirección IP. Solo habrá conexión directa si ella también lo permite; si no, la llamada irá igualmente por Tor.';
+
+  @override
+  String get onionCallStart => 'Llamar';
+
+  @override
+  String get onionCallPeerOffline =>
+      'El contacto no está conectado — ahora no se puede llamar';
+
+  @override
+  String get onionCallNoAnswer => 'Sin respuesta';
+
+  @override
+  String get onionCallFailed =>
+      'No se pudo establecer la conexión de la llamada';
+
+  @override
+  String get callIncomingTitle => 'Llamada entrante';
+
+  @override
+  String get callAccept => 'Aceptar';
+
+  @override
+  String get callDecline => 'Rechazar';
+
+  @override
+  String get callLogOutgoing => 'Llamada saliente';
+
+  @override
+  String get callLogIncoming => 'Llamada entrante';
+
+  @override
+  String get callLogMissed => 'Llamada perdida';
+
+  @override
+  String get callLogCancelled => 'Llamada cancelada';
+
+  @override
+  String get callLogDeclined => 'Llamada rechazada';
+
+  @override
+  String get callLogBusy => 'Línea ocupada';
+
+  @override
+  String get callLogNoAnswer => 'Sin respuesta';
+
+  @override
+  String get callStatusCalling => 'Llamando';
+
+  @override
+  String get callStatusConnecting => 'Conectando';
+
+  @override
+  String get callPathRelay => 'A través del servidor';
+
+  @override
+  String get callEnd => 'Colgar';
+
+  @override
+  String get callMinimize => 'Minimizar';
+
+  @override
+  String get callRestore => 'Abrir llamada';
+
+  @override
+  String get callFallbackName => 'Llamada';
+
+  @override
+  String contactRequestNew(String name) {
+    return '$name quiere chatear contigo';
+  }
+
+  @override
+  String get contactRequestsEntry => 'Solicitudes de contacto';
+
+  @override
+  String get contactRequestsTitle => 'Solicitudes';
+
+  @override
+  String get contactRequestsEmpty => 'No hay solicitudes';
+
+  @override
+  String get contactRequestAccept => 'Aceptar';
+
+  @override
+  String get contactRequestDecline => 'Rechazar';
+
+  @override
+  String get contactRequestDeclineTitle => '¿Rechazar la solicitud?';
+
+  @override
+  String get contactRequestDeclineBody =>
+      'Esta persona ya no podrá escribirte ni enviarte nuevas solicitudes. Más adelante podrás añadirla tú.';
+
+  @override
+  String get contactRequestNoMessages => 'Sin comentario';
+
+  @override
+  String contactRequestNameClash(String username) {
+    return 'Ya tienes un contacto @$username con otra clave. Puede ser su nuevo dispositivo, o alguien que se hace pasar por él. Acepta solo si estás seguro.';
+  }
+
+  @override
+  String get contactRequestInfo =>
+      'Hasta que aceptes, no puede ver cuándo estás en línea, ni tu perfil, ni llamarte.';
+
+  @override
+  String get contactRequestAddress => 'Dirección onion';
+
+  @override
+  String get contactRequestKey => 'Huella de la clave';
+
+  @override
+  String contactRequestAccepted(String name) {
+    return '$name añadido a contactos';
+  }
+
+  @override
+  String get contactRequestFileHidden =>
+      'Archivo (no se acepta de desconocidos)';
+
+  @override
+  String get contactRequestMessages => 'Mensajes';
+
+  @override
+  String get forwardDone => 'Mensaje reenviado';
+
+  @override
+  String get forwardFileUnavailable =>
+      'El archivo no está en este dispositivo, no se puede reenviar';
+
+  @override
+  String get contactRequestDeclineChoiceBody =>
+      'Rechazar: la solicitud desaparece, pero podrá enviar otra más adelante. Rechazar y bloquear: nunca más podrá escribirte ni enviarte solicitudes.';
+
+  @override
+  String get contactRequestDeclineAndBlock => 'Rechazar y bloquear';
+
+  @override
+  String get blockedFromRequests => 'solicitud bloqueada';
+
+  @override
+  String get contactRequestComposeTitle => 'Solicitud de contacto';
+
+  @override
+  String contactRequestComposeBody(String name) {
+    return 'Añade un comentario a tu solicitud — $name lo verá en sus solicitudes. Podréis escribiros cuando la acepte.';
+  }
+
+  @override
+  String get contactRequestComposeHint => 'Comentario…';
+
+  @override
+  String get contactRequestSend => 'Enviar solicitud';
+
+  @override
+  String get contactRequestSkip => 'Sin comentario';
+
+  @override
+  String get contactRequestSent => 'Solicitud enviada';
+
+  @override
+  String get contactRequestAttached => 'Comentario de la solicitud';
+
+  @override
+  String get contactRequestPendingSnack =>
+      'Tu solicitud aún no fue aceptada — podrás escribir después.';
+
+  @override
+  String get contactRequestPendingCall =>
+      'Podrás llamar cuando acepte tu solicitud';
+
+  @override
+  String get contactRequestQueued =>
+      'Está desconectado — la solicitud se enviará en cuanto se conecte';
+
+  @override
+  String contactRequestDelivered(String name) {
+    return 'Tu solicitud a $name fue entregada';
+  }
+
+  @override
+  String get contactRequestResend => 'Volver a enviar la solicitud';
+
+  @override
+  String get contactRequestUpdated => 'Solicitud actualizada';
+
+  @override
+  String get contactRecordAcceptedBoth => 'Solicitud de contacto aceptada';
+
+  @override
+  String get contactRequestAlreadySent =>
+      'Ya enviaste una solicitud — está esperando aprobación';
+
+  @override
+  String get contactRequestAlreadySentShort => 'Solicitud ya enviada';
+
+  @override
+  String get contactRecordAccepted => 'Aceptaste la solicitud de contacto';
+
+  @override
+  String get contactRecordAcceptedByThem =>
+      'Tu solicitud de contacto fue aceptada';
+
+  @override
+  String get contactRecordPreview => 'Contacto añadido';
+
+  @override
+  String contactRequestAcceptedByThem(String name) {
+    return '$name aceptó tu solicitud';
+  }
+
+  @override
+  String get searchOnionHint =>
+      'Pega una dirección xxxx.onion para enviar una solicitud';
+
+  @override
+  String get searchNeedOnionAddress =>
+      'No es una dirección onion — pega una del tipo xxxx.onion';
+
+  @override
+  String get searchConnectingTor => 'Conectando por Tor…';
+
+  @override
+  String searchStillTrying(int attempt, int max) {
+    return 'Seguimos intentando conectar ($attempt/$max)…';
+  }
+
+  @override
+  String get contactRemovedYou =>
+      'Ya no estás en los contactos de esta persona — el mensaje no se puede entregar';
+
+  @override
+  String get contactNotInContacts =>
+      'Esta persona no está en tus contactos — el mensaje no se envió';
+
+  @override
+  String get contactRequestCommentFailed =>
+      'Solicitud enviada, pero el comentario no llegó — se desconectó';
+
+  @override
+  String get callMute => 'Silenciar';
+
+  @override
+  String get callVideo => 'Vídeo';
+
+  @override
+  String get callSpeaker => 'Altavoz';
+
+  @override
+  String get callPathDirect => 'Conexión directa';
+
+  @override
+  String get callPathTor => 'Por Tor';
+
+  @override
+  String get callVideoUnavailable =>
+      'Conexión demasiado débil — vídeo no disponible';
+
+  @override
+  String get callVideoPaused =>
+      'Vídeo desactivado porque la conexión se debilitó';
+
+  @override
+  String get statusShowMyStatus => 'Mostrar mi estado en línea';
+
+  @override
+  String get statusShowMyStatusHint =>
+      'Tus contactos ven cuándo estás en línea. Si está desactivado, no ven nada.';
+
+  @override
+  String get viewCircuitTitle => 'Ver circuito';
+
+  @override
+  String get viewCircuitSubtitle =>
+      'Los repetidores Tor por los que se enruta tu tráfico ahora mismo';
+
+  @override
+  String get viewCircuitEmpty =>
+      'Aún no hay circuitos activos. Inténtalo de nuevo en un momento.';
+
+  @override
+  String get circuitThisDevice => 'Este dispositivo';
+
+  @override
+  String get circuitRoleGuard => 'guardián';
+
+  @override
+  String get circuitRoleIntro => 'punto de introducción';
+
+  @override
+  String get circuitRoleRend => 'punto de encuentro';
+
+  @override
+  String get circuitUnknownRelay => 'Repetidor desconocido';
+
+  @override
+  String get circuitOnionRelay => 'Repetidor del servicio onion';
+
+  @override
+  String get circuitModeSimple => 'Simple';
+
+  @override
+  String get circuitModeAdvanced => 'Avanzado';
+
+  @override
+  String get mediaSendFileTitle => 'Enviar archivo';
+
+  @override
+  String get mediaSendFileDetails => 'DETALLES DEL ARCHIVO';
+
+  @override
+  String get mediaSendAlbumHeading => 'ÁLBUM';
+
+  @override
+  String get mediaSendName => 'Nombre';
+
+  @override
+  String get mediaSendSize => 'Tamaño';
+
+  @override
+  String get mediaSendType => 'Tipo';
+
+  @override
+  String get mediaSendUnknown => 'Desconocido';
+
+  @override
+  String get mediaSendImagesLabel => 'Imágenes';
+
+  @override
+  String mediaSendImagesCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count imágenes',
+      one: '1 imagen',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get mediaSendConfirmAlbum =>
+      '¿Seguro que quieres enviar estas imágenes como álbum?';
+
+  @override
+  String get mediaSendConfirmFile => '¿Seguro que quieres enviar este archivo?';
+
+  @override
+  String get mediaSendVoiceTitle => 'Enviar mensaje de voz';
+
+  @override
+  String get mediaSendVoiceHeading => 'MENSAJE DE VOZ';
+
+  @override
+  String get mediaSendDuration => 'Duración';
+
+  @override
+  String get mediaSendConfirmVoice => '¿Enviar este mensaje de voz?';
+
+  @override
+  String get glassSimpleTitle => 'Ajustes del cristal';
+
+  @override
+  String get glassSimpleDesc =>
+      'Un único conjunto de valores para la barra de navegación, la barra de entrada, la búsqueda y los botones de la barra superior';
+
+  @override
+  String get glassResetAll => 'Restablecer todo';
+
+  @override
+  String favDeleteSelectedTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '¿Eliminar $count chats?',
+      one: '¿Eliminar 1 chat?',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get favDeleteSelectedMessage =>
+      'Los chats seleccionados y todos sus mensajes se eliminarán de favoritos.';
+
+  @override
+  String get glassMasterTitle => 'Efectos Liquid Glass';
+
+  @override
+  String get glassMasterDesc =>
+      'Activa o desactiva todos los efectos de cristal';
+
+  @override
+  String get glassTabGeneral => 'General';
+
+  @override
+  String get glassTabAdvanced => 'Avanzado';
+
+  @override
+  String get glassBlur => 'Desenfoque';
+
+  @override
+  String get glassBlurDesc =>
+      'Intensidad del desenfoque esmerilado detrás del cristal';
+
+  @override
+  String get glassTint => 'Tinte';
+
+  @override
+  String get glassTintDesc =>
+      'Opacidad de la tinta adaptativa (oscuro/claro automático)';
+
+  @override
+  String get glassSaturation => 'Saturación';
+
+  @override
+  String get glassSaturationDesc => 'Viveza del color tomada del fondo';
+
+  @override
+  String get glassChromatic => 'Aberración cromática';
+
+  @override
+  String get glassChromaticDesc =>
+      'Bordes de color en los extremos del cristal (efecto lente)';
+
+  @override
+  String get glassRefractive => 'Índice de refracción';
+
+  @override
+  String get glassRefractiveDesc =>
+      'Cuánto desvía el cristal la luz que hay detrás';
+
+  @override
+  String get glassLight => 'Intensidad de la luz';
+
+  @override
+  String get glassLightDesc => 'Fuerza del brillo especular sobre el cristal';
+
+  @override
+  String get glassThickness => 'Grosor';
+
+  @override
+  String get glassThicknessDesc =>
+      'Profundidad del cristal: afecta a la refracción y al brillo de los bordes';
+
+  @override
+  String get glassJelly => 'Cantidad de estiramiento gelatinoso';
+
+  @override
+  String get glassJellyDesc =>
+      'Expansión del indicador al arrastrar entre pestañas';
+
+  @override
+  String get glassQualityTitle => 'Calidad del cristal';
+
+  @override
+  String get glassQualityFast => 'Rápido';
+
+  @override
+  String get glassQualityFastDesc => 'Ligero\nMejor rendimiento';
+
+  @override
+  String get glassQualityMedium => 'Medio';
+
+  @override
+  String get glassQualityMediumDesc => 'Sin shaders\nSolo desenfoque';
+
+  @override
+  String get glassQualityHigh => 'Calidad';
+
+  @override
+  String get glassQualityHighDesc => 'Shaders completos\nMejor aspecto';
 }

@@ -20,10 +20,10 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
-import '../globals.dart';
-import '../managers/account_manager.dart';
 import '../managers/settings_manager.dart';
 import '../l10n/app_localizations.dart';
+import '../services/onion/onion_account_sync.dart';
+import '../services/onion/onion_transport_service.dart';
 import '../services/qr_lan_auth_service.dart';
 
 enum _Step { loading, ready, success, failed }
@@ -138,6 +138,7 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
       });
       _sub = session.stream.listen(
         (creds) async {
+          await _adoptOnionIdentity(creds);
           final ok = await widget.onQrLogin(
             username: creds.username,
             token: creds.token,
@@ -173,19 +174,18 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
   // ── QR grant server (this device grants a session to the scanner) ─────────────
 
   Future<void> _startGrantServer() async {
-    final token = await AccountManager.getToken(widget.currentUsername!);
-    if (!mounted) return;
-    if (token == null) {
+    if (await OnionAccountSync.exportBundle(widget.currentUsername!) == null) {
+      if (!mounted) return;
       setState(() {
-        _errorDetail = 'No active session';
+        _errorDetail =
+            'This device has no Tor address yet. Turn on Onion mode first.';
         _step = _Step.failed;
       });
       return;
     }
     try {
       final session = await QrLanAuthService.startGrantServer(
-        token: token,
-        serverBase: serverBase,
+        username: widget.currentUsername!,
       );
       if (!mounted) {
         await session.close();
@@ -219,6 +219,20 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
           _step = _Step.failed;
         });
       }
+    }
+  }
+
+  /// Stores the received account key, device roster and contacts under this
+  /// account's name BEFORE login starts the hidden service. This device then
+  /// comes up with an address and key of its own and joins the account's
+  /// roster (see OnionAccount) -- it never reuses the other device's.
+  Future<void> _adoptOnionIdentity(QrAuthCredentials creds) async {
+    final bundle = creds.onionBundle;
+    if (bundle != null) {
+      // Whatever runs here now must not keep using keys about to be replaced
+      // (login restarts it under the linked account).
+      await OnionTransportService.instance.stop();
+      await OnionAccountSync.importBundle(creds.username, bundle);
     }
   }
 
@@ -265,6 +279,8 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
       });
       return;
     }
+    await _adoptOnionIdentity(creds);
+    if (!mounted) return;
     Navigator.of(context).pop(true);
     widget.onQrLogin(
       username: creds.username,
@@ -276,20 +292,9 @@ class _DeviceAuthScreenState extends State<DeviceAuthScreen> {
 
   Future<void> _handleSendAuth(String qrJson) async {
     setState(() => _step = _Step.loading);
-    final token = await AccountManager.getToken(widget.currentUsername!);
-    if (!mounted) return;
-    if (token == null) {
-      setState(() {
-        _errorDetail = 'No active session';
-        _step = _Step.failed;
-        _handling = false;
-      });
-      return;
-    }
     final error = await QrLanAuthService.sendCredentials(
       qrJson: qrJson,
-      token: token,
-      serverBase: serverBase,
+      username: widget.currentUsername!,
     );
     if (!mounted) return;
     if (error == null) {

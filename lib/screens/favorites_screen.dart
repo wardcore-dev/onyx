@@ -6,6 +6,7 @@ import '../utils/code_heuristic.dart';
 import '../utils/chat_image_preloader.dart';
 import '../utils/gallery_extractor.dart';
 import 'media_gallery_screen.dart';
+import 'fav_sync_send_screen.dart';
 import 'dart:math' as math;
 import 'dart:convert';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
@@ -1694,7 +1695,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
               margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               decoration: BoxDecoration(
                 color: sheetColor,
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(27),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1944,7 +1945,14 @@ class _FavoritesScreenState extends State<FavoritesScreen>
             meta['url'] as String? ?? meta['filename'] as String? ?? '';
         final orig = meta['orig'] as String? ?? p.basename(filename);
         if (filename.isEmpty) return;
-        final localPath = mediaFilePathRegistry[filename];
+        var localPath = mediaFilePathRegistry[filename];
+        if (localPath == null) {
+          // Synced videos already sit in video_cache; no need to have opened
+          // (and spun up a player for) the video first.
+          final cached = File(
+              '${(await getOnyxSupportDirectory()).path}/video_cache/$filename');
+          if (await cached.exists()) localPath = cached.path;
+        }
         if (localPath == null) {
           rootScreenKey.currentState?.showSnack('Video not loaded yet');
           return;
@@ -3043,6 +3051,13 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                       onJumpToMessage: (id) =>
                                           _scrollToFavMessageById(id),
                                     );
+                                  } else if (value == 'send_chat') {
+                                    showDialog<void>(
+                                      context: context,
+                                      barrierDismissible: false,
+                                      builder: (_) => FavSyncSendScreen(
+                                          favoriteId: widget.favoriteId),
+                                    );
                                   }
                                 },
                                 itemBuilder: (context) => [
@@ -3054,6 +3069,16 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                       const SizedBox(width: 10),
                                       Text(AppLocalizations.of(context)
                                           .galleryMenuLabel),
+                                    ]),
+                                  ),
+                                  PopupMenuItem<String>(
+                                    value: 'send_chat',
+                                    child: Row(children: [
+                                      const Icon(Icons.send_rounded,
+                                          size: 18),
+                                      const SizedBox(width: 10),
+                                      Text(AppLocalizations.of(context)
+                                          .sendFavoritesSendChat),
                                     ]),
                                   ),
                                 ],

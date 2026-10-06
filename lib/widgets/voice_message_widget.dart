@@ -501,6 +501,19 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
           }
         }
 
+        if (widget.filename.startsWith('onion://')) {
+          final onionFilename = widget.filename.substring(8);
+          final appDocuments = await getOnyxDocumentsDirectory();
+          final onionFile =
+              File('${appDocuments.path}/onion_media/$onionFilename');
+          if (await onionFile.exists()) {
+            return onionFile;
+          } else {
+            _lastEnsureError = 'Onion media file not found: $onionFilename';
+            return null;
+          }
+        }
+
         if (widget.filename.startsWith('fav://')) {
           debugPrint('[VoiceWidget] Favorites local file: ${widget.filename}');
           final favFilename = widget.filename.substring(6);
@@ -667,6 +680,16 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
             found = lanFile;
           } else {
             _lastEnsureError = 'LAN file not found: $lanFilename';
+          }
+        } else if (widget.filename.startsWith('onion://')) {
+          final onionFilename = widget.filename.substring(8);
+          final appDocuments = await getOnyxDocumentsDirectory();
+          final onionFile =
+              File('${appDocuments.path}/onion_media/$onionFilename');
+          if (await onionFile.exists()) {
+            found = onionFile;
+          } else {
+            _lastEnsureError = 'Onion media file not found: $onionFilename';
           }
         } else if (widget.isFile) {
           final root = rootScreenKey.currentState;

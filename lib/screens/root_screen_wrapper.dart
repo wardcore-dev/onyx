@@ -5,7 +5,7 @@ import '../managers/account_manager.dart';
 import '../managers/decoy_manager.dart';
 import '../globals.dart';
 import '../l10n/app_localizations.dart';
-import '../widgets/auth_dialog.dart';
+import '../widgets/identity_onboarding_dialog.dart';
 import '../widgets/migration_dialog.dart';
 import 'root_screen.dart';
 import 'device_auth_screen.dart';
@@ -54,16 +54,6 @@ class _RootScreenWrapperState extends State<RootScreenWrapper> {
           builder: (context, accounts, _) {
             if (accounts.isNotEmpty || decoyActive) return const SizedBox.shrink();
             return _WelcomeOverlay(
-              onLogin: (u, p) async {
-                final state = rootScreenKey.currentState;
-                if (state == null) return false;
-                return state.loginAccount(u, p);
-              },
-              onRegister: (u, p) async {
-                final state = rootScreenKey.currentState;
-                if (state == null) return null;
-                return state.registerAccount(u, p);
-              },
               onQrLogin: ({
                 required username,
                 required token,
@@ -89,8 +79,6 @@ class _RootScreenWrapperState extends State<RootScreenWrapper> {
 }
 
 class _WelcomeOverlay extends StatefulWidget {
-  final Future<bool> Function(String, String) onLogin;
-  final Future<String?> Function(String, String) onRegister;
   final Future<bool> Function({
     required String username,
     required String token,
@@ -99,8 +87,6 @@ class _WelcomeOverlay extends StatefulWidget {
   }) onQrLogin;
 
   const _WelcomeOverlay({
-    required this.onLogin,
-    required this.onRegister,
     required this.onQrLogin,
   });
 
@@ -152,7 +138,7 @@ class _WelcomeOverlayState extends State<_WelcomeOverlay>
       curve: const Interval(0.25, 0.60, curve: Curves.easeOutCubic),
     ));
 
-    // Add Account — появляется первым
+    // New Identity — появляется первым
     _fadeBtn1 = CurvedAnimation(
       parent: _ctrl,
       curve: const Interval(0.54, 0.74, curve: Curves.easeOut),
@@ -185,18 +171,16 @@ class _WelcomeOverlayState extends State<_WelcomeOverlay>
     super.dispose();
   }
 
-  void _openAuthDialog(BuildContext context) {
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'Authentication',
-      transitionDuration: const Duration(milliseconds: 133),
-      pageBuilder: (ctx, anim1, anim2) => AuthDialog(
-        onLogin: widget.onLogin,
-        onRegister: widget.onRegister,
-        onQrLogin: widget.onQrLogin,
-      ),
+  /// There is no server account to "add" any more: a fresh install starts by
+  /// creating (or restoring) an identity, then continues as that account.
+  Future<void> _openNewIdentity(BuildContext context) async {
+    await showIdentityOnboardingDialog(
+      context,
+      onSwitchAccount: (accountId) async {
+        await rootScreenKey.currentState?.switchToNewAccount(accountId);
+      },
     );
+    if (mounted) await AccountManager.ensureAccountsLoaded();
   }
 
   void _openLinkDevice(BuildContext context) {
@@ -268,52 +252,86 @@ class _WelcomeOverlayState extends State<_WelcomeOverlay>
                       );
                       return Column(
                         children: [
-                          // Add Account — первая
+                          // New Identity (with a "?" explainer next to it) -- first.
                           FadeTransition(
                             opacity: _fadeBtn1,
                             child: ScaleTransition(
                               scale: _scaleBtn1,
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(24),
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: baseColor.withValues(alpha: 0.6),
-                                    borderRadius: BorderRadius.circular(24),
-                                    border: Border.all(
-                                      color: Theme.of(context)
-                                          .dividerColor
-                                          .withValues(alpha: 0.15),
-                                      width: 0.8,
-                                    ),
-                                  ),
-                                  child: SizedBox(
-                                    width: double.infinity,
-                                    child: FilledButton.icon(
-                                      onPressed: () => _openAuthDialog(context),
-                                      icon: Icon(
-                                        Icons.add,
-                                        size: 18,
-                                        color: colorScheme.primary,
-                                      ),
-                                      label: Text(
-                                        l.addAccount,
-                                        style: TextStyle(
-                                          fontSize: 15,
-                                          color: colorScheme.primary,
+                              child: IntrinsicHeight(
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    Expanded(
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(24),
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            color: baseColor.withValues(alpha: 0.6),
+                                            borderRadius: BorderRadius.circular(24),
+                                            border: Border.all(
+                                              color: Theme.of(context)
+                                                  .dividerColor
+                                                  .withValues(alpha: 0.15),
+                                              width: 0.8,
+                                            ),
+                                          ),
+                                          child: FilledButton.icon(
+                                            onPressed: () => _openNewIdentity(context),
+                                            icon: Icon(
+                                              Icons.add,
+                                              size: 18,
+                                              color: colorScheme.primary,
+                                            ),
+                                            label: Text(
+                                              l.identityNewIdentityButton,
+                                              style: TextStyle(
+                                                fontSize: 15,
+                                                color: colorScheme.primary,
+                                              ),
+                                            ),
+                                            style: FilledButton.styleFrom(
+                                              backgroundColor: colorScheme.primary
+                                                  .withValues(alpha: 0.12),
+                                              foregroundColor: colorScheme.primary,
+                                              padding: const EdgeInsets.symmetric(
+                                                  vertical: 14),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(24),
+                                              ),
+                                              elevation: 0,
+                                            ),
+                                          ),
                                         ),
                                       ),
-                                      style: FilledButton.styleFrom(
-                                        backgroundColor:
-                                            colorScheme.primary.withValues(alpha: 0.12),
-                                        foregroundColor: colorScheme.primary,
-                                        padding: const EdgeInsets.symmetric(vertical: 14),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(24),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Tooltip(
+                                      message: l.identityInfoTooltip,
+                                      child: GestureDetector(
+                                        onTap: () => showIdentityInfoDialog(context),
+                                        child: Container(
+                                          width: 48,
+                                          decoration: BoxDecoration(
+                                            color: baseColor.withValues(alpha: 0.6),
+                                            borderRadius: BorderRadius.circular(24),
+                                            border: Border.all(
+                                              color: Theme.of(context)
+                                                  .dividerColor
+                                                  .withValues(alpha: 0.15),
+                                              width: 0.8,
+                                            ),
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: Icon(
+                                            Icons.help_outline_rounded,
+                                            size: 20,
+                                            color: colorScheme.primary,
+                                          ),
                                         ),
-                                        elevation: 0,
                                       ),
                                     ),
-                                  ),
+                                  ],
                                 ),
                               ),
                             ),

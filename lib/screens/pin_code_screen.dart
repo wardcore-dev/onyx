@@ -29,14 +29,18 @@ class PinCodeScreen extends StatefulWidget {
 
   final VoidCallback? onBiometric;
 
+  /// [onCancel]: when given, a "Cancel" button appears in the top right (and
+  /// the back gesture works) -- for a PIN asked before a one-off action such
+  /// as switching accounts. Leave it out for the app's own lock screen, which
+  /// must not be dismissible.
   const PinCodeScreen.verify({
     Key? key,
     required VoidCallback this.onSuccess,
     this.onFakePin,
     this.onBiometric,
+    this.onCancel,
   })  : isSetup = false,
         onPinSet = null,
-        onCancel = null,
         isDisableMode = false,
         super(key: key);
 

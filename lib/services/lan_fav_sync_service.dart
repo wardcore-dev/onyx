@@ -751,6 +751,21 @@ class LanFavSyncService {
       if (fn != null && fn.isNotEmpty) out.add((key: fn, type: type));
     }
 
+    // Onion/LAN messages name their file in 'url' (onion://<name>), not
+    // 'filename'; a server URL there is not a local file and is skipped.
+    String? localName(Map<String, dynamic> d) {
+      final fn = d['filename']?.toString();
+      if (fn != null && fn.isNotEmpty) return fn;
+      final url = d['url']?.toString();
+      if (url != null &&
+          (url.startsWith('onion://') ||
+              url.startsWith('lan://') ||
+              url.startsWith('fav://'))) {
+        return url;
+      }
+      return d['orig']?.toString();
+    }
+
     ({String tag, String type})? match;
     for (final m in const [
       (tag: 'IMAGEv1:', type: 'image'),
@@ -772,12 +787,12 @@ class LanFavSyncService {
       if (content.startsWith('ALBUMv1:')) {
         final list = jsonDecode(content.substring('ALBUMv1:'.length)) as List;
         for (final item in list.cast<Map<String, dynamic>>()) {
-          add((item['filename'] ?? item['orig'])?.toString(), 'image');
+          add(localName(item), 'image');
         }
       } else if (match != null) {
         final d = jsonDecode(content.substring(match.tag.length))
             as Map<String, dynamic>;
-        add((d['filename'] ?? d['orig'])?.toString(), match.type);
+        add(localName(d), match.type);
       }
     } catch (_) {}
     return out;

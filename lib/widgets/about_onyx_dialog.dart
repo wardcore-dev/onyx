@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../globals.dart';
 import '../l10n/app_localizations.dart';
 import '../managers/settings_manager.dart';
+import '../services/onion/onion_identity.dart';
 import '../utils/update_checker.dart';
 import 'connection_title.dart';
 import 'update_banner.dart' show MarkdownText;
@@ -15,14 +16,11 @@ void showAboutOnyxDialog(BuildContext context) {
     barrierDismissible: true,
     barrierLabel: 'About ONYX',
     barrierColor: Colors.black.withValues(alpha: 0.55),
-    transitionDuration: const Duration(milliseconds: 187),
+    transitionDuration: const Duration(milliseconds: 140),
     transitionBuilder: (ctx, anim, _, child) {
-      final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
       return FadeTransition(
-        opacity: CurvedAnimation(parent: anim, curve: Curves.easeIn),
-        child: ScaleTransition(
-            scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
-            child: child),
+        opacity: CurvedAnimation(parent: anim, curve: Curves.easeOut),
+        child: child,
       );
     },
     pageBuilder: (ctx, _, __) => const _AboutOnyxContent(),
@@ -71,23 +69,7 @@ class _AboutOnyxContentState extends State<_AboutOnyxContent>
   }
 
   Future<void> _fetchGeo() async {
-    try {
-      final host = Uri.parse(serverBase).host;
-      final response = await http
-          .get(Uri.parse(
-              'http://ip-api.com/json/$host?fields=status,country,city'))
-          .timeout(const Duration(seconds: 6));
-      if (!mounted) return;
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        if (data['status'] == 'success') {
-          setState(() {
-            _serverCity = data['city'] as String?;
-            _serverCountry = data['country'] as String?;
-          });
-        }
-      }
-    } catch (_) {}
+    // No central server to locate any more.
     if (mounted) setState(() => _loadingGeo = false);
   }
 
@@ -246,101 +228,116 @@ class _AboutOnyxContentState extends State<_AboutOnyxContent>
                 ),
               ),
 
-              // ── Server info ───────────────────────────────────────
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-                child: Text(
-                  l.aboutServer,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.0,
-                    color: colorScheme.onSurface.withValues(alpha: 0.38),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest
-                        .withValues(alpha: 0.45),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-                      width: 0.8,
+              // ── Server info (or Tor hidden services, when Onion Mode is
+              // on -- this device has no connection to the central server
+              // at all while it's enabled, so showing server status here
+              // would be actively misleading). ──────────────────────────
+              ValueListenableBuilder<bool>(
+                valueListenable: SettingsManager.onionModeEnabled,
+                builder: (_, onionOn, __) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                      child: Text(
+                        onionOn ? 'CONNECTION' : l.aboutServer,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.0,
+                          color: colorScheme.onSurface.withValues(alpha: 0.38),
+                        ),
+                      ),
                     ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          ValueListenableBuilder<bool>(
-                            valueListenable: wsConnectedNotifier,
-                            builder: (_, connected, __) => Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 7,
-                                  height: 7,
-                                  decoration: BoxDecoration(
-                                    color: connected
-                                        ? colorScheme.primary
-                                        : Colors.orange,
-                                    shape: BoxShape.circle,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 11),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHighest
+                              .withValues(alpha: 0.45),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: colorScheme.outlineVariant
+                                .withValues(alpha: 0.3),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: onionOn
+                            ? _OnionServerInfo(colorScheme: colorScheme)
+                            : Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      ValueListenableBuilder<bool>(
+                                        valueListenable: wsConnectedNotifier,
+                                        builder: (_, connected, __) => Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Container(
+                                              width: 7,
+                                              height: 7,
+                                              decoration: BoxDecoration(
+                                                color: connected
+                                                    ? colorScheme.primary
+                                                    : Colors.orange,
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              connected
+                                                  ? l.aboutConnected
+                                                  : l.aboutConnecting,
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w600,
+                                                color: connected
+                                                    ? colorScheme.primary
+                                                    : Colors.orange,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const Spacer(),
+                                      Text(
+                                        serverHost,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: colorScheme.onSurface
+                                              .withValues(alpha: 0.45),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  connected
-                                      ? l.aboutConnected
-                                      : l.aboutConnecting,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: connected
-                                        ? colorScheme.primary
-                                        : Colors.orange,
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.location_on_outlined,
+                                        size: 13,
+                                        color: colorScheme.onSurface
+                                            .withValues(alpha: 0.4),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        locationText,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: colorScheme.onSurface
+                                              .withValues(alpha: 0.5),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const Spacer(),
-                          Text(
-                            serverHost,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color:
-                                  colorScheme.onSurface.withValues(alpha: 0.45),
-                            ),
-                          ),
-                        ],
+                                ],
+                              ),
                       ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.location_on_outlined,
-                            size: 13,
-                            color: colorScheme.onSurface.withValues(alpha: 0.4),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            locationText,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color:
-                                  colorScheme.onSurface.withValues(alpha: 0.5),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
               // ── Mesh badge (shown below server card when active) ───
@@ -501,6 +498,118 @@ class _AboutOnyxContentState extends State<_AboutOnyxContent>
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Replaces the server connection/location rows when Onion Mode is on --
+/// this device's connection is direct to a paired peer's Tor hidden
+/// service, so there's no "server" to show at all, just this device's own
+/// onion identity and whether its hidden service listener is up.
+class _OnionServerInfo extends StatelessWidget {
+  const _OnionServerInfo({required this.colorScheme});
+
+  final ColorScheme colorScheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<OnionStatus>(
+      valueListenable: OnionIdentity.status,
+      builder: (_, status, __) {
+        final running = status.phase == OnionPhase.ready;
+        final failed = status.phase == OnionPhase.failed;
+        final address = running ? OnionIdentity.onionAddress : null;
+
+        final IconData statusIcon;
+        final Color statusColor;
+        final String statusLabel;
+        if (running) {
+          statusIcon = Icons.check_circle_rounded;
+          statusColor = colorScheme.primary;
+          statusLabel = 'TOR HIDDEN SERVICES';
+        } else if (failed) {
+          statusIcon = Icons.cancel_rounded;
+          statusColor = colorScheme.error;
+          statusLabel = 'Tor offline';
+        } else {
+          statusIcon = Icons.cancel_rounded;
+          statusColor = Colors.orange;
+          statusLabel = 'Starting…';
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(statusIcon, size: 14, color: statusColor),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    statusLabel,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: statusColor,
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () =>
+                      rootScreenKey.currentState?.restartOnionMode(),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: colorScheme.onSurface.withValues(alpha: 0.07),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.refresh_rounded,
+                            size: 13,
+                            color: colorScheme.onSurface.withValues(alpha: 0.6)),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Restart Tor',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: colorScheme.onSurface.withValues(alpha: 0.6),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(
+                  Icons.lock_outline_rounded,
+                  size: 13,
+                  color: colorScheme.onSurface.withValues(alpha: 0.4),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    address ?? 'Waiting for Tor to bootstrap…',
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      color: colorScheme.onSurface.withValues(alpha: 0.5),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
     );
   }
 }

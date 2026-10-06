@@ -104,16 +104,17 @@ class FallbackStorage {
   static const _a2Iter   = 2;
   static const _a2Par    = 1;
 
-  Future<SecretKey> _argon2Key(String pin, List<int> salt) {
-    return Argon2id(
+  // Runs off the main isolate (via compute()) so this CPU-bound KDF never
+  // blocks the UI thread / frame rendering.
+  Future<SecretKey> _argon2Key(String pin, List<int> salt) async {
+    final keyBytes = await compute(_argon2DeriveKeyBytes, _Argon2Params(
+      pinBytes:    utf8.encode(pin),
+      salt:        salt,
       parallelism: _a2Par,
       memory:      _a2Memory,
       iterations:  _a2Iter,
-      hashLength:  32,
-    ).deriveKey(
-      secretKey: SecretKey(utf8.encode(pin)),
-      nonce:     salt,
-    );
+    ));
+    return SecretKey(keyBytes);
   }
 
   List<int> _randomBytes(int len) {
@@ -633,3 +634,37 @@ class FallbackStorage {
 
 // Backward-compat alias used by legacy call sites.
 final fallbackStorage = FallbackStorage.main;
+
+// ── Argon2id isolate entry point ──────────────────────────────────────────
+// Must be top-level (not a class method) so compute() can run it on a
+// worker isolate. Takes/returns only plain data (no SecretKey), since
+// cryptography objects aren't guaranteed sendable across isolates.
+
+class _Argon2Params {
+  final List<int> pinBytes;
+  final List<int> salt;
+  final int parallelism;
+  final int memory;
+  final int iterations;
+
+  const _Argon2Params({
+    required this.pinBytes,
+    required this.salt,
+    required this.parallelism,
+    required this.memory,
+    required this.iterations,
+  });
+}
+
+Future<List<int>> _argon2DeriveKeyBytes(_Argon2Params params) async {
+  final key = await Argon2id(
+    parallelism: params.parallelism,
+    memory:      params.memory,
+    iterations:  params.iterations,
+    hashLength:  32,
+  ).deriveKey(
+    secretKey: SecretKey(params.pinBytes),
+    nonce:     params.salt,
+  );
+  return key.extractBytes();
+}

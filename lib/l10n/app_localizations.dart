@@ -871,7 +871,7 @@ abstract class AppLocalizations {
   /// No description provided for @cacheSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Manage local & server media cache'**
+  /// **'Manage local media cache'**
   String get cacheSubtitle;
 
   /// No description provided for @mediaCacheSize.
@@ -931,7 +931,7 @@ abstract class AppLocalizations {
   /// No description provided for @dangerZoneSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Delete account from server and/or wipe local data.'**
+  /// **'Wipe local data.'**
   String get dangerZoneSubtitle;
 
   /// No description provided for @factoryReset.
@@ -1023,126 +1023,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'WebSocket status & controls'**
   String get connectionSubtitle;
-
-  /// No description provided for @proxyTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Proxy'**
-  String get proxyTitle;
-
-  /// No description provided for @proxySubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Route traffic through HTTP or SOCKS5 proxy'**
-  String get proxySubtitle;
-
-  /// No description provided for @enableProxy.
-  ///
-  /// In en, this message translates to:
-  /// **'Enable Proxy'**
-  String get enableProxy;
-
-  /// No description provided for @proxyType.
-  ///
-  /// In en, this message translates to:
-  /// **'Proxy Type'**
-  String get proxyType;
-
-  /// No description provided for @proxyHost.
-  ///
-  /// In en, this message translates to:
-  /// **'Host'**
-  String get proxyHost;
-
-  /// No description provided for @proxyPort.
-  ///
-  /// In en, this message translates to:
-  /// **'Port'**
-  String get proxyPort;
-
-  /// No description provided for @proxyUsername.
-  ///
-  /// In en, this message translates to:
-  /// **'Username'**
-  String get proxyUsername;
-
-  /// No description provided for @proxyPassword.
-  ///
-  /// In en, this message translates to:
-  /// **'Password'**
-  String get proxyPassword;
-
-  /// No description provided for @testProxy.
-  ///
-  /// In en, this message translates to:
-  /// **'Test Proxy'**
-  String get testProxy;
-
-  /// No description provided for @proxyTesting.
-  ///
-  /// In en, this message translates to:
-  /// **'Testing...'**
-  String get proxyTesting;
-
-  /// No description provided for @proxyOk.
-  ///
-  /// In en, this message translates to:
-  /// **' Proxy OK'**
-  String get proxyOk;
-
-  /// No description provided for @proxyFailed.
-  ///
-  /// In en, this message translates to:
-  /// **' Proxy unreachable'**
-  String get proxyFailed;
-
-  /// No description provided for @useProxy.
-  ///
-  /// In en, this message translates to:
-  /// **'Use proxy'**
-  String get useProxy;
-
-  /// No description provided for @proxyDirectConnection.
-  ///
-  /// In en, this message translates to:
-  /// **'Direct connection'**
-  String get proxyDirectConnection;
-
-  /// No description provided for @proxyRouted.
-  ///
-  /// In en, this message translates to:
-  /// **'Traffic routed through proxy'**
-  String get proxyRouted;
-
-  /// No description provided for @proxyConnectedStatus.
-  ///
-  /// In en, this message translates to:
-  /// **'Connected'**
-  String get proxyConnectedStatus;
-
-  /// No description provided for @proxyNotConnectedStatus.
-  ///
-  /// In en, this message translates to:
-  /// **'Not connected'**
-  String get proxyNotConnectedStatus;
-
-  /// No description provided for @proxyLoginOptional.
-  ///
-  /// In en, this message translates to:
-  /// **'Login (optional)'**
-  String get proxyLoginOptional;
-
-  /// No description provided for @proxyPasswordOptional.
-  ///
-  /// In en, this message translates to:
-  /// **'Password (optional)'**
-  String get proxyPasswordOptional;
-
-  /// No description provided for @proxyApplyReconnect.
-  ///
-  /// In en, this message translates to:
-  /// **'Apply & Reconnect'**
-  String get proxyApplyReconnect;
 
   /// No description provided for @appDataTitle.
   ///
@@ -1414,6 +1294,12 @@ abstract class AppLocalizations {
   /// **'Delete chat?'**
   String get deleteChatTitle;
 
+  /// No description provided for @removeFromContacts.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove from contacts'**
+  String get removeFromContacts;
+
   /// No description provided for @blockUserLabel.
   ///
   /// In en, this message translates to:
@@ -1480,6 +1366,198 @@ abstract class AppLocalizations {
   /// **'Add Account'**
   String get addAccount;
 
+  /// No description provided for @identityNewIdentityButton.
+  ///
+  /// In en, this message translates to:
+  /// **'New Identity'**
+  String get identityNewIdentityButton;
+
+  /// No description provided for @identityInfoTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'How does this work?'**
+  String get identityInfoTooltip;
+
+  /// No description provided for @identityInfoTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'A new way to message'**
+  String get identityInfoTitle;
+
+  /// No description provided for @identityInfoBody.
+  ///
+  /// In en, this message translates to:
+  /// **'ONYX is moving to a fully decentralized model. Instead of an account on a central server, your identity is now a cryptographic key generated on your own device — a Tor address only you control.\n\nThere is no password and no server that knows who you are. A 12-word seed phrase is the only way to restore this identity on a new device.\n\nMessages to contacts who already have your new address are delivered directly over Tor, peer-to-peer, without passing through any central server. Contacts still on the old system will need to share their new address with you once, the same way you\'d share a phone number.'**
+  String get identityInfoBody;
+
+  /// No description provided for @identityTitleChoose.
+  ///
+  /// In en, this message translates to:
+  /// **'Create an identity'**
+  String get identityTitleChoose;
+
+  /// No description provided for @identityChooseSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'The key and address are generated locally on this device.'**
+  String get identityChooseSubtitle;
+
+  /// No description provided for @identityCreateNewButton.
+  ///
+  /// In en, this message translates to:
+  /// **'New Identity'**
+  String get identityCreateNewButton;
+
+  /// No description provided for @identityRestoreLinkButton.
+  ///
+  /// In en, this message translates to:
+  /// **'I already have a seed phrase'**
+  String get identityRestoreLinkButton;
+
+  /// No description provided for @identityTitleMnemonic.
+  ///
+  /// In en, this message translates to:
+  /// **'Your seed phrase'**
+  String get identityTitleMnemonic;
+
+  /// No description provided for @identityMnemonicIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'Write down these 12 words and keep them somewhere safe.'**
+  String get identityMnemonicIntro;
+
+  /// No description provided for @identityMnemonicRestoreNote.
+  ///
+  /// In en, this message translates to:
+  /// **'This is the only way to restore your identity on a new device.'**
+  String get identityMnemonicRestoreNote;
+
+  /// No description provided for @identityCopyButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get identityCopyButton;
+
+  /// No description provided for @identityCopiedSnack.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied'**
+  String get identityCopiedSnack;
+
+  /// No description provided for @identitySavedConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'I saved the phrase somewhere safe'**
+  String get identitySavedConfirm;
+
+  /// No description provided for @identityContinueButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue'**
+  String get identityContinueButton;
+
+  /// No description provided for @identityTitleRestore.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore identity'**
+  String get identityTitleRestore;
+
+  /// No description provided for @identityRestoreHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter your seed phrase (12 words separated by spaces).'**
+  String get identityRestoreHint;
+
+  /// No description provided for @identityRestoreButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore'**
+  String get identityRestoreButton;
+
+  /// No description provided for @identityBackButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get identityBackButton;
+
+  /// No description provided for @identityTitleDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity ready'**
+  String get identityTitleDone;
+
+  /// No description provided for @identityAccountIdLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Account ID'**
+  String get identityAccountIdLabel;
+
+  /// No description provided for @identityAccountIdExplain.
+  ///
+  /// In en, this message translates to:
+  /// **'A stable identifier derived from your key — this is what ties your devices and messages together instead of a username.'**
+  String get identityAccountIdExplain;
+
+  /// No description provided for @identityFingerprintLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Fingerprint'**
+  String get identityFingerprintLabel;
+
+  /// No description provided for @identityFingerprintExplain.
+  ///
+  /// In en, this message translates to:
+  /// **'A short code your contacts can use to verify it\'s really you.'**
+  String get identityFingerprintExplain;
+
+  /// No description provided for @identityDoneButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get identityDoneButton;
+
+  /// No description provided for @tapToCopyAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to copy address'**
+  String get tapToCopyAddress;
+
+  /// No description provided for @identityErrorCreatePrefix.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t create identity'**
+  String get identityErrorCreatePrefix;
+
+  /// No description provided for @identityErrorRestorePrefix.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t restore identity'**
+  String get identityErrorRestorePrefix;
+
+  /// No description provided for @identityTitleSetup.
+  ///
+  /// In en, this message translates to:
+  /// **'Set up your profile'**
+  String get identityTitleSetup;
+
+  /// No description provided for @identityDisplayNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Display name'**
+  String get identityDisplayNameLabel;
+
+  /// No description provided for @identityDisplayNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'How contacts will see you'**
+  String get identityDisplayNameHint;
+
+  /// No description provided for @identityCreateAccountButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Create account'**
+  String get identityCreateAccountButton;
+
   /// No description provided for @welcomeTitle.
   ///
   /// In en, this message translates to:
@@ -1495,7 +1573,7 @@ abstract class AppLocalizations {
   /// No description provided for @otherAccounts.
   ///
   /// In en, this message translates to:
-  /// **'Other Accounts'**
+  /// **'Other Identities'**
   String get otherAccounts;
 
   /// No description provided for @tapToSwitch.
@@ -1765,7 +1843,7 @@ abstract class AppLocalizations {
   /// No description provided for @deleteFromRecentContent.
   ///
   /// In en, this message translates to:
-  /// **'Are you sure you want to remove \"{acc}\" from the recent list?nThis does not delete the account from the server.'**
+  /// **'Are you sure you want to remove \"{acc}\" from the recent list?'**
   String deleteFromRecentContent(String acc);
 
   /// No description provided for @createGroupChannel.
@@ -2149,7 +2227,7 @@ abstract class AppLocalizations {
   /// No description provided for @clearLocalCacheDialogContent.
   ///
   /// In en, this message translates to:
-  /// **'Are you sure you want to delete all cached media (voice, images, videos)?nThis does NOT affect server uploads or chat history.'**
+  /// **'Are you sure you want to delete all cached media (voice, images, videos)?\nThis does NOT affect chat history.'**
   String get clearLocalCacheDialogContent;
 
   /// No description provided for @deleteAllLogsTitle.
@@ -2457,18 +2535,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Glass effect on the bottom navigation bar'**
   String get liquidGlassNavBarDesc;
-
-  /// No description provided for @liquidGlassCardsLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Cards & List Items'**
-  String get liquidGlassCardsLabel;
-
-  /// No description provided for @liquidGlassCardsDesc.
-  ///
-  /// In en, this message translates to:
-  /// **'Glass effect on chat list and settings cards'**
-  String get liquidGlassCardsDesc;
 
   /// No description provided for @liquidGlassInputLabel.
   ///
@@ -2782,6 +2848,18 @@ abstract class AppLocalizations {
   /// **'Display name must be 1–16 characters'**
   String get displayNameLength;
 
+  /// No description provided for @displayNameRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Display name can\'t be empty'**
+  String get displayNameRequired;
+
+  /// No description provided for @displayNameUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Display name updated'**
+  String get displayNameUpdated;
+
   /// No description provided for @failedSendLan.
   ///
   /// In en, this message translates to:
@@ -2829,6 +2907,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This will only remove the message from your device. The other person will still see it.'**
   String get deleteForMeContent;
+
+  /// No description provided for @deleteSelectedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Delete message?} other{Delete {count} messages?}}'**
+  String deleteSelectedTitle(int count);
+
+  /// No description provided for @deleteSelectedForBoth.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{This message will be deleted for both sides.} other{These messages will be deleted for both sides.}}'**
+  String deleteSelectedForBoth(int count);
+
+  /// No description provided for @deleteSelectedForMe.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{This message will be deleted only for you. The other person will still see it.} other{These messages will be deleted only for you. The other person will still see them.}}'**
+  String deleteSelectedForMe(int count);
+
+  /// No description provided for @deleteSelectedMixed.
+  ///
+  /// In en, this message translates to:
+  /// **'Your messages ({mine}) will be deleted for both sides. Messages from the other person ({theirs}) will be deleted only for you.'**
+  String deleteSelectedMixed(int mine, int theirs);
 
   /// No description provided for @deleteFavMessageContent.
   ///
@@ -3049,7 +3151,7 @@ abstract class AppLocalizations {
   /// No description provided for @voiceCallsContent.
   ///
   /// In en, this message translates to:
-  /// **'Voice calls currently work only over LAN (local network).\n\nWe are raising funds for central server maintenance and development of an alternative.'**
+  /// **'Voice calls currently work only over LAN (local network).'**
   String get voiceCallsContent;
 
   /// No description provided for @supportOnyxBtn.
@@ -4606,6 +4708,30 @@ abstract class AppLocalizations {
   /// **'Random content will be generated, replacing existing data.'**
   String get generateAllConfirm;
 
+  /// No description provided for @sendFavoritesSendChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Send chat'**
+  String get sendFavoritesSendChat;
+
+  /// No description provided for @sendFavoritesQrTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Show to receiver device'**
+  String get sendFavoritesQrTitle;
+
+  /// No description provided for @sendFavoritesQrInstruction.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Favorites on the other device → Sync → Receive, then scan this code'**
+  String get sendFavoritesQrInstruction;
+
+  /// No description provided for @sendFavoritesWaitingScan.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for the other device to scan the QR code…'**
+  String get sendFavoritesWaitingScan;
+
   /// No description provided for @sendFavoritesTitle.
   ///
   /// In en, this message translates to:
@@ -4621,7 +4747,7 @@ abstract class AppLocalizations {
   /// No description provided for @sendFavoritesScanReceiver.
   ///
   /// In en, this message translates to:
-  /// **'Scan Receiver QR'**
+  /// **'Scan QR\nof the Receiver'**
   String get sendFavoritesScanReceiver;
 
   /// No description provided for @sendFavoritesSending.
@@ -4687,7 +4813,7 @@ abstract class AppLocalizations {
   /// No description provided for @receiveFavoritesScanSender.
   ///
   /// In en, this message translates to:
-  /// **'Scan Sender QR'**
+  /// **'Scan QR\nof the Sender'**
   String get receiveFavoritesScanSender;
 
   /// No description provided for @receiveFavoritesScanOnSender.
@@ -5020,10 +5146,160 @@ abstract class AppLocalizations {
   /// **'Sync my personal messages'**
   String get wardLinkSyncPersonalToggle;
 
+  /// No description provided for @wardLinkSyncIncomingToggle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync incoming messages'**
+  String get wardLinkSyncIncomingToggle;
+
+  /// No description provided for @pairOverTor.
+  ///
+  /// In en, this message translates to:
+  /// **'Pair over Tor'**
+  String get pairOverTor;
+
+  /// No description provided for @addContactQr.
+  ///
+  /// In en, this message translates to:
+  /// **'Add contact · QR'**
+  String get addContactQr;
+
+  /// No description provided for @contactsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Contacts'**
+  String get contactsTitle;
+
+  /// No description provided for @contactsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No contacts yet.'**
+  String get contactsEmpty;
+
+  /// No description provided for @myDevicesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'My devices'**
+  String get myDevicesTitle;
+
+  /// No description provided for @myDevicesThisDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'This device'**
+  String get myDevicesThisDevice;
+
+  /// No description provided for @myDevicesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Link another device with “Link device” on its login screen. Each device has its own Tor address, and your messages reach all of them.'**
+  String get myDevicesHint;
+
+  /// No description provided for @myDevicesUnlink.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlink'**
+  String get myDevicesUnlink;
+
+  /// No description provided for @myDevicesUnlinkConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlink this device from your account? It stops receiving your messages, and your contacts drop it too.'**
+  String get myDevicesUnlinkConfirm;
+
+  /// No description provided for @contactsRemoveConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {username} from your contacts?'**
+  String contactsRemoveConfirm(String username);
+
+  /// No description provided for @contactsRemoveDeviceConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove this pairing with {name}\'s device? Their other paired device is unaffected.'**
+  String contactsRemoveDeviceConfirm(String name);
+
+  /// No description provided for @pairScanTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan their pairing code'**
+  String get pairScanTitle;
+
+  /// No description provided for @pairScanHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Point the camera at the other person\'s pairing QR code'**
+  String get pairScanHint;
+
+  /// No description provided for @pairShowHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Have the other person scan this code with their Onyx app'**
+  String get pairShowHint;
+
+  /// No description provided for @pairEncrypted.
+  ///
+  /// In en, this message translates to:
+  /// **'End-to-end encrypted, direct over Tor'**
+  String get pairEncrypted;
+
+  /// No description provided for @pairScanCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan code'**
+  String get pairScanCode;
+
+  /// No description provided for @pairedOverTor.
+  ///
+  /// In en, this message translates to:
+  /// **'Paired over Tor'**
+  String get pairedOverTor;
+
+  /// No description provided for @pairing.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing...'**
+  String get pairing;
+
+  /// No description provided for @pairFailedWith.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing failed: {error}'**
+  String pairFailedWith(String error);
+
+  /// No description provided for @pairStartFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not start Tor: {error}'**
+  String pairStartFailed(String error);
+
+  /// No description provided for @pairRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Still trying to reach them ({attempt}/{max}) — their address may still be publishing on Tor...'**
+  String pairRetry(int attempt, int max);
+
+  /// No description provided for @peerShowQr.
+  ///
+  /// In en, this message translates to:
+  /// **'Show QR'**
+  String get peerShowQr;
+
+  /// No description provided for @peerHideQr.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide QR'**
+  String get peerHideQr;
+
+  /// No description provided for @peerAddressCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Address copied'**
+  String get peerAddressCopied;
+
   /// No description provided for @wardLinkSyncPersonalToggleDesc.
   ///
   /// In en, this message translates to:
-  /// **'Sync only the messages YOU sent in personal chats to your other devices — the contact\'s messages already arrive via the server and are never synced this way'**
+  /// **'Sync only the messages YOU sent in personal chats to your other devices'**
   String get wardLinkSyncPersonalToggleDesc;
 
   /// No description provided for @meshSubtitle.
@@ -7587,6 +7863,930 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Select at least one of Manage Ban List, Manage Mute List, or Manage Roles'**
   String get manageMembersRequiresChild;
+
+  /// No description provided for @onionRetryWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Not connected · will send when connected'**
+  String get onionRetryWaiting;
+
+  /// No description provided for @onionRetryNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending… (attempt #{n})'**
+  String onionRetryNow(int n);
+
+  /// No description provided for @onionRetryIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Not online · retry #{n} in {s}s'**
+  String onionRetryIn(int n, int s);
+
+  /// No description provided for @onionOfflineTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact is not online'**
+  String get onionOfflineTitle;
+
+  /// No description provided for @onionOfflineMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Your message could not be delivered right now because your contact is not online. It is saved on this device and will be resent automatically every {seconds} seconds until they come online. Keep the app open for retries to continue.\n\nYou can change the retry interval in Settings → Interaction → Messages.'**
+  String onionOfflineMessage(int seconds);
+
+  /// No description provided for @messagesSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages'**
+  String get messagesSectionTitle;
+
+  /// No description provided for @messagesSectionSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delivery retries when a contact is offline'**
+  String get messagesSectionSubtitle;
+
+  /// No description provided for @retryIntervalTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry interval'**
+  String get retryIntervalTitle;
+
+  /// No description provided for @retryIntervalDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'When a contact is not online, undelivered messages are resent automatically at this interval until they arrive.'**
+  String get retryIntervalDesc;
+
+  /// No description provided for @intervalSeconds.
+  ///
+  /// In en, this message translates to:
+  /// **'{n} seconds'**
+  String intervalSeconds(int n);
+
+  /// No description provided for @intervalMinutes.
+  ///
+  /// In en, this message translates to:
+  /// **'{n} min'**
+  String intervalMinutes(int n);
+
+  /// No description provided for @statusOnlineLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'online'**
+  String get statusOnlineLabel;
+
+  /// No description provided for @statusOfflineLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'offline'**
+  String get statusOfflineLabel;
+
+  /// No description provided for @statusConnectingLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'connecting…'**
+  String get statusConnectingLabel;
+
+  /// No description provided for @onionCallTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Call over Tor'**
+  String get onionCallTitle;
+
+  /// No description provided for @onionCallHideIp.
+  ///
+  /// In en, this message translates to:
+  /// **'Don\'t reveal my IP address'**
+  String get onionCallHideIp;
+
+  /// No description provided for @onionCallHideIpHint.
+  ///
+  /// In en, this message translates to:
+  /// **'The call goes through Tor: your IP address stays hidden, but expect a delay of about a second. Video is not available.'**
+  String get onionCallHideIpHint;
+
+  /// No description provided for @onionCallDirectHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Lower delay, but the other person will see your IP address. A direct connection is only used if they allow it too; otherwise the call still goes through Tor.'**
+  String get onionCallDirectHint;
+
+  /// No description provided for @onionCallStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Call'**
+  String get onionCallStart;
+
+  /// No description provided for @onionCallPeerOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact is not connected — calling is not possible right now'**
+  String get onionCallPeerOffline;
+
+  /// No description provided for @onionCallNoAnswer.
+  ///
+  /// In en, this message translates to:
+  /// **'No answer'**
+  String get onionCallNoAnswer;
+
+  /// No description provided for @onionCallFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not establish the call connection'**
+  String get onionCallFailed;
+
+  /// No description provided for @callIncomingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Incoming call'**
+  String get callIncomingTitle;
+
+  /// No description provided for @callAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept'**
+  String get callAccept;
+
+  /// No description provided for @callDecline.
+  ///
+  /// In en, this message translates to:
+  /// **'Decline'**
+  String get callDecline;
+
+  /// No description provided for @callLogOutgoing.
+  ///
+  /// In en, this message translates to:
+  /// **'Outgoing call'**
+  String get callLogOutgoing;
+
+  /// No description provided for @callLogIncoming.
+  ///
+  /// In en, this message translates to:
+  /// **'Incoming call'**
+  String get callLogIncoming;
+
+  /// No description provided for @callLogMissed.
+  ///
+  /// In en, this message translates to:
+  /// **'Missed call'**
+  String get callLogMissed;
+
+  /// No description provided for @callLogCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancelled call'**
+  String get callLogCancelled;
+
+  /// No description provided for @callLogDeclined.
+  ///
+  /// In en, this message translates to:
+  /// **'Declined call'**
+  String get callLogDeclined;
+
+  /// No description provided for @callLogBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'Line busy'**
+  String get callLogBusy;
+
+  /// No description provided for @callLogNoAnswer.
+  ///
+  /// In en, this message translates to:
+  /// **'No answer'**
+  String get callLogNoAnswer;
+
+  /// No description provided for @callStatusCalling.
+  ///
+  /// In en, this message translates to:
+  /// **'Calling'**
+  String get callStatusCalling;
+
+  /// No description provided for @callStatusConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting'**
+  String get callStatusConnecting;
+
+  /// No description provided for @callPathRelay.
+  ///
+  /// In en, this message translates to:
+  /// **'Via server'**
+  String get callPathRelay;
+
+  /// No description provided for @callEnd.
+  ///
+  /// In en, this message translates to:
+  /// **'End call'**
+  String get callEnd;
+
+  /// No description provided for @callMinimize.
+  ///
+  /// In en, this message translates to:
+  /// **'Minimize'**
+  String get callMinimize;
+
+  /// No description provided for @callRestore.
+  ///
+  /// In en, this message translates to:
+  /// **'Open call'**
+  String get callRestore;
+
+  /// No description provided for @callFallbackName.
+  ///
+  /// In en, this message translates to:
+  /// **'Call'**
+  String get callFallbackName;
+
+  /// No description provided for @contactRequestNew.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} wants to chat with you'**
+  String contactRequestNew(String name);
+
+  /// No description provided for @contactRequestsEntry.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact requests'**
+  String get contactRequestsEntry;
+
+  /// No description provided for @contactRequestsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Requests'**
+  String get contactRequestsTitle;
+
+  /// No description provided for @contactRequestsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No requests'**
+  String get contactRequestsEmpty;
+
+  /// No description provided for @contactRequestAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept'**
+  String get contactRequestAccept;
+
+  /// No description provided for @contactRequestDecline.
+  ///
+  /// In en, this message translates to:
+  /// **'Decline'**
+  String get contactRequestDecline;
+
+  /// No description provided for @contactRequestDeclineTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Decline request?'**
+  String get contactRequestDeclineTitle;
+
+  /// No description provided for @contactRequestDeclineBody.
+  ///
+  /// In en, this message translates to:
+  /// **'They won\'t be able to message you or send you a new request. You can still add them yourself later.'**
+  String get contactRequestDeclineBody;
+
+  /// No description provided for @contactRequestNoMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'No comment'**
+  String get contactRequestNoMessages;
+
+  /// No description provided for @contactRequestNameClash.
+  ///
+  /// In en, this message translates to:
+  /// **'You already have a contact @{username} with a different key. It may be their new device, or someone impersonating them. Accept only if you are sure.'**
+  String contactRequestNameClash(String username);
+
+  /// No description provided for @contactRequestInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Until you accept, they can\'t see when you\'re online, can\'t see your profile and can\'t call you.'**
+  String get contactRequestInfo;
+
+  /// No description provided for @contactRequestAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Onion address'**
+  String get contactRequestAddress;
+
+  /// No description provided for @contactRequestKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Key fingerprint'**
+  String get contactRequestKey;
+
+  /// No description provided for @contactRequestAccepted.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} added to contacts'**
+  String contactRequestAccepted(String name);
+
+  /// No description provided for @contactRequestFileHidden.
+  ///
+  /// In en, this message translates to:
+  /// **'File (not accepted from non-contacts)'**
+  String get contactRequestFileHidden;
+
+  /// No description provided for @contactRequestMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages'**
+  String get contactRequestMessages;
+
+  /// No description provided for @forwardDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Message forwarded'**
+  String get forwardDone;
+
+  /// No description provided for @forwardFileUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'The file isn\'t on this device, so it can\'t be forwarded'**
+  String get forwardFileUnavailable;
+
+  /// No description provided for @contactRequestDeclineChoiceBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Decline: the request disappears, but they can send a new one later. Decline and block: they will never be able to message you or send requests again.'**
+  String get contactRequestDeclineChoiceBody;
+
+  /// No description provided for @contactRequestDeclineAndBlock.
+  ///
+  /// In en, this message translates to:
+  /// **'Decline and block'**
+  String get contactRequestDeclineAndBlock;
+
+  /// No description provided for @blockedFromRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'blocked request'**
+  String get blockedFromRequests;
+
+  /// No description provided for @contactRequestComposeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact request'**
+  String get contactRequestComposeTitle;
+
+  /// No description provided for @contactRequestComposeBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a comment to your request — {name} will see it in their requests. You can write to each other once they accept.'**
+  String contactRequestComposeBody(String name);
+
+  /// No description provided for @contactRequestComposeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Comment…'**
+  String get contactRequestComposeHint;
+
+  /// No description provided for @contactRequestSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send request'**
+  String get contactRequestSend;
+
+  /// No description provided for @contactRequestSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Without a comment'**
+  String get contactRequestSkip;
+
+  /// No description provided for @contactRequestSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Request sent'**
+  String get contactRequestSent;
+
+  /// No description provided for @contactRequestAttached.
+  ///
+  /// In en, this message translates to:
+  /// **'Comment'**
+  String get contactRequestAttached;
+
+  /// No description provided for @contactRequestPendingSnack.
+  ///
+  /// In en, this message translates to:
+  /// **'Your request hasn\'t been accepted yet — you can write once it is.'**
+  String get contactRequestPendingSnack;
+
+  /// No description provided for @contactRequestPendingCall.
+  ///
+  /// In en, this message translates to:
+  /// **'You can call once they accept your request'**
+  String get contactRequestPendingCall;
+
+  /// No description provided for @contactRequestQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'They\'re offline — the request will be sent as soon as they\'re online'**
+  String get contactRequestQueued;
+
+  /// No description provided for @contactRequestDelivered.
+  ///
+  /// In en, this message translates to:
+  /// **'Your request to {name} was delivered'**
+  String contactRequestDelivered(String name);
+
+  /// No description provided for @contactRequestResend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send the request again'**
+  String get contactRequestResend;
+
+  /// No description provided for @contactRequestUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Request updated'**
+  String get contactRequestUpdated;
+
+  /// No description provided for @contactRecordAcceptedBoth.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact request accepted'**
+  String get contactRecordAcceptedBoth;
+
+  /// No description provided for @contactRequestAlreadySent.
+  ///
+  /// In en, this message translates to:
+  /// **'You already sent a request — it\'s waiting for their approval'**
+  String get contactRequestAlreadySent;
+
+  /// No description provided for @contactRequestAlreadySentShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Request already sent'**
+  String get contactRequestAlreadySentShort;
+
+  /// No description provided for @contactRecordAccepted.
+  ///
+  /// In en, this message translates to:
+  /// **'You accepted the contact request'**
+  String get contactRecordAccepted;
+
+  /// No description provided for @contactRecordAcceptedByThem.
+  ///
+  /// In en, this message translates to:
+  /// **'Your contact request was accepted'**
+  String get contactRecordAcceptedByThem;
+
+  /// No description provided for @contactRecordPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact added'**
+  String get contactRecordPreview;
+
+  /// No description provided for @contactRequestAcceptedByThem.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} accepted your request'**
+  String contactRequestAcceptedByThem(String name);
+
+  /// No description provided for @searchOnionHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste an xxxx.onion address to send a request'**
+  String get searchOnionHint;
+
+  /// No description provided for @searchNeedOnionAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'That\'s not an onion address — paste one like xxxx.onion'**
+  String get searchNeedOnionAddress;
+
+  /// No description provided for @searchConnectingTor.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting over Tor…'**
+  String get searchConnectingTor;
+
+  /// No description provided for @searchStillTrying.
+  ///
+  /// In en, this message translates to:
+  /// **'Still trying to reach them ({attempt}/{max})…'**
+  String searchStillTrying(int attempt, int max);
+
+  /// No description provided for @contactRemovedYou.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'re not in this person\'s contacts anymore — the message can\'t be delivered'**
+  String get contactRemovedYou;
+
+  /// No description provided for @contactNotInContacts.
+  ///
+  /// In en, this message translates to:
+  /// **'This person isn\'t in your contacts — the message wasn\'t sent'**
+  String get contactNotInContacts;
+
+  /// No description provided for @contactRequestCommentFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Request sent, but the comment didn\'t get through — they went offline'**
+  String get contactRequestCommentFailed;
+
+  /// No description provided for @callMute.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get callMute;
+
+  /// No description provided for @callVideo.
+  ///
+  /// In en, this message translates to:
+  /// **'Video'**
+  String get callVideo;
+
+  /// No description provided for @callSpeaker.
+  ///
+  /// In en, this message translates to:
+  /// **'Speaker'**
+  String get callSpeaker;
+
+  /// No description provided for @callPathDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct connection'**
+  String get callPathDirect;
+
+  /// No description provided for @callPathTor.
+  ///
+  /// In en, this message translates to:
+  /// **'Through Tor'**
+  String get callPathTor;
+
+  /// No description provided for @callVideoUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection too weak — video is not available'**
+  String get callVideoUnavailable;
+
+  /// No description provided for @callVideoPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'Video turned off because the connection got weak'**
+  String get callVideoPaused;
+
+  /// No description provided for @statusShowMyStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Show my online status'**
+  String get statusShowMyStatus;
+
+  /// No description provided for @statusShowMyStatusHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Contacts see when you are online. When off, they see nothing and you also stop sharing your status.'**
+  String get statusShowMyStatusHint;
+
+  /// No description provided for @viewCircuitTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'View Circuit'**
+  String get viewCircuitTitle;
+
+  /// No description provided for @viewCircuitSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'The Tor relays your traffic is currently routed through'**
+  String get viewCircuitSubtitle;
+
+  /// No description provided for @viewCircuitEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No active circuits yet. Try again in a moment.'**
+  String get viewCircuitEmpty;
+
+  /// No description provided for @circuitThisDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'This device'**
+  String get circuitThisDevice;
+
+  /// No description provided for @circuitRoleGuard.
+  ///
+  /// In en, this message translates to:
+  /// **'guard'**
+  String get circuitRoleGuard;
+
+  /// No description provided for @circuitRoleIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'introduction point'**
+  String get circuitRoleIntro;
+
+  /// No description provided for @circuitRoleRend.
+  ///
+  /// In en, this message translates to:
+  /// **'rendezvous point'**
+  String get circuitRoleRend;
+
+  /// No description provided for @circuitUnknownRelay.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown relay'**
+  String get circuitUnknownRelay;
+
+  /// No description provided for @circuitOnionRelay.
+  ///
+  /// In en, this message translates to:
+  /// **'Onion service relay'**
+  String get circuitOnionRelay;
+
+  /// No description provided for @circuitModeSimple.
+  ///
+  /// In en, this message translates to:
+  /// **'Simple'**
+  String get circuitModeSimple;
+
+  /// No description provided for @circuitModeAdvanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced'**
+  String get circuitModeAdvanced;
+
+  /// No description provided for @mediaSendFileTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Send File'**
+  String get mediaSendFileTitle;
+
+  /// No description provided for @mediaSendFileDetails.
+  ///
+  /// In en, this message translates to:
+  /// **'FILE DETAILS'**
+  String get mediaSendFileDetails;
+
+  /// No description provided for @mediaSendAlbumHeading.
+  ///
+  /// In en, this message translates to:
+  /// **'ALBUM'**
+  String get mediaSendAlbumHeading;
+
+  /// No description provided for @mediaSendName.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get mediaSendName;
+
+  /// No description provided for @mediaSendSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Size'**
+  String get mediaSendSize;
+
+  /// No description provided for @mediaSendType.
+  ///
+  /// In en, this message translates to:
+  /// **'Type'**
+  String get mediaSendType;
+
+  /// No description provided for @mediaSendUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown'**
+  String get mediaSendUnknown;
+
+  /// No description provided for @mediaSendImagesLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Images'**
+  String get mediaSendImagesLabel;
+
+  /// No description provided for @mediaSendImagesCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 image} other{{count} images}}'**
+  String mediaSendImagesCount(int count);
+
+  /// No description provided for @mediaSendConfirmAlbum.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you sure you want to send these images as an album?'**
+  String get mediaSendConfirmAlbum;
+
+  /// No description provided for @mediaSendConfirmFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you sure you want to send this file?'**
+  String get mediaSendConfirmFile;
+
+  /// No description provided for @mediaSendVoiceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Send Voice Message'**
+  String get mediaSendVoiceTitle;
+
+  /// No description provided for @mediaSendVoiceHeading.
+  ///
+  /// In en, this message translates to:
+  /// **'VOICE MESSAGE'**
+  String get mediaSendVoiceHeading;
+
+  /// No description provided for @mediaSendDuration.
+  ///
+  /// In en, this message translates to:
+  /// **'Duration'**
+  String get mediaSendDuration;
+
+  /// No description provided for @mediaSendConfirmVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Send this voice message?'**
+  String get mediaSendConfirmVoice;
+
+  /// No description provided for @glassSimpleTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Glass settings'**
+  String get glassSimpleTitle;
+
+  /// No description provided for @glassSimpleDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'One set of values for the navigation bar, input bar, search and app-bar buttons'**
+  String get glassSimpleDesc;
+
+  /// No description provided for @glassResetAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset all to defaults'**
+  String get glassResetAll;
+
+  /// No description provided for @favDeleteSelectedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Delete 1 chat?} other{Delete {count} chats?}}'**
+  String favDeleteSelectedTitle(int count);
+
+  /// No description provided for @favDeleteSelectedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The selected chats and all their messages will be removed from favorites.'**
+  String get favDeleteSelectedMessage;
+
+  /// No description provided for @glassMasterTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Liquid Glass effects'**
+  String get glassMasterTitle;
+
+  /// No description provided for @glassMasterDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn all glass effects on or off'**
+  String get glassMasterDesc;
+
+  /// No description provided for @glassTabGeneral.
+  ///
+  /// In en, this message translates to:
+  /// **'General'**
+  String get glassTabGeneral;
+
+  /// No description provided for @glassTabAdvanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced'**
+  String get glassTabAdvanced;
+
+  /// No description provided for @glassBlur.
+  ///
+  /// In en, this message translates to:
+  /// **'Blur'**
+  String get glassBlur;
+
+  /// No description provided for @glassBlurDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Frosted blur intensity behind the glass'**
+  String get glassBlurDesc;
+
+  /// No description provided for @glassTint.
+  ///
+  /// In en, this message translates to:
+  /// **'Tint'**
+  String get glassTint;
+
+  /// No description provided for @glassTintDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Adaptive tint opacity (auto dark/light)'**
+  String get glassTintDesc;
+
+  /// No description provided for @glassSaturation.
+  ///
+  /// In en, this message translates to:
+  /// **'Saturation'**
+  String get glassSaturation;
+
+  /// No description provided for @glassSaturationDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Color vibrancy picked up from background'**
+  String get glassSaturationDesc;
+
+  /// No description provided for @glassChromatic.
+  ///
+  /// In en, this message translates to:
+  /// **'Chromatic Aberration'**
+  String get glassChromatic;
+
+  /// No description provided for @glassChromaticDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Color fringing on glass edges (lens effect)'**
+  String get glassChromaticDesc;
+
+  /// No description provided for @glassRefractive.
+  ///
+  /// In en, this message translates to:
+  /// **'Refractive Index'**
+  String get glassRefractive;
+
+  /// No description provided for @glassRefractiveDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'How much the glass bends light behind it'**
+  String get glassRefractiveDesc;
+
+  /// No description provided for @glassLight.
+  ///
+  /// In en, this message translates to:
+  /// **'Light Intensity'**
+  String get glassLight;
+
+  /// No description provided for @glassLightDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Strength of the specular highlight on glass'**
+  String get glassLightDesc;
+
+  /// No description provided for @glassThickness.
+  ///
+  /// In en, this message translates to:
+  /// **'Thickness'**
+  String get glassThickness;
+
+  /// No description provided for @glassThicknessDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Glass depth — affects refraction and edge glow'**
+  String get glassThicknessDesc;
+
+  /// No description provided for @glassJelly.
+  ///
+  /// In en, this message translates to:
+  /// **'Jelly Stretch Amount'**
+  String get glassJelly;
+
+  /// No description provided for @glassJellyDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Indicator expansion when dragging between tabs'**
+  String get glassJellyDesc;
+
+  /// No description provided for @glassQualityTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Glass Quality'**
+  String get glassQualityTitle;
+
+  /// No description provided for @glassQualityFast.
+  ///
+  /// In en, this message translates to:
+  /// **'Fast'**
+  String get glassQualityFast;
+
+  /// No description provided for @glassQualityFastDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Lightweight\nBest perf'**
+  String get glassQualityFastDesc;
+
+  /// No description provided for @glassQualityMedium.
+  ///
+  /// In en, this message translates to:
+  /// **'Medium'**
+  String get glassQualityMedium;
+
+  /// No description provided for @glassQualityMediumDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'No shaders\nBlur only'**
+  String get glassQualityMediumDesc;
+
+  /// No description provided for @glassQualityHigh.
+  ///
+  /// In en, this message translates to:
+  /// **'Quality'**
+  String get glassQualityHigh;
+
+  /// No description provided for @glassQualityHighDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Full shaders\nBest visuals'**
+  String get glassQualityHighDesc;
 }
 
 class _AppLocalizationsDelegate

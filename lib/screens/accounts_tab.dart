@@ -22,6 +22,11 @@ import '../utils/global_log_collector.dart';
 import '../l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import '../widgets/adaptive_glass_card.dart';
+import '../services/onion/onion_identity.dart';
+import '../services/onion/onion_transport_service.dart';
+import '../widgets/identity_onboarding_dialog.dart';
+import '../utils/app_lock_gate.dart';
+import '../widgets/paired_contacts_card.dart';
 
 class AccountsTab extends StatefulWidget {
   final String? currentUsername;
@@ -79,12 +84,6 @@ class _AccountsTabState extends State<AccountsTab>
   late final Animation<double> _fadeAnimation;
   bool _isVisible = false;
 
-  // Token expiry
-  DateTime? _tokenExpiresAt;
-  static const Duration _tokenLifetime = Duration(days: 30);
-  // ── Set to false to hide banner when session is healthy ──────────────────
-  static const bool _debugAlwaysShowTokenBanner = false;
-
   Future<void> _refreshMetaAndSort() async {
     final meta = await AccountManager.getAccountsMeta();
     final displayNames = <String, String?>{};
@@ -125,11 +124,6 @@ class _AccountsTabState extends State<AccountsTab>
     
     AccountManager.ensureAccountsLoaded();
     AccountManager.accountsNotifier.addListener(_onAccountsChanged);
-    // Re-read token_created_at whenever the session gets (re)confirmed —
-    // root_screen re-baselines it on init_complete, so a stale, already-
-    // loaded _tokenExpiresAt would otherwise keep showing a false "expired"
-    // banner for an account that just proved it's still valid.
-    sessionExpiredNotifier.addListener(_onSessionConfirmedValid);
     if (!DecoyManager.isActive.value) {
       _accounts = List<String>.from(AccountManager.accountsNotifier.value);
     }
@@ -151,24 +145,6 @@ class _AccountsTabState extends State<AccountsTab>
         _fadeController.forward();
       }
     });
-
-    _loadTokenExpiry();
-  }
-
-  void _onSessionConfirmedValid() {
-    if (!sessionExpiredNotifier.value) {
-      _loadTokenExpiry();
-    }
-  }
-
-  Future<void> _loadTokenExpiry() async {
-    final username = widget.currentUsername;
-    if (username == null) return;
-    final createdAt = await AccountManager.getTokenCreatedAt(username);
-    if (!mounted) return;
-    setState(() {
-      _tokenExpiresAt = createdAt?.add(_tokenLifetime);
-    });
   }
 
   @override
@@ -177,14 +153,12 @@ class _AccountsTabState extends State<AccountsTab>
 
     if (old.currentUsername != widget.currentUsername) {
       _refreshMetaAndSort();
-      _loadTokenExpiry();
     }
   }
 
   @override
   void dispose() {
     AccountManager.accountsNotifier.removeListener(_onAccountsChanged);
-    sessionExpiredNotifier.removeListener(_onSessionConfirmedValid);
     _fadeController.dispose();
     super.dispose();
   }
@@ -303,7 +277,6 @@ class _AccountsTabState extends State<AccountsTab>
     }
 
     bool avatarChanged = false;
-
     final result = await showGeneralDialog<bool>(
       context: context,
       barrierDismissible: true,
@@ -416,52 +389,126 @@ class _AccountsTabState extends State<AccountsTab>
                                   },
                                 ),
                                 const SizedBox(height: 10),
-                                GestureDetector(
-                                  onTap: () {
-                                    _copyToClipboard(ctx, '@$username');
-                                    _showSnack(l.copiedUsername(username));
-                                  },
-                                  child: Text(
-                                    '@$username',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w700,
-                                      color: cs.primary,
-                                      decoration: TextDecoration.underline,
-                                      decorationColor: cs.primary
-                                          .withValues(alpha: 0.4),
-                                    ),
-                                  ),
-                                ),
-                                if (widget.currentUin != null) ...[
-                                  const SizedBox(height: 6),
-                                  GestureDetector(
-                                    onTap: () {
-                                      _copyToClipboard(ctx, widget.currentUin!);
-                                      _showSnack(
-                                          '${l.uinCopied}: ${widget.currentUin}');
-                                    },
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 4),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            cs.primary.withValues(alpha: 0.10),
-                                        borderRadius: BorderRadius.circular(20),
-                                      ),
-                                      child: Text(
-                                        '#${widget.currentUin}',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: cs.primary
-                                              .withValues(alpha: 0.85),
-                                          letterSpacing: 0.5,
+                                ValueListenableBuilder<bool>(
+                                  valueListenable:
+                                      SettingsManager.onionModeEnabled,
+                                  builder: (_, onionOn, __) {
+                                    // With several devices: an onyx: code
+                                    // listing all of their addresses.
+                                    final onionAddress =
+                                        onionOn && OnionIdentity.isRunning
+                                            ? OnionTransportService
+                                                .instance.myContactCode
+                                            : null;
+                                    if (onionAddress == null) {
+                                      // Tor still bootstrapping (or off): the
+                                      // old @username / #UIN are server-era
+                                      // leftovers, so show nothing until the
+                                      // onion address exists.
+                                      return const SizedBox.shrink();
+                                    }
+                                    // Onion Mode on: this account has no
+                                    // username/UIN anyone off-device can use
+                                    // to reach it -- the onion address is the
+                                    // only thing that actually works, so it
+                                    // replaces both, plus a QR someone can
+                                    // scan straight into "Connect via Tor".
+                                    return Column(
+                                      children: [
+                                        GestureDetector(
+                                          onTap: () {
+                                            _copyToClipboard(
+                                                ctx, onionAddress);
+                                            _showSnack('Onion address copied');
+                                          },
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Flexible(
+                                                child: Text(
+                                                  onionAddress,
+                                                  style: TextStyle(
+                                                    fontSize: 13,
+                                                    fontFamily: 'monospace',
+                                                    fontWeight:
+                                                        FontWeight.w700,
+                                                    color: cs.primary,
+                                                    decoration: TextDecoration
+                                                        .underline,
+                                                    decorationColor: cs
+                                                        .primary
+                                                        .withValues(
+                                                            alpha: 0.4),
+                                                  ),
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Icon(Icons.copy_rounded,
+                                                  size: 14, color: cs.primary),
+                                            ],
+                                          ),
                                         ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                                        const SizedBox(height: 10),
+                                        Wrap(
+                                          alignment: WrapAlignment.center,
+                                          spacing: 8,
+                                          runSpacing: 8,
+                                          children: [
+                                            OutlinedButton.icon(
+                                              style: OutlinedButton.styleFrom(
+                                                shape: const StadiumBorder(),
+                                                side: BorderSide(
+                                                    color: cs.primary.withValues(alpha: 0.5)),
+                                                padding: const EdgeInsets.symmetric(
+                                                    horizontal: 16, vertical: 10),
+                                              ),
+                                              onPressed: () =>
+                                                  showOnionPairDialog(ctx),
+                                              icon: const Icon(
+                                                  Icons.qr_code_2_rounded,
+                                                  size: 16),
+                                              label: Text(l.addContactQr),
+                                            ),
+                                            OutlinedButton.icon(
+                                              style: OutlinedButton.styleFrom(
+                                                shape: const StadiumBorder(),
+                                                side: BorderSide(
+                                                    color: cs.primary.withValues(alpha: 0.5)),
+                                                padding: const EdgeInsets.symmetric(
+                                                    horizontal: 16, vertical: 10),
+                                              ),
+                                              onPressed: () =>
+                                                  showPairedContactsDialog(
+                                                      ctx),
+                                              icon: const Icon(
+                                                  Icons.people_alt_rounded,
+                                                  size: 16),
+                                              label: Text(l.contactsTitle),
+                                            ),
+                                            OutlinedButton.icon(
+                                              style: OutlinedButton.styleFrom(
+                                                shape: const StadiumBorder(),
+                                                side: BorderSide(
+                                                    color: cs.primary.withValues(alpha: 0.5)),
+                                                padding: const EdgeInsets.symmetric(
+                                                    horizontal: 16, vertical: 10),
+                                              ),
+                                              onPressed: () =>
+                                                  showOwnDevicesDialog(ctx),
+                                              icon: const Icon(
+                                                  Icons.devices_rounded,
+                                                  size: 16),
+                                              label: Text(l.myDevicesTitle),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                ),
                                 const SizedBox(height: 8),
                                 Text(
                                   l.tapAvatarHint,
@@ -491,8 +538,8 @@ class _AccountsTabState extends State<AccountsTab>
                                 cs.surfaceContainerHighest, brightness);
                               return TextField(
                                 controller: displayNameCtrl,
-                                autofocus: true,
-                                maxLength: 16,
+                                onTapOutside: (_) =>
+                                    FocusManager.instance.primaryFocus?.unfocus(),
                                 decoration: InputDecoration(
                                   filled: true,
                                   fillColor: baseColor.withValues(alpha: 0.5),
@@ -526,8 +573,8 @@ class _AccountsTabState extends State<AccountsTab>
                             ),
                             onPressed: () {
                               final newName = displayNameCtrl.text.trim();
-                              if (newName.isEmpty || newName.length > 16) {
-                                _showSnack(l.displayNameLength);
+                              if (newName.isEmpty) {
+                                _showSnack(l.displayNameRequired);
                                 return;
                               }
                               if (newName == currentDisplayName) {
@@ -565,10 +612,18 @@ class _AccountsTabState extends State<AccountsTab>
   }
 
   Future<void> _saveDisplayName(String username, String newName) async {
-    final notLoggedInMsg = AppLocalizations.of(context).notLoggedIn;
     final token = await AccountManager.getToken(username);
     if (token == null) {
-      _showSnack(notLoggedInMsg);
+      // No server token -- this is a decentralized (onion-only) account, not
+      // an expired session. There is no server to notify, so the name is
+      // just a local fact about this device's identity.
+      await AccountManager.cacheDisplayName(username, newName);
+      rootScreenKey.currentState?.setState(() {
+        rootScreenKey.currentState!.currentDisplayName = newName;
+      });
+      if (!mounted) return;
+      setState(() => _displayNames[username] = newName != username ? newName : null);
+      _showSnack(AppLocalizations.of(context).displayNameUpdated);
       return;
     }
 
@@ -601,145 +656,6 @@ class _AccountsTabState extends State<AccountsTab>
     }
   }
 
-  // ── Token expiry banner ────────────────────────────────────────────────────
-
-  Widget? _buildTokenExpiryBanner(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final l = AppLocalizations.of(context);
-    final now = DateTime.now();
-
-    // Debug preview: treat as if token expires in 2 days
-    final expiresAt = _debugAlwaysShowTokenBanner
-        ? now.add(const Duration(days: 2))
-        : _tokenExpiresAt;
-
-    if (expiresAt == null) return null;
-
-    final diff = expiresAt.difference(now);
-    final expired = diff.isNegative;
-    final daysLeft = diff.inDays;
-    final hoursLeft = diff.inHours;
-
-    // Production: only show when ≤7 days left or expired
-    if (!_debugAlwaysShowTokenBanner && !expired && daysLeft > 7) return null;
-
-    final Color bgColor;
-    final Color fgColor;
-    final Color borderColor;
-    final IconData icon;
-    final String title;
-    final String subtitle;
-    final bool showButton;
-
-    if (expired) {
-      bgColor = cs.errorContainer;
-      fgColor = cs.onErrorContainer;
-      borderColor = cs.error.withValues(alpha: 0.4);
-      icon = Icons.lock_outline_rounded;
-      title = l.sessionExpiredTitle;
-      subtitle = l.sessionExpiredSubtitle;
-      showButton = true;
-    } else if (daysLeft < 1) {
-      bgColor = cs.errorContainer.withValues(alpha: 0.85);
-      fgColor = cs.onErrorContainer;
-      borderColor = cs.error.withValues(alpha: 0.35);
-      icon = Icons.timer_outlined;
-      title = l.sessionExpiresInHours(hoursLeft);
-      subtitle = l.sessionRenewSoon;
-      showButton = true;
-    } else if (daysLeft <= 7) {
-      bgColor = cs.tertiaryContainer.withValues(alpha: 0.85);
-      fgColor = cs.onTertiaryContainer;
-      borderColor = cs.tertiary.withValues(alpha: 0.35);
-      icon = Icons.timer_outlined;
-      title = l.sessionExpiresInDays(daysLeft);
-      subtitle = l.sessionRenewSoon;
-      showButton = true;
-    } else {
-      // Debug only — healthy session
-      bgColor = cs.primaryContainer.withValues(alpha: 0.75);
-      fgColor = cs.onPrimaryContainer;
-      borderColor = cs.primary.withValues(alpha: 0.3);
-      icon = Icons.verified_user_outlined;
-      title = l.sessionActiveForDays(daysLeft);
-      subtitle = l.sessionStillValid;
-      showButton = false;
-    }
-
-    return ValueListenableBuilder<double>(
-      valueListenable: SettingsManager.elementOpacity,
-      builder: (_, opacity, __) {
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: bgColor.withValues(alpha: opacity.clamp(0.55, 1.0)),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: borderColor, width: 1.0),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, color: fgColor, size: 18),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: fgColor,
-                        height: 1.2,
-                      ),
-                    ),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: fgColor.withValues(alpha: 0.72),
-                        height: 1.3,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (showButton) ...[
-                const SizedBox(width: 6),
-                TextButton(
-                  style: TextButton.styleFrom(
-                    foregroundColor: fgColor,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    textStyle: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w600),
-                  ),
-                  onPressed: () async {
-                    await showGeneralDialog(
-                      context: context,
-                      barrierDismissible: true,
-                      barrierLabel: 'Authentication',
-                      transitionDuration: const Duration(milliseconds: 133),
-                      pageBuilder: (ctx, anim1, anim2) => AuthDialog(
-                        onLogin: widget.onLogin,
-                        onRegister: widget.onRegister,
-                        onQrLogin: widget.onQrLogin,
-                      ),
-                    );
-                    if (mounted) _loadTokenExpiry();
-                  },
-                  child: Text(l.sessionSignIn),
-                ),
-              ],
-            ],
-          ),
-        );
-      },
-    );
-  }
 
   void _showSnack(String text) {
     if (!mounted) return;
@@ -779,7 +695,9 @@ class _AccountsTabState extends State<AccountsTab>
     return FadeTransition(
       opacity: _isVisible ? _fadeAnimation : const AlwaysStoppedAnimation(0),
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        // Same bottom gap as the other tabs (room for the nav bar).
+        padding: EdgeInsets.fromLTRB(
+            16, 16, 16, 8 + MediaQuery.paddingOf(context).bottom),
         physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
         children: [
           
@@ -810,42 +728,54 @@ class _AccountsTabState extends State<AccountsTab>
                     ),
                   const SizedBox(width: 12),
                   Flexible(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          rootScreenKey.currentState?.currentDisplayName ?? widget.currentUsername!,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                            color: Theme.of(context).colorScheme.onSurface,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        Text(
-                          '@${widget.currentUsername}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (widget.currentUin != null) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            '#${widget.currentUin}',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
-                              letterSpacing: 0.5,
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: SettingsManager.onionModeEnabled,
+                      builder: (context, onionEnabled, __) {
+                        final cs = Theme.of(context).colorScheme;
+                        final title =
+                            rootScreenKey.currentState?.currentDisplayName ??
+                                widget.currentUsername!;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              title,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                color: cs.onSurface,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                          ),
-                        ],
-                      ],
+                            if (!onionEnabled) ...[
+                              Text(
+                                '@${widget.currentUsername}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: cs.onSurface.withValues(alpha: 0.6),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (widget.currentUin != null) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  '#${widget.currentUin}',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color:
+                                        cs.primary.withValues(alpha: 0.8),
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -854,87 +784,15 @@ class _AccountsTabState extends State<AccountsTab>
 
           const SizedBox(height: 12),
 
-          // Session expired banner
-          if (!DecoyManager.isActive.value)
-            ValueListenableBuilder<bool>(
-              valueListenable: sessionExpiredNotifier,
-              builder: (ctx, expired, __) {
-                if (!expired) return const SizedBox.shrink();
-                final l = AppLocalizations.of(ctx);
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Colors.orange.withValues(alpha: 0.5), width: 1),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 20),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            l.sessionExpiredBanner,
-                            style: const TextStyle(
-                              color: Colors.orange,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        TextButton(
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.orange,
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                          ),
-                          onPressed: () async {
-                            await showGeneralDialog(
-                              context: ctx,
-                              barrierDismissible: true,
-                              barrierLabel: 'Authentication',
-                              transitionDuration: const Duration(milliseconds: 133),
-                              pageBuilder: (dialogCtx, anim1, anim2) => AuthDialog(
-                                onLogin: widget.onLogin,
-                                onRegister: widget.onRegister,
-                                onQrLogin: widget.onQrLogin,
-                              ),
-                            );
-                            if (mounted) _loadTokenExpiry();
-                          },
-                          child: Text(l.sessionSignIn),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-
-          // Token expiry banner — suppressed while the orange "session expired"
-          // banner is showing, so the user sees a single notification instead
-          // of two redundant ones for the same expired session.
-          if (widget.currentUsername != null && !DecoyManager.isActive.value) ...[
-            ValueListenableBuilder<bool>(
-              valueListenable: sessionExpiredNotifier,
-              builder: (ctx, sessionExpired, __) {
-                if (sessionExpired) return const SizedBox.shrink();
-                final banner = _buildTokenExpiryBanner(ctx);
-                if (banner == null) return const SizedBox.shrink();
-                return Column(children: [banner, const SizedBox(height: 12)]);
-              },
-            ),
-          ],
+          // (The "session expired" / "session expires in N days" banners are
+          // gone: they were about the central server's login token, and
+          // accounts are Tor identities now -- nothing expires.)
 
           const SizedBox(height: 16),
 
-          // Add Account
+          // New decentralized identity (Tor-based, no server) — this is now
+          // the only way to add an account; the old server-registration
+          // "Add Account" flow (AuthDialog) has been removed in favour of it.
           ValueListenableBuilder<double>(
             valueListenable: SettingsManager.elementBrightness,
             builder: (_, brightness, __) {
@@ -942,66 +800,80 @@ class _AccountsTabState extends State<AccountsTab>
                 Theme.of(context).colorScheme.surfaceContainerHighest,
                 brightness,
               );
-              return ClipRRect(
-                borderRadius: BorderRadius.circular(28),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: baseColor.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(
-                      color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
-                      width: 0.8,
-                    ),
-                  ),
-                  child: FilledButton.icon(
-                    onPressed: () async {
-                      if (isDesktop &&
-                          rootScreenKey.currentState?.selectedChatOther != null) {
-                        rootScreenKey.currentState?.hideDetailPanel();
-                      }
-                      await showGeneralDialog(
-                        context: context,
-                        barrierDismissible: true,
-                        barrierLabel: 'Authentication',
-                        transitionDuration: const Duration(milliseconds: 133),
-                        pageBuilder: (ctx, anim1, anim2) => AuthDialog(
-                          onLogin: widget.onLogin,
-                          onRegister: widget.onRegister,
-                          onQrLogin: widget.onQrLogin,
+              final fgColor = (widget.currentTheme == AppTheme.grey &&
+                      Theme.of(context).colorScheme.brightness == Brightness.dark)
+                  ? const Color(0xFFA0A0A0)
+                  : Theme.of(context).colorScheme.primary;
+              // IntrinsicHeight so CrossAxisAlignment.stretch has a definite
+              // height to stretch to -- this Row sits inside a ListView,
+              // which gives it unbounded height (0..Infinity), and stretch
+              // against an unbounded constraint throws a layout assertion
+              // that cascades into every sibling below it in the list.
+              return IntrinsicHeight(
+                child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(28),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: baseColor.withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(28),
+                          border: Border.all(
+                            color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
+                            width: 0.8,
+                          ),
                         ),
-                      );
-                      if (mounted) {
-                        await AccountManager.ensureAccountsLoaded();
-                      }
-                    },
-                    icon: Icon(
-                      Icons.add,
-                      size: 18,
-                      color: (widget.currentTheme == AppTheme.grey &&
-                              Theme.of(context).colorScheme.brightness == Brightness.dark)
-                          ? const Color(0xFFA0A0A0)
-                          : Theme.of(context).colorScheme.primary,
-                    ),
-                    label: Text(
-                      AppLocalizations.of(context).addAccount,
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: (widget.currentTheme == AppTheme.grey &&
-                                Theme.of(context).colorScheme.brightness == Brightness.dark)
-                            ? const Color(0xFFA0A0A0)
-                            : Theme.of(context).colorScheme.primary,
+                        child: FilledButton.icon(
+                          onPressed: () async {
+                            await showIdentityOnboardingDialog(
+                              context,
+                              onSwitchAccount: widget.onSwitchAccount,
+                            );
+                            if (mounted) {
+                              await AccountManager.ensureAccountsLoaded();
+                            }
+                          },
+                          icon: Icon(Icons.add, size: 18, color: fgColor),
+                          label: Text(
+                            AppLocalizations.of(context).identityNewIdentityButton,
+                            style: TextStyle(fontSize: 15, color: fgColor),
+                          ),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: widget.currentTheme == AppTheme.grey
+                                ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.06)
+                                : Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                            foregroundColor: Theme.of(context).colorScheme.primary,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+                            elevation: 0,
+                          ),
+                        ),
                       ),
                     ),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: widget.currentTheme == AppTheme.grey
-                          ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.06)
-                          : Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
-                      foregroundColor: Theme.of(context).colorScheme.primary,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-                      elevation: 0,
+                  ),
+                  const SizedBox(width: 8),
+                  Tooltip(
+                    message: AppLocalizations.of(context).identityInfoTooltip,
+                    child: GestureDetector(
+                      onTap: () => showIdentityInfoDialog(context),
+                      child: Container(
+                        width: 48,
+                        decoration: BoxDecoration(
+                          color: baseColor.withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(
+                            color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
+                            width: 0.8,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(Icons.help_outline_rounded, size: 20, color: fgColor),
+                      ),
                     ),
                   ),
+                ],
                 ),
               );
             },
@@ -1029,14 +901,24 @@ class _AccountsTabState extends State<AccountsTab>
                     ),
                   ),
                   child: FilledButton.icon(
-                    onPressed: () => showDialog(
-                      context: context,
-                      barrierDismissible: true,
-                      builder: (_) => DeviceAuthScreen(
-                        currentUsername: widget.currentUsername,
-                        onQrLogin: widget.onQrLogin,
-                      ),
-                    ),
+                    onPressed: () async {
+                      // Linking hands this account (key, contacts) to another
+                      // device, so it needs the same unlock as switching
+                      // accounts -- but only if a PIN lock is enabled at all.
+                      if (!await confirmWithAppLock(context,
+                          reason: 'Confirm linking a new device')) {
+                        return;
+                      }
+                      if (!context.mounted) return;
+                      showDialog(
+                        context: context,
+                        barrierDismissible: true,
+                        builder: (_) => DeviceAuthScreen(
+                          currentUsername: widget.currentUsername,
+                          onQrLogin: widget.onQrLogin,
+                        ),
+                      );
+                    },
                     icon: Icon(
                       Icons.devices_rounded,
                       size: 18,

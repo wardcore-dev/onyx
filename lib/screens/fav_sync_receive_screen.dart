@@ -20,6 +20,7 @@ import '../models/favorite_chat.dart';
 import '../services/lan_fav_sync_service.dart';
 import '../utils/wardlink_bubble_controller.dart';
 import '../widgets/adaptive_glass_card.dart';
+import '../widgets/onyx_dialog.dart';
 
 class FavSyncReceiveScreen extends StatefulWidget {
   const FavSyncReceiveScreen({super.key});
@@ -283,20 +284,15 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
     final title = _scanningHandshake ? _l.receiveFavoritesScanSender : _l.receiveFavoritesTitle;
     // X button: minimizes when transfer is active, closes otherwise.
     final canMinimize = !_done && _fatalError == null && !_starting && !_scanningHandshake && _total > 0;
+    final icon = _scanningHandshake
+        ? Icons.qr_code_scanner_rounded
+        : Icons.download_rounded;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surface,
-        border: Border(
-          bottom: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.3)),
-        ),
-      ),
-      child: Row(
-        children: [
-          if (_scanningHandshake)
-            IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () {
+    return OnyxDialogHeader(
+      leading: _scanningHandshake
+          ? OnyxHeaderIconButton(
+              icon: Icons.arrow_back_rounded,
+              onTap: () {
                 _handshakeScanCtrl?.dispose();
                 _handshakeScanCtrl = null;
                 setState(() {
@@ -305,24 +301,24 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
                 });
               },
             )
-          else
-            const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              title,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: cs.onSurface,
+          : Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
               ),
+              child: Icon(icon, size: 20, color: cs.primary),
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.close),
-            onPressed: canMinimize ? _minimize : () => Navigator.of(context).pop(),
-          ),
-        ],
+      title: Text(
+        title,
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: cs.onSurface,
+        ),
       ),
+      onClose: canMinimize ? _minimize : () => Navigator.of(context).pop(),
     );
   }
 
@@ -351,13 +347,11 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _minimize();
       },
-      child: Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-        clipBehavior: Clip.antiAlias,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+      child: OnyxDialogShell(
+        maxWidth: 520,
+        radius: kOnyxPanelRadius,
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: 520,
             maxHeight: MediaQuery.sizeOf(context).height * 0.85,
           ),
           child: Column(
@@ -394,6 +388,10 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
               ),
               const SizedBox(height: 24),
               FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
+                  shape: kOnyxDialogButtonShape,
+                ),
                 onPressed: () => Navigator.of(context).pop(),
                 icon: const Icon(Icons.close),
                 label: Text(AppLocalizations.of(context).close),
@@ -414,7 +412,7 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
           valueListenable: SettingsManager.elementBrightness,
           builder: (_, brightness, __) {
             return AdaptiveGlassCard(
-              borderRadius: 20,
+              borderRadius: 27,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
                 child: Column(
@@ -440,9 +438,14 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
                     ),
                     const SizedBox(height: 20),
                     Container(
+                      // Fixed square (220 QR + 12 padding each side): in the app this tile
+                      // came out taller than wide, with a blank band under the code.
+                      width: 244,
+                      height: 244,
+                      alignment: Alignment.center,
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(20),
                         boxShadow: [
                           BoxShadow(
                             color: cs.shadow.withValues(alpha:0.12),
@@ -501,6 +504,10 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
           const SizedBox(height: 12),
           Center(
             child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
+                shape: kOnyxDialogButtonShape,
+              ),
               onPressed: () {
                 _handshakeScanCtrl = MobileScannerController(
                   detectionSpeed: DetectionSpeed.normal,
@@ -512,7 +519,7 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
                 });
               },
               icon: const Icon(Icons.qr_code_scanner, size: 16),
-              label: Text(_l.receiveFavoritesScanSender),
+              label: Text(_l.receiveFavoritesScanSender.replaceAll('\n', ' ')),
             ),
           ),
         ],
@@ -528,6 +535,8 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
           const SizedBox(height: 16),
           OutlinedButton.icon(
             style: OutlinedButton.styleFrom(
+              padding: kOnyxDialogButtonPadding,
+              shape: kOnyxDialogButtonShape,
               foregroundColor: cs.error,
               side: BorderSide(color: cs.error.withValues(alpha: 0.5)),
             ),
@@ -595,7 +604,7 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
   Widget _buildStatusCard(ColorScheme cs) => ValueListenableBuilder<double>(
         valueListenable: SettingsManager.elementBrightness,
         builder: (_, brightness, __) => AdaptiveGlassCard(
-          borderRadius: 16,
+          borderRadius: 27,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             child: Column(
@@ -716,6 +725,10 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
         // Action buttons
         if (ev != null)
           FilledButton.icon(
+            style: FilledButton.styleFrom(
+              padding: kOnyxDialogButtonPadding,
+              shape: kOnyxDialogButtonShape,
+            ),
             onPressed: _applyAndClose,
             icon: const Icon(Icons.download_done_rounded),
             label: Text(
@@ -727,6 +740,7 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
         const SizedBox(height: 8),
         OutlinedButton(
           onPressed: () => Navigator.of(context).pop(),
+          style: OutlinedButton.styleFrom(padding: kOnyxDialogButtonPadding, shape: kOnyxDialogButtonShape),
           child: Text(AppLocalizations.of(context).close),
         ),
       ],
@@ -735,12 +749,12 @@ class _FavSyncReceiveScreenState extends State<FavSyncReceiveScreen> {
 
   Widget _buildFileResultsList(ColorScheme cs) {
     return AdaptiveGlassCard(
-      borderRadius: 16,
+      borderRadius: 27,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(27),
             onTap: () => setState(() => _logExpanded = !_logExpanded),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),

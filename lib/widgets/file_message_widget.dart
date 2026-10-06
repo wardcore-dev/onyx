@@ -110,6 +110,23 @@ class _FileMessageWidgetState extends State<FileMessageWidget> {
         }
       }
 
+      if (filename.startsWith('onion://')) {
+        // Same reasoning as ImageMessageWidget/VideoMessageWidget's onion://
+        // branch: the bytes arrive over their own Tor stream, separately
+        // from this pointer message, and for a chunked file transfer can
+        // still be in progress when the pointer is first shown -- poll
+        // briefly instead of failing immediately.
+        final onionFilename = filename.substring(8);
+        final appDocuments = await getOnyxDocumentsDirectory();
+        final onionFile =
+            File('${appDocuments.path}/onion_media/$onionFilename');
+        if (await onionFile.exists()) return onionFile;
+        for (var i = 0; i < 20 && !(await onionFile.exists()); i++) {
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
+        return await onionFile.exists() ? onionFile : null;
+      }
+
       if (directUrl != null && directUrl!.isNotEmpty) {
         debugPrint('FileMessageWidget: Using direct URL: $directUrl');
         final cached = await _downloadFromDirectUrl(directUrl!, filename,

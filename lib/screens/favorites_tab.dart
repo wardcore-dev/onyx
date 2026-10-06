@@ -173,6 +173,14 @@ class _FavoritesTabState extends State<FavoritesTab>
   // chats toggles them; a bottom toolbar then bulk-deletes or moves them.
   bool _selectionMode = false;
   final Set<String> _selectedIds = {};
+  // Chats ticked in an open folder's reorder mode (inline desktop view).
+  final Set<String> _folderSel = {};
+
+  void _toggleFolderSel(String id) {
+    setState(() {
+      if (!_folderSel.add(id)) _folderSel.remove(id);
+    });
+  }
 
   late double _staggerStep;
 
@@ -299,6 +307,21 @@ class _FavoritesTabState extends State<FavoritesTab>
       if (_selectedIds.isEmpty) _selectionMode = false;
     });
     if (_selectedIds.isEmpty) _selectionAnimController.reverse();
+  }
+
+  /// Reorder mode: a tap on a tile selects it -- its drag handle turns into a
+  /// check -- without leaving reorder mode. The toolbar morphs into the move
+  /// / delete actions while anything is selected, and back when nothing is.
+  void _toggleSelectInEdit(String id) {
+    setState(() {
+      if (!_selectedIds.add(id)) _selectedIds.remove(id);
+      _selectionMode = _selectedIds.isNotEmpty;
+    });
+    if (_selectedIds.isEmpty) {
+      _selectionAnimController.reverse();
+    } else {
+      _selectionAnimController.forward();
+    }
   }
 
   void _exitSelection() {
@@ -1589,9 +1612,8 @@ class _FavoritesTabState extends State<FavoritesTab>
     final l = AppLocalizations.of(context);
     final confirmed = await showOnyxConfirmDialog(
       context: context,
-      title: 'Delete ${ids.length} chat${ids.length == 1 ? '' : 's'}?',
-      message:
-          'The selected chats and all their messages will be removed from favorites.',
+      title: l.favDeleteSelectedTitle(ids.length),
+      message: l.favDeleteSelectedMessage,
       confirmLabel: l.delete,
       isDestructive: true,
       icon: Icons.delete_outline_rounded,
@@ -1779,7 +1801,7 @@ class _FavoritesTabState extends State<FavoritesTab>
         child: InkWell(
         borderRadius: BorderRadius.circular(28),
         onTap: editMode
-            ? null
+            ? () => _toggleSelectInEdit(fav.id)
             : _selectionMode
                 ? () => _toggleSelect(fav.id)
                 : () => _openFavWithLockCheck(context, fav.id),
@@ -1881,7 +1903,9 @@ class _FavoritesTabState extends State<FavoritesTab>
                     ),
                   ),
                 ),
-              if (editMode && dragIndex != null)
+              // Reorder mode: the handle drags; a selected tile shows a check
+              // in its place (tap the tile to select / unselect it).
+              if (editMode && dragIndex != null && !selected)
                 ReorderableDragStartListener(
                   index: dragIndex,
                   child: Padding(
@@ -1891,7 +1915,7 @@ class _FavoritesTabState extends State<FavoritesTab>
                         color: cs.onSurface.withValues(alpha: 0.35)),
                   ),
                 ),
-              if (_selectionMode)
+              if (selected || (_selectionMode && !editMode))
                 Padding(
                   padding: const EdgeInsets.only(left: 8),
                   child: Icon(
@@ -2070,6 +2094,7 @@ class _FavoritesTabState extends State<FavoritesTab>
                   setState(() {
                     _openFolderId = null;
                     _editMode = false;
+                    _folderSel.clear();
                   });
                 },
                 tooltip: 'Back',
@@ -2108,7 +2133,10 @@ class _FavoritesTabState extends State<FavoritesTab>
                     _editMode ? Icons.check_rounded : Icons.sort_rounded,
                     color: _editMode ? Colors.green : cs.primary,
                   ),
-                  onPressed: () => setState(() => _editMode = !_editMode),
+                  onPressed: () => setState(() {
+                    _editMode = !_editMode;
+                    _folderSel.clear();
+                  }),
                   tooltip: _editMode ? 'Done' : 'Reorder',
                 ),
             ],
@@ -2137,6 +2165,12 @@ class _FavoritesTabState extends State<FavoritesTab>
                   : _buildInlineNormalList(
                       context, displayChats, allChats, cs),
         ),
+        if (_editMode && _folderSel.isNotEmpty)
+          _FolderSelectionBar(
+            folderId: folder.id,
+            ids: _folderSel,
+            onDone: () => setState(_folderSel.clear),
+          ),
       ],
     );
   }
@@ -2165,6 +2199,7 @@ class _FavoritesTabState extends State<FavoritesTab>
     return ReorderableListView.builder(
       padding: EdgeInsets.fromLTRB(
           12, 4, 12, 8 + MediaQuery.paddingOf(context).bottom),
+      buildDefaultDragHandles: false,
       proxyDecorator: (child, _, __) =>
           Material(color: Colors.transparent, child: child),
       itemCount: chats.length,
@@ -2180,7 +2215,7 @@ class _FavoritesTabState extends State<FavoritesTab>
         key: ValueKey(chats[i].id),
         padding: const EdgeInsets.only(bottom: 6),
         child: _buildInlineChatRow(context, chats[i], allChats, cs,
-            editMode: true),
+            editMode: true, dragIndex: i),
       ),
     );
   }
@@ -2190,9 +2225,11 @@ class _FavoritesTabState extends State<FavoritesTab>
       FavoriteChat fav,
       Map<String, List<ChatMessage>> allChats,
       ColorScheme cs, {
-      bool editMode = false}) {
+      bool editMode = false,
+      int? dragIndex}) {
     final preview = _getFavPreview(fav.id, allChats);
     final lastTs = _getFavLastTs(fav.id, allChats);
+    final selected = editMode && _folderSel.contains(fav.id);
 
     return GestureDetector(
       onSecondaryTapUp: _isDesktop && !editMode
@@ -2200,7 +2237,9 @@ class _FavoritesTabState extends State<FavoritesTab>
           : null,
       child: InkWell(
         borderRadius: BorderRadius.circular(28),
-        onTap: editMode ? null : () => _openFavWithLockCheck(context, fav.id),
+        onTap: editMode
+            ? () => _toggleFolderSel(fav.id)
+            : () => _openFavWithLockCheck(context, fav.id),
         onLongPress: editMode
             ? null
             : () => _showInlineChatActions(context, fav, cs),
@@ -2291,6 +2330,22 @@ class _FavoritesTabState extends State<FavoritesTab>
                         fontSize: 12,
                         color: cs.onSurface.withValues(alpha: 0.6)),
                   ),
+                ),
+              if (editMode && dragIndex != null && !selected)
+                ReorderableDragStartListener(
+                  index: dragIndex,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: Icon(Icons.drag_handle_rounded,
+                        size: 22,
+                        color: cs.onSurface.withValues(alpha: 0.35)),
+                  ),
+                ),
+              if (selected)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Icon(Icons.check_circle_rounded,
+                      size: 22, color: cs.primary),
                 ),
             ],
           ),
@@ -2407,6 +2462,139 @@ class _FavoritesTabState extends State<FavoritesTab>
 
 }
 
+// ── Multi-select inside a folder ─────────────────────────────────────────────
+
+/// Bottom bar shown while chats are selected in a folder's reorder mode:
+/// take them out of the folder, move them to another folder, or delete them.
+class _FolderSelectionBar extends StatelessWidget {
+  final String folderId;
+  final Set<String> ids;
+  final VoidCallback onDone;
+
+  const _FolderSelectionBar({
+    required this.folderId,
+    required this.ids,
+    required this.onDone,
+  });
+
+  Future<void> _move(BuildContext context) async {
+    final root = rootScreenKey.currentState;
+    final others = (root?.favFolders ?? const <FavFolder>[])
+        .where((f) => f.id != folderId)
+        .toList();
+    if (others.isEmpty) return;
+    final cs = Theme.of(context).colorScheme;
+    final target = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          decoration: BoxDecoration(
+            color: SettingsManager.getElementColor(cs.surfaceContainerHighest,
+                SettingsManager.elementBrightness.value),
+            borderRadius: BorderRadius.circular(28),
+          ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(ctx).height * 0.6),
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              children: [
+                for (final f in others)
+                  ListTile(
+                    leading: const Icon(Icons.folder_rounded),
+                    title: Text(f.name),
+                    onTap: () => Navigator.of(ctx).pop(f.id),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (target == null) return;
+    for (final id in ids.toList()) {
+      root?.moveChatToFolder(id, target);
+    }
+    onDone();
+  }
+
+  Future<void> _delete(BuildContext context) async {
+    final l = AppLocalizations.of(context);
+    final confirmed = await showOnyxConfirmDialog(
+      context: context,
+      title: l.favDeleteSelectedTitle(ids.length),
+      message: l.favDeleteSelectedMessage,
+      confirmLabel: l.delete,
+      isDestructive: true,
+      icon: Icons.delete_outline_rounded,
+    );
+    if (confirmed != true) return;
+    final root = rootScreenKey.currentState;
+    for (final id in ids.toList()) {
+      LockManager.removeLock('fav_$id');
+      root?.deleteFavoriteById(id);
+    }
+    onDone();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
+    final hasOtherFolders = (rootScreenKey.currentState?.favFolders ??
+            const <FavFolder>[])
+        .any((f) => f.id != folderId);
+
+    Widget action(IconData icon, String label, VoidCallback? onTap,
+        {Color? color}) {
+      final c = color ?? cs.primary;
+      return Expanded(
+        child: TextButton.icon(
+          onPressed: onTap,
+          style: TextButton.styleFrom(
+            foregroundColor: c,
+            shape: const StadiumBorder(),
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+          ),
+          icon: Icon(icon, size: 18),
+          label: Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12)),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.3)),
+        ),
+      ),
+      child: Row(
+        children: [
+          action(Icons.folder_off_outlined, l.favRemoveFromFolder, () {
+            final root = rootScreenKey.currentState;
+            for (final id in ids.toList()) {
+              root?.moveChatOutOfFolder(id);
+            }
+            onDone();
+          }),
+          action(Icons.drive_file_move_outlined, l.favMoveToFolder,
+              hasOtherFolders ? () => _move(context) : null),
+          action(Icons.delete_outline_rounded, l.delete,
+              () => _delete(context),
+              color: cs.error),
+        ],
+      ),
+    );
+  }
+}
+
 // ── Folder content dialog ──────────────────────────────────────────────────────
 
 class _FolderContentDialog extends StatefulWidget {
@@ -2424,6 +2612,14 @@ class _FolderContentDialog extends StatefulWidget {
 
 class _FolderContentDialogState extends State<_FolderContentDialog> {
   bool _editMode = false;
+  // Chats ticked in reorder mode (tap a row); see _FolderSelectionBar.
+  final Set<String> _sel = {};
+
+  void _toggleSel(String id) {
+    setState(() {
+      if (!_sel.add(id)) _sel.remove(id);
+    });
+  }
 
   bool get _isDesktop =>
       Platform.isWindows || Platform.isMacOS || Platform.isLinux;
@@ -2711,8 +2907,10 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
                                 : Icons.sort_rounded,
                             color: _editMode ? Colors.green : cs.primary,
                           ),
-                          onPressed: () =>
-                              setState(() => _editMode = !_editMode),
+                          onPressed: () => setState(() {
+                            _editMode = !_editMode;
+                            _sel.clear();
+                          }),
                           tooltip: _editMode ? 'Done' : 'Reorder',
                         ),
                       IconButton(
@@ -2743,6 +2941,12 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
                           : _buildNormalList(
                               context, displayChats, allChats, cs),
                 ),
+                if (_editMode && _sel.isNotEmpty)
+                  _FolderSelectionBar(
+                    folderId: folder.id,
+                    ids: _sel,
+                    onDone: () => setState(_sel.clear),
+                  ),
               ],
             ),
           );
@@ -2809,6 +3013,7 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
       int? dragIndex}) {
     final preview = _getFavPreview(fav.id, allChats);
     final lastTs = _getFavLastTs(fav.id, allChats);
+    final selected = editMode && _sel.contains(fav.id);
 
     return GestureDetector(
       onSecondaryTapUp: _isDesktop && !editMode
@@ -2816,7 +3021,9 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
           : null,
       child: InkWell(
         borderRadius: BorderRadius.circular(28),
-        onTap: editMode ? null : () => _openWithLockCheck(context, fav.id),
+        onTap: editMode
+            ? () => _toggleSel(fav.id)
+            : () => _openWithLockCheck(context, fav.id),
         onLongPress:
             editMode ? null : () => _showChatActions(context, fav, cs),
         child: AdaptiveGlassCard(
@@ -2909,7 +3116,7 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
                     ),
                   ),
                 ),
-              if (editMode && dragIndex != null)
+              if (editMode && dragIndex != null && !selected)
                 ReorderableDragStartListener(
                   index: dragIndex,
                   child: Padding(
@@ -2918,6 +3125,12 @@ class _FolderContentDialogState extends State<_FolderContentDialog> {
                         size: 22,
                         color: cs.onSurface.withValues(alpha: 0.35)),
                   ),
+                ),
+              if (selected)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Icon(Icons.check_circle_rounded,
+                      size: 22, color: cs.primary),
                 ),
             ],
           ),

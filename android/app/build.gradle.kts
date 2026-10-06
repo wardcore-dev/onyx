@@ -7,6 +7,12 @@ plugins {
 android {
     namespace = "com.wardcore.onyx"
     compileSdk = 36
+    // Required by super_native_extensions's cargokit build (compiles its
+    // Rust core for Android via the NDK). Matches whatever NDK version this
+    // Flutter SDK bundles, avoiding a hardcoded version string that may not
+    // be installed. onyx_tor no longer needs this -- it now runs a
+    // prebuilt tor-android binary rather than compiling Rust.
+    ndkVersion = flutter.ndkVersion
 
     defaultConfig {
         applicationId = "com.wardcore.onyx"
@@ -25,6 +31,16 @@ android {
 
     kotlinOptions {
         jvmTarget = "11"
+    }
+
+    // onyx_tor (info.guardianproject:tor-android) needs its libtor*.so
+    // extracted to a real file under ApplicationInfo.nativeLibraryDir --
+    // it's exec'd directly via Process.start(), not dlopen'd -- so it can't
+    // use AGP's default uncompressed/mmap-from-APK native lib loading.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     signingConfigs {
@@ -57,7 +73,11 @@ flutter {
 dependencies {
     
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
-    
+
+    // NotificationCompat.CallStyle (incoming-call notification, see
+    // CallNotifications.kt).
+    implementation("androidx.core:core-ktx:1.13.1")
+
     implementation("com.google.errorprone:error_prone_annotations:2.11.0")
     implementation("javax.annotation:javax.annotation-api:1.3.2")
     implementation("com.google.code.findbugs:jsr305:3.0.2")

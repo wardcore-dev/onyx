@@ -134,12 +134,21 @@ class _ForwardScreenState extends State<ForwardScreen> {
     if (_sending) return;
     setState(() => _sending = true);
     try {
+      var sent = 0;
       for (final content in widget.contents) {
-        await rootScreenKey.currentState?.sendChatMessage(username, content);
+        // To a Tor contact this also sends the file itself (it can take a
+        // moment for a big one); false = its file isn't on this device.
+        final ok = await rootScreenKey.currentState
+                ?.sendChatMessage(username, content) ??
+            false;
+        if (ok) sent++;
       }
       if (mounted) {
         Navigator.of(context).pop();
-        rootScreenKey.currentState?.showSnack('Message forwarded');
+        if (sent > 0) {
+          rootScreenKey.currentState
+              ?.showSnack(AppLocalizations.of(context).forwardDone);
+        }
       }
     } finally {
       if (mounted) setState(() => _sending = false);

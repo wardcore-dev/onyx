@@ -406,7 +406,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get cacheTitle => 'Кэш';
 
   @override
-  String get cacheSubtitle => 'Управление локальным и серверным кэшем медиа';
+  String get cacheSubtitle => 'Управление локальным кэшем медиа';
 
   @override
   String get mediaCacheSize => 'Кэш медиа: ';
@@ -438,8 +438,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get dangerZone => 'Опасная зона';
 
   @override
-  String get dangerZoneSubtitle =>
-      'Удалить аккаунт с сервера и/или стереть локальные данные.';
+  String get dangerZoneSubtitle => 'Стереть локальные данные.';
 
   @override
   String get factoryReset => 'Сброс';
@@ -491,66 +490,6 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get connectionSubtitle => 'Статус и управление WebSocket';
-
-  @override
-  String get proxyTitle => 'Прокси';
-
-  @override
-  String get proxySubtitle => 'Маршрутизация через HTTP или SOCKS5 прокси';
-
-  @override
-  String get enableProxy => 'Включить прокси';
-
-  @override
-  String get proxyType => 'Тип прокси';
-
-  @override
-  String get proxyHost => 'Хост';
-
-  @override
-  String get proxyPort => 'Порт';
-
-  @override
-  String get proxyUsername => 'Логин';
-
-  @override
-  String get proxyPassword => 'Пароль';
-
-  @override
-  String get testProxy => 'Проверить прокси';
-
-  @override
-  String get proxyTesting => 'Проверка...';
-
-  @override
-  String get proxyOk => ' Прокси работает';
-
-  @override
-  String get proxyFailed => ' Прокси недоступен';
-
-  @override
-  String get useProxy => 'Использовать прокси';
-
-  @override
-  String get proxyDirectConnection => 'Прямое подключение';
-
-  @override
-  String get proxyRouted => 'Трафик идёт через прокси';
-
-  @override
-  String get proxyConnectedStatus => 'Подключено';
-
-  @override
-  String get proxyNotConnectedStatus => 'Не подключено';
-
-  @override
-  String get proxyLoginOptional => 'Логин (необязательно)';
-
-  @override
-  String get proxyPasswordOptional => 'Пароль (необязательно)';
-
-  @override
-  String get proxyApplyReconnect => 'Применить и переподключить';
 
   @override
   String get appDataTitle => 'Папка данных ONYX';
@@ -697,6 +636,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get deleteChatTitle => 'Удалить чат?';
 
   @override
+  String get removeFromContacts => 'Удалить из контактов';
+
+  @override
   String get blockUserLabel => 'Заблокировать';
 
   @override
@@ -737,13 +679,116 @@ class AppLocalizationsRu extends AppLocalizations {
   String get addAccount => 'Добавить аккаунт';
 
   @override
+  String get identityNewIdentityButton => 'Новая личность';
+
+  @override
+  String get identityInfoTooltip => 'Как это работает?';
+
+  @override
+  String get identityInfoTitle => 'Новый способ переписки';
+
+  @override
+  String get identityInfoBody =>
+      'ONYX переходит на полностью децентрализованную модель. Вместо аккаунта на центральном сервере твоя личность теперь — это криптографический ключ, сгенерированный прямо на твоём устройстве: Tor-адрес, которым управляешь только ты.\n\nНет ни пароля, ни сервера, который знает, кто ты. Seed-фраза из 12 слов — единственный способ восстановить эту личность на новом устройстве.\n\nСообщения контактам, у которых уже есть твой новый адрес, доставляются напрямую через Tor, без центрального сервера. Контактам, которые остались на старой системе, нужно будет один раз поделиться с тобой новым адресом — так же, как обычно делятся номером телефона.';
+
+  @override
+  String get identityTitleChoose => 'Создайте личность';
+
+  @override
+  String get identityChooseSubtitle =>
+      'Ключ и адрес генерируются локально на этом устройстве.';
+
+  @override
+  String get identityCreateNewButton => 'Новая личность';
+
+  @override
+  String get identityRestoreLinkButton => 'У меня уже есть seed-фраза';
+
+  @override
+  String get identityTitleMnemonic => 'Ваша seed-фраза';
+
+  @override
+  String get identityMnemonicIntro =>
+      'Запишите эти 12 слов и храните в надёжном месте.';
+
+  @override
+  String get identityMnemonicRestoreNote =>
+      'Это единственный способ восстановить личность на новом устройстве.';
+
+  @override
+  String get identityCopyButton => 'Скопировать';
+
+  @override
+  String get identityCopiedSnack => 'Скопировано';
+
+  @override
+  String get identitySavedConfirm => 'Я сохранил(а) фразу в надёжном месте';
+
+  @override
+  String get identityContinueButton => 'Продолжить';
+
+  @override
+  String get identityTitleRestore => 'Восстановление личности';
+
+  @override
+  String get identityRestoreHint =>
+      'Введите вашу seed-фразу (12 слов через пробел).';
+
+  @override
+  String get identityRestoreButton => 'Восстановить';
+
+  @override
+  String get identityBackButton => 'Назад';
+
+  @override
+  String get identityTitleDone => 'Личность готова';
+
+  @override
+  String get identityAccountIdLabel => 'Account ID';
+
+  @override
+  String get identityAccountIdExplain =>
+      'Стабильный идентификатор, производный от вашего ключа — именно он связывает ваши устройства и сообщения вместо username.';
+
+  @override
+  String get identityFingerprintLabel => 'Отпечаток';
+
+  @override
+  String get identityFingerprintExplain =>
+      'Короткий код, по которому контакты могут убедиться, что это действительно вы.';
+
+  @override
+  String get identityDoneButton => 'Готово';
+
+  @override
+  String get tapToCopyAddress => 'Нажмите, чтобы скопировать адрес';
+
+  @override
+  String get identityErrorCreatePrefix => 'Не удалось создать личность';
+
+  @override
+  String get identityErrorRestorePrefix => 'Не удалось восстановить личность';
+
+  @override
+  String get identityTitleSetup => 'Настройте профиль';
+
+  @override
+  String get identityDisplayNameLabel => 'Отображаемое имя';
+
+  @override
+  String get identityDisplayNameHint => 'Так вас увидят контакты';
+
+  @override
+  String get identityCreateAccountButton => 'Создать аккаунт';
+
+  @override
   String get welcomeTitle => 'Добро пожаловать';
 
   @override
   String get welcomeTagline => 'Безопасный мессенджер с шифрованием';
 
   @override
-  String get otherAccounts => 'Другие аккаунты';
+  String get otherAccounts => 'Другие личности';
 
   @override
   String get tapToSwitch => 'Нажмите для входа';
@@ -892,7 +937,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String deleteFromRecentContent(String acc) {
-    return 'Удалить \"$acc\" из списка? Аккаунт на сервере не будет удалён.';
+    return 'Убрать \"$acc\" из списка недавних?';
   }
 
   @override
@@ -1095,7 +1140,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get clearLocalCacheDialogContent =>
-      'Удалить весь кэшированный медиаконтент (голос, фото, видео)?nЗагрузки на сервере и история чатов не затрагиваются.';
+      'Удалить весь кэшированный медиаконтент (голос, фото, видео)?\nИстория чатов не затрагивается.';
 
   @override
   String get deleteAllLogsTitle => 'Удалить все логи?';
@@ -1256,13 +1301,6 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get liquidGlassNavBarDesc => 'Эффект стекла нижней навигации';
-
-  @override
-  String get liquidGlassCardsLabel => 'Карточки и список';
-
-  @override
-  String get liquidGlassCardsDesc =>
-      'Эффект стекла в списке чатов и настройках';
 
   @override
   String get liquidGlassInputLabel => 'Панель ввода';
@@ -1436,6 +1474,12 @@ class AppLocalizationsRu extends AppLocalizations {
   String get displayNameLength => 'Имя должно быть от 1 до 16 символов';
 
   @override
+  String get displayNameRequired => 'Имя не может быть пустым';
+
+  @override
+  String get displayNameUpdated => 'Имя обновлено';
+
+  @override
   String get failedSendLan => 'Ошибка отправки по LAN';
 
   @override
@@ -1461,6 +1505,46 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get deleteForMeContent =>
       'Сообщение будет удалено только с вашего устройства. У собеседника оно останется.';
+
+  @override
+  String deleteSelectedTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Удалить $count сообщений?',
+      few: 'Удалить $count сообщения?',
+      one: 'Удалить $count сообщение?',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String deleteSelectedForBoth(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Сообщения будут удалены для обеих сторон.',
+      one: 'Сообщение будет удалено для обеих сторон.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String deleteSelectedForMe(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Сообщения будут удалены только у вас. У собеседника они останутся.',
+      one: 'Сообщение будет удалено только у вас. У собеседника оно останется.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String deleteSelectedMixed(int mine, int theirs) {
+    return 'Ваши сообщения ($mine) будут удалены для обеих сторон. Сообщения собеседника ($theirs) будут удалены только у вас.';
+  }
 
   @override
   String get deleteFavMessageContent =>
@@ -1579,7 +1663,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get voiceCallsContent =>
-      'Голосовые звонки пока работают только через LAN (локальная сеть).\n\nМы собираем средства на поддержку сервера и разработку альтернативы.';
+      'Голосовые звонки пока работают только по LAN (локальная сеть).';
 
   @override
   String get supportOnyxBtn => 'Задонатить';
@@ -2422,13 +2506,27 @@ class AppLocalizationsRu extends AppLocalizations {
       'Будет сгенерирован случайный контент. Текущие данные будут заменены.';
 
   @override
+  String get sendFavoritesSendChat => 'Отправить чат';
+
+  @override
+  String get sendFavoritesQrTitle => 'Покажите QR-код устройству получателя';
+
+  @override
+  String get sendFavoritesQrInstruction =>
+      'Откройте Избранное на другом устройстве → Синхронизация → Получить, затем отсканируйте этот код';
+
+  @override
+  String get sendFavoritesWaitingScan =>
+      'Ожидание сканирования QR-кода другим устройством…';
+
+  @override
   String get sendFavoritesTitle => 'Отправка избранного';
 
   @override
   String get sendFavoritesShowQrToReceiver => 'Показать QR получателю';
 
   @override
-  String get sendFavoritesScanReceiver => 'Сканировать QR получателя';
+  String get sendFavoritesScanReceiver => 'Сканировать QR\nполучателя';
 
   @override
   String get sendFavoritesSending => 'Идёт отправка избранного';
@@ -2465,7 +2563,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get receiveFavoritesTitle => 'Получение избранного';
 
   @override
-  String get receiveFavoritesScanSender => 'Сканировать QR отправителя';
+  String get receiveFavoritesScanSender => 'Сканировать QR\nотправителя';
 
   @override
   String get receiveFavoritesScanOnSender =>
@@ -2656,8 +2754,97 @@ class AppLocalizationsRu extends AppLocalizations {
   String get wardLinkSyncPersonalToggle => 'Синхронизировать мои сообщения';
 
   @override
+  String get wardLinkSyncIncomingToggle =>
+      'Синхронизировать входящие сообщения';
+
+  @override
+  String get pairOverTor => 'Пара через Tor';
+
+  @override
+  String get addContactQr => 'Добавить контакт · QR';
+
+  @override
+  String get contactsTitle => 'Контакты';
+
+  @override
+  String get contactsEmpty => 'Пока нет контактов.';
+
+  @override
+  String get myDevicesTitle => 'Мои устройства';
+
+  @override
+  String get myDevicesThisDevice => 'Это устройство';
+
+  @override
+  String get myDevicesHint =>
+      'Чтобы добавить устройство, выберите на нём «Привязать устройство» на экране входа. У каждого устройства свой Tor-адрес, и сообщения приходят на все.';
+
+  @override
+  String get myDevicesUnlink => 'Отвязать';
+
+  @override
+  String get myDevicesUnlinkConfirm =>
+      'Отвязать это устройство от аккаунта? Оно перестанет получать ваши сообщения, и контакты тоже его удалят.';
+
+  @override
+  String contactsRemoveConfirm(String username) {
+    return 'Убрать $username из контактов?';
+  }
+
+  @override
+  String contactsRemoveDeviceConfirm(String name) {
+    return 'Убрать связь с устройством $name? Другое их устройство не затрагивается.';
+  }
+
+  @override
+  String get pairScanTitle => 'Сканирование кода собеседника';
+
+  @override
+  String get pairScanHint => 'Наведите камеру на QR-код собеседника';
+
+  @override
+  String get pairShowHint =>
+      'Попросите собеседника отсканировать этот код в своём Onyx';
+
+  @override
+  String get pairEncrypted => 'Сквозное шифрование, напрямую через Tor';
+
+  @override
+  String get pairScanCode => 'Сканировать код';
+
+  @override
+  String get pairedOverTor => 'Контакт добавлен через Tor';
+
+  @override
+  String get pairing => 'Соединяем...';
+
+  @override
+  String pairFailedWith(String error) {
+    return 'Не удалось добавить: $error';
+  }
+
+  @override
+  String pairStartFailed(String error) {
+    return 'Не удалось запустить Tor: $error';
+  }
+
+  @override
+  String pairRetry(int attempt, int max) {
+    return 'Всё ещё пытаемся связаться ($attempt/$max) — их адрес может ещё публиковаться в Tor...';
+  }
+
+  @override
+  String get peerShowQr => 'Показать QR';
+
+  @override
+  String get peerHideQr => 'Скрыть QR';
+
+  @override
+  String get peerAddressCopied => 'Адрес скопирован';
+
+  @override
   String get wardLinkSyncPersonalToggleDesc =>
-      'Синхронизировать на другие устройства только те сообщения, которые отправили ВЫ, в личных чатах — сообщения собеседника и так приходят с сервера и никогда не передаются этим способом';
+      'Синхронизировать на другие устройства только те сообщения, которые отправили ВЫ, в личных чатах';
 
   @override
   String get meshSubtitle => 'Mesh-сеть без интернета';
@@ -4176,4 +4363,539 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get manageMembersRequiresChild =>
       'Select at least one of Manage Ban List, Manage Mute List, or Manage Roles';
+
+  @override
+  String get onionRetryWaiting =>
+      'Нет подключения · отправится при подключении';
+
+  @override
+  String onionRetryNow(int n) {
+    return 'Отправка… (попытка №$n)';
+  }
+
+  @override
+  String onionRetryIn(int n, int s) {
+    return 'Не в сети · попытка №$n через $s с';
+  }
+
+  @override
+  String get onionOfflineTitle => 'Собеседник не в сети';
+
+  @override
+  String onionOfflineMessage(int seconds) {
+    return 'Сообщение сейчас не удалось доставить, потому что собеседник не в сети. Оно сохранено на этом устройстве и будет автоматически отправляться каждые $seconds с, пока собеседник не появится в сети. Держите приложение открытым, чтобы повторы продолжались.\n\nИнтервал повтора можно изменить в Настройки → Взаимодействие → Сообщения.';
+  }
+
+  @override
+  String get messagesSectionTitle => 'Сообщения';
+
+  @override
+  String get messagesSectionSubtitle =>
+      'Повторная отправка, когда собеседник не в сети';
+
+  @override
+  String get retryIntervalTitle => 'Интервал повтора';
+
+  @override
+  String get retryIntervalDesc =>
+      'Когда собеседник не в сети, недоставленные сообщения автоматически отправляются повторно с этим интервалом, пока не дойдут.';
+
+  @override
+  String intervalSeconds(int n) {
+    return '$n сек.';
+  }
+
+  @override
+  String intervalMinutes(int n) {
+    return '$n мин.';
+  }
+
+  @override
+  String get statusOnlineLabel => 'в сети';
+
+  @override
+  String get statusOfflineLabel => 'не в сети';
+
+  @override
+  String get statusConnectingLabel => 'подключение…';
+
+  @override
+  String get onionCallTitle => 'Звонок через Tor';
+
+  @override
+  String get onionCallHideIp => 'Не раскрывать IP-адрес';
+
+  @override
+  String get onionCallHideIpHint =>
+      'Звонок пойдёт через Tor: ваш IP-адрес скрыт, но возможна задержка около секунды. Видео недоступно.';
+
+  @override
+  String get onionCallDirectHint =>
+      'Задержка меньше, но собеседник увидит ваш IP-адрес. Прямое соединение будет, только если собеседник тоже разрешит, иначе звонок всё равно пойдёт через Tor.';
+
+  @override
+  String get onionCallStart => 'Позвонить';
+
+  @override
+  String get onionCallPeerOffline =>
+      'Собеседник не в сети — позвонить сейчас нельзя';
+
+  @override
+  String get onionCallNoAnswer => 'Нет ответа';
+
+  @override
+  String get onionCallFailed => 'Не удалось установить соединение';
+
+  @override
+  String get callIncomingTitle => 'Входящий звонок';
+
+  @override
+  String get callAccept => 'Принять';
+
+  @override
+  String get callDecline => 'Отклонить';
+
+  @override
+  String get callLogOutgoing => 'Исходящий звонок';
+
+  @override
+  String get callLogIncoming => 'Входящий звонок';
+
+  @override
+  String get callLogMissed => 'Пропущенный звонок';
+
+  @override
+  String get callLogCancelled => 'Отменённый звонок';
+
+  @override
+  String get callLogDeclined => 'Отклонённый звонок';
+
+  @override
+  String get callLogBusy => 'Линия занята';
+
+  @override
+  String get callLogNoAnswer => 'Нет ответа';
+
+  @override
+  String get callStatusCalling => 'Вызов';
+
+  @override
+  String get callStatusConnecting => 'Соединение';
+
+  @override
+  String get callPathRelay => 'Через сервер';
+
+  @override
+  String get callEnd => 'Завершить';
+
+  @override
+  String get callMinimize => 'Свернуть';
+
+  @override
+  String get callRestore => 'Развернуть звонок';
+
+  @override
+  String get callFallbackName => 'Звонок';
+
+  @override
+  String contactRequestNew(String name) {
+    return '$name хочет начать общение';
+  }
+
+  @override
+  String get contactRequestsEntry => 'Запросы на общение';
+
+  @override
+  String get contactRequestsTitle => 'Запросы';
+
+  @override
+  String get contactRequestsEmpty => 'Запросов нет';
+
+  @override
+  String get contactRequestAccept => 'Принять';
+
+  @override
+  String get contactRequestDecline => 'Отклонить';
+
+  @override
+  String get contactRequestDeclineTitle => 'Отклонить запрос?';
+
+  @override
+  String get contactRequestDeclineBody =>
+      'Этот человек больше не сможет писать вам и присылать новые запросы. Позже вы сможете сами добавить его.';
+
+  @override
+  String get contactRequestNoMessages => 'Без комментария';
+
+  @override
+  String contactRequestNameClash(String username) {
+    return 'У вас уже есть контакт @$username с другим ключом. Это может быть его новое устройство — или кто-то выдаёт себя за него. Принимайте, только если уверены.';
+  }
+
+  @override
+  String get contactRequestInfo =>
+      'Пока вы не примете запрос, этот человек не видит, когда вы в сети, не видит ваш профиль и не может вам позвонить.';
+
+  @override
+  String get contactRequestAddress => 'Onion-адрес';
+
+  @override
+  String get contactRequestKey => 'Отпечаток ключа';
+
+  @override
+  String contactRequestAccepted(String name) {
+    return '$name добавлен в контакты';
+  }
+
+  @override
+  String get contactRequestFileHidden => 'Файл (от незнакомых не принимается)';
+
+  @override
+  String get contactRequestMessages => 'Сообщения';
+
+  @override
+  String get forwardDone => 'Сообщение переслано';
+
+  @override
+  String get forwardFileUnavailable =>
+      'Файла нет на этом устройстве — переслать его нельзя';
+
+  @override
+  String get contactRequestDeclineChoiceBody =>
+      'Отклонить — запрос исчезнет, но человек сможет прислать новый. Отклонить и заблокировать — он больше никогда не сможет писать вам и присылать запросы.';
+
+  @override
+  String get contactRequestDeclineAndBlock => 'Отклонить и заблокировать';
+
+  @override
+  String get blockedFromRequests => 'заблокированный запрос';
+
+  @override
+  String get contactRequestComposeTitle => 'Запрос на общение';
+
+  @override
+  String contactRequestComposeBody(String name) {
+    return 'Добавьте комментарий к запросу — $name увидит его в запросах. Писать друг другу можно будет после того, как запрос примут.';
+  }
+
+  @override
+  String get contactRequestComposeHint => 'Комментарий…';
+
+  @override
+  String get contactRequestSend => 'Отправить запрос';
+
+  @override
+  String get contactRequestSkip => 'Без комментария';
+
+  @override
+  String get contactRequestSent => 'Запрос отправлен';
+
+  @override
+  String get contactRequestAttached => 'Комментарий к запросу';
+
+  @override
+  String get contactRequestPendingSnack =>
+      'Ваш запрос ещё не приняли — писать можно будет после этого.';
+
+  @override
+  String get contactRequestPendingCall =>
+      'Позвонить можно, когда собеседник примет ваш запрос';
+
+  @override
+  String get contactRequestQueued =>
+      'Пользователь не в сети — запрос отправится, как только он появится';
+
+  @override
+  String contactRequestDelivered(String name) {
+    return 'Запрос для $name доставлен';
+  }
+
+  @override
+  String get contactRequestResend => 'Отправить запрос заново';
+
+  @override
+  String get contactRequestUpdated => 'Запрос обновлён';
+
+  @override
+  String get contactRecordAcceptedBoth => 'Запрос на общение принят';
+
+  @override
+  String get contactRequestAlreadySent =>
+      'Вы уже отправили запрос — он ждёт одобрения';
+
+  @override
+  String get contactRequestAlreadySentShort => 'Запрос уже отправлен';
+
+  @override
+  String get contactRecordAccepted => 'Вы приняли запрос на общение';
+
+  @override
+  String get contactRecordAcceptedByThem => 'Ваш запрос на общение приняли';
+
+  @override
+  String get contactRecordPreview => 'Контакт добавлен';
+
+  @override
+  String contactRequestAcceptedByThem(String name) {
+    return '$name принял(а) ваш запрос';
+  }
+
+  @override
+  String get searchOnionHint =>
+      'Вставьте адрес xxxx.onion, чтобы отправить запрос';
+
+  @override
+  String get searchNeedOnionAddress =>
+      'Это не onion-адрес — вставьте адрес вида xxxx.onion';
+
+  @override
+  String get searchConnectingTor => 'Подключение через Tor…';
+
+  @override
+  String searchStillTrying(int attempt, int max) {
+    return 'Пробуем достучаться ($attempt/$max)…';
+  }
+
+  @override
+  String get contactRemovedYou =>
+      'Вас больше нет в контактах у этого человека — сообщение не доставить';
+
+  @override
+  String get contactNotInContacts =>
+      'Этого человека нет в ваших контактах — сообщение не отправлено';
+
+  @override
+  String get contactRequestCommentFailed =>
+      'Запрос отправлен, но комментарий не дошёл — собеседник ушёл из сети';
+
+  @override
+  String get callMute => 'Микрофон';
+
+  @override
+  String get callVideo => 'Видео';
+
+  @override
+  String get callSpeaker => 'Динамик';
+
+  @override
+  String get callPathDirect => 'Прямое соединение';
+
+  @override
+  String get callPathTor => 'Через Tor';
+
+  @override
+  String get callVideoUnavailable => 'Слабое соединение — видео недоступно';
+
+  @override
+  String get callVideoPaused => 'Видео выключено из-за слабого соединения';
+
+  @override
+  String get statusShowMyStatus => 'Показывать мой онлайн-статус';
+
+  @override
+  String get statusShowMyStatusHint =>
+      'Контакты видят, когда вы в сети. Если выключено, они ничего не видят.';
+
+  @override
+  String get viewCircuitTitle => 'Проверка цепочки';
+
+  @override
+  String get viewCircuitSubtitle =>
+      'Через какие Tor-узлы сейчас идёт ваш трафик';
+
+  @override
+  String get viewCircuitEmpty =>
+      'Активных цепочек пока нет. Попробуйте ещё раз через момент.';
+
+  @override
+  String get circuitThisDevice => 'Это устройство';
+
+  @override
+  String get circuitRoleGuard => 'страж';
+
+  @override
+  String get circuitRoleIntro => 'точка представления';
+
+  @override
+  String get circuitRoleRend => 'точка встречи';
+
+  @override
+  String get circuitUnknownRelay => 'Неизвестный узел';
+
+  @override
+  String get circuitOnionRelay => 'Реле onion-сервиса';
+
+  @override
+  String get circuitModeSimple => 'Просто';
+
+  @override
+  String get circuitModeAdvanced => 'Подробно';
+
+  @override
+  String get mediaSendFileTitle => 'Отправить файл';
+
+  @override
+  String get mediaSendFileDetails => 'О ФАЙЛЕ';
+
+  @override
+  String get mediaSendAlbumHeading => 'АЛЬБОМ';
+
+  @override
+  String get mediaSendName => 'Имя';
+
+  @override
+  String get mediaSendSize => 'Размер';
+
+  @override
+  String get mediaSendType => 'Тип';
+
+  @override
+  String get mediaSendUnknown => 'Неизвестно';
+
+  @override
+  String get mediaSendImagesLabel => 'Изображения';
+
+  @override
+  String mediaSendImagesCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count изображения',
+      many: '$count изображений',
+      few: '$count изображения',
+      one: '1 изображение',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get mediaSendConfirmAlbum => 'Отправить эти изображения альбомом?';
+
+  @override
+  String get mediaSendConfirmFile => 'Отправить этот файл?';
+
+  @override
+  String get mediaSendVoiceTitle => 'Отправить голосовое сообщение';
+
+  @override
+  String get mediaSendVoiceHeading => 'ГОЛОСОВОЕ СООБЩЕНИЕ';
+
+  @override
+  String get mediaSendDuration => 'Длительность';
+
+  @override
+  String get mediaSendConfirmVoice => 'Отправить это голосовое сообщение?';
+
+  @override
+  String get glassSimpleTitle => 'Настройки стекла';
+
+  @override
+  String get glassSimpleDesc =>
+      'Один набор значений для навигационной панели, строки ввода, поиска и кнопок в шапке';
+
+  @override
+  String get glassResetAll => 'Сбросить всё по умолчанию';
+
+  @override
+  String favDeleteSelectedTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Удалить $count чата?',
+      many: 'Удалить $count чатов?',
+      few: 'Удалить $count чата?',
+      one: 'Удалить 1 чат?',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get favDeleteSelectedMessage =>
+      'Выбранные чаты и все их сообщения будут удалены из избранного.';
+
+  @override
+  String get glassMasterTitle => 'Эффекты Liquid Glass';
+
+  @override
+  String get glassMasterDesc => 'Включить или выключить все стеклянные эффекты';
+
+  @override
+  String get glassTabGeneral => 'Общие';
+
+  @override
+  String get glassTabAdvanced => 'Расширенные';
+
+  @override
+  String get glassBlur => 'Размытие';
+
+  @override
+  String get glassBlurDesc => 'Сила матового размытия за стеклом';
+
+  @override
+  String get glassTint => 'Оттенок';
+
+  @override
+  String get glassTintDesc =>
+      'Прозрачность оттенка (автоматически тёмный/светлый)';
+
+  @override
+  String get glassSaturation => 'Насыщенность';
+
+  @override
+  String get glassSaturationDesc => 'Яркость цветов, берущихся с фона';
+
+  @override
+  String get glassChromatic => 'Хроматическая аберрация';
+
+  @override
+  String get glassChromaticDesc =>
+      'Цветная кайма на краях стекла (эффект линзы)';
+
+  @override
+  String get glassRefractive => 'Показатель преломления';
+
+  @override
+  String get glassRefractiveDesc =>
+      'Насколько стекло преломляет свет позади себя';
+
+  @override
+  String get glassLight => 'Интенсивность света';
+
+  @override
+  String get glassLightDesc => 'Сила блика на стекле';
+
+  @override
+  String get glassThickness => 'Толщина';
+
+  @override
+  String get glassThicknessDesc =>
+      'Глубина стекла — влияет на преломление и свечение краёв';
+
+  @override
+  String get glassJelly => 'Сила «желейного» растяжения';
+
+  @override
+  String get glassJellyDesc =>
+      'Растяжение индикатора при перетаскивании между вкладками';
+
+  @override
+  String get glassQualityTitle => 'Качество стекла';
+
+  @override
+  String get glassQualityFast => 'Быстро';
+
+  @override
+  String get glassQualityFastDesc => 'Лёгкий\nМакс. скорость';
+
+  @override
+  String get glassQualityMedium => 'Средне';
+
+  @override
+  String get glassQualityMediumDesc => 'Без шейдеров\nТолько размытие';
+
+  @override
+  String get glassQualityHigh => 'Качество';
+
+  @override
+  String get glassQualityHighDesc => 'Полные шейдеры\nЛучшая картинка';
 }

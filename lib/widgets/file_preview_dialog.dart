@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import '../managers/settings_manager.dart';
 import '../l10n/app_localizations.dart';
+import 'onyx_dialog.dart';
 
 class FilePreviewDialog extends StatefulWidget {
   final String filePath;
@@ -247,7 +248,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
       double elemOpacity, Color surfaceBg) {
     final border = Border.all(
         color: colorScheme.outline.withValues(alpha: 0.25 * elemOpacity));
-    final radius = BorderRadius.circular(12);
+    final radius = BorderRadius.circular(20);
 
     // ── Album mode ─────────────────────────────────────────────────────────
     if (_isAlbumMode) {
@@ -345,6 +346,11 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
     final colorScheme = theme.colorScheme;
     final count = _albumPaths.length;
     final l = AppLocalizations.of(context);
+    final title = _isAlbumMode ? l.sendAlbum : l.mediaSendFileTitle;
+    void cancel() {
+      Navigator.pop(context);
+      widget.onCancel();
+    }
 
     return ValueListenableBuilder<double>(
       valueListenable: SettingsManager.elementOpacity,
@@ -356,252 +362,84 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
               colorScheme.surfaceContainerHighest,
               brightness,
             );
-            return Dialog(
-              constraints: const BoxConstraints(maxWidth: 500),
-              child: Focus(
-                focusNode: _focusNode,
-                autofocus: true,
-                onKeyEvent: _handleKeyEvent,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // ── Header ──────────────────────────────────────────────
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: colorScheme.primary
-                              .withValues(alpha: 0.1 * elemOpacity),
-                          border: Border(
-                            bottom: BorderSide(
-                              color: colorScheme.outline
-                                  .withValues(alpha: 0.2 * elemOpacity),
-                            ),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              _isAlbumMode
-                                  ? Icons.photo_library_outlined
-                                  : Icons.attach_file,
-                              color: colorScheme.primary,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                _isAlbumMode ? 'Send Album' : 'Send File',
-                                style: theme.textTheme.headlineSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      Padding(
-                        padding: const EdgeInsets.all(24),
+            return Focus(
+              focusNode: _focusNode,
+              autofocus: true,
+              onKeyEvent: _handleKeyEvent,
+              child: OnyxDialogShell(
+                maxWidth: 480,
+                radius: kOnyxPanelRadius,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    OnyxDialogHeader(
+                      leading: OnyxHeaderBadge(_isAlbumMode
+                          ? Icons.photo_library_outlined
+                          : Icons.attach_file),
+                      title: OnyxHeaderTitle(title),
+                      onClose: cancel,
+                    ),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            // ── Preview ────────────────────────────────────────
-                            _buildPreview(theme, colorScheme, elemOpacity,
-                                surfaceHighestColor),
-
-                            const SizedBox(height: 24),
-
-                            // ── Info box ───────────────────────────────────────
+                            Center(
+                              child: _buildPreview(theme, colorScheme,
+                                  elemOpacity, surfaceHighestColor),
+                            ),
+                            const SizedBox(height: 16),
                             if (_isAlbumMode)
-                              Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: surfaceHighestColor.withValues(
-                                      alpha: 1.0),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: colorScheme.outline
-                                        .withValues(alpha: 0.2 * elemOpacity),
+                              OnyxDetailsPanel(
+                                title: l.mediaSendAlbumHeading,
+                                rows: [
+                                  (
+                                    l.mediaSendImagesLabel,
+                                    l.mediaSendImagesCount(count)
                                   ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.collections_outlined,
-                                        size: 20, color: colorScheme.primary),
-                                    const SizedBox(width: 12),
-                                    Text(
-                                      '$count ${count == 1 ? 'image' : 'images'} selected',
-                                      style:
-                                          theme.textTheme.bodyMedium?.copyWith(
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                ],
                               )
                             else
-                              Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: surfaceHighestColor.withValues(
-                                      alpha: 1.0),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: colorScheme.outline
-                                        .withValues(alpha: 0.2 * elemOpacity),
-                                  ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'File Details',
-                                      style:
-                                          theme.textTheme.labelMedium?.copyWith(
-                                        fontWeight: FontWeight.bold,
-                                        color: colorScheme.onSurfaceVariant,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Row(
-                                      children: [
-                                        Text(
-                                          'Name:',
-                                          style: theme.textTheme.bodySmall
-                                              ?.copyWith(
-                                            color: colorScheme.onSurfaceVariant,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                          child: SelectableText(
-                                            _filename,
-                                            style: theme.textTheme.bodySmall
-                                                ?.copyWith(
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Row(
-                                      children: [
-                                        Text(
-                                          'Size:',
-                                          style: theme.textTheme.bodySmall
-                                              ?.copyWith(
-                                            color: colorScheme.onSurfaceVariant,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          _fileSize,
-                                          style: theme.textTheme.bodySmall
-                                              ?.copyWith(
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Row(
-                                      children: [
-                                        Text(
-                                          'Type:',
-                                          style: theme.textTheme.bodySmall
-                                              ?.copyWith(
-                                            color: colorScheme.onSurfaceVariant,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          _extension.isEmpty
-                                              ? 'Unknown'
-                                              : _extension.toUpperCase(),
-                                          style: theme.textTheme.bodySmall
-                                              ?.copyWith(
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                              ),
-
-                            const SizedBox(height: 24),
-
-                            // ── Confirm / hint text ────────────────────────────
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: colorScheme.primary
-                                    .withValues(alpha: 0.1 * elemOpacity),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: colorScheme.primary
-                                      .withValues(alpha: 0.3 * elemOpacity),
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.info,
-                                    size: 18,
-                                    color: colorScheme.primary,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      _isAlbumMode
-                                          ? 'Are you sure you want to send these images as an album?'
-                                          : 'Are you sure you want to send this file?',
-                                      style:
-                                          theme.textTheme.bodySmall?.copyWith(
-                                        color: colorScheme.onSurface,
-                                      ),
-                                    ),
+                              OnyxDetailsPanel(
+                                title: l.mediaSendFileDetails,
+                                rows: [
+                                  (l.mediaSendName, _filename),
+                                  (l.mediaSendSize, _fileSize),
+                                  (
+                                    l.mediaSendType,
+                                    _extension.isEmpty
+                                        ? l.mediaSendUnknown
+                                        : _extension.toUpperCase()
                                   ),
                                 ],
                               ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _isAlbumMode
+                                  ? l.mediaSendConfirmAlbum
+                                  : l.mediaSendConfirmFile,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.4,
+                                color: colorScheme.onSurface
+                                    .withValues(alpha: 0.6),
+                              ),
                             ),
                           ],
                         ),
                       ),
-
-                      // ── Action buttons ─────────────────────────────────────
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          border: Border(
-                            top: BorderSide(
-                              color: colorScheme.outline
-                                  .withValues(alpha: 0.2 * elemOpacity),
-                            ),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            TextButton(
-                              onPressed: () {
-                                Navigator.pop(context);
-                                widget.onCancel();
-                              },
-                              child: Text(l.cancel),
-                            ),
-                            const SizedBox(width: 12),
-                            FilledButton.tonal(
-                              onPressed: _confirmSend,
-                              child: Text(
-                                  _isAlbumMode ? 'Send Album' : 'Send File'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                    OnyxConfirmButtons(
+                      confirmLabel: title,
+                      onConfirm: _confirmSend,
+                      cancelLabel: l.cancel,
+                      onCancel: cancel,
+                    ),
+                  ],
                 ),
               ),
             );

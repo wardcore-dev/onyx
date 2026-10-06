@@ -20,6 +20,7 @@ import '../models/chat_message.dart';
 import '../models/fav_folder.dart';
 import '../models/favorite_chat.dart';
 import '../models/group.dart';
+import '../services/profile_store.dart';
 
 // ─────────────────────── enum ───────────────────────────────────────────────
 
@@ -1065,17 +1066,15 @@ class _AccountGraphViewState extends State<AccountGraphView>
     // Instantly decode any bytes already cached from a previous mount
     await _warmFromCache();
 
-    final token = _token;
-    if (token == null || !mounted) return;
+    // Only external servers still need a token (their own, below); profile
+    // avatars are local files since the central server is gone.
+    final token = _token ?? '';
+    if (!mounted) return;
     if (DecoyManager.isActive.value) return;
     final username = _myUsername;
     if (username.isEmpty) return;
 
-    await _fetchAvatar(
-      username,
-      '$serverBase/avatar/${Uri.encodeComponent(username)}/raw?v=${avatarVersion.value}',
-      token,
-    );
+    await _loadProfileAvatar(username, username);
 
     var processed = 0;
     for (final entry in _priorityAvatarItems()) {
@@ -1085,10 +1084,9 @@ class _AccountGraphViewState extends State<AccountGraphView>
       if (key == null || _missingAvatarKeys.contains(key)) continue;
 
       if (catType == _CatType.chats) {
-        final url =
-            '$serverBase/avatar/${Uri.encodeComponent(item.label)}/raw?v=0';
-        await _fetchAvatar(key, url, token);
-      } else if (catType == _CatType.groups || catType == _CatType.channels) {
+        await _loadProfileAvatar(key, item.label);
+      } else if (!kCentralServerRemoved &&
+          (catType == _CatType.groups || catType == _CatType.channels)) {
         final parts = key.split('_');
         if (parts.length >= 2) {
           final gid = int.tryParse(parts[1]);
@@ -1143,17 +1141,15 @@ class _AccountGraphViewState extends State<AccountGraphView>
   }
 
   Future<void> _loadAllAvatars() async {
-    final token = _token;
-    if (token == null || !mounted) return;
+    // Only external servers still need a token (their own, below); profile
+    // avatars are local files since the central server is gone.
+    final token = _token ?? '';
+    if (!mounted) return;
     if (DecoyManager.isActive.value) return;
     final username = _myUsername;
     if (username.isEmpty) return;
 
-    await _fetchAvatar(
-      username,
-      '$serverBase/avatar/${Uri.encodeComponent(username)}/raw?v=${avatarVersion.value}',
-      token,
-    );
+    await _loadProfileAvatar(username, username);
 
     for (final cat in _categories) {
       for (final item in cat.items) {
@@ -1161,11 +1157,10 @@ class _AccountGraphViewState extends State<AccountGraphView>
         if (key == null) continue;
 
         if (cat.catType == _CatType.chats) {
-          final url =
-              '$serverBase/avatar/${Uri.encodeComponent(item.label)}/raw?v=0';
-          await _fetchAvatar(key, url, token);
-        } else if (cat.catType == _CatType.groups ||
-            cat.catType == _CatType.channels) {
+          await _loadProfileAvatar(key, item.label);
+        } else if (!kCentralServerRemoved &&
+            (cat.catType == _CatType.groups ||
+                cat.catType == _CatType.channels)) {
           // key format: 'grp_{gid}_{ver}'
           final parts = key.split('_');
           if (parts.length >= 2) {
@@ -1262,6 +1257,29 @@ class _AccountGraphViewState extends State<AccountGraphView>
       }
     } catch (_) {
       // file not found or corrupt — initials fallback
+    } finally {
+      _loadingAvatar[key] = false;
+    }
+  }
+
+  /// A person's avatar from the local profile store (what AvatarWidget shows).
+  Future<void> _loadProfileAvatar(String key, String username) async {
+    if (_avatars.containsKey(key) || _loadingAvatar[key] == true) return;
+    _loadingAvatar[key] = true;
+    try {
+      final raw = await ProfileStore.readAvatar(username);
+      if (raw == null || raw.isEmpty || !mounted) return;
+      final bytes = Uint8List.fromList(raw);
+      _cachedBytes[key] = bytes;
+      final codec = await ui.instantiateImageCodec(bytes,
+          targetWidth: 80, targetHeight: 80);
+      final frame = await codec.getNextFrame();
+      if (mounted) {
+        _avatars[key] = frame.image;
+        setState(() {});
+      }
+    } catch (_) {
+      // missing or corrupt -- initials are drawn instead
     } finally {
       _loadingAvatar[key] = false;
     }

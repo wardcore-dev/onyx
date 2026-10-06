@@ -79,6 +79,13 @@ class ImageMessageWidget extends StatefulWidget {
   State<ImageMessageWidget> createState() => _ImageMessageWidgetState();
 }
 
+/// Where the corner buttons of the full-screen image sit: on desktop they have
+/// to clear the window's 42 px custom title bar, which is drawn on top.
+double get _viewerTopInset =>
+    (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS))
+        ? 50.0
+        : 8.0;
+
 class _ImageMessageWidgetState extends State<ImageMessageWidget> {
   File? _imageFile;
   bool _loading = true;
@@ -148,6 +155,27 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
         cachedFile = File('${appDocuments.path}/lan_media/$lanFilename');
         if (!(await cachedFile.exists())) {
           throw Exception('LAN file not found: $lanFilename');
+        }
+      } else if (widget.filename.startsWith('onion://')) {
+        // Onion-mode media arrives inline over the Tor stream itself (no
+        // server upload step exists), sent as its own sealed frame separate
+        // from this pointer message -- the sender awaits the media send
+        // before firing the pointer, but the two still travel over
+        // independently-dialed Tor streams with no shared ordering
+        // guarantee, so the bytes can occasionally still land a moment
+        // after the pointer is displayed. Poll briefly instead of failing
+        // immediately so that case self-heals instead of showing a
+        // permanently broken image.
+        final onionFilename = widget.filename.substring(8);
+        final appDocuments = await getOnyxDocumentsDirectory();
+        cachedFile = File('${appDocuments.path}/onion_media/$onionFilename');
+        if (!(await cachedFile.exists())) {
+          for (var i = 0; i < 10 && !(await cachedFile.exists()); i++) {
+            await Future.delayed(const Duration(milliseconds: 500));
+          }
+        }
+        if (!(await cachedFile.exists())) {
+          throw Exception('Onion media file not found: $onionFilename');
         }
       } else if (widget.filename.startsWith('fav://')) {
         final favFilename = widget.filename.substring(6);
@@ -400,7 +428,7 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
                     ),
                   ),
                   Positioned(
-                    top: 8,
+                    top: _viewerTopInset,
                     right: 8,
                     child: SafeArea(
                       child: ClipOval(
@@ -443,7 +471,7 @@ class _ImageMessageWidgetState extends State<ImageMessageWidget> {
                     ),
                   ),
                   Positioned(
-                    top: 8,
+                    top: _viewerTopInset,
                     left: 8,
                     child: SafeArea(
                       child: ClipOval(

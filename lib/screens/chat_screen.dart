@@ -1,6 +1,7 @@
 // lib/screens/chat_screen.dart
 import '../widgets/marquee_text.dart';
-import 'package:ONYX/screens/chats_tab.dart' show getPreviewText;
+import 'package:ONYX/screens/chats_tab.dart'
+    show getPreviewText, isAccentPreview;
 import '../services/chat_load_optimizer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
@@ -39,6 +40,7 @@ import '../widgets/video_message_widget.dart';
 import '../widgets/avatar_widget.dart';
 import '../widgets/avatar_fullscreen_viewer.dart';
 import '../widgets/onyx_dialog.dart';
+import '../widgets/tor_circuit_dialog.dart';
 import '../utils/code_heuristic.dart';
 import '../call/call_manager.dart';
 import '../screens/call_overlay.dart';
@@ -58,6 +60,11 @@ import '../widgets/chat_search_bar.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import '../managers/lan_message_manager.dart';
 import '../enums/delivery_mode.dart';
+import '../services/onion/onion_account_key.dart';
+import '../services/onion/onion_paired_peers.dart';
+import '../utils/onion_names.dart';
+import '../widgets/peer_id_block.dart';
+import '../services/onion/onion_transport_service.dart';
 import '../services/mesh/mesh_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../l10n/app_localizations.dart';
@@ -564,15 +571,25 @@ class ChatScreenState extends State<ChatScreen>
                           ),
                         ),
                         const SizedBox(height: 2),
-                        Text(
-                          getPreviewText(msg['content']?.toString() ?? ''),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: colorScheme.onSurface.withValues(alpha: 0.7),
-                          ),
-                        ),
+                        Builder(builder: (_) {
+                          final preview =
+                              getPreviewText(msg['content']?.toString() ?? '');
+                          final accent = isAccentPreview(preview);
+                          return Text(
+                            AppLocalizations.of(context)
+                                .localizePreview(preview),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: accent ? FontWeight.w500 : null,
+                              color: accent
+                                  ? colorScheme.primary
+                                  : colorScheme.onSurface
+                                      .withValues(alpha: 0.7),
+                            ),
+                          );
+                        }),
                       ],
                     ),
                   ),
@@ -605,6 +622,8 @@ class ChatScreenState extends State<ChatScreen>
         !t.startsWith('FILEv1:') &&
         !t.startsWith('FILE:') &&
         !t.startsWith('MEDIA_PROXYv1:') &&
+        !t.startsWith('CALLv1:') &&
+        !t.startsWith('CONTACTv1:') &&
         !t.startsWith('[cannot-decrypt');
   }
 
@@ -806,38 +825,84 @@ class ChatScreenState extends State<ChatScreen>
     ForwardScreen.show(context, contents);
   }
 
+  /// Own messages in the selection that can be deleted for both sides:
+  /// media anytime, text within the 30s window (canEditOrDelete checks
+  /// outgoing+timer). A WardLink-synced copy isn't ours to delete from this
+  /// device -- only the device that actually sent it can. A null
+  /// serverMessageId (every onion-mode message, or one still syncing) has
+  /// no server copy to retract, but is still ours -- see
+  /// _desktopDeleteMessage's fallback.
+  bool _canDeleteForBoth(ChatMessage m) =>
+      !m.isWardLinkCopy &&
+      (m.serverMessageId == null
+          ? m.outgoing
+          : (!_isTextMessage(m) ? m.outgoing : m.canEditOrDelete));
+
+  /// The other person's messages in the selection: "delete for me" only,
+  /// same as _deleteMessageForMe.
+  bool _canDeleteForMe(ChatMessage m) => !m.outgoing;
+
   Future<void> _confirmDeleteSelected() async {
-    // media can be deleted anytime (outgoing), text only within 30s (canEditOrDelete already checks outgoing+timer)
-    // A WardLink-synced copy isn't ours to delete from this device — only
-    // the device that actually sent it can.
-    final toDelete = _selectedMessages.values
-        .where((m) =>
-            m.serverMessageId != null &&
-            !m.isWardLinkCopy &&
-            (!_isTextMessage(m) ? m.outgoing : m.canEditOrDelete))
-        .toList();
-    if (toDelete.isEmpty) return;
+    final mine = _selectedMessages.values.where(_canDeleteForBoth).toList();
+    final theirs = _selectedMessages.values.where(_canDeleteForMe).toList();
+    if (mine.isEmpty && theirs.isEmpty) return;
     final l = AppLocalizations.of(context);
+    final total = mine.length + theirs.length;
+    final String message;
+    if (theirs.isEmpty) {
+      message = l.deleteSelectedForBoth(mine.length);
+    } else if (mine.isEmpty) {
+      message = l.deleteSelectedForMe(theirs.length);
+    } else {
+      message = l.deleteSelectedMixed(mine.length, theirs.length);
+    }
     final confirmed = await showOnyxConfirmDialog(
       context: context,
-      title: l.deleteMessageTitle,
-      message: toDelete.length == 1
-          ? l.deleteMessageContent
-          : 'Delete ${toDelete.length} messages?',
+      title: mine.isEmpty && total == 1
+          ? l.deleteForMeTitle
+          : l.deleteSelectedTitle(total),
+      message: message,
       confirmLabel: l.delete,
       isDestructive: true,
       icon: Icons.delete_outline_rounded,
     );
     if (confirmed == true) {
-      final snapshot = List<ChatMessage>.from(toDelete);
+      final snapshot = List<ChatMessage>.from(mine);
+      final theirsSnapshot = List<ChatMessage>.from(theirs);
       _exitSelectionMode();
+      final chatId =
+          rootScreenKey.currentState?.chatIdForUser(widget.otherUsername);
+      final localOnlyIds = <String>[];
+      // The other person's messages: removed on this device only.
+      for (final msg in theirsSnapshot) {
+        if (msg.content.startsWith('ALBUMv1:')) {
+          await _deleteAlbumFiles(msg.content);
+        } else {
+          await _deleteMediaFile(msg.content);
+        }
+        localOnlyIds.add(msg.id);
+      }
       for (final msg in snapshot) {
         if (msg.content.startsWith('ALBUMv1:')) {
           await _deleteAlbumFiles(msg.content);
         } else {
           await _deleteMediaFile(msg.content);
         }
-        await widget.onDeleteMessage(msg.serverMessageId!);
+        if (msg.serverMessageId != null) {
+          await widget.onDeleteMessage(msg.serverMessageId!);
+        } else {
+          if (msg.deliveryMode == DeliveryMode.onion) {
+            // Still queued (peer offline)? Then this cancels the send.
+            await OnionTransportService.instance
+                .cancelPendingSend(widget.otherUsername, msg.id, msg.content);
+            unawaited(OnionTransportService.instance
+                .sendDeleteNotice(widget.otherUsername, msg.id));
+          }
+          localOnlyIds.add(msg.id);
+        }
+      }
+      if (localOnlyIds.isNotEmpty && chatId != null) {
+        rootScreenKey.currentState?.removeMessagesLocally(chatId, localOnlyIds);
       }
     }
   }
@@ -881,7 +946,12 @@ class ChatScreenState extends State<ChatScreen>
         msg: msg,
         canEditDelete: canEdit,
         isMedia: isMedia,
-        canAlwaysDelete: isMedia,
+        // No serverMessageId means there's no server copy to retract (every
+        // onion-mode message, or one that hasn't finished syncing yet) --
+        // _desktopDeleteMessage falls back to a local-only "delete for me"
+        // for those, which isn't gated by the 30s edit/delete-for-everyone
+        // window, so the button shouldn't be either.
+        canAlwaysDelete: isMedia || msg.serverMessageId == null,
         onReply: () {
           Navigator.pop(ctx);
           final preview = {
@@ -1314,8 +1384,49 @@ class ChatScreenState extends State<ChatScreen>
 
   Future<void> _desktopDeleteMessage(ChatMessage msg) async {
     final l = AppLocalizations.of(context);
+    // Messages with no serverMessageId were never stored on the central
+    // server -- true for every onion-mode message (onion bypasses the
+    // server entirely, see OnionTransportService), and also for an
+    // internet message that hasn't finished syncing yet. There's nothing
+    // for a "delete for everyone" *server* call to target, but onion mode
+    // has its own peer-to-peer equivalent (OnionTransportService.
+    // sendDeleteNotice, keyed by ChatMessage.onionMid) -- for an onion
+    // message this is real "delete for everyone", not just local removal.
+    // A non-onion message with no serverMessageId yet (still syncing) has
+    // no such peer-to-peer channel, so that rarer case still falls back to
+    // a plain local-only "delete for me".
     if (msg.serverMessageId == null) {
-      rootScreenKey.currentState?.showSnack(l.cannotDeleteMsg);
+      final isOnion = msg.deliveryMode == DeliveryMode.onion;
+      final confirmed = await showOnyxConfirmDialog(
+        context: context,
+        title: isOnion ? l.deleteMessageTitle : l.deleteForMeTitle,
+        message: isOnion ? l.deleteMessageContent : l.deleteForMeContent,
+        confirmLabel: l.delete,
+        isDestructive: true,
+        icon: Icons.delete_outline_rounded,
+      );
+      if (confirmed != true) return;
+      if (msg.content.startsWith('ALBUMv1:')) {
+        await _deleteAlbumFiles(msg.content);
+      } else {
+        await _deleteMediaFile(msg.content);
+      }
+      if (isOnion) {
+        // If it's still waiting in the retry queue (peer offline), deleting
+        // it cancels the send -- it must not go out once they're back.
+        await OnionTransportService.instance
+            .cancelPendingSend(widget.otherUsername, msg.id, msg.content);
+        // Best-effort: paired devices that are offline right now simply
+        // won't get this (onion mode has no offline mailbox at all, same
+        // as a regular message send) -- our own copy is removed either way.
+        unawaited(OnionTransportService.instance
+            .sendDeleteNotice(widget.otherUsername, msg.id));
+      }
+      final chatId =
+          rootScreenKey.currentState?.chatIdForUser(widget.otherUsername);
+      if (chatId != null) {
+        rootScreenKey.currentState?.removeMessagesLocally(chatId, [msg.id]);
+      }
       return;
     }
     final confirmed = await showOnyxConfirmDialog(
@@ -1462,6 +1573,7 @@ class ChatScreenState extends State<ChatScreen>
       onlineUsersNotifier,
       userStatusNotifier,
       userStatusVisibilityNotifier,
+      OnionTransportService.instance.connectingUsers,
     ]);
   }
 
@@ -1573,23 +1685,7 @@ class ChatScreenState extends State<ChatScreen>
                                 ),
                               ),
                               const SizedBox(height: 4),
-                              GestureDetector(
-                                onTap: () {
-                                  Clipboard.setData(
-                                      ClipboardData(text: '@$username'));
-                                  rootScreenKey.currentState?.showSnack(
-                                      AppLocalizations.of(context)
-                                          .copiedUsername(username));
-                                },
-                                child: Text(
-                                  '@$username',
-                                  style: TextStyle(
-                                    color: colorScheme.primary,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                              ),
+                              PeerIdBlock(username: username),
                               if (uin != null && uin.isNotEmpty) ...[
                                 const SizedBox(height: 6),
                                 GestureDetector(
@@ -2812,10 +2908,18 @@ class ChatScreenState extends State<ChatScreen>
                                   MediaQuery.sizeOf(titleCtx).width > 700;
                               final textContent = Builder(
                                 builder: (context) {
+                                  final onionPeer = SettingsManager
+                                          .onionModeEnabled.value
+                                      ? OnionPairedPeers.byUsername(
+                                          widget.otherUsername)
+                                      : null;
                                   final userInfo =
                                       UserCache.getSync(widget.otherUsername);
                                   final displayName = userInfo?.displayName ??
-                                      widget.otherUsername;
+                                      (onionPeer != null
+                                          ? friendlyContactName(onionPeer.name)
+                                          : friendlyContactName(
+                                              widget.otherUsername));
                                   return Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
@@ -2846,6 +2950,62 @@ class ChatScreenState extends State<ChatScreen>
                                                     fontSize: 12,
                                                     color:
                                                         Colors.orangeAccent));
+                                          }
+                                          // Onion Mode: "online" means a live
+                                          // Tor channel to them is open right
+                                          // now (see OnionTransportService's
+                                          // channels), i.e. a message sent
+                                          // now will arrive. Otherwise
+                                          // "connecting..." while the first
+                                          // attempt is running, then
+                                          // "offline". A contact who hides
+                                          // their status shows nothing.
+                                          if (SettingsManager
+                                                  .onionModeEnabled.value &&
+                                              OnionPairedPeers.isTrusted(
+                                                  widget.otherUsername)) {
+                                            final peerOnline =
+                                                onlineUsersNotifier.value
+                                                    .contains(
+                                                        widget.otherUsername);
+                                            final peerHidden =
+                                                userStatusVisibilityNotifier
+                                                            .value[
+                                                        widget.otherUsername] ==
+                                                    'hide';
+                                            if (peerHidden) {
+                                              return const SizedBox.shrink();
+                                            }
+                                            if (!peerOnline) {
+                                              final l =
+                                                  AppLocalizations.of(context);
+                                              final connecting =
+                                                  OnionTransportService
+                                                      .instance
+                                                      .connectingUsers
+                                                      .value
+                                                      .contains(widget
+                                                          .otherUsername);
+                                              return Text(
+                                                  connecting
+                                                      ? l.statusConnectingLabel
+                                                      : l.statusOfflineLabel,
+                                                  style: const TextStyle(
+                                                      fontSize: 12,
+                                                      color: Colors.grey));
+                                            }
+                                            final custom = userStatusNotifier
+                                                .value[widget.otherUsername];
+                                            return Text(
+                                                (custom != null &&
+                                                        custom.isNotEmpty)
+                                                    ? custom
+                                                    : AppLocalizations.of(
+                                                            context)
+                                                        .statusOnlineLabel,
+                                                style: const TextStyle(
+                                                    fontSize: 12,
+                                                    color: Color(0xFF2ECC71)));
                                           }
                                           final isConnected =
                                               wsConnectedNotifier.value;
@@ -3047,12 +3207,13 @@ class ChatScreenState extends State<ChatScreen>
                                       maintainSize: true,
                                       maintainAnimation: true,
                                       maintainState: true,
-                                      visible: sel.selected.values
-                                          .any((m) => m.outgoing),
+                                      visible: sel.selected.values.any((m) =>
+                                          _canDeleteForBoth(m) ||
+                                          _canDeleteForMe(m)),
                                       child: selBtn(
                                           Icons.delete_outline_rounded,
                                           cs.error,
-                                          'Delete',
+                                          l.delete,
                                           _confirmDeleteSelected),
                                     ),
                                   ]);
@@ -3200,6 +3361,29 @@ class ChatScreenState extends State<ChatScreen>
                                                   ],
                                                 ),
                                               ),
+                                              if (!isBlocked &&
+                                                  SettingsManager
+                                                      .onionModeEnabled
+                                                      .value &&
+                                                  OnionPairedPeers.isTrusted(
+                                                      widget.otherUsername ??
+                                                          ''))
+                                                PopupMenuItem<String>(
+                                                  value: 'circuit',
+                                                  child: Row(
+                                                    children: [
+                                                      const Icon(
+                                                          Icons
+                                                              .route_outlined,
+                                                          size: 18),
+                                                      const SizedBox(
+                                                          width: 10),
+                                                      Text(AppLocalizations.of(
+                                                              context)
+                                                          .viewCircuitTitle),
+                                                    ],
+                                                  ),
+                                                ),
                                               if (SettingsManager
                                                   .meshModeEnabled.value)
                                                 PopupMenuItem<String>(
@@ -3264,6 +3448,21 @@ class ChatScreenState extends State<ChatScreen>
                                             ],
                                             onSelected: (value) async {
                                               if (value == 'call') {
+                                                // Tor contact: no server --
+                                                // call straight over the
+                                                // onion channel (always via
+                                                // Tor, nothing to choose).
+                                                if (SettingsManager
+                                                        .onionModeEnabled
+                                                        .value &&
+                                                    OnionPairedPeers.isTrusted(
+                                                        widget
+                                                            .otherUsername)) {
+                                                  await callManager
+                                                      .startOnionCall(widget
+                                                          .otherUsername);
+                                                  return;
+                                                }
                                                 final l = AppLocalizations.of(
                                                     context);
                                                 final confirmed =
@@ -3474,6 +3673,13 @@ class ChatScreenState extends State<ChatScreen>
                                                 }
                                                 return;
                                               }
+                                              if (value == 'circuit') {
+                                                showTorCircuitDialog(
+                                                    context,
+                                                    widget.otherUsername ??
+                                                        '');
+                                                return;
+                                              }
                                               if (value == 'gallery') {
                                                 final rootState =
                                                     rootScreenKey.currentState;
@@ -3524,23 +3730,6 @@ class ChatScreenState extends State<ChatScreen>
                                                 if (confirmed != true) return;
                                                 await BlocklistManager.unblock(
                                                     other);
-                                                try {
-                                                  final token =
-                                                      await AccountManager
-                                                          .getToken(widget
-                                                              .myUsername);
-                                                  await http.delete(
-                                                    Uri.parse(
-                                                        '$serverBase/block/$other'),
-                                                    headers: {
-                                                      'authorization':
-                                                          'Bearer $token'
-                                                    },
-                                                  );
-                                                } catch (e) {
-                                                  debugPrint(
-                                                      '[unblock] failed: $e');
-                                                }
                                                 return;
                                               }
                                               final recipient =
@@ -3555,53 +3744,18 @@ class ChatScreenState extends State<ChatScreen>
                                               final closeLabel =
                                                   AppLocalizations.of(context)
                                                       .close;
-                                              String? theirPubB64;
+                                              // Keys come from the Tor pairing itself: the
+                                              // contact's pinned identity key and our own
+                                              // account key (no server to ask any more).
+                                              final String? theirPubB64 =
+                                                  OnionPairedPeers.byUsername(
+                                                          recipient)
+                                                      ?.identityPubB64;
                                               String? myPubB64;
-                                              final token =
-                                                  await AccountManager.getToken(
-                                                      widget.myUsername);
                                               try {
-                                                final results =
-                                                    await Future.wait([
-                                                  http.get(
-                                                    Uri.parse(
-                                                        '$serverBase/pubkey/$recipient'),
-                                                    headers: {
-                                                      'authorization':
-                                                          'Bearer $token'
-                                                    },
-                                                  ),
-                                                  http.get(
-                                                    Uri.parse(
-                                                        '$serverBase/pubkey/${widget.myUsername}'),
-                                                    headers: {
-                                                      'authorization':
-                                                          'Bearer $token'
-                                                    },
-                                                  ),
-                                                ]);
-                                                if (results[0].statusCode ==
-                                                    200) {
-                                                  theirPubB64 = (jsonDecode(
-                                                          results[0].body))[
-                                                      'pubkey'] as String?;
-                                                }
-                                                if (results[1].statusCode ==
-                                                    200) {
-                                                  myPubB64 = (jsonDecode(
-                                                          results[1].body))[
-                                                      'pubkey'] as String?;
-                                                }
-                                              } catch (e) {
-                                                rootScreenKey.currentState
-                                                    ?.showSnack(
-                                                        lookupAppLocalizations(
-                                                                SettingsManager
-                                                                    .appLocale
-                                                                    .value)
-                                                            .failedToFetchPubkey);
-                                                return;
-                                              }
+                                                myPubB64 =
+                                                    OnionAccountKey.publicKeyB64;
+                                              } catch (_) {}
                                               if (theirPubB64 == null) {
                                                 rootScreenKey.currentState
                                                     ?.showSnack(
@@ -4740,6 +4894,9 @@ class ChatScreenState extends State<ChatScreen>
                                                                     child:
                                                                         bubbleChild!,
                                                                   ),
+                                                                  OnionRetryStatus(
+                                                                      message:
+                                                                          msg),
                                                                   MessageReactionBar(
                                                                     reactions:
                                                                         reactionsFor(
@@ -5202,26 +5359,45 @@ class ChatScreenState extends State<ChatScreen>
                                                         ),
                                                         const SizedBox(
                                                             height: 4),
-                                                        Text(
-                                                          getPreviewText(
+                                                        Builder(
+                                                            builder: (_) {
+                                                          final preview =
+                                                              getPreviewText(
                                                             (_replyingToMessage![
                                                                         'content'] ??
                                                                     '')
                                                                 .toString(),
-                                                          ),
-                                                          maxLines: 2,
-                                                          overflow: TextOverflow
-                                                              .ellipsis,
-                                                          style: TextStyle(
-                                                            fontSize: 12,
-                                                            color: Theme.of(
+                                                          );
+                                                          final accent =
+                                                              isAccentPreview(
+                                                                  preview);
+                                                          final cs =
+                                                              Theme.of(context)
+                                                                  .colorScheme;
+                                                          return Text(
+                                                            AppLocalizations.of(
                                                                     context)
-                                                                .colorScheme
-                                                                .onSurface
-                                                                .withOpacity(
-                                                                    0.7),
-                                                          ),
-                                                        ),
+                                                                .localizePreview(
+                                                                    preview),
+                                                            maxLines: 2,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                            style: TextStyle(
+                                                              fontSize: 12,
+                                                              fontWeight: accent
+                                                                  ? FontWeight
+                                                                      .w500
+                                                                  : null,
+                                                              color: accent
+                                                                  ? cs.primary
+                                                                  : cs.onSurface
+                                                                      .withValues(
+                                                                          alpha:
+                                                                              0.7),
+                                                            ),
+                                                          );
+                                                        }),
                                                       ],
                                                     ),
                                                   ),
@@ -6030,6 +6206,14 @@ class ChatScreenState extends State<ChatScreen>
       return await _sendFileLAN(filePath, basename, fileType);
     }
 
+    if (SettingsManager.onionModeEnabled.value &&
+        OnionPairedPeers.isTrusted(widget.otherUsername)) {
+      if (fileType == 'IMAGE' || fileType == 'AUDIO') {
+        return await _sendFileOnion(filePath, basename, fileType);
+      }
+      return await _sendFileOnionChunked(filePath, basename, fileType);
+    }
+
     if (fileType == 'IMAGE') {
       await _sendImage(filePath, basename, ext);
     } else if (fileType == 'VIDEO') {
@@ -6258,6 +6442,195 @@ class ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// Onion-mode analogue of [_sendFileLAN]: no server upload step exists in
+  /// onion mode (see OnionTransportService.sendMedia's doc comment), so the
+  /// actual bytes go straight over the Tor connection to the peer instead of
+  /// to a presigned upload URL -- everything else (staging a local copy
+  /// under a unique filename, building the same IMAGEv1/VOICEv1 pointer
+  /// content the renderer already understands) mirrors the LAN path.
+  Future<void> _sendFileOnion(
+      String filePath, String basename, String fileType) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        rootScreenKey.currentState?.showSnack(
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .fileNotFound);
+        return;
+      }
+      final bytes = await file.readAsBytes();
+      if (bytes.length > OnionTransportService.maxMediaBytes) {
+        rootScreenKey.currentState?.showSnack(
+            'File is too large to send over Tor (max '
+            '${OnionTransportService.maxMediaBytes ~/ (1024 * 1024)}MB)');
+        return;
+      }
+
+      final appDocuments = await getOnyxDocumentsDirectory();
+      final onionMediaDir = Directory('${appDocuments.path}/onion_media');
+      if (!await onionMediaDir.exists()) {
+        await onionMediaDir.create(recursive: true);
+      }
+      final uniqueBasename =
+          '${DateTime.now().microsecondsSinceEpoch}_$basename';
+      final stagedPath = '${onionMediaDir.path}/$uniqueBasename';
+      await File(stagedPath).writeAsBytes(bytes, flush: true);
+
+      final kind = fileType == 'AUDIO' ? 'voice' : 'image';
+      final Map<String, dynamic> extra = {};
+      if (kind == 'image') {
+        final blur = await computeBlurHash(bytes);
+        if (blur != null) {
+          extra['blur'] = blur.hash;
+          extra['ar'] = blur.aspectRatio;
+        }
+      } else {
+        extra['duration'] = bytes.length ~/ (16000 * 2);
+        extra['format'] = basename.split('.').last;
+      }
+
+      // Awaited (not fired-and-forgotten) so the pointer message below --
+      // sent over its own separate Tor stream -- can never race ahead of
+      // the actual bytes and arrive at the peer first. It used to be
+      // unawaited, which let the receiver's pointer-triggered chat bubble
+      // render before the 'media' frame had landed, showing a broken/
+      // missing-file image until (if ever) something re-rendered it. A
+      // failed attempt here still queues itself for background retry (see
+      // OnionTransportService.sendMedia's doc comment) rather than blocking
+      // the pointer forever -- the pointer goes out regardless, through the
+      // normal onion chat path, which has its own retry queue too.
+      await OnionTransportService.instance.sendMedia(
+        widget.otherUsername,
+        kind: kind,
+        filename: uniqueBasename,
+        bytes: bytes,
+        extra: extra,
+        filePath: stagedPath,
+      );
+
+      final replyTo = _replyingToMessage;
+      final String content;
+      if (kind == 'image') {
+        content = 'IMAGEv1:${jsonEncode({
+              'url': 'onion://$uniqueBasename',
+              'orig': basename,
+              ...extra,
+            })}';
+      } else {
+        content = 'VOICEv1:${jsonEncode({
+              'url': 'onion://$uniqueBasename',
+              'orig': basename,
+              ...extra,
+            })}';
+      }
+      await widget.onSend(content, replyTo);
+
+      if (mounted) {
+        setState(() {
+          _replyingToMessage = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack('Error sending over Tor: $e');
+      }
+    }
+  }
+
+  /// Onion-mode analogue of [_sendFileOnion] for anything too big/unsuited
+  /// to that method's one-shot sealed frame -- video, documents, archives,
+  /// generic files. Uses [OnionTransportService.sendMediaChunked] (split
+  /// into many small frames over one held-open stream) instead of embedding
+  /// the whole file in a single frame, so there's no 25MB cap and a shown
+  /// [UploadTask] progress bar instead of the app hanging until one huge
+  /// write completes.
+  Future<void> _sendFileOnionChunked(
+      String filePath, String basename, String fileType) async {
+    UploadTask? task;
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        rootScreenKey.currentState?.showSnack(
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .fileNotFound);
+        return;
+      }
+      final length = await file.length();
+      if (length > OnionTransportService.maxChunkedMediaBytes) {
+        rootScreenKey.currentState?.showSnack(
+            'File is too large to send over Tor (max '
+            '${OnionTransportService.maxChunkedMediaBytes ~/ (1024 * 1024 * 1024)}GB)');
+        return;
+      }
+
+      final appDocuments = await getOnyxDocumentsDirectory();
+      final onionMediaDir = Directory('${appDocuments.path}/onion_media');
+      if (!await onionMediaDir.exists()) {
+        await onionMediaDir.create(recursive: true);
+      }
+      final uniqueBasename =
+          '${DateTime.now().microsecondsSinceEpoch}_$basename';
+      final stagedPath = '${onionMediaDir.path}/$uniqueBasename';
+      // Copy (not move) so the original picked/dropped file is untouched --
+      // matches _sendFileOnion's staging, and this staged copy is what a
+      // queued retry (see sendMediaChunked's doc comment) re-reads from.
+      await file.copy(stagedPath);
+      final stagedFile = File(stagedPath);
+
+      final kind = fileType.toLowerCase();
+      task = UploadTask(
+        id: 'onion_${DateTime.now().millisecondsSinceEpoch}',
+        type: kind,
+        localPath: filePath,
+        basename: basename,
+      );
+      task.status = UploadStatus.uploading;
+      if (mounted) setState(() => _pendingUploads.add(task!));
+
+      final ok = await OnionTransportService.instance.sendMediaChunked(
+        widget.otherUsername,
+        kind: kind,
+        filename: uniqueBasename,
+        file: stagedFile,
+        onProgress: (p) => task?.progress = p,
+      );
+
+      final replyTo = _replyingToMessage;
+      final String content = fileType == 'VIDEO'
+          ? 'VIDEOv1:${jsonEncode({
+                'url': 'onion://$uniqueBasename',
+                'orig': basename,
+              })}'
+          : 'FILEv1:${jsonEncode({
+                'filename': 'onion://$uniqueBasename',
+                'orig': basename,
+              })}';
+      // Pointer goes out regardless of whether the immediate chunked attempt
+      // succeeded: a failed attempt is queued for background retry inside
+      // sendMediaChunked itself (same as every other onion send), and the
+      // pointer riding the normal chat path has its own retry queue too --
+      // see _sendFileOnion's doc comment for why this must not be skipped.
+      await widget.onSend(content, replyTo);
+      if (!ok) {
+        debugPrint('[onion] chunked send of $uniqueBasename queued for retry');
+      }
+
+      if (mounted) {
+        setState(() {
+          _replyingToMessage = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack('Error sending over Tor: $e');
+      }
+    } finally {
+      if (task != null && mounted) {
+        setState(() => _pendingUploads.remove(task));
+      }
+    }
+  }
+
   Future<void> _sendImage(String filePath, String basename, String ext) async {
     MediaType contentType;
     if (ext == '.png')
@@ -6461,6 +6834,103 @@ class ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// Onion-mode analogue of [_sendAlbum]: same staging + sendMedia flow as
+  /// [_sendFileOnion], run once per image, then a single ALBUMv1 pointer
+  /// referencing them all by their onion:// urls (mirrors IMAGEv1's url
+  /// field so ImageLoader/AlbumMessageWidget resolve them the same way).
+  Future<void> _sendAlbumOnion(
+      List<String> filePaths,
+      Future<void> Function(String text, Map<String, dynamic>? replyTo)
+          sendFn) async {
+    UploadTask? albumTask;
+    try {
+      albumTask = UploadTask(
+        id: 'album_${DateTime.now().millisecondsSinceEpoch}',
+        type: 'album',
+        localPath: '',
+        basename: '',
+      );
+      albumTask.albumTotal = filePaths.length;
+      albumTask.status = UploadStatus.uploading;
+      if (mounted) setState(() => _pendingUploads.add(albumTask!));
+
+      final appDocuments = await getOnyxDocumentsDirectory();
+      final onionMediaDir = Directory('${appDocuments.path}/onion_media');
+      if (!await onionMediaDir.exists()) {
+        await onionMediaDir.create(recursive: true);
+      }
+
+      final results = await Future.wait(filePaths.map((filePath) async {
+        final localFile = File(filePath);
+        if (!await localFile.exists()) return null;
+
+        final bytes = await localFile.readAsBytes();
+        if (bytes.length > OnionTransportService.maxMediaBytes) {
+          debugPrint('[album-onion] $filePath too large for Tor, skipping');
+          return null;
+        }
+
+        final basename = p.basename(filePath);
+        final uniqueBasename =
+            '${DateTime.now().microsecondsSinceEpoch}_$basename';
+        final stagedPath = '${onionMediaDir.path}/$uniqueBasename';
+        await File(stagedPath).writeAsBytes(bytes, flush: true);
+
+        final blur = await computeBlurHash(bytes);
+
+        await OnionTransportService.instance.sendMedia(
+          widget.otherUsername,
+          kind: 'image',
+          filename: uniqueBasename,
+          bytes: bytes,
+          extra: {
+            if (blur != null) 'blur': blur.hash,
+            if (blur != null) 'ar': blur.aspectRatio,
+          },
+          filePath: stagedPath,
+        );
+
+        albumTask!.albumDone++;
+        albumTask.progress = albumTask.albumDone / albumTask.albumTotal;
+
+        return {
+          'url': 'onion://$uniqueBasename',
+          'orig': basename,
+          if (blur != null) 'blur': blur.hash,
+          if (blur != null) 'ar': blur.aspectRatio,
+        };
+      }));
+
+      final albumItems = results.whereType<Map<String, dynamic>>().toList();
+      if (albumItems.isEmpty) {
+        rootScreenKey.currentState?.showSnack(
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .albumUploadFailed);
+        return;
+      }
+
+      final content = 'ALBUMv1:${jsonEncode(albumItems)}';
+      final replyTo = _replyingToMessage;
+      if (mounted) setState(() => _replyingToMessage = null);
+
+      await sendFn(content, replyTo);
+
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack(
+            lookupAppLocalizations(SettingsManager.appLocale.value)
+                .albumSent(albumItems.length));
+      }
+    } catch (e) {
+      if (mounted) {
+        rootScreenKey.currentState?.showSnack('Error sending album over Tor: $e');
+      }
+    } finally {
+      if (albumTask != null && mounted) {
+        setState(() => _pendingUploads.remove(albumTask!));
+      }
+    }
+  }
+
   Future<void> _sendAlbum(List<String> filePaths,
       {bool skipConfirm = false}) async {
     if (filePaths.isEmpty) return;
@@ -6483,6 +6953,11 @@ class ChatScreenState extends State<ChatScreen>
         ),
       );
       if (!proceed) return;
+    }
+
+    if (SettingsManager.onionModeEnabled.value &&
+        OnionPairedPeers.isTrusted(widget.otherUsername)) {
+      return await _sendAlbumOnion(filePaths, sendFn);
     }
 
     UploadTask? albumTask;
@@ -6855,7 +7330,7 @@ class _MessageActionsSheetState extends State<_MessageActionsSheet> {
             margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             decoration: BoxDecoration(
               color: sheetColor,
-              borderRadius: BorderRadius.circular(28),
+              borderRadius: BorderRadius.circular(27),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,

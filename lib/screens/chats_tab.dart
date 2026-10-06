@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import '../models/chat_message.dart';
 import '../globals.dart';
+import '../widgets/peer_id_block.dart';
 import '../widgets/avatar_widget.dart';
 import '../managers/user_cache.dart';
 import '../l10n/app_localizations.dart';
@@ -23,7 +24,10 @@ import '../widgets/inline_search_bar.dart';
 import '../utils/dialog_utils.dart';
 import '../enums/delivery_mode.dart';
 import '../services/mesh/mesh_manager.dart';
+import '../services/onion/onion_paired_peers.dart';
+import '../services/onion/onion_requests.dart';
 import '../widgets/onyx_dialog.dart';
+import 'contact_requests_screen.dart';
 
 String _getFileTypeLabel(String filename) {
   final ext = filename.toLowerCase();
@@ -135,9 +139,63 @@ String _meshAwarePreview(dynamic msg) {
   return getPreviewText(content);
 }
 
+/// Preview keys for call records (CALLv1), English like the other preview
+/// keys; translated by AppLocalizations.localizePreview.
+const Set<String> kCallPreviewKeys = {
+  'Outgoing call',
+  'Incoming call',
+  'Missed call',
+  'Cancelled call',
+  'Declined call',
+  'Call',
+};
+
+/// Whether a preview key (from [getPreviewText]) names a media / call
+/// message rather than text: shown in the accent color in the chat list,
+/// the reply bar and reply quotes.
+bool isAccentPreview(String preview) {
+  const labels = {
+    'Voice message',
+    'Image',
+    'Video file',
+    'Music',
+    'Video',
+    'Document',
+    'Spreadsheet',
+    'Presentation',
+    'Archive',
+    'Artifact',
+    'File',
+    'Contact added',
+  };
+  if (preview.startsWith('[Message not decrypted]')) return true;
+  if (preview == 'Album' || preview.startsWith('Album ·')) return true;
+  return labels.contains(preview) || kCallPreviewKeys.contains(preview);
+}
+
 String getPreviewText(String rawContent) {
   if (rawContent.startsWith('MESH_FILE:')) {
     return _getFileTypeLabel(rawContent.substring(10));
+  }
+  if (rawContent.startsWith('CONTACTv1:')) return 'Contact added';
+  if (rawContent.startsWith('CALLv1:')) {
+    try {
+      final d = jsonDecode(rawContent.substring(7)) as Map<String, dynamic>;
+      final out = d['dir'] == 'out';
+      switch (d['st']) {
+        case 'missed':
+          return 'Missed call';
+        case 'declined':
+          return 'Declined call';
+        case 'cancelled':
+        case 'no_answer':
+        case 'busy':
+          return 'Cancelled call';
+      }
+      return out ? 'Outgoing call' : 'Incoming call';
+    } catch (_) {
+      return 'Call';
+    }
   }
   if (rawContent.startsWith('VOICEv1:')) return 'Voice message';
   if (rawContent.startsWith('AUDIOv1:')) return 'Music';
@@ -202,6 +260,81 @@ String getPreviewText(String rawContent) {
   return rawContent;
 }
 
+
+/// Compact "Contact requests · N" row above the chats (same width as a chat
+/// row), only while there are any. Opens the Requests modal.
+class _ContactRequestsEntry extends StatelessWidget {
+  const _ContactRequestsEntry();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<OnionContactRequest>>(
+      valueListenable: OnionRequests.requests,
+      builder: (context, reqs, _) {
+        if (reqs.isEmpty) return const SizedBox.shrink();
+        final cs = Theme.of(context).colorScheme;
+        final l = AppLocalizations.of(context);
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(28),
+            onTap: () => showContactRequestsDialog(context),
+            child: AdaptiveGlassCard(
+              borderRadius: 28,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: cs.primary.withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.person_add_alt_1_rounded,
+                          size: 16, color: cs.primary),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        l.contactRequestsEntry,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w500, fontSize: 14),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: cs.primary,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${reqs.length}',
+                        style: TextStyle(
+                            color: cs.onPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    Icon(Icons.chevron_right_rounded,
+                        size: 20, color: cs.onSurface.withValues(alpha: 0.4)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
 
 class _ChatSumm {
   final String chatId;
@@ -361,6 +494,10 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
   final Map<String, _ChatSumm> _byChatId = {};
   late List<_ChatSumm> _summaries;
   VoidCallback? _userUpdateListener;
+  void _onionPeersListener() {
+    if (!mounted) return;
+    setState(_rebuildSummaries);
+  }
 
   final TextEditingController _searchCtrl = TextEditingController();
   final GlobalKey _searchBarKey = GlobalKey();
@@ -400,6 +537,11 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
       setState(_rebuildSummaries);
     };
     UserCache.updatedUsers.addListener(_userUpdateListener!);
+    // OnionPairedPeers.load() runs async during account load, so on a cold
+    // start it can still be in flight when this tab's first _rebuildSummaries
+    // ran with no pairing data yet (showing the raw username as a fallback
+    // until this fires) — see displayName resolution above.
+    OnionPairedPeers.peers.addListener(_onionPeersListener);
     chatsVersion.addListener(_onChatsVersion);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -451,11 +593,15 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
       final preview = last != null ? _meshAwarePreview(last) : '';
       final isBle = last?.deliveryMode == DeliveryMode.bleMesh;
       final cached = UserCache.getSync(other);
+      final onionPeer = OnionPairedPeers.byUsername(other);
       final displayName = (cached != null &&
               cached.displayName.isNotEmpty &&
               cached.displayName != other)
           ? cached.displayName
-          : (prev?.displayName ?? other);
+          : (prev?.displayName ??
+              ((onionPeer != null && onionPeer.name.isNotEmpty)
+                  ? onionPeer.name
+                  : other));
       _byChatId[chatId] = _ChatSumm(
         chatId: chatId,
         otherUsername: other,
@@ -545,6 +691,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
     if (_userUpdateListener != null) {
       UserCache.updatedUsers.removeListener(_userUpdateListener!);
     }
+    OnionPairedPeers.peers.removeListener(_onionPeersListener);
     chatsVersion.removeListener(_onChatsVersion);
     if (_subscribedRoute != null) routeObserver.unsubscribe(this);
     super.dispose();
@@ -576,7 +723,11 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
         meshTransportUsed = last.meshTransportUsed;
       }
       final cached = UserCache.getSync(other);
-      String displayName = prev?.displayName ?? other;
+      final onionPeer = OnionPairedPeers.byUsername(other);
+      String displayName = prev?.displayName ??
+          ((onionPeer != null && onionPeer.name.isNotEmpty)
+              ? onionPeer.name
+              : other);
       if (cached != null &&
           cached.displayName.isNotEmpty &&
           cached.displayName != other) {
@@ -622,11 +773,11 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
     final l = AppLocalizations.of(context);
     final confirmed = await showOnyxConfirmDialog(
       context: context,
-      title: l.blockUserLabel,
-      message: l.blockUserConfirmContent(summary.displayName),
-      confirmLabel: l.blockUserLabel,
+      title: l.removeFromContacts,
+      message: l.contactsRemoveConfirm(summary.otherUsername),
+      confirmLabel: l.remove,
       isDestructive: true,
-      icon: Icons.block_rounded,
+      icon: Icons.link_off_rounded,
     );
     if (confirmed == true) {
       widget.onBlockUser(summary.otherUsername, summary.displayName);
@@ -673,7 +824,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
         nameHits.add(TabSearchResult(
           id: summ.otherUsername,
           title: summ.displayName,
-          subtitle: '@${summ.otherUsername}',
+          subtitle: null,
           snippet: summ.preview.isNotEmpty ? summ.preview : null,
           icon: Icons.person_outline,
           avatarBuilder: avatarBuilder,
@@ -691,7 +842,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
           contentHits.add(TabSearchResult(
             id: summ.otherUsername,
             title: summ.displayName,
-            subtitle: '@${summ.otherUsername}',
+            subtitle: null,
             snippet: getPreviewText(content),
             icon: Icons.forum_outlined,
             avatarBuilder: avatarBuilder,
@@ -818,10 +969,10 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                       },
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     )
-                  else
+                  else if (OnionPairedPeers.byUsername(summary.otherUsername) != null)
                     ListTile(
-                      leading: Icon(Icons.block, color: colorScheme.error),
-                      title: Text(AppLocalizations.of(context).blockUserLabel),
+                      leading: Icon(Icons.person_remove_outlined, color: colorScheme.error),
+                      title: Text(AppLocalizations.of(context).removeFromContacts),
                       onTap: () {
                         Navigator.of(sheetCtx).pop();
                         _showBlockConfirmationDialog(context, summary);
@@ -901,14 +1052,14 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
               ],
             ),
           )
-        else
+        else if (OnionPairedPeers.byUsername(summary.otherUsername) != null)
           PopupMenuItem<String>(
             value: 'block',
             child: Row(
               children: [
-                Icon(Icons.block, size: 18, color: colorScheme.error),
+                Icon(Icons.person_remove_outlined, size: 18, color: colorScheme.error),
                 const SizedBox(width: 10),
-                Text(AppLocalizations.of(context).blockUserLabel),
+                Text(AppLocalizations.of(context).removeFromContacts),
               ],
             ),
           ),
@@ -963,25 +1114,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
         preview.startsWith('[Message not decrypted]');
   }
 
-  static bool _isPurplePreview(String preview) {
-    final purpleLabels = {
-      'Voice message',
-      'Image',
-      'Video file',
-      'Music',
-      'Video',
-      'Image',
-      'Document',
-      'Spreadsheet',
-      'Presentation',
-      'Archive',
-      'Artifact',
-      'File'
-    };
-    if (preview.startsWith('[Message not decrypted]')) return true;
-    if (preview == 'Album' || preview.startsWith('Album ·')) return true;
-    return purpleLabels.contains(preview);
-  }
+  static bool _isPurplePreview(String preview) => isAccentPreview(preview);
 
   static String _formatTime(DateTime t) {
     final now = DateTime.now();
@@ -1082,22 +1215,7 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                                 ),
                               ),
                               const SizedBox(height: 4),
-                              GestureDetector(
-                                onTap: () {
-                                  Clipboard.setData(ClipboardData(text: '@$username'));
-                                  rootScreenKey.currentState?.showSnack(
-                                      AppLocalizations.of(context)
-                                          .copiedUsername(username));
-                                },
-                                child: Text(
-                                  '@$username',
-                                  style: TextStyle(
-                                    color: colorScheme.primary,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                              ),
+                              PeerIdBlock(username: username),
                               if (desc.isNotEmpty) ...[
                                 const SizedBox(height: 8),
                                 Padding(
@@ -1194,21 +1312,32 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
 
   Widget _buildContent() {
     if (_summaries.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Opacity(
-              opacity: 0.4,
-              child: Icon(Icons.chat_outlined, size: 48),
+      return Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: _ContactRequestsEntry(),
+          ),
+          Expanded(
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Opacity(
+                    opacity: 0.4,
+                    child: Icon(Icons.chat_outlined, size: 48),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    AppLocalizations.of(context).noChatsYet,
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 12),
-            Text(
-              AppLocalizations.of(context).noChatsYet,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-            ),
-          ],
-        ),
+          ),
+        ],
       );
     }
 
@@ -1280,7 +1409,18 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
       child: AnimatedReorderList<_ChatSumm>(
         items: _summaries,
         keyOf: (it) => it.chatId,
-        header: searchBar,
+        header: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            searchBar,
+            // The header sits outside the list's padding: same 12px sides
+            // as the chat rows so it lines up with them.
+            const Padding(
+              padding: EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: _ContactRequestsEntry(),
+            ),
+          ],
+        ),
         padding: EdgeInsets.fromLTRB(12, 8, 12, bottomPad),
         physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
         separatorHeight: 6,
@@ -1415,22 +1555,6 @@ class _ChatsTabState extends State<ChatsTab> with TickerProviderStateMixin, Auto
                               ],
                             ),
                           ),
-                          if (it.displayName != it.otherUsername)
-                            GestureDetector(
-                              onTap: () => _openChatWithLockCheck(context, it.otherUsername),
-                              onLongPress: () => _showUserProfileDialog(
-                                  it.otherUsername, it.displayName),
-                              child: Text(
-                                '@${it.otherUsername}',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurface
-                                      .withValues(alpha: 0.5),
-                                ),
-                              ),
-                            ),
                           const SizedBox(height: 2),
                           if (it.isBle)
                             Row(

@@ -23,9 +23,14 @@ import '../models/favorite_chat.dart';
 import '../services/lan_fav_sync_service.dart';
 import '../utils/wardlink_bubble_controller.dart';
 import '../widgets/adaptive_glass_card.dart';
+import '../widgets/onyx_dialog.dart';
 
 class FavSyncSendScreen extends StatefulWidget {
-  const FavSyncSendScreen({super.key});
+  /// When set, that one favourite is sent right away: the chat selection step
+  /// is skipped and the QR (desktop) / scanner (mobile) opens straight away.
+  final String? favoriteId;
+
+  const FavSyncSendScreen({super.key, this.favoriteId});
 
   @override
   State<FavSyncSendScreen> createState() => _FavSyncSendScreenState();
@@ -89,6 +94,12 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
         detectionSpeed: DetectionSpeed.normal,
         facing: CameraFacing.back,
       );
+    }
+    final preselected = widget.favoriteId;
+    if (preselected != null) {
+      _selectedIds.add(preselected);
+      _scanning = true;
+      if (_isDesktop) _startHandshake();
     }
   }
 
@@ -330,13 +341,11 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _minimize();
       },
-      child: Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-        clipBehavior: Clip.antiAlias,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+      child: OnyxDialogShell(
+        maxWidth: 520,
+        radius: kOnyxPanelRadius,
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: 520,
             maxHeight: MediaQuery.sizeOf(context).height * 0.85,
           ),
           child: Column(
@@ -359,48 +368,49 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
             ? l.sendFavoritesSending
             : l.sendFavoritesTitle;
     final canMinimize = _transferring && !_done && _fatalError == null && _total > 0;
+    final icon = _scanning
+        ? (_isDesktop ? Icons.qr_code_rounded : Icons.qr_code_scanner_rounded)
+        : _transferring || _done
+            ? Icons.upload_rounded
+            : Icons.send_rounded;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surface,
-        border: Border(
-          bottom: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.3)),
-        ),
-      ),
-      child: Row(
-        children: [
-          if (_scanning)
-            IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () {
+    return OnyxDialogHeader(
+      leading: _scanning
+          ? OnyxHeaderIconButton(
+              icon: Icons.arrow_back_rounded,
+              onTap: () {
                 _sub?.cancel();
                 _sub = null;
                 _handshakeSession?.close();
                 _handshakeSession = null;
+                if (widget.favoriteId != null) {
+                  Navigator.of(context).pop();
+                  return;
+                }
                 setState(() {
                   _scanning = false;
                   _qrScanned = false;
                 });
               },
             )
-          else
-            const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              title,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: cs.onSurface,
+          : Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
               ),
+              child: Icon(icon, size: 20, color: cs.primary),
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.close),
-            onPressed: canMinimize ? _minimize : () => Navigator.of(context).pop(),
-          ),
-        ],
+      title: Text(
+        title,
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: cs.onSurface,
+        ),
       ),
+      onClose: canMinimize ? _minimize : () => Navigator.of(context).pop(),
     );
   }
 
@@ -480,7 +490,7 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
             children: [
               AdaptiveGlassCard(
-                borderRadius: 16,
+                borderRadius: 27,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 16, vertical: 14),
@@ -523,7 +533,7 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
                 )
               else
                 AdaptiveGlassCard(
-                  borderRadius: 16,
+                  borderRadius: 27,
                   child: Column(children: chatItems),
                 ),
             ],
@@ -686,33 +696,47 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
   }
 
   Widget _buildBottomBar(ColorScheme cs) => Container(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         decoration: BoxDecoration(
           color: cs.surface.withValues(alpha: 0.9),
           border: Border(
               top: BorderSide(
                   color: cs.outlineVariant.withValues(alpha: 0.2))),
         ),
-        child: Row(
+        // Stacked, not side by side: next to the hint the button's label
+        // ("Scan receiver's QR") didn't fit and overflowed. Full width, its
+        // label can wrap onto a second line like the receive screen's.
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: Text(
-                _selectedIds.isEmpty
-                    ? AppLocalizations.of(context).sendFavoritesSelectAtLeastOne
-                    : AppLocalizations.of(context).chatsSelected(_selectedIds.length),
-                style: TextStyle(
-                  fontSize: 13,
-                  color: cs.onSurface.withValues(alpha: 0.6),
-                ),
+            Text(
+              _selectedIds.isEmpty
+                  ? AppLocalizations.of(context).sendFavoritesSelectAtLeastOne
+                  : AppLocalizations.of(context).chatsSelected(_selectedIds.length),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: cs.onSurface.withValues(alpha: 0.6),
               ),
             ),
+            const SizedBox(height: 10),
             FilledButton.icon(
+              style: FilledButton.styleFrom(
+                padding: kOnyxDialogButtonPadding,
+                shape: kOnyxDialogButtonShape,
+              ),
               onPressed: _selectedIds.isEmpty ? null : _onScanPressed,
               icon: Icon(
                 _isDesktop ? Icons.qr_code : Icons.qr_code_scanner,
                 size: 18,
               ),
-              label: Text(_isDesktop ? AppLocalizations.of(context).sendFavoritesShowQrBtn : AppLocalizations.of(context).sendFavoritesScanQrBtn),
+              label: Text(
+                _isDesktop
+                    ? AppLocalizations.of(context).sendFavoritesShowQrBtn
+                    : AppLocalizations.of(context).sendFavoritesScanQrBtn,
+                textAlign: TextAlign.center,
+              ),
             ),
           ],
         ),
@@ -733,13 +757,13 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
         ValueListenableBuilder<double>(
           valueListenable: SettingsManager.elementBrightness,
           builder: (_, brightness, __) => AdaptiveGlassCard(
-            borderRadius: 20,
+            borderRadius: 27,
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: Column(
                 children: [
                   Text(
-                    'Show to receiver device',
+                    AppLocalizations.of(context).sendFavoritesQrTitle,
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 15,
@@ -748,7 +772,7 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Open Favorites on the phone → Sync → Receive, then scan this code',
+                    AppLocalizations.of(context).sendFavoritesQrInstruction,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 12,
@@ -758,9 +782,14 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
                   ),
                   const SizedBox(height: 20),
                   Container(
+                    // Fixed square (220 QR + 12 padding each side): in the app this tile
+                    // came out taller than wide, with a blank band under the code.
+                    width: 244,
+                    height: 244,
+                    alignment: Alignment.center,
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(20),
                       boxShadow: [
                         BoxShadow(
                           color: cs.shadow.withValues(alpha: 0.12),
@@ -793,7 +822,7 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
                           size: 14, color: cs.primary),
                       const SizedBox(width: 5),
                       Text(
-                        'End-to-end encrypted · local network only',
+                        AppLocalizations.of(context).receiveFavoritesE2E,
                         style: TextStyle(
                           fontSize: 11,
                           color: cs.onSurface.withValues(alpha: 0.5),
@@ -808,7 +837,7 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
         ),
         const SizedBox(height: 16),
         AdaptiveGlassCard(
-          borderRadius: 16,
+          borderRadius: 27,
           child: Padding(
             padding:
                 const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -822,7 +851,7 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Waiting for phone to scan QR code…',
+                    AppLocalizations.of(context).sendFavoritesWaitingScan,
                     style: const TextStyle(fontSize: 13, height: 1.4),
                   ),
                 ),
@@ -930,7 +959,7 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
 
         // Status / progress card
         AdaptiveGlassCard(
-          borderRadius: 16,
+          borderRadius: 27,
           child: Padding(
             padding:
                 const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -1022,6 +1051,8 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
         if (!_done && _total > 0) ...[
           OutlinedButton.icon(
             style: OutlinedButton.styleFrom(
+              padding: kOnyxDialogButtonPadding,
+              shape: kOnyxDialogButtonShape,
               foregroundColor: cs.error,
               side: BorderSide(color: cs.error.withValues(alpha: 0.5)),
             ),
@@ -1032,6 +1063,7 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
         ] else if (_done)
           OutlinedButton(
             onPressed: () => Navigator.of(context).pop(),
+            style: OutlinedButton.styleFrom(padding: kOnyxDialogButtonPadding, shape: kOnyxDialogButtonShape),
             child: Text(AppLocalizations.of(context).close),
           ),
       ],
@@ -1045,12 +1077,12 @@ class _FavSyncSendScreenState extends State<FavSyncSendScreen> {
   }
 
   Widget _buildFileResultsList(ColorScheme cs) => AdaptiveGlassCard(
-        borderRadius: 16,
+        borderRadius: 27,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             InkWell(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(27),
               onTap: () => setState(() => _logExpanded = !_logExpanded),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),

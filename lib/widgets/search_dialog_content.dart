@@ -11,6 +11,12 @@ import '../managers/account_manager.dart';
 import '../managers/settings_manager.dart';
 import '../enums/liquid_glass_quality.dart';
 import '../widgets/avatar_widget.dart';
+import '../l10n/app_localizations.dart';
+import '../screens/contact_requests_screen.dart'
+    show showContactRequestComposer;
+import '../services/onion/onion_paired_peers.dart';
+import '../services/onion/onion_requests.dart';
+import '../services/onion/onion_transport_service.dart';
 
 class SearchDialogContent extends StatefulWidget {
   final TextEditingController controller;
@@ -34,6 +40,16 @@ class _SearchDialogContentState extends State<SearchDialogContent>
   String _error = '';
   int _hoveredIndex = -1;
   String? _cachedToken;
+
+  // When Onion Mode is on and the typed text looks like a bare Tor v3
+  // address, we skip the normal /users?query= lookup (that's for usernames,
+  // not addresses reachable directly over Tor) and show a "connect via Tor"
+  // row instead. The actual connect only happens on tap, never
+  // automatically as the user types, since it can take a while (retried
+  // dial + a live identify handshake with whoever is on the other end).
+  String? _onionAddressCandidate;
+  bool _connectingOnion = false;
+  String? _onionStatus;
 
   final FocusNode _focusNode = FocusNode();
 
@@ -94,9 +110,42 @@ class _SearchDialogContentState extends State<SearchDialogContent>
   Future<void> _search(String q) async {
     final query = q.trim().replaceFirst('@', '');
     if (query.isEmpty) {
-      if (mounted) setState(() { _results.clear(); _error = ''; _loading = false; });
+      if (mounted) {
+        setState(() {
+          _results.clear();
+          _error = '';
+          _loading = false;
+          _onionAddressCandidate = null;
+        });
+      }
       return;
     }
+    if (SettingsManager.onionModeEnabled.value &&
+        parseOnionContactCode(query) != null) {
+      if (mounted) {
+        setState(() {
+          _results.clear();
+          _error = '';
+          _loading = false;
+          _onionAddressCandidate = query.trim().toLowerCase();
+        });
+      }
+      return;
+    }
+    if (SettingsManager.onionModeEnabled.value) {
+      // No server to look usernames up on (the old lookup went straight to
+      // it, outside Tor): only an onion address can be added.
+      if (mounted) {
+        setState(() {
+          _onionAddressCandidate = null;
+          _results.clear();
+          _loading = false;
+          _error = AppLocalizations.of(context).searchNeedOnionAddress;
+        });
+      }
+      return;
+    }
+    if (mounted) setState(() => _onionAddressCandidate = null);
     if (mounted) setState(() { _loading = true; _error = ''; });
     try {
       if (_cachedToken == null) await _loadToken();
@@ -112,6 +161,102 @@ class _SearchDialogContentState extends State<SearchDialogContent>
       if (mounted) setState(() => _error = 'Search error');
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _connectOnion() async {
+    final code = _onionAddressCandidate;
+    if (code == null || _connectingOnion) return;
+    final myUsername = await AccountManager.getCurrentAccount();
+    if (myUsername == null) return;
+    // A bare address, or an onyx: code with every device of their account.
+    final addresses = parseOnionContactCode(code);
+    if (addresses == null) return;
+
+    // Someone new: the request goes out only once its comment is written
+    // (or skipped) -- closing the modal sends nothing. An existing contact's
+    // address just opens the chat.
+    final normalized = addresses.first;
+    // Asked before and still waiting: sending again replaces that request
+    // on their side (new comment, back on top) -- it never piles up.
+    final resend = addresses.any(OnionRequests.isOutgoingPendingAddress);
+    // A contact for real -- not someone we only sent a (still pending)
+    // request to, nor someone who removed us: those get a request again.
+    final knownPeer = OnionPairedPeers.peers.value
+        .where((p) =>
+            addresses.contains(p.onionAddress.toLowerCase()) &&
+            !OnionRequests.isOutgoingPending(p.username) &&
+            !OnionRequests.isRemovedBy(p.identityPubB64))
+        .firstOrNull;
+    if (knownPeer != null) {
+      // Already a contact: just open the chat (no need to reach them now).
+      widget.onSelect(knownPeer.username);
+      return;
+    }
+    // Someone new: the comment modal first; closing it sends nothing.
+    if (!mounted) return;
+    final shortAddr = normalized.length > 24
+        ? '${normalized.substring(0, 8)}…${normalized.substring(normalized.length - 14)}'
+        : normalized;
+    final comment = await showContactRequestComposer(context, shortAddr);
+    if (comment == null || !mounted) return;
+
+    setState(() {
+      _connectingOnion = true;
+      _onionStatus = AppLocalizations.of(context).searchConnectingTor;
+    });
+    OnionTransportService.instance.onPairingRetry = (attempt, maxAttempts) {
+      if (!mounted) return;
+      setState(() => _onionStatus = AppLocalizations.of(context)
+          .searchStillTrying(attempt, maxAttempts));
+    };
+
+    // All their devices are dialed at once; whichever answers first takes
+    // the request (the account's other devices get it from that one).
+    var unreachable = false;
+    final (username, error) = await OnionTransportService.instance
+        .connectByAddress(addresses.first, myUsername,
+            comment: comment.isEmpty ? null : comment,
+            alsoTry: addresses.skip(1).toList(),
+            onUnreachable: () => unreachable = true);
+
+    OnionTransportService.instance.onPairingRetry = null;
+    if (username != null) {
+      for (final a in addresses) {
+        await OnionRequests.dequeueRequest(a);
+      }
+    } else if (unreachable) {
+      // Offline: the request waits and goes out as soon as they're back
+      // (retried at every start and every few minutes).
+      for (final a in addresses) {
+        await OnionRequests.queueRequest(a, comment);
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _connectingOnion = false;
+      _onionStatus = null;
+    });
+
+    if (username == null && unreachable) {
+      final queued = AppLocalizations.of(context).contactRequestQueued;
+      widget.onSelect(''); // closes search
+      rootScreenKey.currentState?.showSnack(queued, force: true);
+      return;
+    }
+
+    if (username != null) {
+      if (OnionRequests.isOutgoingPending(username)) {
+        // A request now waits for their approval: no chat to open yet.
+        final l = AppLocalizations.of(context);
+        final sent = resend ? l.contactRequestUpdated : l.contactRequestSent;
+        widget.onSelect(''); // closes search, opens nothing
+        rootScreenKey.currentState?.showSnack(sent);
+      } else {
+        widget.onSelect(username);
+      }
+    } else {
+      setState(() => _error = error ?? 'Connection failed');
     }
   }
 
@@ -163,9 +308,11 @@ class _SearchDialogContentState extends State<SearchDialogContent>
           curve: Curves.easeInOut,
           child: hasQuery
               ? Padding(
-                  padding: const EdgeInsets.only(top: 8),
+                  // Same 6 px side inset as the search pill above, so both
+                  // have the same width.
+                  padding: const EdgeInsets.fromLTRB(6, 8, 6, 0),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
+                    borderRadius: BorderRadius.circular(27),
                     child: isDesktop
                         ? _BackdropBlurWrapper(
                             sigma: 14,
@@ -184,7 +331,7 @@ class _SearchDialogContentState extends State<SearchDialogContent>
     return Container(
       decoration: BoxDecoration(
         color: cs.surface.withValues(alpha: isDesktop ? 0.88 : 1.0),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(27),
         border: Border.all(color: cs.outline.withValues(alpha: 0.10), width: 1),
         boxShadow: [
           BoxShadow(
@@ -273,7 +420,7 @@ class _SearchDialogContentState extends State<SearchDialogContent>
                     settings: settings,
                     quality: glassQuality,
                     padding: EdgeInsets.zero,
-                    shape: LiquidRoundedRectangle(borderRadius: 18),
+                    shape: LiquidRoundedRectangle(borderRadius: 27),
                     clipBehavior: Clip.antiAlias,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -412,7 +559,9 @@ class _SearchDialogContentState extends State<SearchDialogContent>
           padding: const EdgeInsets.only(left: 2),
           child: Icon(Icons.search_rounded, color: iconColor, size: iconSize),
         ),
-        hintText: 'Search @username...',
+        hintText: SettingsManager.onionModeEnabled.value
+            ? AppLocalizations.of(context).searchOnionHint
+            : 'Search @username...',
         hintStyle: TextStyle(color: hintColor, fontSize: fontSize),
         suffixIcon: widget.controller.text.isNotEmpty
             ? IconButton(
@@ -436,9 +585,89 @@ class _SearchDialogContentState extends State<SearchDialogContent>
 
   // ── Results list ─────────────────────────────────────────────────────────────
 
+  Widget _onionConnectRow(
+      BuildContext context, ColorScheme colorScheme, bool isDark) {
+    final address = _onionAddressCandidate!;
+    if (_connectingOnion) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+                width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+            const SizedBox(height: 10),
+            Text(
+              _onionStatus ?? AppLocalizations.of(context).searchConnectingTor,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12.5, color: colorScheme.onSurface.withValues(alpha: 0.7)),
+            ),
+          ],
+        ),
+      );
+    }
+    final alreadySent = (parseOnionContactCode(address) ?? const <String>[])
+        .any(OnionRequests.isOutgoingPendingAddress);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: _connectOnion,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 20,
+                  backgroundColor: colorScheme.primary.withValues(alpha: 0.14),
+                  child: Icon(
+                      alreadySent
+                          ? Icons.refresh_rounded
+                          : Icons.security_rounded,
+                      color: colorScheme.primary,
+                      size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                          alreadySent
+                              ? AppLocalizations.of(context).contactRequestResend
+                              : AppLocalizations.of(context).contactRequestSend,
+                          style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                              color: colorScheme.onSurface)),
+                      Text(address,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 11.5,
+                              fontFamily: 'monospace',
+                              color: colorScheme.onSurface.withValues(alpha: 0.55))),
+                    ],
+                  ),
+                ),
+                Icon(Icons.arrow_forward_ios_rounded, size: 13, color: colorScheme.primary.withValues(alpha: 0.6)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _resultsList(BuildContext context, bool useGlass) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (_onionAddressCandidate != null) {
+      return _onionConnectRow(context, colorScheme, isDark);
+    }
 
     if (_loading) return const SizedBox.shrink();
 
@@ -450,7 +679,9 @@ class _SearchDialogContentState extends State<SearchDialogContent>
           children: [
             Icon(Icons.error_outline_rounded, size: 18, color: colorScheme.error.withValues(alpha: 0.75)),
             const SizedBox(width: 8),
-            Text('Search error', style: TextStyle(color: colorScheme.error.withValues(alpha: 0.75), fontSize: 14)),
+            Flexible(
+              child: Text(_error, style: TextStyle(color: colorScheme.error.withValues(alpha: 0.75), fontSize: 14)),
+            ),
           ],
         ),
       );

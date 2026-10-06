@@ -54,7 +54,6 @@ final ValueNotifier<double> recordingLevelNotifier = ValueNotifier<double>(0.0);
 final ValueNotifier<bool> wsConnectedNotifier = ValueNotifier<bool>(false);
 final ValueNotifier<bool> sessionExpiredNotifier = ValueNotifier<bool>(false);
 
-final ValueNotifier<bool> proxyActiveNotifier = ValueNotifier<bool>(false);
 
 /// True while the PIN/biometric lock gate is blocking the UI — either the
 /// initial app-launch lock screen, or the resume-lock screen main.dart pushes
@@ -207,11 +206,16 @@ Widget getFavoritesScreen(String id, String title) {
 Map<String, List<ChatMessage>> _chats = {};
 double _chatsPanelWidth = 300.0;
 
-const String serverBase = 'https://api-onyx.wardcore.com';
+/// The central Node.js server is gone for good. Kill-switch checked by the
+/// websocket / pubkey-upload entry points in root_screen.dart; the remaining
+/// [serverBase]/[wsUrl] references are dead code awaiting removal.
+const bool kCentralServerRemoved = true;
+
+const String serverBase ='https://api-onyx.wardcore.com';
 const String wsUrl = 'wss://api-onyx.wardcore.com/ws';
 const String publicIpApi = 'https://api.ipify.org';
 
-const String kAppVersion = 'v1.10-beta';
+const String kAppVersion = 'v2.0-beta';
 
 bool get isDesktop {
   if (kIsWeb) return false;

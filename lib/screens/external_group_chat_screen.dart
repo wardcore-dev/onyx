@@ -2620,7 +2620,7 @@ class _ExternalGroupChatScreenState extends State<ExternalGroupChatScreen>
               margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               decoration: BoxDecoration(
                 color: sheetColor,
-                borderRadius: BorderRadius.circular(28),
+                borderRadius: BorderRadius.circular(27),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:ONYX/globals.dart';
 import 'package:ONYX/managers/settings_manager.dart';
+import 'package:ONYX/services/onion/onion_identity.dart';
 
 class ConnectionTitle extends StatefulWidget {
   final TextStyle? style;
@@ -17,23 +18,22 @@ class _ConnectionTitleState extends State<ConnectionTitle> {
     final baseStyle =
         widget.style ?? const TextStyle(fontSize: 20, fontWeight: FontWeight.bold);
 
+    // Title doubles as the Tor status: plain "ONYX" when everything is fine
+    // (or Onion mode is off), a live "Tor N%" while bootstrapping, and
+    // "Tor offline" if it failed to start.
     return ValueListenableBuilder<bool>(
-      valueListenable: SettingsManager.meshModeEnabled,
-      builder: (_, meshEnabled, __) {
-        return ValueListenableBuilder<bool>(
-          valueListenable: wsConnectedNotifier,
-          builder: (_, connected, __) {
+      valueListenable: SettingsManager.onionModeEnabled,
+      builder: (_, onionOn, __) {
+        return ValueListenableBuilder<OnionStatus>(
+          valueListenable: OnionIdentity.status,
+          builder: (_, st, __) {
+            final booting = onionOn && st.phase == OnionPhase.bootstrapping;
+            final failed = onionOn && st.phase == OnionPhase.failed;
             Widget child;
 
-            if (connected || meshEnabled) {
-              child = Text(
-                'ONYX',
-                key: const ValueKey('title_onyx'),
-                style: baseStyle,
-              );
-            } else {
+            if (booting) {
               child = Row(
-                key: const ValueKey('title_connecting'),
+                key: const ValueKey('title_tor_boot'),
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
@@ -48,6 +48,21 @@ class _ConnectionTitleState extends State<ConnectionTitle> {
                     ),
                   ),
                 ],
+              );
+            } else if (failed) {
+              child = Text(
+                'Tor offline',
+                key: const ValueKey('title_tor_failed'),
+                style: baseStyle.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              );
+            } else {
+              child = Text(
+                'ONYX',
+                key: const ValueKey('title_onyx'),
+                style: baseStyle,
               );
             }
 

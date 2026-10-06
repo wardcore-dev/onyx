@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'dart:async';
 import '../globals.dart';
 import '../managers/account_manager.dart';
 import '../managers/settings_manager.dart';
 import '../l10n/app_localizations.dart';
+import '../services/onion/onion_transport_service.dart';
+import '../services/profile_store.dart';
+import '../services/wardlink/wardlink_sync_service.dart';
 
 class ProfileEditScreen extends StatefulWidget {
   final String currentUsername;
@@ -45,36 +47,18 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
     setState(() => _saving = true);
 
-    final token = await AccountManager.getToken(widget.currentUsername);
-    if (token == null) {
-      rootScreenKey.currentState?.showSnack('Not logged in');
-      setState(() => _saving = false);
-      return;
-    }
-
     try {
-      final res = await http.post(
-        Uri.parse('$serverBase/profile/display_name'),
-        headers: {
-          'authorization': 'Bearer $token',
-          'content-type': 'application/json',
-        },
-        body: jsonEncode({'display_name': newName}),
-      );
-
-      if (res.statusCode == 200) {
-        
-        rootScreenKey.currentState?.setState(() {
-          rootScreenKey.currentState!.currentDisplayName = newName;
-        });
-        
-        rootScreenKey.currentState?.showSnack(' Display name updated');
-        Navigator.of(context).pop();
-      } else {
-        rootScreenKey.currentState?.showSnack(' Failed to update');
-      }
+      await AccountManager.cacheDisplayName(widget.currentUsername, newName);
+      await ProfileStore.touch(widget.currentUsername);
+      rootScreenKey.currentState?.setState(() {
+        rootScreenKey.currentState!.currentDisplayName = newName;
+      });
+      unawaited(OnionTransportService.instance.syncProfileToPeers());
+      WardLinkSyncService.instance.pokeNow();
+      rootScreenKey.currentState?.showSnack(' Display name updated');
+      if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      rootScreenKey.currentState?.showSnack(' Network error: $e');
+      rootScreenKey.currentState?.showSnack(' Failed to update: $e');
     } finally {
       if (mounted) {
         setState(() => _saving = false);

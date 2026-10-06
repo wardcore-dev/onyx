@@ -127,7 +127,7 @@
   "updateAvailableLabel": "Atualização disponível",
   "updateDownload": "Baixar",
   "cacheTitle": "Cache",
-  "cacheSubtitle": "Gerenciar cache de mídia local e do servidor",
+  "cacheSubtitle": "Gerenciar o cache de mídia local",
   "mediaCacheSize": "Cache de mensagens de mídia: ",
   "clearLocalCache": "Limpar Cache Local",
   "clearLocalCacheTitle": "Limpar cache local",
@@ -137,7 +137,7 @@
   "serverMediaCacheSubtitle": "Armazenado no servidor: imagens, voz, vídeo.",
   "clearServerCache": "Limpar Cache do Servidor",
   "dangerZone": "Zona de Perigo",
-  "dangerZoneSubtitle": "Excluir a conta do servidor e/ou apagar os dados locais.",
+  "dangerZoneSubtitle": "Apagar os dados locais.",
   "factoryReset": "Restauração de Fábrica",
   "factoryResetHint": "Selecione o que deseja redefinir. Pelo menos uma opção deve ser escolhida.",
   "resetDeleteAccount": "Excluir conta do servidor",
@@ -160,26 +160,6 @@
   "resetConfirmStep2Message": "Esta é sua última chance de cancelar. Confirmar iniciará a redefinição imediatamente.",
   "connectionTitle": "Conexão",
   "connectionSubtitle": "Status e controles do WebSocket",
-  "proxyTitle": "Proxy",
-  "proxySubtitle": "Roteie o tráfego por um proxy HTTP ou SOCKS5",
-  "enableProxy": "Ativar Proxy",
-  "proxyType": "Tipo de Proxy",
-  "proxyHost": "Host",
-  "proxyPort": "Porta",
-  "proxyUsername": "Usuário",
-  "proxyPassword": "Senha",
-  "testProxy": "Testar Proxy",
-  "proxyTesting": "Testando...",
-  "proxyOk": " Proxy OK",
-  "proxyFailed": " Proxy inacessível",
-  "useProxy": "Usar proxy",
-  "proxyDirectConnection": "Conexão direta",
-  "proxyRouted": "Tráfego roteado pelo proxy",
-  "proxyConnectedStatus": "Conectado",
-  "proxyNotConnectedStatus": "Não conectado",
-  "proxyLoginOptional": "Usuário (opcional)",
-  "proxyPasswordOptional": "Senha (opcional)",
-  "proxyApplyReconnect": "Aplicar e Reconectar",
   "appDataTitle": "Pasta de dados do ONYX",
   "appDataSubtitle": "Mover a pasta de dados do app para outra unidade",
   "appDataCurrentPath": "Pasta atual",
@@ -225,6 +205,7 @@
   "languageChanged": "Idioma alterado",
   "noChatsYet": "Nenhuma conversa ainda",
   "deleteChatTitle": "Excluir conversa?",
+  "removeFromContacts": "Remover dos contatos",
   "blockUserLabel": "Bloquear usuário",
   "unblockUserLabel": "Desbloquear",
   "muteUserLabel": "Silenciar notificações",
@@ -257,9 +238,41 @@
   "editProfile": "Editar Perfil",
   "displayName": "Nome de Exibição",
   "addAccount": "Adicionar Conta",
+  "identityNewIdentityButton": "Nova identidade",
+  "identityInfoTooltip": "Como isso funciona?",
+  "identityInfoTitle": "Uma nova forma de conversar",
+  "identityInfoBody": "O ONYX está migrando para um modelo totalmente descentralizado. Em vez de uma conta em um servidor central, sua identidade agora é uma chave criptográfica gerada localmente no seu dispositivo — um endereço Tor que só você controla.\n\nNão há senha nem servidor que saiba quem você é. Uma frase-semente de 12 palavras é a única forma de restaurar essa identidade em um novo dispositivo.\n\nMensagens para contatos que já têm seu novo endereço são entregues diretamente via Tor, sem passar por nenhum servidor central. Contatos ainda no sistema antigo precisarão compartilhar o novo endereço com você uma vez, como se compartilha um número de telefone.",
+  "identityTitleChoose": "Criar uma identidade",
+  "identityChooseSubtitle": "A chave e o endereço são gerados localmente neste dispositivo.",
+  "identityCreateNewButton": "Nova identidade",
+  "identityRestoreLinkButton": "Já tenho uma frase-semente",
+  "identityTitleMnemonic": "Sua frase-semente",
+  "identityMnemonicIntro": "Anote estas 12 palavras e guarde-as em local seguro.",
+  "identityMnemonicRestoreNote": "Esta é a única forma de restaurar sua identidade em um novo dispositivo.",
+  "identityCopyButton": "Copiar",
+  "identityCopiedSnack": "Copiado",
+  "identitySavedConfirm": "Salvei a frase em local seguro",
+  "identityContinueButton": "Continuar",
+  "identityTitleRestore": "Restaurar identidade",
+  "identityRestoreHint": "Digite sua frase-semente (12 palavras separadas por espaço).",
+  "identityRestoreButton": "Restaurar",
+  "identityBackButton": "Voltar",
+  "identityTitleDone": "Identidade pronta",
+  "identityAccountIdLabel": "ID da conta",
+  "identityAccountIdExplain": "Um identificador estável derivado da sua chave — é ele que liga seus dispositivos e mensagens no lugar de um nome de usuário.",
+  "identityFingerprintLabel": "Impressão digital",
+  "identityFingerprintExplain": "Um código curto que seus contatos podem usar para confirmar que é realmente você.",
+  "identityDoneButton": "Concluído",
+  "tapToCopyAddress": "Toque para copiar o endereço",
+  "identityErrorCreatePrefix": "Não foi possível criar a identidade",
+  "identityErrorRestorePrefix": "Não foi possível restaurar a identidade",
+  "identityTitleSetup": "Configure seu perfil",
+  "identityDisplayNameLabel": "Nome de exibição",
+  "identityDisplayNameHint": "Assim seus contatos vão te ver",
+  "identityCreateAccountButton": "Criar conta",
   "welcomeTitle": "Bem-vindo",
   "welcomeTagline": "Mensageiro seguro com criptografia de ponta a ponta",
-  "otherAccounts": "Outras Contas",
+  "otherAccounts": "Outras Identidades",
   "tapToSwitch": "Toque para trocar",
   "deleteFromRecentTitle": "Excluir conta dos recentes?",
   "authUsernameLabel": "Nome de usuário (3-16 caracteres)",
@@ -311,7 +324,7 @@
     }
   },
   "iSavedIt": "Eu salvei",
-  "deleteFromRecentContent": "Tem certeza de que deseja remover \"{acc}\" da lista de recentes?nIsso não exclui a conta do servidor.",
+  "deleteFromRecentContent": "Remover \"{acc}\" da lista recente?",
   "@deleteFromRecentContent": {
     "placeholders": {
       "acc": {
@@ -403,7 +416,7 @@
   "cacheDeselectAll": "Desmarcar tudo",
   "cacheSelected": "selecionado(s)",
   "clearLocalCacheDialogTitle": "Limpar cache local",
-  "clearLocalCacheDialogContent": "Tem certeza de que deseja excluir toda a mídia em cache (voz, imagens, vídeos)?nIsso NÃO afeta os uploads no servidor nem o histórico de conversas.",
+  "clearLocalCacheDialogContent": "Excluir toda a mídia em cache (voz, imagens, vídeos)?\nO histórico de conversas não é afetado.",
   "deleteAllLogsTitle": "Excluir todos os logs?",
   "deleteAllLogsContent": "Isso excluirá permanentemente todos os arquivos de log do app no disco.\nEssa ação não pode ser desfeita.",
   "noLogsFound": "Nenhum arquivo de log encontrado.",
@@ -455,8 +468,6 @@
   "liquidGlassSubtitle": "Configure os efeitos de vidro e a qualidade por elemento",
   "liquidGlassNavBarLabel": "Barra de Navegação",
   "liquidGlassNavBarDesc": "Efeito de vidro na barra de navegação inferior",
-  "liquidGlassCardsLabel": "Cartões e Itens de Lista",
-  "liquidGlassCardsDesc": "Efeito de vidro na lista de conversas e cartões de configurações",
   "liquidGlassInputLabel": "Barra de Entrada",
   "liquidGlassInputDesc": "Efeito de vidro na barra de composição de mensagens",
   "liquidGlassSearchLabel": "Busca",
@@ -530,6 +541,8 @@
   "avatarRemoved": "Avatar removido",
   "uinCopied": "UIN copiado",
   "displayNameLength": "O nome de exibição deve ter entre 1 e 16 caracteres",
+  "displayNameRequired": "O nome de exibição não pode ficar vazio",
+  "displayNameUpdated": "Nome atualizado",
   "failedSendLan": "Falha ao enviar pela rede local",
   "fileCancelled": "Arquivo cancelado",
   "doneRestarting": "Concluído! Reiniciando...",
@@ -538,6 +551,10 @@
   "cannotDeleteMsg": "Não é possível excluir: mensagem ainda não salva no servidor",
   "deleteForMeTitle": "Excluir para mim?",
   "deleteForMeContent": "Isso removerá a mensagem apenas do seu dispositivo. A outra pessoa ainda poderá vê-la.",
+  "deleteSelectedTitle": "{count, plural, =1{Excluir mensagem?} other{Excluir {count} mensagens?}}",
+  "deleteSelectedForBoth": "{count, plural, =1{Esta mensagem será excluída para ambos os lados.} other{Estas mensagens serão excluídas para ambos os lados.}}",
+  "deleteSelectedForMe": "{count, plural, =1{Esta mensagem será excluída apenas para você. A outra pessoa ainda poderá vê-la.} other{Estas mensagens serão excluídas apenas para você. A outra pessoa ainda poderá vê-las.}}",
+  "deleteSelectedMixed": "Suas mensagens ({mine}) serão excluídas para ambos os lados. As mensagens da outra pessoa ({theirs}) serão excluídas apenas para você.",
   "deleteFavMessageContent": "Esta mensagem será removida dos favoritos.",
   "pinnedMessage": "Mensagem Fixada",
   "setReminder": "Set Reminder",
@@ -595,7 +612,7 @@
   "message": "Mensagem",
   "noMessagesYet": "Nenhuma mensagem ainda",
   "voiceCallsTitle": "Chamadas de Voz",
-  "voiceCallsContent": "As chamadas de voz atualmente funcionam apenas em rede local (LAN).\n\nEstamos arrecadando fundos para a manutenção do servidor central e desenvolvimento de uma alternativa.",
+  "voiceCallsContent": "As chamadas de voz por enquanto funcionam apenas via LAN (rede local).",
   "supportOnyxBtn": "Apoiar o ONYX",
   "call": "Ligar",
   "securityCheckTitle": "Verificação de segurança",
@@ -1022,9 +1039,13 @@
   "favTitleHint": "Título",
   "generateAll": "Gerar Tudo",
   "generateAllConfirm": "Conteúdo aleatório será gerado, substituindo os dados existentes.",
+  "sendFavoritesSendChat": "Enviar conversa",
+  "sendFavoritesQrTitle": "Mostre ao dispositivo receptor",
+  "sendFavoritesQrInstruction": "Abra Favoritos no outro dispositivo → Sincronizar → Receber e escaneie este código",
+  "sendFavoritesWaitingScan": "Aguardando o outro dispositivo escanear o código QR…",
   "sendFavoritesTitle": "Enviar Favoritos",
   "sendFavoritesShowQrToReceiver": "Mostrar QR para o Receptor",
-  "sendFavoritesScanReceiver": "Escanear QR do Receptor",
+  "sendFavoritesScanReceiver": "Escanear QR\ndo Receptor",
   "sendFavoritesSending": "Enviando Favoritos",
   "sendFavoritesSelectTitle": "Selecione as conversas para enviar",
   "sendFavoritesHintDesktop": "O receptor deve tocar em \"Receber\" primeiro. Depois, escaneie o código QR exibido aqui.",
@@ -1042,7 +1063,7 @@
   "sendFavoritesShowQrBtn": "Mostrar QR",
   "sendFavoritesScanQrBtn": "Escanear QR",
   "receiveFavoritesTitle": "Receber Favoritos",
-  "receiveFavoritesScanSender": "Escanear QR do Remetente",
+  "receiveFavoritesScanSender": "Escanear QR\ndo Remetente",
   "receiveFavoritesScanOnSender": "Escanear no dispositivo do remetente",
   "receiveFavoritesInstruction": "Abra Favoritos no remetente, toque em Sincronizar → Enviar e depois escaneie este código",
   "receiveFavoritesE2E": "Criptografado de ponta a ponta · somente rede local",
@@ -1119,7 +1140,31 @@
   "wardLinkSyncFavoritesToggle": "Sincronizar favoritos",
   "wardLinkSyncFavoritesToggleDesc": "Sincroniza seus favoritos — mensagens e mídia deles",
   "wardLinkSyncPersonalToggle": "Sincronizar minhas mensagens",
-  "wardLinkSyncPersonalToggleDesc": "Sincroniza apenas as mensagens que VOCÊ enviou em conversas pessoais para os seus outros dispositivos — as mensagens do contato já chegam pelo servidor e nunca são sincronizadas desta forma",
+  "pairOverTor": "Parear via Tor",
+  "addContactQr": "Adicionar contato · QR",
+  "contactsTitle": "Contatos",
+  "contactsEmpty": "Ainda não há contatos.",
+  "myDevicesTitle": "Meus dispositivos",
+  "myDevicesThisDevice": "Este dispositivo",
+  "myDevicesHint": "Vincule outro dispositivo com “Vincular dispositivo” na tela de login dele. Cada dispositivo tem seu próprio endereço Tor, e suas mensagens chegam a todos.",
+  "myDevicesUnlink": "Desvincular",
+  "myDevicesUnlinkConfirm": "Desvincular este dispositivo da sua conta? Ele deixará de receber suas mensagens, e seus contatos também o removerão.",
+  "contactsRemoveConfirm": "Remover {username} dos seus contatos?",
+  "contactsRemoveDeviceConfirm": "Remover o pareamento com o dispositivo de {name}? O outro dispositivo dele não é afetado.",
+  "pairScanTitle": "Escanear o código de pareamento",
+  "pairScanHint": "Aponte a câmera para o QR code de pareamento da outra pessoa",
+  "pairShowHint": "Peça para a outra pessoa escanear este código com o app Onyx dela",
+  "pairEncrypted": "Criptografia de ponta a ponta, direto via Tor",
+  "pairScanCode": "Escanear código",
+  "pairedOverTor": "Pareado via Tor",
+  "pairing": "Pareando...",
+  "pairFailedWith": "Falha no pareamento: {error}",
+  "pairStartFailed": "Não foi possível iniciar o Tor: {error}",
+  "pairRetry": "Ainda tentando conectar ({attempt}/{max}) — o endereço pode ainda estar sendo publicado no Tor...",
+  "peerShowQr": "Mostrar QR",
+  "peerHideQr": "Ocultar QR",
+  "peerAddressCopied": "Endereço copiado",
+  "wardLinkSyncPersonalToggleDesc": "Sincroniza apenas as mensagens que VOCÊ enviou em conversas pessoais para os seus outros dispositivos",
   "meshSubtitle": "Rede mesh offline",
   "meshEnable": "Ativar rede Mesh",
   "meshEnableDesc": "Mensagens diretas sem internet via Wi-Fi ou Bluetooth.\nFunciona apenas em mensagens diretas.",
@@ -1546,53 +1591,122 @@
   "quotaExceeded": "Cota excedida",
   "openSettingsAction": "Abrir Configurações",
   "trashIsEmpty": "A lixeira está vazia",
-
   "languageEnglish": "English",
   "languageRussian": "Русский",
   "deviceAuthTabQr": "QR",
   "meshTitle": "Mesh",
   "meshMenuModeWifi": "Wi-Fi",
   "meshMenuModeBluetooth": "Bluetooth",
-
   "mediaCachesCleared": "{n, plural, one{ Cache de mídia limpo ({n})} other{ {n} caches de mídia limpos}}",
-  "@mediaCachesCleared": {"placeholders": {"n": {"type": "int"}}},
-
+  "@mediaCachesCleared": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "leaveGroupTitle": "Sair {isChannel, select, true{do canal} other{do grupo}}?",
-  "@leaveGroupTitle": {"placeholders": {"isChannel": {"type": "String"}}},
-
+  "@leaveGroupTitle": {
+    "placeholders": {
+      "isChannel": {
+        "type": "String"
+      }
+    }
+  },
   "cacheFilesDeleted": "{n, plural, one{{n} arquivo excluído} other{{n} arquivos excluídos}}",
-  "@cacheFilesDeleted": {"placeholders": {"n": {"type": "int"}}},
-
+  "@cacheFilesDeleted": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "orphanedCleanupDeleted": "{files, plural, one{{files} arquivo não usado excluído} other{{files} arquivos não usados excluídos}} ({freedMb} MB liberados)",
-  "@orphanedCleanupDeleted": {"placeholders": {"files": {"type": "int"}, "freedMb": {"type": "String"}}},
-
+  "@orphanedCleanupDeleted": {
+    "placeholders": {
+      "files": {
+        "type": "int"
+      },
+      "freedMb": {
+        "type": "String"
+      }
+    }
+  },
   "deletedLogsCount": "{n, plural, one{{n} arquivo de log excluído.} other{{n} arquivos de log excluídos.}}",
-  "@deletedLogsCount": {"placeholders": {"n": {"type": "int"}}},
-
+  "@deletedLogsCount": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "notifEnabledSubtitle": "{enabled, select, true{Você será avisado sobre novas mensagens} other{Todas as notificações estão silenciadas}}",
-  "@notifEnabledSubtitle": {"placeholders": {"enabled": {"type": "String"}}},
-
+  "@notifEnabledSubtitle": {
+    "placeholders": {
+      "enabled": {
+        "type": "String"
+      }
+    }
+  },
   "notifHideContentSubtitle": "{hidden, select, true{Notificações sem o texto da mensagem} other{Mostrar o texto da mensagem nas notificações}}",
-  "@notifHideContentSubtitle": {"placeholders": {"hidden": {"type": "String"}}},
-
+  "@notifHideContentSubtitle": {
+    "placeholders": {
+      "hidden": {
+        "type": "String"
+      }
+    }
+  },
   "notifSoundEnabledSubtitle": "{enabled, select, true{Som ativado} other{Som desativado}}",
-  "@notifSoundEnabledSubtitle": {"placeholders": {"enabled": {"type": "String"}}},
-
+  "@notifSoundEnabledSubtitle": {
+    "placeholders": {
+      "enabled": {
+        "type": "String"
+      }
+    }
+  },
   "sessionExpiresInDays": "{n, plural, one{A sessão expira em {n} dia} other{A sessão expira em {n} dias}}",
-  "@sessionExpiresInDays": {"placeholders": {"n": {"type": "int"}}},
-
+  "@sessionExpiresInDays": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "sessionExpiresInHours": "{n, plural, one{A sessão expira em {n} hora} other{A sessão expira em {n} horas}}",
-  "@sessionExpiresInHours": {"placeholders": {"n": {"type": "int"}}},
-
+  "@sessionExpiresInHours": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "sessionActiveForDays": "{n, plural, one{A sessão é válida por mais {n} dia} other{A sessão é válida por mais {n} dias}}",
-  "@sessionActiveForDays": {"placeholders": {"n": {"type": "int"}}},
-
+  "@sessionActiveForDays": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "meshRadarFound": "{n, plural, one{{n} dispositivo ao alcance} other{{n} dispositivos ao alcance}}",
-  "@meshRadarFound": {"placeholders": {"n": {"type": "int"}}},
-
+  "@meshRadarFound": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "trashSummary": "{chats, plural, one{{chats} conversa} other{{chats} conversas}}, {messages, plural, one{{messages} mensagem} other{{messages} mensagens}}",
-  "@trashSummary": {"placeholders": {"chats": {"type": "int"}, "messages": {"type": "int"}}},
-
+  "@trashSummary": {
+    "placeholders": {
+      "chats": {
+        "type": "int"
+      },
+      "messages": {
+        "type": "int"
+      }
+    }
+  },
   "muteAction": "Silenciar",
   "unmuteAction": "Reativar som",
   "muteUserTitle": "Silenciar {name}",
@@ -1614,14 +1728,12 @@
   "failedUnmuteUser": "Falha ao reativar o som de {name}",
   "youAreMutedTitle": "Você está silenciado",
   "mutedUntilMessage": "Você não pode enviar mensagens neste chat até {date}.",
-
   "slowModeLabel": "Modo lento (segundos, 0 = desativado)",
   "slowModeHelper": "Atraso mínimo entre mensagens para membros comuns. Não afeta administradores.",
   "slowModeSetTo": "{seconds, plural, one{Modo lento definido para {seconds} segundo} other{Modo lento definido para {seconds} segundos}}",
   "slowModeDisabled": "Modo lento desativado",
   "failedSetSlowMode": "Falha ao ativar o modo lento",
   "failedUpdateSlowMode": "Falha ao atualizar o modo lento",
-
   "donateMenuLabel": "Doar",
   "pollsMenuLabel": "Enquetes",
   "supportThisCommunityTitle": "Apoiar esta comunidade",
@@ -1634,7 +1746,6 @@
   "addDonationAddress": "Adicionar endereço",
   "donationsSaved": "Endereços de doação salvos",
   "failedSaveDonations": "Falha ao salvar endereços de doação",
-
   "noPollsOwnerHint": "Ainda não há enquetes. Toque em \"Nova enquete\" para criar uma.",
   "noPollsHint": "Ainda não há enquetes.",
   "newPollAction": "Nova enquete",
@@ -1647,7 +1758,6 @@
   "failedCreatePoll": "Falha ao criar a enquete",
   "failedVote": "Falha ao enviar o voto",
   "pollVoteCountAnonymous": "{count, plural, one{{count} voto} other{{count} votos}} • anônimo",
-
   "descriptionLabel": "Description",
   "descriptionHint": "What is this group about?",
   "noDescriptionSet": "No description set.",
@@ -1667,7 +1777,16 @@
   "roleColorLabel": "Color",
   "rolePermissionsLabel": "Permissions",
   "roleSubtitle": "{count} permissions · {members} members",
-  "@roleSubtitle": {"placeholders": {"count": {"type": "int"}, "members": {"type": "int"}}},
+  "@roleSubtitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "members": {
+        "type": "int"
+      }
+    }
+  },
   "settingsUpdated": "Settings updated",
   "failedUpdateSettings": "Failed to update settings",
   "roleSaved": "Role saved",
@@ -1676,7 +1795,13 @@
   "failedDeleteRole": "Failed to delete role",
   "addCommentAction": "Comment",
   "commentsCount": "{count} comments",
-  "@commentsCount": {"placeholders": {"count": {"type": "int"}}},
+  "@commentsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "commentsTitle": "Comments",
   "writeCommentHint": "Write a comment...",
   "failedLoadComments": "Failed to load comments",
@@ -1698,5 +1823,159 @@
   "permViewBanList": "Manage ban list",
   "permViewMuteList": "Manage mute list",
   "permViewInviteLink": "View invite link",
-  "manageMembersRequiresChild": "Select at least one of Manage Ban List, Manage Mute List, or Manage Roles"
+  "manageMembersRequiresChild": "Select at least one of Manage Ban List, Manage Mute List, or Manage Roles",
+  "onionRetryWaiting": "Sem conexão · será enviado ao conectar",
+  "onionRetryNow": "Enviando… (tentativa nº {n})",
+  "onionRetryIn": "Offline · tentativa nº {n} em {s} s",
+  "onionOfflineTitle": "O contato não está online",
+  "onionOfflineMessage": "Sua mensagem não pôde ser entregue agora porque seu contato não está online. Ela foi salva neste dispositivo e será reenviada automaticamente a cada {seconds} segundos até ele ficar online. Mantenha o app aberto para que as tentativas continuem.\n\nVocê pode alterar o intervalo em Configurações → Interação → Mensagens.",
+  "messagesSectionTitle": "Mensagens",
+  "messagesSectionSubtitle": "Novas tentativas de envio quando um contato está offline",
+  "retryIntervalTitle": "Intervalo de tentativa",
+  "retryIntervalDesc": "Quando um contato não está online, as mensagens não entregues são reenviadas automaticamente nesse intervalo até chegarem.",
+  "intervalSeconds": "{n} segundos",
+  "intervalMinutes": "{n} min",
+  "statusOnlineLabel": "online",
+  "statusOfflineLabel": "offline",
+  "statusConnectingLabel": "conectando…",
+  "onionCallTitle": "Chamada via Tor",
+  "onionCallHideIp": "Não revelar meu endereço IP",
+  "onionCallHideIpHint": "A chamada passa pelo Tor: seu endereço IP fica oculto, mas espere um atraso de cerca de um segundo. Vídeo não disponível.",
+  "onionCallDirectHint": "Menos atraso, mas a outra pessoa verá seu endereço IP. A conexão direta só é usada se ela também permitir; caso contrário a chamada ainda passa pelo Tor.",
+  "onionCallStart": "Ligar",
+  "onionCallPeerOffline": "O contato não está conectado — não é possível ligar agora",
+  "onionCallNoAnswer": "Sem resposta",
+  "onionCallFailed": "Não foi possível estabelecer a conexão da chamada",
+  "callIncomingTitle": "Chamada recebida",
+  "callAccept": "Atender",
+  "callDecline": "Recusar",
+  "callLogOutgoing": "Chamada efetuada",
+  "callLogIncoming": "Chamada recebida",
+  "callLogMissed": "Chamada perdida",
+  "callLogCancelled": "Chamada cancelada",
+  "callLogDeclined": "Chamada recusada",
+  "callLogBusy": "Linha ocupada",
+  "callLogNoAnswer": "Sem resposta",
+  "callStatusCalling": "Chamando",
+  "callStatusConnecting": "Conectando",
+  "callPathRelay": "Pelo servidor",
+  "callEnd": "Desligar",
+  "callMinimize": "Minimizar",
+  "callRestore": "Abrir chamada",
+  "callFallbackName": "Chamada",
+  "contactRequestNew": "{name} quer conversar com você",
+  "contactRequestsEntry": "Solicitações de contato",
+  "contactRequestsTitle": "Solicitações",
+  "contactRequestsEmpty": "Nenhuma solicitação",
+  "contactRequestAccept": "Aceitar",
+  "contactRequestDecline": "Recusar",
+  "contactRequestDeclineTitle": "Recusar solicitação?",
+  "contactRequestDeclineBody": "Essa pessoa não poderá mais escrever para você nem enviar novas solicitações. Você ainda pode adicioná-la depois.",
+  "contactRequestNoMessages": "Sem comentário",
+  "contactRequestNameClash": "Você já tem um contato @{username} com outra chave. Pode ser o novo dispositivo dele, ou alguém se passando por ele. Aceite só se tiver certeza.",
+  "contactRequestInfo": "Até você aceitar, essa pessoa não vê quando você está online, não vê seu perfil e não pode ligar para você.",
+  "contactRequestAddress": "Endereço onion",
+  "contactRequestKey": "Impressão digital da chave",
+  "contactRequestAccepted": "{name} adicionado aos contatos",
+  "contactRequestFileHidden": "Arquivo (não aceito de desconhecidos)",
+  "contactRequestMessages": "Mensagens",
+  "forwardDone": "Mensagem encaminhada",
+  "forwardFileUnavailable": "O arquivo não está neste dispositivo, não é possível encaminhá-lo",
+  "contactRequestDeclineChoiceBody": "Recusar: a solicitação some, mas a pessoa pode enviar outra depois. Recusar e bloquear: ela nunca mais poderá escrever para você nem enviar solicitações.",
+  "contactRequestDeclineAndBlock": "Recusar e bloquear",
+  "blockedFromRequests": "solicitação bloqueada",
+  "contactRequestComposeTitle": "Solicitação de contato",
+  "contactRequestComposeBody": "Adicione um comentário à sua solicitação — {name} vai vê-lo nas solicitações. Vocês poderão conversar quando ela for aceita.",
+  "contactRequestComposeHint": "Comentário…",
+  "contactRequestSend": "Enviar solicitação",
+  "contactRequestSkip": "Sem comentário",
+  "contactRequestSent": "Solicitação enviada",
+  "contactRequestAttached": "Comentário da solicitação",
+  "contactRequestPendingSnack": "Sua solicitação ainda não foi aceita — você poderá escrever depois.",
+  "contactRequestPendingCall": "Você poderá ligar quando a solicitação for aceita",
+  "contactRequestQueued": "A pessoa está offline — a solicitação será enviada assim que ela ficar online",
+  "contactRequestDelivered": "Sua solicitação para {name} foi entregue",
+  "contactRequestResend": "Enviar a solicitação de novo",
+  "contactRequestUpdated": "Solicitação atualizada",
+  "contactRecordAcceptedBoth": "Solicitação de contato aceita",
+  "contactRequestAlreadySent": "Você já enviou uma solicitação — ela aguarda aprovação",
+  "contactRequestAlreadySentShort": "Solicitação já enviada",
+  "contactRecordAccepted": "Você aceitou a solicitação de contato",
+  "contactRecordAcceptedByThem": "Sua solicitação de contato foi aceita",
+  "contactRecordPreview": "Contato adicionado",
+  "contactRequestAcceptedByThem": "{name} aceitou sua solicitação",
+  "searchOnionHint": "Cole um endereço xxxx.onion para enviar uma solicitação",
+  "searchNeedOnionAddress": "Isso não é um endereço onion — cole um como xxxx.onion",
+  "searchConnectingTor": "Conectando pelo Tor…",
+  "searchStillTrying": "Ainda tentando alcançar ({attempt}/{max})…",
+  "contactRemovedYou": "Você não está mais nos contatos dessa pessoa — a mensagem não pode ser entregue",
+  "contactNotInContacts": "Essa pessoa não está nos seus contatos — a mensagem não foi enviada",
+  "contactRequestCommentFailed": "Solicitação enviada, mas o comentário não chegou — a pessoa ficou offline",
+  "callMute": "Mudo",
+  "callVideo": "Vídeo",
+  "callSpeaker": "Alto-falante",
+  "callPathDirect": "Conexão direta",
+  "callPathTor": "Via Tor",
+  "callVideoUnavailable": "Conexão fraca demais — vídeo indisponível",
+  "callVideoPaused": "Vídeo desligado porque a conexão ficou fraca",
+  "statusShowMyStatus": "Mostrar meu status online",
+  "statusShowMyStatusHint": "Seus contatos veem quando você está online. Desativado, eles não veem nada.",
+  "viewCircuitTitle": "Ver circuito",
+  "viewCircuitSubtitle": "Os relés Tor pelos quais seu tráfego está sendo roteado agora",
+  "viewCircuitEmpty": "Ainda não há circuitos ativos. Tente novamente em instantes.",
+  "circuitThisDevice": "Este dispositivo",
+  "circuitRoleGuard": "guarda",
+  "circuitRoleIntro": "ponto de introdução",
+  "circuitRoleRend": "ponto de encontro",
+  "circuitUnknownRelay": "Retransmissor desconhecido",
+  "circuitOnionRelay": "Retransmissor do serviço onion",
+  "circuitModeSimple": "Simples",
+  "circuitModeAdvanced": "Avançado",
+  "mediaSendFileTitle": "Enviar arquivo",
+  "mediaSendFileDetails": "DETALHES DO ARQUIVO",
+  "mediaSendAlbumHeading": "ÁLBUM",
+  "mediaSendName": "Nome",
+  "mediaSendSize": "Tamanho",
+  "mediaSendType": "Tipo",
+  "mediaSendUnknown": "Desconhecido",
+  "mediaSendImagesLabel": "Imagens",
+  "mediaSendImagesCount": "{count, plural, =1{1 imagem} other{{count} imagens}}",
+  "mediaSendConfirmAlbum": "Tem certeza de que quer enviar estas imagens como álbum?",
+  "mediaSendConfirmFile": "Tem certeza de que quer enviar este arquivo?",
+  "mediaSendVoiceTitle": "Enviar mensagem de voz",
+  "mediaSendVoiceHeading": "MENSAGEM DE VOZ",
+  "mediaSendDuration": "Duração",
+  "mediaSendConfirmVoice": "Enviar esta mensagem de voz?",
+  "glassSimpleTitle": "Configurações do vidro",
+  "glassSimpleDesc": "Um único conjunto de valores para a barra de navegação, a barra de entrada, a pesquisa e os botões da barra superior",
+  "glassResetAll": "Redefinir tudo",
+  "favDeleteSelectedTitle": "{count, plural, =1{Excluir 1 conversa?} other{Excluir {count} conversas?}}",
+  "favDeleteSelectedMessage": "As conversas selecionadas e todas as suas mensagens serão removidas dos favoritos.",
+  "glassMasterTitle": "Efeitos Liquid Glass",
+  "glassMasterDesc": "Ativar ou desativar todos os efeitos de vidro",
+  "glassTabGeneral": "Geral",
+  "glassTabAdvanced": "Avançado",
+  "glassBlur": "Desfoque",
+  "glassBlurDesc": "Intensidade do desfoque fosco atrás do vidro",
+  "glassTint": "Tonalidade",
+  "glassTintDesc": "Opacidade da tonalidade adaptativa (escuro/claro automático)",
+  "glassSaturation": "Saturação",
+  "glassSaturationDesc": "Vivacidade das cores captadas do fundo",
+  "glassChromatic": "Aberração cromática",
+  "glassChromaticDesc": "Franjas de cor nas bordas do vidro (efeito de lente)",
+  "glassRefractive": "Índice de refração",
+  "glassRefractiveDesc": "O quanto o vidro desvia a luz atrás dele",
+  "glassLight": "Intensidade da luz",
+  "glassLightDesc": "Força do brilho especular no vidro",
+  "glassThickness": "Espessura",
+  "glassThicknessDesc": "Profundidade do vidro — afeta a refração e o brilho das bordas",
+  "glassJelly": "Quantidade de alongamento gelatinoso",
+  "glassJellyDesc": "Expansão do indicador ao arrastar entre abas",
+  "glassQualityTitle": "Qualidade do vidro",
+  "glassQualityFast": "Rápido",
+  "glassQualityFastDesc": "Leve\nMelhor desempenho",
+  "glassQualityMedium": "Médio",
+  "glassQualityMediumDesc": "Sem shaders\nSó desfoque",
+  "glassQualityHigh": "Qualidade",
+  "glassQualityHighDesc": "Shaders completos\nMelhor visual"
 }

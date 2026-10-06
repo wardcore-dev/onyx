@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../managers/settings_manager.dart';
 import '../l10n/app_localizations.dart';
+import 'onyx_dialog.dart';
 
 class VoiceConfirmDialog extends StatelessWidget {
   final Duration duration;
@@ -22,213 +22,78 @@ class VoiceConfirmDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
+    final cs = Theme.of(context).colorScheme;
     final l = AppLocalizations.of(context);
+    void cancel() {
+      Navigator.pop(context);
+      onCancel();
+    }
 
-    return ValueListenableBuilder<double>(
-      valueListenable: SettingsManager.elementOpacity,
-      builder: (_, elemOpacity, __) {
-        return ValueListenableBuilder<double>(
-          valueListenable: SettingsManager.elementBrightness,
-          builder: (_, brightness, ___) {
-            final surfaceHighestColor = SettingsManager.getElementColor(
-              colorScheme.surfaceContainerHighest,
-              brightness,
-            );
-            return Dialog(
-          constraints: const BoxConstraints(
-            maxWidth: 500,
+    return OnyxDialogShell(
+      maxWidth: 400,
+      radius: kOnyxPanelRadius,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OnyxDialogHeader(
+            leading: const OnyxHeaderBadge(Icons.mic),
+            title: OnyxHeaderTitle(l.mediaSendVoiceTitle),
+            onClose: cancel,
           ),
-          child: SingleChildScrollView(
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: colorScheme.primary.withOpacity(0.1 * elemOpacity),
-                    border: Border(
-                      bottom: BorderSide(
-                        color: colorScheme.outline.withOpacity(0.2 * elemOpacity),
+                Center(
+                  child: Container(
+                    width: 96,
+                    height: 96,
+                    decoration: BoxDecoration(
+                      color: cs.primary.withValues(alpha: 0.10),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: cs.primary.withValues(alpha: 0.30),
+                        width: 2,
                       ),
                     ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.mic, color: colorScheme.primary),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Send Voice Message',
-                          style: theme.textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
+                    child: Icon(Icons.mic, size: 44, color: cs.primary),
                   ),
                 ),
-
-                Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      
-                      Container(
-                        width: 100,
-                        height: 100,
-                        decoration: BoxDecoration(
-                          color: colorScheme.primary.withOpacity(0.1 * elemOpacity),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: colorScheme.primary.withOpacity(0.3 * elemOpacity),
-                            width: 2,
-                          ),
-                        ),
-                        child: Center(
-                          child: Icon(
-                            Icons.mic,
-                            size: 48,
-                            color: colorScheme.primary,
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: surfaceHighestColor.withValues(alpha: 1.0),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: colorScheme.outline.withOpacity(0.2 * elemOpacity),
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Voice Message Details',
-                              style: theme.textTheme.labelMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                Text(
-                                  'Duration:',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _formatDuration(duration),
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              children: [
-                                Text(
-                                  'Type:',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Audio (M4A)',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: colorScheme.primary.withOpacity(0.1 * elemOpacity),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: colorScheme.primary.withOpacity(0.3 * elemOpacity),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.info,
-                              size: 18,
-                              color: colorScheme.primary,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                'Send this voice message?',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: colorScheme.onSurface,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+                const SizedBox(height: 20),
+                OnyxDetailsPanel(
+                  title: l.mediaSendVoiceHeading,
+                  rows: [
+                    (l.mediaSendDuration, _formatDuration(duration)),
+                    (l.mediaSendType, 'Audio (M4A)'),
+                  ],
                 ),
-
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      top: BorderSide(
-                        color: colorScheme.outline.withOpacity(0.2 * elemOpacity),
-                      ),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          onCancel();
-                        },
-                        child: Text(l.cancel),
-                      ),
-                      const SizedBox(width: 12),
-                      FilledButton.tonal(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          onSend();
-                        },
-                        child: Text(l.sendVoice),
-                      ),
-                    ],
+                const SizedBox(height: 16),
+                Text(
+                  l.mediaSendConfirmVoice,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.4,
+                    color: cs.onSurface.withValues(alpha: 0.6),
                   ),
                 ),
               ],
             ),
           ),
-            );
-          },
-        );
-      },
+          OnyxConfirmButtons(
+            confirmLabel: l.sendVoice,
+            onConfirm: () {
+              Navigator.pop(context);
+              onSend();
+            },
+            cancelLabel: l.cancel,
+            onCancel: cancel,
+          ),
+        ],
+      ),
     );
   }
 }

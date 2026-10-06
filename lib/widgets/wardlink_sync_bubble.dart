@@ -248,13 +248,20 @@ class _WardLinkSyncBubbleState extends State<WardLinkSyncBubble>
                             ),
                             constraints: const BoxConstraints(
                                 minWidth: 18, minHeight: 18),
-                            child: Text(
-                              '${st.filesDone}',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: cs.onPrimary),
+                            // Floating above the Navigator, outside any
+                            // Material: a bare Text gets the debug style
+                            // (yellow double underline). A transparent
+                            // Material gives it the theme's text style.
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: Text(
+                                '${st.filesDone}',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: cs.onPrimary),
+                              ),
                             ),
                           ),
                         ),

@@ -1,10 +1,9 @@
-import 'dart:io';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
-import '../enums/liquid_glass_quality.dart';
 import '../managers/settings_manager.dart';
 
+/// Standard rounded card used all over the settings / lists. (It used to have
+/// a Liquid Glass variant; that was dropped -- glass is now only for the nav
+/// bar, input bar, search and app-bar buttons.)
 class AdaptiveGlassCard extends StatelessWidget {
   const AdaptiveGlassCard({
     super.key,
@@ -19,88 +18,8 @@ class AdaptiveGlassCard extends StatelessWidget {
   final EdgeInsetsGeometry padding;
   final VoidCallback? onTap;
 
-  // Liquid glass только на Android и iOS; на десктопе (Windows/Linux/macOS) — стандартный рендер.
-  static bool get _glassAllowed =>
-      !Platform.isWindows && !Platform.isLinux && !Platform.isMacOS;
-
   @override
   Widget build(BuildContext context) {
-    if (!_glassAllowed) return _buildStandard(context);
-    return ValueListenableBuilder<bool>(
-      valueListenable: SettingsManager.liquidGlassOnCards,
-      builder: (_, onCards, __) {
-        if (!onCards) return _buildStandard(context);
-        return _buildGlass(context);
-      },
-    );
-  }
-
-  Widget _buildGlass(BuildContext context) {
-    return ListenableBuilder(
-      listenable: Listenable.merge([
-        SettingsManager.liquidGlassCardsQuality,
-        SettingsManager.liquidGlassCardsBlur,
-        SettingsManager.liquidGlassCardsTint,
-        SettingsManager.liquidGlassCardsSaturation,
-        SettingsManager.liquidGlassCardsChromatic,
-        SettingsManager.liquidGlassCardsRefractive,
-        SettingsManager.liquidGlassCardsLightIntensity,
-        SettingsManager.liquidGlassCardsThickness,
-      ]),
-      builder: (context, _) {
-        final quality        = SettingsManager.liquidGlassCardsQuality.value;
-        final blur           = SettingsManager.liquidGlassCardsBlur.value;
-        final tint           = SettingsManager.liquidGlassCardsTint.value;
-        final saturation     = SettingsManager.liquidGlassCardsSaturation.value;
-        final chromatic      = SettingsManager.liquidGlassCardsChromatic.value;
-        final refractive     = SettingsManager.liquidGlassCardsRefractive.value;
-        final lightIntensity = SettingsManager.liquidGlassCardsLightIntensity.value;
-        final thickness      = SettingsManager.liquidGlassCardsThickness.value;
-
-        final glassQuality = switch (quality) {
-          LiquidGlassQuality.fast    => GlassQuality.standard,
-          LiquidGlassQuality.medium  => GlassQuality.minimal,
-          LiquidGlassQuality.quality => GlassQuality.premium,
-        };
-
-        final isDark = Theme.of(context).brightness == Brightness.dark;
-        final tintColor = isDark
-            ? Colors.white.withValues(alpha: tint)
-            : Colors.black.withValues(alpha: tint);
-
-        final settings = LiquidGlassSettings(
-          thickness: thickness,
-          blur: blur,
-          chromaticAberration: chromatic,
-          lightIntensity: lightIntensity,
-          refractiveIndex: refractive,
-          saturation: saturation,
-          ambientStrength: 0.8,
-          lightAngle: 0.75 * math.pi,
-          glassColor: tintColor,
-        );
-
-        final shape = LiquidRoundedRectangle(borderRadius: borderRadius);
-
-        final card = GlassCard(
-          useOwnLayer: true,
-          settings: settings,
-          quality: glassQuality,
-          padding: padding,
-          shape: shape,
-          clipBehavior: Clip.antiAlias,
-          child: child,
-        );
-
-        if (onTap != null) {
-          return GestureDetector(onTap: onTap, child: card);
-        }
-        return card;
-      },
-    );
-  }
-
-  Widget _buildStandard(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return ValueListenableBuilder<double>(
       valueListenable: SettingsManager.elementOpacity,

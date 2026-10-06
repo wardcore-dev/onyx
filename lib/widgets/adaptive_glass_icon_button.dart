@@ -85,7 +85,7 @@ Widget _buildAppBarGlass(
 /// (back, search, more-menu, selection actions) — renders the existing
 /// frosted-container look by default, or a real Liquid Glass card when
 /// [SettingsManager.liquidGlassOnAppBar] is on, mirroring how
-/// [SettingsManager.liquidGlassOnInput]/`OnSearch`/`OnCards` already work for
+/// [SettingsManager.liquidGlassOnInput]/`OnSearch` already work for
 /// their respective elements.
 class AdaptiveGlassIconButton extends StatelessWidget {
   const AdaptiveGlassIconButton({

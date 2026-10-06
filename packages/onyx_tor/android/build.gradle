@@ -1,0 +1,87 @@
+group = "com.onyx.onyx_tor"
+version = "1.0-SNAPSHOT"
+
+buildscript {
+    ext.kotlinVersion = "2.3.20"
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath "com.android.tools.build:gradle:9.0.1"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        // info.guardianproject:tor-android (the prebuilt tor daemon binary)
+        // isn't on Maven Central -- Guardian Project serves their own repo
+        // straight out of the gpmaven GitHub repo.
+        maven { url "https://raw.githubusercontent.com/guardianproject/gpmaven/master" }
+    }
+}
+
+apply plugin: "com.android.library"
+apply plugin: "org.jetbrains.kotlin.android"
+
+android {
+    namespace "com.onyx.onyx_tor"
+
+    compileSdk 36
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += "src/main/kotlin"
+        }
+        test {
+            java.srcDirs += "src/test/kotlin"
+        }
+    }
+
+    defaultConfig {
+        minSdk 24
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+            all {
+                useJUnitPlatform()
+                outputs.upToDateWhen { false }
+                testLogging {
+                    events "passed", "skipped", "failed", "standardOut", "standardError"
+                    showStandardStreams = true
+                }
+            }
+        }
+    }
+}
+
+dependencies {
+    testImplementation "org.jetbrains.kotlin:kotlin-test"
+    testImplementation "org.mockito:mockito-core:5.0.0"
+
+    // Guardian Project's prebuilt tor daemon (the same one Orbot ships) --
+    // Gradle unpacks its libtor.so into this app's nativeLibraryDir per-ABI
+    // like any other native dependency; OnyxTorPlugin.kt just reports that
+    // directory back to Dart so Process.start can exec it directly.
+    // Bumped from 0.4.8.18 -- the Tor network consensus now recommends
+    // protocol versions (Desc=3-4, Microdesc=3, Relay=5-6) that 0.4.8.18
+    // doesn't implement, logged as a "you should upgrade" warning on every
+    // bootstrap. Still works as a client for now, but the network will
+    // eventually stop accepting a client this far behind.
+    implementation "info.guardianproject:tor-android:0.4.8.21.1"
+}

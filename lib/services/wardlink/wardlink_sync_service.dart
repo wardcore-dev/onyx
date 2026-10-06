@@ -27,6 +27,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import '../profile_store.dart';
 
 import '../../globals.dart';
 import 'wardlink_media.dart';
@@ -202,6 +203,11 @@ class WardLinkSyncService {
   Timer? _broadcastTimer;
   String? _username;
   bool _starting = false;
+  String? _startingUsername;
+  // Bumped by every stop(); lets an in-flight start() notice it was torn
+  // down (account switch) while awaiting and abort instead of resurrecting
+  // the daemon for the previous account.
+  int _generation = 0;
 
   final Set<String> _activeSyncs = {};            // peer pub → in-flight
   // Peers that sent a poke while we were already syncing with them — resync
@@ -238,18 +244,36 @@ class WardLinkSyncService {
       if (kDebugMode) print('[WardLink] start refused: decoy mode active');
       return;
     }
-    if (_starting) return;
+    // A start() already in flight for the SAME account is a duplicate. For a
+    // DIFFERENT account it must not be silently dropped (it used to be): the
+    // in-flight start kept running for the old account while the UI had
+    // already switched, so the daemon synced the old account's data into the
+    // new one. Wait for it to finish, then fall through and restart.
+    while (_starting) {
+      if (_startingUsername == username) return;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
     if (isRunning && _username == username) return;
     _starting = true;
+    _startingUsername = username;
     try {
       await stop();
+      final gen = _generation;
+      bool superseded() => gen != _generation;
       _username = username;
 
       await WardLinkIdentity.ensureLoaded();
       await WardLinkPairedDevices.load(username);
       await WardLinkPendingDeletions.load(username);
+      // stop() (e.g. an account switch) ran while the loads above were
+      // awaiting: don't bring the server up for an account that's gone.
+      if (superseded()) return;
 
       final server = await HttpServer.bind(InternetAddress.anyIPv4, syncPort);
+      if (superseded()) {
+        await server.close(force: true);
+        return;
+      }
       _server = server;
       _syncPort = server.port;
       server.listen(_handleRequest, onError: (e) {
@@ -294,6 +318,7 @@ class WardLinkSyncService {
       await stop();
     } finally {
       _starting = false;
+      _startingUsername = null;
     }
   }
 
@@ -310,6 +335,7 @@ class WardLinkSyncService {
     // the instant stop() is called, every outstanding coroutine's next check
     // sees `null != '<old username>'` and aborts.
     _username = null;
+    _generation++;
     chatsVersion.removeListener(_onLocalChange);
     favoritesVersion.removeListener(_onLocalChange);
     _pokeDebounce?.cancel();
@@ -565,7 +591,9 @@ class WardLinkSyncService {
     if (!WardLinkPairedDevices.isTrusted(peerPub)) return;
 
     // Always refresh the cached address so sendUnpair can reach this peer.
+    final known = _peerAddresses.containsKey(peerPub);
     _peerAddresses[peerPub] = (ip: from, port: peerPort);
+    if (!known) onPeerReachable?.call();
 
     // A peer that just joined asks everyone to announce — reply with our own
     // presence (rate-limited) so it discovers us immediately, not in 5s.
@@ -607,6 +635,49 @@ class WardLinkSyncService {
 
   /// Public entry so the UI can force an immediate broadcast/sync attempt.
   Future<void> refresh() => _broadcast();
+
+  // ─────────────────────── Tor own-device events ────────────────────────────
+  //
+  // The Tor transport's own devices talk over their own Tor channels; when
+  // Tor isn't available on one of them, the same events (see
+  // OnionTransportService "own-device events") ride WardLink instead.
+
+  /// Set by OnionTransportService: handles an event from another of our
+  /// devices and returns this device's onion device pub, or null to refuse.
+  static Future<String?> Function(Map<String, dynamic> event)? onOnionOwnEvent;
+
+  /// Set by OnionTransportService: a paired device was just seen on the LAN
+  /// (a good moment to hand it queued events).
+  static VoidCallback? onPeerReachable;
+
+  /// True when at least one paired device has been seen on the LAN.
+  bool get hasReachablePeer => isRunning && _peerAddresses.isNotEmpty;
+
+  /// Hands [event] to every paired device currently known on the LAN.
+  /// Returns the onion device pubs of the devices that took it.
+  Future<List<String>> sendOnionOwnEvent(Map<String, dynamic> event) async {
+    if (!isRunning || DecoyManager.isActive.value) return const [];
+    final taken = <String>[];
+    for (final entry in Map.of(_peerAddresses).entries) {
+      final paired = WardLinkPairedDevices.byPub(entry.key);
+      if (paired == null) continue;
+      try {
+        final key = await WardLinkCrypto.deriveSessionKey(
+            WardLinkIdentity.keyPair, paired.identityPub);
+        final resp = await _post(
+          'http://${entry.value.ip.address}:${entry.value.port}',
+          '/wardlink/onion_own',
+          key,
+          {'e': event},
+        ).timeout(const Duration(seconds: 10));
+        final pub = resp?['pub'];
+        if (resp?['ok'] == true && pub is String) taken.add(pub);
+      } catch (_) {
+        // Gone from the LAN / an older build without this endpoint.
+      }
+    }
+    return taken;
+  }
 
   /// Immediately tell paired devices to pull — used right after a deletion so
   /// the removal propagates without waiting for the debounced change-poke.
@@ -1170,7 +1241,8 @@ class WardLinkSyncService {
       // scope can never merge state with, or be affected by, Favorites sync.
       int importedPersonalMsgs = 0;
       int importedPersonalEdits = 0;
-      if (SettingsManager.wardLinkSyncPersonalOutgoing.value) {
+      if (SettingsManager.wardLinkSyncPersonalOutgoing.value ||
+          SettingsManager.wardLinkSyncPersonalIncoming.value) {
         for (final cm in personalChatsManifest) {
           final chatId = cm['chatId'] as String?;
           if (chatId == null || chatId.startsWith('fav:')) continue;
@@ -1205,7 +1277,33 @@ class WardLinkSyncService {
             if (remoteEtMs > localEtMs) editedIds.add(id);
           }
 
-          if (missingIds.isEmpty && editedIds.isEmpty) continue;
+          // Messages we already have whose file never arrived here (synced
+          // back when files weren't fetched for personal chats, or a download
+          // that failed): this peer has them, so fetch them now. Only the
+          // newest media messages are checked, to keep a sync cheap.
+          final repair = <ChatMessage>[];
+          for (final m in (List.of(manifestMsgs)
+                ..sort((a, b) => _msgMillis(b['t']).compareTo(_msgMillis(a['t']))))
+              .take(300)) {
+            final local = localMsgById[m['id']?.toString()];
+            if (local == null ||
+                LanFavSyncService.referencedKeys(local.content).isEmpty) {
+              continue;
+            }
+            for (final ref in LanFavSyncService.referencedKeys(local.content)) {
+              if (_peerMissingFiles.contains('$peerPubB64\x00${ref.key}')) {
+                continue;
+              }
+              if (await _needsFile(ref.key, ref.type)) {
+                repair.add(local);
+                break;
+              }
+            }
+          }
+
+          if (missingIds.isEmpty && editedIds.isEmpty && repair.isEmpty) {
+            continue;
+          }
 
           final peerLabel = (cm['peer'] as String?) ?? chatId;
           _chatBegin(chatId, peerLabel, missingIds.length);
@@ -1225,7 +1323,7 @@ class WardLinkSyncService {
             // would display as if it came from the contact.
             newMsgs = rawList
                 .map(ChatMessage.fromJson)
-                .where((m) => m.outgoing)
+                .where(_personalAllowed)
                 // This device didn't send it — it only has a synced copy, so
                 // it must never offer edit/delete for it (only the
                 // originating device can change/delete a message), and the
@@ -1248,9 +1346,14 @@ class WardLinkSyncService {
                 [];
             editedMsgs = rawEdited
                 .map(ChatMessage.fromJson)
-                .where((m) => m.outgoing)
+                .where(_personalAllowed)
                 .toList();
           }
+
+          // Their files (images, voice, video...), written where the message
+          // widgets look -- before the messages show up, so they render.
+          importedFiles += await _fetchMediaOf(
+              base, key, peerPubB64, chatId, [...newMsgs, ...repair]);
 
           if (staleAccount()) {
             _log(WardLinkLogLevel.info,
@@ -1300,6 +1403,20 @@ class WardLinkSyncService {
             force: (firstSyncWithPeer && !iAmEstablished) || importedFavs > 0);
       }
 
+      // Profile (display name + avatar): newest edit across our own devices wins.
+      final remoteProfile = manifestResp['profile'];
+      final meNow = root.currentUsername;
+      if (remoteProfile is Map && meNow != null && !staleAccount()) {
+        final remoteAt = (remoteProfile['updatedAt'] as num?)?.toInt() ?? 0;
+        if (remoteAt > await ProfileStore.updatedAt(meNow)) {
+          final resp = await _post(base, '/wardlink/profile', key, const {});
+          final prof = resp?['profile'];
+          if (prof is Map<String, dynamic> && !staleAccount()) {
+            await ProfileStore.applyOwnProfile(meNow, prof);
+          }
+        }
+      }
+
       await WardLinkPairedDevices.markSynced(peerPubB64);
       final nothingNew = importedMsgs == 0 && importedFiles == 0 && importedEdits == 0;
       final editSuffix = importedEdits > 0 ? ', $importedEdits edit(s)' : '';
@@ -1343,6 +1460,56 @@ class WardLinkSyncService {
     // Poke AFTER finally — peer is out of _activeSyncs now, so their response
     // won't land in _pendingResync and won't cause an immediate re-sync loop.
     if (pokeAfterSync) unawaited(pokeNow());
+  }
+
+  /// Downloads the files [msgs] refer to that aren't where their widgets
+  /// look on this device. Returns how many were fetched.
+  Future<int> _fetchMediaOf(String base, SecretKey key, String peerPubB64,
+      String chatId, List<ChatMessage> msgs) async {
+    var got = 0;
+    final seen = <String>{};
+    for (final msg in msgs) {
+      for (final ref in LanFavSyncService.referencedKeys(msg.content)) {
+        if (!seen.add(ref.key)) continue;
+        final missingKey = '$peerPubB64\x00${ref.key}';
+        if (_peerMissingFiles.contains(missingKey)) continue;
+        if (!await _needsFile(ref.key, ref.type)) continue;
+        final fname = p.basename(ref.key);
+        _chatAddFile(chatId, WardLinkFileEntry(fname));
+        final ok =
+            await _fetchFile(base, key, chatId, msg.id, ref.key, ref.type);
+        _chatUpdateFile(chatId, fname, done: ok, error: !ok);
+        if (ok) {
+          got++;
+        } else if (_lastDownloadError == 'HTTP 404') {
+          // They don't have it: don't ask again this session. A transfer
+          // that was cut off is simply retried on the next sync.
+          _peerMissingFiles.add(missingKey);
+        }
+      }
+    }
+    return got;
+  }
+
+  /// True if the file [fileKey] still has to come from a peer. An
+  /// onion:// / lan:// file must sit in its own directory; if this device
+  /// has it elsewhere (e.g. synced into a cache dir by an older build) it's
+  /// copied there instead of downloaded again.
+  Future<bool> _needsFile(String fileKey, String type) async {
+    final prefixed =
+        fileKey.startsWith('onion://') || fileKey.startsWith('lan://');
+    if (!prefixed) return await WardLinkMedia.resolveLocal(fileKey) == null;
+    if (await WardLinkMedia.isWhereWidgetLooks(fileKey, type)) return false;
+    final local = await WardLinkMedia.resolveLocal(fileKey);
+    if (local == null) return true;
+    try {
+      final target = await WardLinkMedia.saveTarget(fileKey, type);
+      await File(local).copy(target);
+      WardLinkMedia.register(fileKey, type, target, await File(target).length());
+      return false;
+    } catch (_) {
+      return true;
+    }
   }
 
   /// Stream a media file from the peer to local disk, enforcing the size limit.
@@ -1462,6 +1629,21 @@ class WardLinkSyncService {
           await _serveMessages(req, key, payload);
         case '/wardlink/file':
           await _serveFile(req, key, payload, paired.name);
+        case '/wardlink/profile':
+          final me = rootScreenKey.currentState?.currentUsername;
+          await _reply(req, key, {
+            if (me != null) 'profile': await ProfileStore.exportProfile(me),
+          });
+        case '/wardlink/onion_own':
+          // An own-device event of the Tor transport (relay a message, a
+          // forwarded incoming one...), sent over the LAN because Tor
+          // between the two devices isn't available.
+          final handler = onOnionOwnEvent;
+          final e = payload['e'];
+          final pub = (handler != null && e is Map)
+              ? await handler(Map<String, dynamic>.from(e))
+              : null;
+          await _reply(req, key, {'ok': pub != null, 'pub': pub});
         default:
           req.response.statusCode = 404;
           await req.response.close();
@@ -1535,12 +1717,14 @@ class WardLinkSyncService {
     // block above: separate top-level key, separate gate, no fav bookkeeping
     // (no meta/avatar/folder structure) so the two scopes can never merge.
     final personalChats = <Map<String, dynamic>>[];
-    if (root != null && SettingsManager.wardLinkSyncPersonalOutgoing.value) {
+    if (root != null &&
+        (SettingsManager.wardLinkSyncPersonalOutgoing.value ||
+            SettingsManager.wardLinkSyncPersonalIncoming.value)) {
       final me = root.currentUsername;
       for (final chatId in root.chats.keys) {
         if (chatId.startsWith('fav:') || !chatId.contains(':')) continue;
         final outgoingMsgs = (root.chats[chatId] ?? const <ChatMessage>[])
-            .where((m) => m.outgoing)
+            .where(_personalAllowed)
             .toList();
         if (outgoingMsgs.isEmpty) continue;
         final peer =
@@ -1587,8 +1771,21 @@ class WardLinkSyncService {
       'tombstones': WardLinkTombstones.export(),
       // Trusted peer list for automatic full-mesh formation.
       'meshPeers': meshPeers,
+      // Profile version, so a device with an older name/avatar can pull ours.
+      if (root?.currentUsername != null)
+        'profile': {
+          'updatedAt': await ProfileStore.updatedAt(root!.currentUsername!),
+        },
     });
   }
+
+  /// Whether a personal-chat message may cross WardLink under the local
+  /// settings: our own sent messages need "sync my messages", the contact's
+  /// messages need "sync incoming messages". Applied on both the serving and
+  /// the receiving side (defense in depth).
+  bool _personalAllowed(ChatMessage m) => m.outgoing
+      ? SettingsManager.wardLinkSyncPersonalOutgoing.value
+      : SettingsManager.wardLinkSyncPersonalIncoming.value;
 
   Future<void> _serveMessages(
       HttpRequest req, SecretKey key, Map<String, dynamic> payload) async {
@@ -1603,10 +1800,12 @@ class WardLinkSyncService {
       // personal-outgoing scope is enabled — regardless of what the peer
       // claims to be requesting or what its own manifest looked like.
       final isFav = chatId.startsWith('fav:');
-      if (isFav || SettingsManager.wardLinkSyncPersonalOutgoing.value) {
+      if (isFav ||
+          SettingsManager.wardLinkSyncPersonalOutgoing.value ||
+          SettingsManager.wardLinkSyncPersonalIncoming.value) {
         for (final m in root.chats[chatId] ?? const <ChatMessage>[]) {
           if (!ids.contains(m.id)) continue;
-          if (!isFav && !m.outgoing) continue;
+          if (!isFav && !_personalAllowed(m)) continue;
           out.add(m.toJson());
         }
       }
@@ -1823,15 +2022,21 @@ class WardLinkSyncService {
 
       final total =
           int.tryParse(resp.headers.value('x-wardlink-size') ?? '') ?? 0;
-      sink = File(destPath).openWrite();
+      // Written aside and moved into place only when complete, so a widget
+      // never picks up (and caches) a half-written file.
+      sink = File('$destPath.part').openWrite();
       reader = WardLinkFrameReader(resp);
       int written = 0;
+      var terminated = false;
 
       while (true) {
         final lenBytes = await reader.readExact(4);
         if (lenBytes == null) break; // stream ended
         final len = ByteData.sublistView(lenBytes).getUint32(0, Endian.big);
-        if (len == 0) break; // terminator
+        if (len == 0) {
+          terminated = true;
+          break;
+        }
         final sealed = await reader.readExact(len);
         if (sealed == null) throw const FormatException('truncated frame');
         final plain = await WardLinkCrypto.openFrame(sealed, key);
@@ -1843,9 +2048,20 @@ class WardLinkSyncService {
         onProgress?.call(written, total);
       }
 
+      // The connection dropped between frames (Wi-Fi blip, the other app
+      // went to background): what we have is a cut-off file that would sit
+      // here as a "done" but broken image forever. Fail instead; the
+      // except-branch deletes it and the next sync fetches it again.
+      if (!terminated || (total > 0 && written != total)) {
+        throw StateError('transfer cut off ($written of $total bytes)');
+      }
+
       await sink.flush();
       await sink.close();
       sink = null;
+      final done = File(destPath);
+      if (await done.exists()) await done.delete();
+      await File('$destPath.part').rename(destPath);
       return written;
     } catch (e) {
       _lastDownloadError = '$e';
@@ -1854,7 +2070,7 @@ class WardLinkSyncService {
         await sink?.close();
       } catch (_) {}
       try {
-        final d = File(destPath);
+        final d = File('$destPath.part');
         if (await d.exists()) await d.delete();
       } catch (_) {}
       return -1;

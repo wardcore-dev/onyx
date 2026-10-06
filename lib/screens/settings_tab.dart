@@ -29,7 +29,6 @@ import '../enums/media_preload_mode.dart';
 import '../enums/scroll_down_button_position.dart';
 import '../l10n/app_localizations.dart';
 import '../l10n/app_localizations_extra.dart';
-import '../utils/proxy_manager.dart';
 import 'pin_code_screen.dart';
 import 'decoy_setup_screen.dart';
 import 'cache_manager_screen.dart';
@@ -51,6 +50,9 @@ import '../widgets/media_picker_sheet.dart';
 import '../services/wardlink/wardlink_sync_service.dart';
 import '../services/wardlink/wardlink_paired_devices.dart';
 import '../services/mesh/mesh_manager.dart';
+import '../services/onion/onion_transport_service.dart';
+import '../services/onion/onion_paired_peers.dart';
+import '../services/onion/onion_requests.dart';
 import 'mesh_graph_screen.dart' show showMeshRadarSheet;
 import 'package:permission_handler/permission_handler.dart';
 import '../managers/trash_manager.dart';
@@ -458,19 +460,12 @@ class _SettingsTabState extends State<SettingsTab>
 
   bool _isUpdatingControllers = false;
 
-  late TextEditingController _proxyHostController;
-  late TextEditingController _proxyPortController;
-  late TextEditingController _proxyUsernameController;
-  late TextEditingController _proxyPasswordController;
-  bool _proxyPasswordVisible = false;
-  bool _proxyTesting = false;
-  String? _proxyTestResult;
-
   // Cached future for old-folder check — avoids redoing filesystem I/O on every rebuild.
   Future<({String path, bool hasUserData})>? _oldFolderInfoFuture;
 
   late String _localStatusVisibility;
   bool _localHideFromSearch = false;
+
 
   @override
   void initState() {
@@ -484,19 +479,6 @@ class _SettingsTabState extends State<SettingsTab>
     );
     _statusOfflineController = TextEditingController(
       text: SettingsManager.statusOffline.value,
-    );
-
-    _proxyHostController = TextEditingController(
-      text: SettingsManager.proxyHost.value,
-    );
-    _proxyPortController = TextEditingController(
-      text: SettingsManager.proxyPort.value,
-    );
-    _proxyUsernameController = TextEditingController(
-      text: SettingsManager.proxyUsername.value,
-    );
-    _proxyPasswordController = TextEditingController(
-      text: SettingsManager.proxyPassword.value,
     );
 
     SettingsManager.statusOnline.addListener(_updateStatusOnlineController);
@@ -549,10 +531,6 @@ class _SettingsTabState extends State<SettingsTab>
         .removeListener(_updateStatusOfflineController);
     _statusOnlineController.dispose();
     _statusOfflineController.dispose();
-    _proxyHostController.dispose();
-    _proxyPortController.dispose();
-    _proxyUsernameController.dispose();
-    _proxyPasswordController.dispose();
     _settingsSearchCtrl.dispose();
     _fadeController.dispose();
     super.dispose();
@@ -633,13 +611,7 @@ class _SettingsTabState extends State<SettingsTab>
   }
 
   Future<void> _openCacheManager() async {
-    final username = await AccountManager.getCurrentAccount();
-    if (!mounted) return;
-    final token =
-        username != null ? await AccountManager.getToken(username) : null;
-    if (!mounted) return;
-
-    await showCacheManagerSheet(context, token: token);
+    await showCacheManagerSheet(context);
 
     setState(() {
       _cacheSizeMb = null;
@@ -804,20 +776,6 @@ class _SettingsTabState extends State<SettingsTab>
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-                  child: _buildResetOption(
-                    colorScheme: colorScheme,
-                    value: deleteAccount,
-                    onChanged: username == null
-                        ? null
-                        : (v) => setState(() => deleteAccount = v ?? false),
-                    title: l.resetDeleteAccount,
-                    subtitle: username != null
-                        ? l.resetDeleteAccountSubtitle(username)
-                        : l.resetNoAccount,
-                  ),
-                ),
-                Padding(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
                   child: _buildResetOption(
                     colorScheme: colorScheme,
@@ -973,8 +931,6 @@ class _SettingsTabState extends State<SettingsTab>
     String localVisibility = _localStatusVisibility;
     final onlineCtrl =
         TextEditingController(text: SettingsManager.statusOnline.value);
-    final offlineCtrl =
-        TextEditingController(text: SettingsManager.statusOffline.value);
 
     await showGeneralDialog(
       context: context,
@@ -1049,7 +1005,6 @@ class _SettingsTabState extends State<SettingsTab>
                               GestureDetector(
                                 onTap: () {
                                   onlineCtrl.dispose();
-                                  offlineCtrl.dispose();
                                   Navigator.of(ctx).pop();
                                 },
                                 child: Container(
@@ -1074,86 +1029,40 @@ class _SettingsTabState extends State<SettingsTab>
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              // Visibility
+                              // Visibility (iOS-style draggable pill switch)
                               Row(
                                 children: [
                                   Icon(Icons.visibility_rounded,
-                                      size: 15,
+                                      size: 18,
                                       color:
                                           cs.onSurface.withValues(alpha: 0.6)),
-                                  const SizedBox(width: 6),
-                                  Text(l.statusVisibility,
-                                      style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          color: cs.onSurface
-                                              .withValues(alpha: 0.6))),
-                                ],
-                              ),
-                              const SizedBox(height: 10),
-                              Row(
-                                children: ['show', 'hide'].map((opt) {
-                                  final selected = localVisibility == opt;
-                                  return Expanded(
-                                    child: Padding(
-                                      padding: EdgeInsets.only(
-                                          right: opt == 'show' ? 6 : 0,
-                                          left: opt == 'hide' ? 6 : 0),
-                                      child: GestureDetector(
-                                        onTap: () => setDialogState(
-                                            () => localVisibility = opt),
-                                        child: AnimatedContainer(
-                                          duration:
-                                              const Duration(milliseconds: 150),
-                                          padding: const EdgeInsets.symmetric(
-                                              vertical: 10),
-                                          decoration: BoxDecoration(
-                                            color: selected
-                                                ? cs.primary
-                                                    .withValues(alpha: 0.12)
-                                                : cs.surfaceContainerHighest
-                                                    .withValues(alpha: 0.4),
-                                            borderRadius:
-                                                BorderRadius.circular(12),
-                                            border: Border.all(
-                                              color: selected
-                                                  ? cs.primary
-                                                      .withValues(alpha: 0.4)
-                                                  : cs.outlineVariant
-                                                      .withValues(alpha: 0.3),
-                                              width: selected ? 1.2 : 0.8,
-                                            ),
-                                          ),
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              if (selected)
-                                                Icon(Icons.check_rounded,
-                                                    size: 15,
-                                                    color: cs.primary),
-                                              if (selected)
-                                                const SizedBox(width: 4),
-                                              Text(
-                                                opt == 'show'
-                                                    ? l.statusShowStatus
-                                                    : l.statusHideStatus,
-                                                style: TextStyle(
-                                                  fontSize: 13,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: selected
-                                                      ? cs.primary
-                                                      : cs.onSurface.withValues(
-                                                          alpha: 0.7),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(l.statusShowMyStatus,
+                                            style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w600,
+                                                color: cs.onSurface)),
+                                        const SizedBox(height: 2),
+                                        Text(l.statusShowMyStatusHint,
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: cs.onSurface
+                                                    .withValues(alpha: 0.55))),
+                                      ],
                                     ),
-                                  );
-                                }).toList(),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Switch(
+                                    value: localVisibility != 'hide',
+                                    onChanged: (v) => setDialogState(() =>
+                                        localVisibility = v ? 'show' : 'hide'),
+                                  ),
+                                ],
                               ),
                               const SizedBox(height: 20),
                               // Text fields
@@ -1196,30 +1105,6 @@ class _SettingsTabState extends State<SettingsTab>
                                   ),
                                 ),
                               ),
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: offlineCtrl,
-                                decoration: InputDecoration(
-                                  labelText: l.statusWhenOffline,
-                                  filled: true,
-                                  fillColor: cs.surfaceContainerHighest
-                                      .withValues(alpha: 0.4),
-                                  border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(28)),
-                                  enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(28),
-                                    borderSide: BorderSide(
-                                        color: cs.outlineVariant
-                                            .withValues(alpha: 0.3),
-                                        width: 0.8),
-                                  ),
-                                  focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(28),
-                                    borderSide: BorderSide(
-                                        color: cs.primary, width: 1.4),
-                                  ),
-                                ),
-                              ),
                               const SizedBox(height: 24),
                               FilledButton(
                                 style: FilledButton.styleFrom(
@@ -1229,22 +1114,15 @@ class _SettingsTabState extends State<SettingsTab>
                                       onlineCtrl.text.trim().isEmpty
                                           ? 'online'
                                           : onlineCtrl.text.trim();
-                                  final offlineText =
-                                      offlineCtrl.text.trim().isEmpty
-                                          ? 'offline'
-                                          : offlineCtrl.text.trim();
                                   _isUpdatingControllers = true;
                                   await SettingsManager.setStatusVisibility(
                                       localVisibility);
                                   await SettingsManager.setStatusOnline(
                                       onlineText);
-                                  await SettingsManager.setStatusOffline(
-                                      offlineText);
                                   _isUpdatingControllers = false;
                                   setState(() =>
                                       _localStatusVisibility = localVisibility);
                                   onlineCtrl.dispose();
-                                  offlineCtrl.dispose();
                                   if (!ctx.mounted) return;
                                   Navigator.pop(ctx);
                                   final ok = await _syncStatusSettings();
@@ -1270,6 +1148,11 @@ class _SettingsTabState extends State<SettingsTab>
   }
 
   Future<bool> _syncStatusSettings() async {
+    if (kCentralServerRemoved) {
+      // Presence travels peer-to-peer over Tor; the transport re-broadcasts
+      // automatically whenever these settings change.
+      return true;
+    }
     try {
       final username = await AccountManager.getCurrentAccount();
       if (username == null) return false;
@@ -1684,8 +1567,6 @@ class _SettingsTabState extends State<SettingsTab>
             l.useBiometricsSubtitle,
             l.lockOnResume,
             l.lockOnResumeSubtitle,
-            l.hideFromSearch,
-            l.hideFromSearchSubtitle,
             l.statusVisibility,
             l.statusShowStatus,
             l.statusHideStatus,
@@ -1699,9 +1580,6 @@ class _SettingsTabState extends State<SettingsTab>
             l.decoyAccountSubtitle,
             l.decoyContactsSection,
             l.decoyContactsSubtitle,
-            l.activeDevices,
-            l.changePassword,
-            l.keyMgmtDescription,
             'Privacy',
             'Visibility and search settings',
             'PIN, biometrics and lock behavior'
@@ -1849,8 +1727,6 @@ class _SettingsTabState extends State<SettingsTab>
             l.liquidGlassSubtitle,
             l.liquidGlassNavBarLabel,
             l.liquidGlassNavBarDesc,
-            l.liquidGlassCardsLabel,
-            l.liquidGlassCardsDesc,
             l.liquidGlassInputLabel,
             l.liquidGlassInputDesc,
             l.liquidGlassSearchLabel,
@@ -1903,14 +1779,12 @@ class _SettingsTabState extends State<SettingsTab>
           if (_sectionVisible(l.cacheTitle, l.cacheSubtitle, [
             l.mediaCacheSize,
             l.clearLocalCache,
-            l.serverMediaCache,
             l.serverMediaCacheSubtitle,
             l.clearServerCache,
             l.dangerZone,
             l.dangerZoneSubtitle,
             l.factoryReset,
             l.factoryResetHint,
-            l.resetDeleteAccount,
             l.resetDeleteLocal,
             l.resetDeleteLocalSubtitle,
             l.manageCacheTitle,
@@ -1926,35 +1800,6 @@ class _SettingsTabState extends State<SettingsTab>
               subtitle: AppLocalizations.of(context).cacheSubtitle,
               section: SectionType.cache,
               expandedContentBuilder: _buildCacheContent,
-            ),
-            const SizedBox(height: 16),
-          ],
-          if (_sectionVisible(l.connectionTitle, l.connectionSubtitle, [
-            l.connect,
-            l.disconnect,
-            'Server Connection',
-            'Connect or disconnect from the WebSocket server',
-            l.proxyTitle,
-            l.proxySubtitle,
-            l.enableProxy,
-            l.proxyType,
-            l.proxyHost,
-            l.proxyPort,
-            l.proxyUsername,
-            l.proxyPassword,
-            l.testProxy,
-            l.proxyApplyReconnect,
-            l.useProxy,
-            l.proxyDirectConnection,
-            l.proxyRouted
-          ])) ...[
-            _buildLiquidGlassSection(
-              icon: Icons.cell_tower_rounded,
-              iconHue: 1,
-              title: AppLocalizations.of(context).connectionTitle,
-              subtitle: AppLocalizations.of(context).connectionSubtitle,
-              section: SectionType.connection,
-              expandedContentBuilder: _buildConnectionContent,
             ),
             const SizedBox(height: 16),
           ],
@@ -2033,7 +1878,7 @@ class _SettingsTabState extends State<SettingsTab>
           const SizedBox(height: 20),
           Center(
             child: Text(
-              'open-beta 1.10',
+              'open-beta 2.0',
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context)
@@ -2118,16 +1963,6 @@ class _SettingsTabState extends State<SettingsTab>
     return Column(
       children: [
         contactItem(
-          icon: Icons.language_rounded,
-          label: l.contactWebsite,
-          value: 'onyx.wardcore.com',
-          onTap: () => openUrl('https://onyx.wardcore.com/'),
-        ),
-        Divider(
-            height: 1,
-            indent: 50,
-            color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
-        contactItem(
           icon: Icons.code_rounded,
           label: l.contactRepository,
           value: 'github.com/wardcore-dev/onyx',
@@ -2161,10 +1996,13 @@ class _SettingsTabState extends State<SettingsTab>
     final l = AppLocalizations.of(context);
     final colorScheme = Theme.of(context).colorScheme;
 
-    return ValueListenableBuilder<Set<String>>(
-      valueListenable: BlocklistManager.blockedUsers,
-      builder: (_, blocked, __) {
-        if (blocked.isEmpty) {
+    return ListenableBuilder(
+      listenable:
+          Listenable.merge([BlocklistManager.blockedUsers, OnionRequests.blocked]),
+      builder: (_, __) {
+        final blocked = BlocklistManager.blockedUsers.value;
+        final requesters = OnionRequests.blocked.value;
+        if (blocked.isEmpty && requesters.isEmpty) {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Row(
@@ -2186,7 +2024,8 @@ class _SettingsTabState extends State<SettingsTab>
         }
 
         return Column(
-          children: blocked.map((username) {
+          children: [
+            ...blocked.map((username) {
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Row(
@@ -2211,18 +2050,7 @@ class _SettingsTabState extends State<SettingsTab>
                     padding: EdgeInsets.zero,
                   ),
                   IconButton(
-                    onPressed: () async {
-                      final username0 =
-                          await AccountManager.getCurrentAccount();
-                      if (username0 == null) return;
-                      final token = await AccountManager.getToken(username0);
-                      if (token == null) return;
-                      await http.delete(
-                        Uri.parse('$serverBase/block/$username'),
-                        headers: {'Authorization': 'Bearer $token'},
-                      );
-                      await BlocklistManager.unblock(username);
-                    },
+                    onPressed: () => BlocklistManager.unblock(username),
                     icon: Icon(Icons.lock_open_rounded,
                         size: 20, color: colorScheme.primary),
                     tooltip: l.unblockAction,
@@ -2232,7 +2060,52 @@ class _SettingsTabState extends State<SettingsTab>
                 ],
               ),
             );
-          }).toList(),
+          }),
+            // Blocked from the Requests screen: never contacts, blocked by
+            // key -- shown with who they said they were.
+            ...requesters.map((b) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            b.name.isNotEmpty ? b.name : '@${b.username}',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: colorScheme.onSurface,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            '@${b.username} · ${l.blockedFromRequests}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.7),
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => OnionRequests.unblock(b.pub),
+                      icon: Icon(Icons.lock_open_rounded,
+                          size: 20, color: colorScheme.primary),
+                      tooltip: l.unblockAction,
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
         );
       },
     );
@@ -2309,11 +2182,11 @@ class _SettingsTabState extends State<SettingsTab>
                       return Container(
                         margin: const EdgeInsets.only(bottom: 10),
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 8),
+                            horizontal: 14, vertical: 8),
                         decoration: BoxDecoration(
                           color: cs.surfaceContainerHighest
                               .withValues(alpha: 0.35),
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(27),
                         ),
                         child: Row(
                           children: [
@@ -2448,6 +2321,27 @@ class _SettingsTabState extends State<SettingsTab>
                               value: syncPersonal,
                               onChanged: (v) => SettingsManager
                                   .setWardLinkSyncPersonalOutgoing(v),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      ValueListenableBuilder<bool>(
+                        valueListenable:
+                            SettingsManager.wardLinkSyncPersonalIncoming,
+                        builder: (_, syncIncoming, __) => Row(
+                          children: [
+                            Expanded(
+                              child: Text(l.wardLinkSyncIncomingToggle,
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: cs.onSurface)),
+                            ),
+                            Switch(
+                              value: syncIncoming,
+                              onChanged: (v) => SettingsManager
+                                  .setWardLinkSyncPersonalIncoming(v),
                             ),
                           ],
                         ),
@@ -2700,6 +2594,164 @@ class _SettingsTabState extends State<SettingsTab>
             ],
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildOnionModeContent() {
+    final cs = Theme.of(context).colorScheme;
+
+    Future<void> addPeer() async {
+      final username = await AccountManager.getCurrentAccount();
+      if (username == null) {
+        _showSnack('Not logged in');
+        return;
+      }
+      if (!mounted) return;
+      await showOnyxDialog<void>(
+        context: context,
+        barrierLabel: 'Pair over Tor',
+        builder: (_) => const OnionQrDialog(),
+      );
+    }
+
+    Future<void> removePeer(OnionPeer peer) async {
+      // A contact can be paired from more than one of their devices (onion
+      // identity is per-device) -- unpairing this one entry shouldn't be
+      // described as dropping onion mode for ${peer.username} entirely
+      // unless it's actually their last remaining paired device.
+      final otherDevicesRemain = OnionPairedPeers.allByUsername(peer.username)
+          .any((p) => p.identityPubB64 != peer.identityPubB64);
+      final ok = await showOnyxConfirmDialog(
+        context: context,
+        title: peer.name,
+        message: otherDevicesRemain
+            ? 'Remove this onion pairing with ${peer.name}\'s device? Their other paired device is unaffected.'
+            : 'Remove this onion pairing with ${peer.username}?',
+        confirmLabel: 'Remove',
+        isDestructive: true,
+        icon: Icons.link_off_rounded,
+      );
+      if (ok == true) {
+        await OnionPairedPeers.remove(peer.identityPubB64);
+        rootScreenKey.currentState?.markOnionDeviceUnpaired(
+            peer.username, peer.identityPubB64,
+            hasOtherDevices: otherDevicesRemain);
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Onion Mode is the app's only messaging transport now (see
+        // SettingsManager.onionModeEnabled defaulting to true) — there is no
+        // toggle to turn it off, so this reads as a status line rather than
+        // a setting.
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(
+            children: [
+              Icon(Icons.lock_outline_rounded, size: 15, color: cs.primary),
+              const SizedBox(width: 6),
+              Text('Прямая передача через Tor включена',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      color: cs.primary)),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline_rounded,
+                  size: 13, color: cs.onSurface.withValues(alpha: 0.5)),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  'Both people must be online at the same time for a message to go through — there is no store-and-forward yet.',
+                  style: TextStyle(
+                      fontSize: 11.5,
+                      color: cs.onSurface.withValues(alpha: 0.5)),
+                ),
+              ),
+            ],
+          ),
+        ),
+        ValueListenableBuilder<List<OnionPeer>>(
+          valueListenable: OnionPairedPeers.peers,
+          builder: (_, peersList, __) => _buildSubSection(
+                    key: 'onion_peers',
+                    title: 'Paired contacts',
+                    subtitle: 'People you can reach directly over Tor',
+                    icon: Icons.people_alt_rounded,
+                    trailingBadge:
+                        peersList.isNotEmpty ? '${peersList.length}' : null,
+                    searchShowAll: true,
+                    keywords: const ['onion peer', 'pair', 'contact'],
+                    expandedContent: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (peersList.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Text('No onion-paired contacts yet',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    color:
+                                        cs.onSurface.withValues(alpha: 0.5))),
+                          )
+                        else
+                          Column(
+                            children: peersList.map((peer) {
+                              return ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                dense: true,
+                                leading: Icon(
+                                  peer.os == 'android' || peer.os == 'ios'
+                                      ? Icons.smartphone_rounded
+                                      : Icons.computer_rounded,
+                                  size: 20,
+                                  color: cs.primary,
+                                ),
+                                title: Text(peer.username,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 13.5)),
+                                subtitle: Text(peer.name,
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        color:
+                                            cs.onSurface.withValues(alpha: 0.6))),
+                                trailing: IconButton(
+                                  visualDensity: VisualDensity.compact,
+                                  icon: Icon(Icons.delete_outline_rounded,
+                                      size: 20, color: cs.error),
+                                  onPressed: () => removePeer(peer),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: cs.primary,
+                              foregroundColor: cs.onPrimary,
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: const StadiumBorder(),
+                            ),
+                            onPressed: addPeer,
+                            icon: const Icon(Icons.add_rounded, size: 18),
+                            label: const Text('Pair a contact'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
       ],
     );
   }
@@ -3386,350 +3438,6 @@ class _SettingsTabState extends State<SettingsTab>
     );
   }
 
-  Widget _buildProxyContent() {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    InputDecoration fieldDecor(String label,
-            {String? hint, bool enabled = true}) =>
-        InputDecoration(
-          labelText: label,
-          hintText: hint,
-          filled: true,
-          fillColor: colorScheme.surface,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(28),
-            borderSide: BorderSide(color: colorScheme.outline),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(28),
-            borderSide: BorderSide(
-              color: colorScheme.outline.withValues(alpha: enabled ? 0.5 : 0.2),
-            ),
-          ),
-          disabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(28),
-            borderSide: BorderSide(
-              color: colorScheme.outline.withValues(alpha: 0.15),
-            ),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(28),
-            borderSide: BorderSide(color: colorScheme.primary, width: 2),
-          ),
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        );
-
-    return ValueListenableBuilder<bool>(
-      valueListenable: SettingsManager.proxyEnabled,
-      builder: (_, enabled, __) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(AppLocalizations.of(context).useProxy,
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text(
-                enabled
-                    ? AppLocalizations.of(context).proxyRouted
-                    : AppLocalizations.of(context).proxyDirectConnection,
-                style: TextStyle(
-                    fontSize: 13, color: colorScheme.onSurfaceVariant),
-              ),
-              value: enabled,
-              onChanged: (v) {
-                SettingsManager.setProxyEnabled(v);
-                if (!v) proxyActiveNotifier.value = false;
-              },
-            ),
-            if (enabled)
-              ValueListenableBuilder<bool>(
-                valueListenable: proxyActiveNotifier,
-                builder: (_, connected, __) {
-                  final host = SettingsManager.proxyHost.value.trim();
-                  final port = SettingsManager.proxyPort.value.trim();
-                  final server = host.isNotEmpty
-                      ? '$host${port.isNotEmpty ? ':$port' : ''}'
-                      : null;
-                  final statusColor = connected
-                      ? const Color(0xFF4CAF50)
-                      : const Color(0xFFFF9800);
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 4),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: statusColor.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: statusColor.withValues(alpha: 0.3),
-                        width: 0.8,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          connected
-                              ? Icons.shield_rounded
-                              : Icons.shield_outlined,
-                          size: 15,
-                          color: statusColor,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            connected
-                                ? '${AppLocalizations.of(context).proxyConnectedStatus}${server != null ? ' · $server' : ''}'
-                                : '${AppLocalizations.of(context).proxyNotConnectedStatus}${server != null ? ' · $server' : ''}',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: statusColor,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            const Divider(),
-            const SizedBox(height: 8),
-            Text(AppLocalizations.of(context).proxyType,
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: enabled
-                        ? colorScheme.onSurface
-                        : colorScheme.onSurfaceVariant)),
-            const SizedBox(height: 8),
-            ValueListenableBuilder<String>(
-              valueListenable: SettingsManager.proxyType,
-              builder: (_, type, __) {
-                return Row(
-                  children: [
-                    for (final (val, label) in [
-                      ('http', 'HTTP'),
-                      ('socks5', 'SOCKS5'),
-                    ]) ...[
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: enabled
-                              ? () => SettingsManager.setProxyType(val)
-                              : null,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 160),
-                            padding: const EdgeInsets.symmetric(vertical: 9),
-                            decoration: BoxDecoration(
-                              color: type == val
-                                  ? colorScheme.primaryContainer
-                                      .withValues(alpha: enabled ? 0.85 : 0.4)
-                                  : colorScheme.surfaceContainerHighest
-                                      .withValues(alpha: enabled ? 0.45 : 0.2),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: type == val
-                                    ? colorScheme.primary
-                                        .withValues(alpha: enabled ? 1.0 : 0.3)
-                                    : colorScheme.outlineVariant
-                                        .withValues(alpha: 0.4),
-                                width: type == val ? 1.5 : 0.8,
-                              ),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              label,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: type == val
-                                    ? FontWeight.w600
-                                    : FontWeight.normal,
-                                color: type == val
-                                    ? colorScheme.onPrimaryContainer
-                                        .withValues(alpha: enabled ? 1.0 : 0.5)
-                                    : colorScheme.onSurfaceVariant
-                                        .withValues(alpha: enabled ? 1.0 : 0.5),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (val != 'socks5') const SizedBox(width: 8),
-                    ],
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: TextField(
-                    controller: _proxyHostController,
-                    enabled: enabled,
-                    decoration: fieldDecor(
-                        AppLocalizations.of(context).proxyHost,
-                        hint: '127.0.0.1'),
-                    style: const TextStyle(fontSize: 14),
-                    onChanged: (v) => SettingsManager.setProxyHost(v),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 1,
-                  child: TextField(
-                    controller: _proxyPortController,
-                    enabled: enabled,
-                    keyboardType: TextInputType.number,
-                    decoration: fieldDecor(
-                        AppLocalizations.of(context).proxyPort,
-                        hint: '8080'),
-                    style: const TextStyle(fontSize: 14),
-                    onChanged: (v) => SettingsManager.setProxyPort(v),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _proxyUsernameController,
-              enabled: enabled,
-              decoration:
-                  fieldDecor(AppLocalizations.of(context).proxyLoginOptional),
-              style: const TextStyle(fontSize: 14),
-              onChanged: (v) => SettingsManager.setProxyUsername(v),
-            ),
-            const SizedBox(height: 12),
-            StatefulBuilder(
-              builder: (_, setLocal) => TextField(
-                controller: _proxyPasswordController,
-                enabled: enabled,
-                obscureText: !_proxyPasswordVisible,
-                decoration: fieldDecor(
-                        AppLocalizations.of(context).proxyPasswordOptional)
-                    .copyWith(
-                  suffixIcon: IconButton(
-                    icon: Icon(_proxyPasswordVisible
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined),
-                    onPressed: () => setState(
-                        () => _proxyPasswordVisible = !_proxyPasswordVisible),
-                  ),
-                ),
-                style: const TextStyle(fontSize: 14),
-                onChanged: (v) => SettingsManager.setProxyPassword(v),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Divider(),
-            const SizedBox(height: 12),
-            if (_proxyTestResult != null) ...[
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: _proxyTestResult!.startsWith('')
-                      ? colorScheme.primaryContainer.withValues(alpha: 0.5)
-                      : colorScheme.errorContainer.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  _proxyTestResult!,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: _proxyTestResult!.startsWith('')
-                        ? colorScheme.onPrimaryContainer
-                        : colorScheme.onErrorContainer,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-            ],
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                _buildLiquidGlassButton(
-                  icon: _proxyTesting
-                      ? Icons.hourglass_empty
-                      : Icons.network_check_rounded,
-                  label: _proxyTesting
-                      ? AppLocalizations.of(context).proxyTesting
-                      : AppLocalizations.of(context).testProxy,
-                  fontSize: 14,
-                  onPressed: enabled && !_proxyTesting
-                      ? () async {
-                          setState(() {
-                            _proxyTesting = true;
-                            _proxyTestResult = null;
-                          });
-                          final (ok, msg) = await ProxyManager.testConnection();
-                          if (mounted) {
-                            setState(() {
-                              _proxyTesting = false;
-                              _proxyTestResult = ok ? ' $msg' : ' $msg';
-                            });
-                          }
-                        }
-                      : null,
-                ),
-                _buildLiquidGlassButton(
-                  icon: Icons.check_circle_outline_rounded,
-                  label: AppLocalizations.of(context).proxyApplyReconnect,
-                  fontSize: 14,
-                  onPressed: () async {
-                    final host = SettingsManager.proxyHost.value.trim();
-                    final port =
-                        int.tryParse(SettingsManager.proxyPort.value.trim()) ??
-                            0;
-                    if (host.isEmpty || port <= 0) return;
-
-                    await SettingsManager.setProxyEnabled(true);
-                    ProxyManager.applyFromSettings();
-                    proxyActiveNotifier.value = false;
-                    widget.onDisconnectWs();
-                    Future.delayed(
-                        const Duration(milliseconds: 400), widget.onConnectWs);
-                    if (mounted) setState(() => _proxyTestResult = null);
-
-                    final (ok, _) = await ProxyManager.testConnection();
-                    if (ok && SettingsManager.proxyEnabled.value) {
-                      proxyActiveNotifier.value = true;
-                    }
-                  },
-                ),
-                ValueListenableBuilder<bool>(
-                  valueListenable: proxyActiveNotifier,
-                  builder: (_, active, __) {
-                    if (!active) return const SizedBox.shrink();
-                    return _buildLiquidGlassButton(
-                      icon: Icons.link_off_rounded,
-                      label: AppLocalizations.of(context).disconnect,
-                      fontSize: 14,
-                      color: colorScheme.error,
-                      onPressed: () {
-                        ProxyManager.reset();
-                        proxyActiveNotifier.value = false;
-                        SettingsManager.setProxyEnabled(false);
-                        widget.onDisconnectWs();
-                        Future.delayed(const Duration(milliseconds: 400),
-                            widget.onConnectWs);
-                        if (mounted) setState(() => _proxyTestResult = null);
-                      },
-                    );
-                  },
-                ),
-              ],
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   Widget _buildLanguageContent() {
     final l = AppLocalizations.of(context);
 
@@ -3954,8 +3662,6 @@ class _SettingsTabState extends State<SettingsTab>
           keywords: [
             l.showDisplayNameInGroups,
             l.showDisplayNameSubtitle,
-            l.hideFromSearch,
-            l.hideFromSearchSubtitle,
             l.statusSettings,
             l.statusVisibility,
             l.statusShowStatus,
@@ -3989,25 +3695,6 @@ class _SettingsTabState extends State<SettingsTab>
                   value: showDN,
                   onChanged: (val) =>
                       SettingsManager.setShowDisplayNameInGroups(val),
-                ),
-              ),
-              ValueListenableBuilder<bool>(
-                valueListenable: SettingsManager.hideFromSearch,
-                builder: (context, hideSearch, _) => SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(l.hideFromSearch,
-                      style: const TextStyle(fontSize: 14)),
-                  subtitle: Text(l.hideFromSearchSubtitle,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                  value: hideSearch,
-                  onChanged: (val) async {
-                    final okMsg = l.hideFromSearchSavedOk;
-                    final failMsg = l.hideFromSearchSavedFail;
-                    await SettingsManager.setHideFromSearch(val);
-                    setState(() => _localHideFromSearch = val);
-                    final ok = await _syncPrivacySettings();
-                    if (mounted) _showSnack(ok ? okMsg : failMsg);
-                  },
                 ),
               ),
             ],
@@ -4165,60 +3852,6 @@ class _SettingsTabState extends State<SettingsTab>
             ],
           ),
         ),
-        const SizedBox(height: 8),
-        Builder(builder: (_) {
-          // Deliberately not gated by canManage: an untrusted device needs to
-          // reach this section precisely to see RecoveryBanner and recover
-          // trust. Session revoke/approve and security-level changes are
-          // still enforced server-side (403 on unauthorized attempts).
-          final username = rootScreenKey.currentState?.currentUsername;
-          final canManage = widget.isPrimaryDevice || widget.isE2eTrustedDevice;
-          return _buildSubSection(
-            key: 'security_active_devices',
-            title: l.activeDevices,
-            subtitle: l.activeDevicesSubtitle,
-            icon: Icons.devices_rounded,
-            searchShowAll: showAll,
-            keywords: [
-              l.activeDevices,
-              l.keyMgmtDescription,
-              'sessions',
-              'devices'
-            ],
-            expandedContent: ActiveDevicesPanel(
-              serverBase: serverBase,
-              username: username,
-              showSecurityLevel: canManage,
-            ),
-          );
-        }),
-        const SizedBox(height: 8),
-        Builder(builder: (_) {
-          final canManage = widget.isPrimaryDevice || widget.isE2eTrustedDevice;
-          return Opacity(
-            opacity: canManage ? 1.0 : 0.4,
-            child: IgnorePointer(
-              ignoring: !canManage,
-              child: _buildSubSection(
-                key: 'security_change_password',
-                title:
-                    canManage ? l.changePassword : l.changePasswordPrimaryOnly,
-                subtitle: l.changePasswordInfo,
-                icon: Icons.password_rounded,
-                searchShowAll: showAll,
-                keywords: [
-                  l.changePassword,
-                  l.changePasswordCurrentLabel,
-                  l.changePasswordNewLabel
-                ],
-                expandedContent: _ChangePasswordForm(
-                  onSubmit: widget.onChangePassword,
-                  onSnack: _showSnack,
-                ),
-              ),
-            ),
-          );
-        }),
       ],
     );
   }
@@ -4448,7 +4081,6 @@ class _SettingsTabState extends State<SettingsTab>
             l.manageCacheTitle,
             l.cleanUnusedFiles,
             l.clearLocalCache,
-            l.serverMediaCache,
             'storage',
             'cache',
             'cleanup'
@@ -4496,7 +4128,6 @@ class _SettingsTabState extends State<SettingsTab>
             l.dangerZoneSubtitle,
             l.factoryReset,
             l.factoryResetHint,
-            l.resetDeleteAccount,
             l.resetDeleteLocal,
             'reset',
             'delete',
@@ -4552,28 +4183,6 @@ class _SettingsTabState extends State<SettingsTab>
                   onPressed: widget.onDisconnectWs),
             ],
           ),
-        ),
-        const SizedBox(height: 8),
-        _buildSubSection(
-          key: 'connection_proxy',
-          searchShowAll: showAll,
-          title: l.proxyTitle,
-          subtitle: l.proxySubtitle,
-          icon: Icons.language_rounded,
-          keywords: [
-            l.enableProxy,
-            l.proxyType,
-            l.proxyHost,
-            l.proxyPort,
-            l.proxyUsername,
-            l.proxyPassword,
-            l.testProxy,
-            l.proxyApplyReconnect,
-            l.useProxy,
-            l.proxyDirectConnection,
-            l.proxyRouted
-          ],
-          expandedContent: _buildProxyContent(),
         ),
       ],
     );
@@ -4682,6 +4291,69 @@ class _SettingsTabState extends State<SettingsTab>
                 ),
               ),
             ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildSubSection(
+          key: 'interact_messages',
+          searchShowAll: showAll,
+          title: l.messagesSectionTitle,
+          subtitle: l.messagesSectionSubtitle,
+          icon: Icons.chat_bubble_outline_rounded,
+          keywords: [
+            'messages',
+            'retry',
+            'offline',
+            'interval',
+            'tor',
+            'delivery'
+          ],
+          expandedContent: ValueListenableBuilder<int>(
+            valueListenable: SettingsManager.onionRetryIntervalSeconds,
+            builder: (_, seconds, __) => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(l.retryIntervalTitle,
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(
+                  l.retryIntervalDesc,
+                  style: TextStyle(
+                      fontSize: 13,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.6)),
+                ),
+                const SizedBox(height: 8),
+                DropdownButton<int>(
+                  value: const [10, 20, 30, 60, 120, 300].contains(seconds)
+                      ? seconds
+                      : 20,
+                  underline: const SizedBox.shrink(),
+                  onChanged: (val) async {
+                    if (val != null) {
+                      await SettingsManager.setOnionRetryIntervalSeconds(val);
+                    }
+                  },
+                  items: [
+                    DropdownMenuItem(
+                        value: 10, child: Text(l.intervalSeconds(10))),
+                    DropdownMenuItem(
+                        value: 20, child: Text(l.intervalSeconds(20))),
+                    DropdownMenuItem(
+                        value: 30, child: Text(l.intervalSeconds(30))),
+                    DropdownMenuItem(
+                        value: 60, child: Text(l.intervalMinutes(1))),
+                    DropdownMenuItem(
+                        value: 120, child: Text(l.intervalMinutes(2))),
+                    DropdownMenuItem(
+                        value: 300, child: Text(l.intervalMinutes(5))),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -5063,18 +4735,16 @@ class _SettingsTabState extends State<SettingsTab>
     required BuildContext context,
     required String label,
     required String description,
-    required ValueListenable<dynamic> toggleListenable,
-    required bool Function(dynamic) toggleGetter,
-    required Future<void> Function(bool) onToggle,
+    ValueListenable<dynamic>? toggleListenable,
+    bool Function(dynamic)? toggleGetter,
+    Future<void> Function(bool)? onToggle,
     required List<_LiquidItem> sliders,
     ValueNotifier<LiquidGlassQuality>? qualityNotifier,
     Future<void> Function(LiquidGlassQuality)? onQualityChanged,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
-    return ValueListenableBuilder(
-      valueListenable: toggleListenable,
-      builder: (_, val, __) {
-        final enabled = toggleGetter(val);
+    // Without a toggle the block is always open (the "common settings" card).
+    Widget buildBlock(bool enabled) {
         return Container(
           decoration: BoxDecoration(
             color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
@@ -5108,7 +4778,8 @@ class _SettingsTabState extends State<SettingsTab>
                         ],
                       ),
                     ),
-                    Switch(value: enabled, onChanged: onToggle),
+                    if (onToggle != null)
+                      Switch(value: enabled, onChanged: onToggle),
                   ],
                 ),
               ),
@@ -5123,8 +4794,8 @@ class _SettingsTabState extends State<SettingsTab>
                     children: [
                       if (qualityNotifier != null &&
                           onQualityChanged != null) ...[
-                        const Text('Glass Quality',
-                            style: TextStyle(
+                        Text(AppLocalizations.of(context).glassQualityTitle,
+                            style: const TextStyle(
                                 fontSize: 11, fontWeight: FontWeight.w600)),
                         const SizedBox(height: 6),
                         ValueListenableBuilder<LiquidGlassQuality>(
@@ -5135,18 +4806,19 @@ class _SettingsTabState extends State<SettingsTab>
                             return Row(
                               children: LiquidGlassQuality.values.map((q) {
                                 final sel = q == currentQuality;
+                                final gl = AppLocalizations.of(context);
                                 final (lbl, sub) = switch (q) {
                                   LiquidGlassQuality.fast => (
-                                      'Fast',
-                                      'Lightweight\nBest perf'
+                                      gl.glassQualityFast,
+                                      gl.glassQualityFastDesc
                                     ),
                                   LiquidGlassQuality.medium => (
-                                      'Medium',
-                                      'No shaders\nBlur only'
+                                      gl.glassQualityMedium,
+                                      gl.glassQualityMediumDesc
                                     ),
                                   LiquidGlassQuality.quality => (
-                                      'Quality',
-                                      'Full shaders\nBest visuals'
+                                      gl.glassQualityHigh,
+                                      gl.glassQualityHighDesc
                                     ),
                                 };
                                 return Expanded(
@@ -5211,7 +4883,14 @@ class _SettingsTabState extends State<SettingsTab>
             ],
           ),
         );
-      },
+    }
+
+    if (toggleListenable == null || toggleGetter == null) {
+      return buildBlock(true);
+    }
+    return ValueListenableBuilder(
+      valueListenable: toggleListenable,
+      builder: (_, val, __) => buildBlock(toggleGetter(val)),
     );
   }
 
@@ -5228,36 +4907,8 @@ class _SettingsTabState extends State<SettingsTab>
   Widget _buildLiquidSlider({
     required BuildContext context,
     required _LiquidSliderConfig config,
-  }) {
-    return ValueListenableBuilder<double>(
-      valueListenable: config.listenable,
-      builder: (_, value, __) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(config.label,
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600)),
-              Text(config.format(value),
-                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
-            ],
-          ),
-          const SizedBox(height: 2),
-          Text(config.description,
-              style: const TextStyle(fontSize: 11, color: Colors.grey)),
-          Slider(
-            min: config.min,
-            max: config.max,
-            divisions: config.divisions,
-            value: value,
-            onChanged: config.onChanged,
-          ),
-        ],
-      ),
-    );
-  }
+  }) =>
+      _LiquidSliderTile(config: config);
 
   Widget _buildInlineLiquidToggle(
       {required BuildContext context, required _LiquidToggleItem item}) {
@@ -5412,6 +5063,7 @@ class _SettingsTabState extends State<SettingsTab>
     List<String> keywords = const [],
     bool searchShowAll = false,
     String? trailingBadge,
+    bool animateExpand = true,
   }) {
     // Capture breadcrumb context before visibility check clears it
     final breadcrumb = _searchSectionLabel;
@@ -5496,7 +5148,9 @@ class _SettingsTabState extends State<SettingsTab>
           ),
           ClipRect(
             child: AnimatedSize(
-              duration: const Duration(milliseconds: 220),
+              duration: animateExpand
+                  ? const Duration(milliseconds: 220)
+                  : Duration.zero,
               curve: Curves.easeInOut,
               clipBehavior: Clip.hardEdge,
               child: isExpanded
@@ -6706,8 +6360,6 @@ class _SettingsTabState extends State<SettingsTab>
             keywords: [
               l.liquidGlassNavBarLabel,
               l.liquidGlassNavBarDesc,
-              l.liquidGlassCardsLabel,
-              l.liquidGlassCardsDesc,
               l.liquidGlassInputLabel,
               l.liquidGlassInputDesc,
               l.liquidGlassSearchLabel,
@@ -6722,452 +6374,429 @@ class _SettingsTabState extends State<SettingsTab>
               'opacity',
               'saturation',
             ],
-            expandedContent: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildLiquidElementSection(
-                  context: context,
-                  label: l.liquidGlassNavBarLabel,
-                  description: l.liquidGlassNavBarDesc,
-                  toggleListenable: SettingsManager.liquidGlassOnNavBar,
-                  toggleGetter: (v) => v as bool,
-                  onToggle: SettingsManager.setLiquidGlassOnNavBar,
-                  qualityNotifier: SettingsManager.liquidGlassNavBarQuality,
-                  onQualityChanged: SettingsManager.setLiquidGlassNavBarQuality,
-                  sliders: [
-                    _LiquidSliderConfig(
-                        label: 'Blur',
-                        description: 'Frosted blur intensity behind the glass',
-                        listenable: SettingsManager.liquidGlassBlur,
-                        min: 0,
-                        max: 15,
-                        divisions: 15,
-                        format: (v) => v.toStringAsFixed(0),
-                        onChanged: SettingsManager.setLiquidGlassBlur),
-                    _LiquidSliderConfig(
-                        label: 'Tint',
-                        description: 'Adaptive tint opacity (auto dark/light)',
-                        listenable: SettingsManager.liquidGlassTint,
-                        min: 0,
-                        max: 0.30,
-                        divisions: 30,
-                        format: (v) => '${(v * 100).toStringAsFixed(0)}%',
-                        onChanged: SettingsManager.setLiquidGlassTint),
-                    _LiquidSliderConfig(
-                        label: 'Saturation',
-                        description: 'Color vibrancy picked up from background',
-                        listenable: SettingsManager.liquidGlassSaturation,
-                        min: 0.3,
-                        max: 2.0,
-                        divisions: 17,
-                        format: (v) => v.toStringAsFixed(1),
-                        onChanged: SettingsManager.setLiquidGlassSaturation),
-                    _LiquidSliderConfig(
-                        label: 'Chromatic Aberration',
-                        description:
-                            'Color fringing on glass edges (lens effect)',
-                        listenable: SettingsManager.liquidGlassChromatic,
-                        min: 0,
-                        max: 1.0,
-                        divisions: 20,
-                        format: (v) => v.toStringAsFixed(2),
-                        onChanged: SettingsManager.setLiquidGlassChromatic),
-                    _LiquidSliderConfig(
-                        label: 'Refractive Index',
-                        description: 'How much the glass bends light behind it',
-                        listenable: SettingsManager.liquidGlassRefractive,
-                        min: 1.0,
-                        max: 2.5,
-                        divisions: 15,
-                        format: (v) => v.toStringAsFixed(2),
-                        onChanged: SettingsManager.setLiquidGlassRefractive),
-                    _LiquidSliderConfig(
-                        label: 'Light Intensity',
-                        description:
-                            'Strength of the specular highlight on glass',
-                        listenable: SettingsManager.liquidGlassLightIntensity,
-                        min: 0,
-                        max: 1.0,
-                        divisions: 20,
-                        format: (v) => v.toStringAsFixed(2),
-                        onChanged:
-                            SettingsManager.setLiquidGlassLightIntensity),
-                    _LiquidSliderConfig(
-                        label: 'Thickness',
-                        description:
-                            'Glass depth — affects refraction and edge glow',
-                        listenable: SettingsManager.liquidGlassThickness,
-                        min: 0,
-                        max: 60,
-                        divisions: 12,
-                        format: (v) => v.toStringAsFixed(0),
-                        onChanged: SettingsManager.setLiquidGlassThickness),
-                    _LiquidSliderConfig(
-                        label: 'Jelly Stretch Amount',
-                        description:
-                            'Indicator expansion when dragging between tabs',
-                        listenable: SettingsManager.liquidGlassExpansion,
-                        min: 0,
-                        max: 28,
-                        divisions: 28,
-                        format: (v) => v.toStringAsFixed(0),
-                        onChanged: SettingsManager.setLiquidGlassExpansion),
-                  ],
-                ),
-                if (!Platform.isMacOS) ...[
-                  const SizedBox(height: 12),
-                  _buildLiquidElementSection(
-                    context: context,
-                    label: l.liquidGlassCardsLabel,
-                    description: l.liquidGlassCardsDesc,
-                    toggleListenable: SettingsManager.liquidGlassOnCards,
-                    toggleGetter: (v) => v as bool,
-                    onToggle: SettingsManager.setLiquidGlassOnCards,
-                    qualityNotifier: SettingsManager.liquidGlassCardsQuality,
-                    onQualityChanged:
-                        SettingsManager.setLiquidGlassCardsQuality,
-                    sliders: [
-                      _LiquidSliderConfig(
-                          label: 'Blur',
-                          description:
-                              'Frosted blur intensity behind the glass',
-                          listenable: SettingsManager.liquidGlassCardsBlur,
-                          min: 0,
-                          max: 15,
-                          divisions: 15,
-                          format: (v) => v.toStringAsFixed(0),
-                          onChanged: SettingsManager.setLiquidGlassCardsBlur),
-                      _LiquidSliderConfig(
-                          label: 'Tint',
-                          description:
-                              'Adaptive tint opacity (auto dark/light)',
-                          listenable: SettingsManager.liquidGlassCardsTint,
-                          min: 0,
-                          max: 0.30,
-                          divisions: 30,
-                          format: (v) => '${(v * 100).toStringAsFixed(0)}%',
-                          onChanged: SettingsManager.setLiquidGlassCardsTint),
-                      _LiquidSliderConfig(
-                          label: 'Saturation',
-                          description:
-                              'Color vibrancy picked up from background',
-                          listenable:
-                              SettingsManager.liquidGlassCardsSaturation,
-                          min: 0.3,
-                          max: 2.0,
-                          divisions: 17,
-                          format: (v) => v.toStringAsFixed(1),
-                          onChanged:
-                              SettingsManager.setLiquidGlassCardsSaturation),
-                      _LiquidSliderConfig(
-                          label: 'Chromatic Aberration',
-                          description:
-                              'Color fringing on glass edges (lens effect)',
-                          listenable: SettingsManager.liquidGlassCardsChromatic,
-                          min: 0,
-                          max: 1.0,
-                          divisions: 20,
-                          format: (v) => v.toStringAsFixed(2),
-                          onChanged:
-                              SettingsManager.setLiquidGlassCardsChromatic),
-                      _LiquidSliderConfig(
-                          label: 'Refractive Index',
-                          description:
-                              'How much the glass bends light behind it',
-                          listenable:
-                              SettingsManager.liquidGlassCardsRefractive,
-                          min: 1.0,
-                          max: 2.5,
-                          divisions: 15,
-                          format: (v) => v.toStringAsFixed(2),
-                          onChanged:
-                              SettingsManager.setLiquidGlassCardsRefractive),
-                      _LiquidSliderConfig(
-                          label: 'Light Intensity',
-                          description:
-                              'Strength of the specular highlight on glass',
-                          listenable:
-                              SettingsManager.liquidGlassCardsLightIntensity,
-                          min: 0,
-                          max: 1.0,
-                          divisions: 20,
-                          format: (v) => v.toStringAsFixed(2),
-                          onChanged: SettingsManager
-                              .setLiquidGlassCardsLightIntensity),
-                      _LiquidSliderConfig(
-                          label: 'Thickness',
-                          description:
-                              'Glass depth — affects refraction and edge glow',
-                          listenable: SettingsManager.liquidGlassCardsThickness,
-                          min: 0,
-                          max: 60,
-                          divisions: 12,
-                          format: (v) => v.toStringAsFixed(0),
-                          onChanged:
-                              SettingsManager.setLiquidGlassCardsThickness),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 12),
-                _buildLiquidElementSection(
-                  context: context,
-                  label: l.liquidGlassInputLabel,
-                  description: l.liquidGlassInputDesc,
-                  toggleListenable: SettingsManager.liquidGlassOnInput,
-                  toggleGetter: (v) => v as bool,
-                  onToggle: SettingsManager.setLiquidGlassOnInput,
-                  qualityNotifier: SettingsManager.liquidGlassInputQuality,
-                  onQualityChanged: SettingsManager.setLiquidGlassInputQuality,
-                  sliders: [
-                    _LiquidSliderConfig(
-                        label: 'Blur',
-                        description: 'Frosted blur intensity behind the glass',
-                        listenable: SettingsManager.liquidGlassInputBlur,
-                        min: 0,
-                        max: 15,
-                        divisions: 15,
-                        format: (v) => v.toStringAsFixed(0),
-                        onChanged: SettingsManager.setLiquidGlassInputBlur),
-                    _LiquidSliderConfig(
-                        label: 'Tint',
-                        description: 'Adaptive tint opacity (auto dark/light)',
-                        listenable: SettingsManager.liquidGlassInputTint,
-                        min: 0,
-                        max: 0.30,
-                        divisions: 30,
-                        format: (v) => '${(v * 100).toStringAsFixed(0)}%',
-                        onChanged: SettingsManager.setLiquidGlassInputTint),
-                    _LiquidSliderConfig(
-                        label: 'Saturation',
-                        description: 'Color vibrancy picked up from background',
-                        listenable: SettingsManager.liquidGlassInputSaturation,
-                        min: 0.3,
-                        max: 2.0,
-                        divisions: 17,
-                        format: (v) => v.toStringAsFixed(1),
-                        onChanged:
-                            SettingsManager.setLiquidGlassInputSaturation),
-                    _LiquidSliderConfig(
-                        label: 'Chromatic Aberration',
-                        description:
-                            'Color fringing on glass edges (lens effect)',
-                        listenable: SettingsManager.liquidGlassInputChromatic,
-                        min: 0,
-                        max: 1.0,
-                        divisions: 20,
-                        format: (v) => v.toStringAsFixed(2),
-                        onChanged:
-                            SettingsManager.setLiquidGlassInputChromatic),
-                    _LiquidSliderConfig(
-                        label: 'Refractive Index',
-                        description: 'How much the glass bends light behind it',
-                        listenable: SettingsManager.liquidGlassInputRefractive,
-                        min: 1.0,
-                        max: 2.5,
-                        divisions: 15,
-                        format: (v) => v.toStringAsFixed(2),
-                        onChanged:
-                            SettingsManager.setLiquidGlassInputRefractive),
-                    _LiquidSliderConfig(
-                        label: 'Light Intensity',
-                        description:
-                            'Strength of the specular highlight on glass',
-                        listenable:
-                            SettingsManager.liquidGlassInputLightIntensity,
-                        min: 0,
-                        max: 1.0,
-                        divisions: 20,
-                        format: (v) => v.toStringAsFixed(2),
-                        onChanged:
-                            SettingsManager.setLiquidGlassInputLightIntensity),
-                    _LiquidSliderConfig(
-                        label: 'Thickness',
-                        description:
-                            'Glass depth — affects refraction and edge glow',
-                        listenable: SettingsManager.liquidGlassInputThickness,
-                        min: 0,
-                        max: 60,
-                        divisions: 12,
-                        format: (v) => v.toStringAsFixed(0),
-                        onChanged:
-                            SettingsManager.setLiquidGlassInputThickness),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _buildLiquidElementSection(
-                  context: context,
-                  label: l.liquidGlassSearchLabel,
-                  description: l.liquidGlassSearchDesc,
-                  toggleListenable: SettingsManager.liquidGlassOnSearch,
-                  toggleGetter: (v) => v as bool,
-                  onToggle: SettingsManager.setLiquidGlassOnSearch,
-                  qualityNotifier: SettingsManager.liquidGlassSearchQuality,
-                  onQualityChanged: SettingsManager.setLiquidGlassSearchQuality,
-                  sliders: [
-                    _LiquidSliderConfig(
-                        label: 'Blur',
-                        description: 'Frosted blur intensity behind the glass',
-                        listenable: SettingsManager.liquidGlassSearchBlur,
-                        min: 0,
-                        max: 15,
-                        divisions: 15,
-                        format: (v) => v.toStringAsFixed(0),
-                        onChanged: SettingsManager.setLiquidGlassSearchBlur),
-                    _LiquidSliderConfig(
-                        label: 'Tint',
-                        description: 'Adaptive tint opacity (auto dark/light)',
-                        listenable: SettingsManager.liquidGlassSearchTint,
-                        min: 0,
-                        max: 0.30,
-                        divisions: 30,
-                        format: (v) => '${(v * 100).toStringAsFixed(0)}%',
-                        onChanged: SettingsManager.setLiquidGlassSearchTint),
-                    _LiquidSliderConfig(
-                        label: 'Saturation',
-                        description: 'Color vibrancy picked up from background',
-                        listenable: SettingsManager.liquidGlassSearchSaturation,
-                        min: 0.3,
-                        max: 2.0,
-                        divisions: 17,
-                        format: (v) => v.toStringAsFixed(1),
-                        onChanged:
-                            SettingsManager.setLiquidGlassSearchSaturation),
-                    _LiquidSliderConfig(
-                        label: 'Chromatic Aberration',
-                        description:
-                            'Color fringing on glass edges (lens effect)',
-                        listenable: SettingsManager.liquidGlassSearchChromatic,
-                        min: 0,
-                        max: 1.0,
-                        divisions: 20,
-                        format: (v) => v.toStringAsFixed(2),
-                        onChanged:
-                            SettingsManager.setLiquidGlassSearchChromatic),
-                    _LiquidSliderConfig(
-                        label: 'Refractive Index',
-                        description: 'How much the glass bends light behind it',
-                        listenable: SettingsManager.liquidGlassSearchRefractive,
-                        min: 1.0,
-                        max: 2.5,
-                        divisions: 15,
-                        format: (v) => v.toStringAsFixed(2),
-                        onChanged:
-                            SettingsManager.setLiquidGlassSearchRefractive),
-                    _LiquidSliderConfig(
-                        label: 'Light Intensity',
-                        description:
-                            'Strength of the specular highlight on glass',
-                        listenable:
-                            SettingsManager.liquidGlassSearchLightIntensity,
-                        min: 0,
-                        max: 1.0,
-                        divisions: 20,
-                        format: (v) => v.toStringAsFixed(2),
-                        onChanged:
-                            SettingsManager.setLiquidGlassSearchLightIntensity),
-                    _LiquidSliderConfig(
-                        label: 'Thickness',
-                        description:
-                            'Glass depth — affects refraction and edge glow',
-                        listenable: SettingsManager.liquidGlassSearchThickness,
-                        min: 0,
-                        max: 60,
-                        divisions: 12,
-                        format: (v) => v.toStringAsFixed(0),
-                        onChanged:
-                            SettingsManager.setLiquidGlassSearchThickness),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _buildLiquidElementSection(
-                  context: context,
-                  label: l.liquidGlassAppBarLabel,
-                  description: l.liquidGlassAppBarDesc,
-                  toggleListenable: SettingsManager.liquidGlassOnAppBar,
-                  toggleGetter: (v) => v as bool,
-                  onToggle: SettingsManager.setLiquidGlassOnAppBar,
-                  qualityNotifier: SettingsManager.liquidGlassAppBarQuality,
-                  onQualityChanged: SettingsManager.setLiquidGlassAppBarQuality,
-                  sliders: [
-                    _LiquidSliderConfig(
-                        label: 'Blur',
-                        description: 'Frosted blur intensity behind the glass',
-                        listenable: SettingsManager.liquidGlassAppBarBlur,
-                        min: 0,
-                        max: 15,
-                        divisions: 15,
-                        format: (v) => v.toStringAsFixed(0),
-                        onChanged: SettingsManager.setLiquidGlassAppBarBlur),
-                    _LiquidSliderConfig(
-                        label: 'Tint',
-                        description: 'Adaptive tint opacity (auto dark/light)',
-                        listenable: SettingsManager.liquidGlassAppBarTint,
-                        min: 0,
-                        max: 0.30,
-                        divisions: 30,
-                        format: (v) => '${(v * 100).toStringAsFixed(0)}%',
-                        onChanged: SettingsManager.setLiquidGlassAppBarTint),
-                    _LiquidSliderConfig(
-                        label: 'Saturation',
-                        description: 'Color vibrancy picked up from background',
-                        listenable: SettingsManager.liquidGlassAppBarSaturation,
-                        min: 0.3,
-                        max: 2.0,
-                        divisions: 17,
-                        format: (v) => v.toStringAsFixed(1),
-                        onChanged:
-                            SettingsManager.setLiquidGlassAppBarSaturation),
-                    _LiquidSliderConfig(
-                        label: 'Chromatic Aberration',
-                        description:
-                            'Color fringing on glass edges (lens effect)',
-                        listenable: SettingsManager.liquidGlassAppBarChromatic,
-                        min: 0,
-                        max: 1.0,
-                        divisions: 20,
-                        format: (v) => v.toStringAsFixed(2),
-                        onChanged:
-                            SettingsManager.setLiquidGlassAppBarChromatic),
-                    _LiquidSliderConfig(
-                        label: 'Refractive Index',
-                        description: 'How much the glass bends light behind it',
-                        listenable: SettingsManager.liquidGlassAppBarRefractive,
-                        min: 1.0,
-                        max: 2.5,
-                        divisions: 15,
-                        format: (v) => v.toStringAsFixed(2),
-                        onChanged:
-                            SettingsManager.setLiquidGlassAppBarRefractive),
-                    _LiquidSliderConfig(
-                        label: 'Light Intensity',
-                        description:
-                            'Strength of the specular highlight on glass',
-                        listenable:
-                            SettingsManager.liquidGlassAppBarLightIntensity,
-                        min: 0,
-                        max: 1.0,
-                        divisions: 20,
-                        format: (v) => v.toStringAsFixed(2),
-                        onChanged:
-                            SettingsManager.setLiquidGlassAppBarLightIntensity),
-                    _LiquidSliderConfig(
-                        label: 'Thickness',
-                        description:
-                            'Glass depth — affects refraction and edge glow',
-                        listenable: SettingsManager.liquidGlassAppBarThickness,
-                        min: 0,
-                        max: 60,
-                        divisions: 12,
-                        format: (v) => v.toStringAsFixed(0),
-                        onChanged:
-                            SettingsManager.setLiquidGlassAppBarThickness),
-                  ],
-                ),
-              ],
-            ),
+            // Its own paint layer, so the open/close animation of this tall
+            // list doesn't repaint the whole settings page every frame.
+            expandedContent:
+                RepaintBoundary(child: _buildLiquidGlassBody(context, l)),
           ),
         ],
       ],
+    );
+  }
+
+  // ── Liquid Glass: one common block + an "Advanced" accordion ──────────────
+  // min, max, divisions, format kind
+  // (0 integer, 1 percent, 2 one decimal, 3 two decimals)
+  static const _glassSliderSpecs = <(double, double, int, int)>[
+    (0, 15, 15, 0), // blur
+    (0, 0.30, 30, 1), // tint
+    (0.3, 2.0, 17, 2), // saturation
+    (0, 1.0, 20, 3), // chromatic aberration
+    (1.0, 2.5, 15, 3), // refractive index
+    (0, 1.0, 20, 3), // light intensity
+    (0, 60, 12, 0), // thickness
+  ];
+
+  List<(String, String)> _glassTexts(AppLocalizations l) => [
+        (l.glassBlur, l.glassBlurDesc),
+        (l.glassTint, l.glassTintDesc),
+        (l.glassSaturation, l.glassSaturationDesc),
+        (l.glassChromatic, l.glassChromaticDesc),
+        (l.glassRefractive, l.glassRefractiveDesc),
+        (l.glassLight, l.glassLightDesc),
+        (l.glassThickness, l.glassThicknessDesc),
+      ];
+
+  // Per element, in the order of _glassSliderSpecs: blur, tint, saturation,
+  // chromatic, refractive, light intensity, thickness.
+  static final _glassNav = (
+    <ValueNotifier<double>>[
+      SettingsManager.liquidGlassBlur,
+      SettingsManager.liquidGlassTint,
+      SettingsManager.liquidGlassSaturation,
+      SettingsManager.liquidGlassChromatic,
+      SettingsManager.liquidGlassRefractive,
+      SettingsManager.liquidGlassLightIntensity,
+      SettingsManager.liquidGlassThickness,
+    ],
+    <Future<void> Function(double)>[
+      SettingsManager.setLiquidGlassBlur,
+      SettingsManager.setLiquidGlassTint,
+      SettingsManager.setLiquidGlassSaturation,
+      SettingsManager.setLiquidGlassChromatic,
+      SettingsManager.setLiquidGlassRefractive,
+      SettingsManager.setLiquidGlassLightIntensity,
+      SettingsManager.setLiquidGlassThickness,
+    ],
+  );
+  static final _glassInput = (
+    <ValueNotifier<double>>[
+      SettingsManager.liquidGlassInputBlur,
+      SettingsManager.liquidGlassInputTint,
+      SettingsManager.liquidGlassInputSaturation,
+      SettingsManager.liquidGlassInputChromatic,
+      SettingsManager.liquidGlassInputRefractive,
+      SettingsManager.liquidGlassInputLightIntensity,
+      SettingsManager.liquidGlassInputThickness,
+    ],
+    <Future<void> Function(double)>[
+      SettingsManager.setLiquidGlassInputBlur,
+      SettingsManager.setLiquidGlassInputTint,
+      SettingsManager.setLiquidGlassInputSaturation,
+      SettingsManager.setLiquidGlassInputChromatic,
+      SettingsManager.setLiquidGlassInputRefractive,
+      SettingsManager.setLiquidGlassInputLightIntensity,
+      SettingsManager.setLiquidGlassInputThickness,
+    ],
+  );
+  static final _glassSearch = (
+    <ValueNotifier<double>>[
+      SettingsManager.liquidGlassSearchBlur,
+      SettingsManager.liquidGlassSearchTint,
+      SettingsManager.liquidGlassSearchSaturation,
+      SettingsManager.liquidGlassSearchChromatic,
+      SettingsManager.liquidGlassSearchRefractive,
+      SettingsManager.liquidGlassSearchLightIntensity,
+      SettingsManager.liquidGlassSearchThickness,
+    ],
+    <Future<void> Function(double)>[
+      SettingsManager.setLiquidGlassSearchBlur,
+      SettingsManager.setLiquidGlassSearchTint,
+      SettingsManager.setLiquidGlassSearchSaturation,
+      SettingsManager.setLiquidGlassSearchChromatic,
+      SettingsManager.setLiquidGlassSearchRefractive,
+      SettingsManager.setLiquidGlassSearchLightIntensity,
+      SettingsManager.setLiquidGlassSearchThickness,
+    ],
+  );
+  static final _glassAppBar = (
+    <ValueNotifier<double>>[
+      SettingsManager.liquidGlassAppBarBlur,
+      SettingsManager.liquidGlassAppBarTint,
+      SettingsManager.liquidGlassAppBarSaturation,
+      SettingsManager.liquidGlassAppBarChromatic,
+      SettingsManager.liquidGlassAppBarRefractive,
+      SettingsManager.liquidGlassAppBarLightIntensity,
+      SettingsManager.liquidGlassAppBarThickness,
+    ],
+    <Future<void> Function(double)>[
+      SettingsManager.setLiquidGlassAppBarBlur,
+      SettingsManager.setLiquidGlassAppBarTint,
+      SettingsManager.setLiquidGlassAppBarSaturation,
+      SettingsManager.setLiquidGlassAppBarChromatic,
+      SettingsManager.setLiquidGlassAppBarRefractive,
+      SettingsManager.setLiquidGlassAppBarLightIntensity,
+      SettingsManager.setLiquidGlassAppBarThickness,
+    ],
+  );
+
+  /// The navigation bar's defaults -- the defaults of every glass element.
+  static const _glassDefaults = <double>[7, 0.10, 1.0, 0.30, 1.59, 0.60, 30];
+
+  String _glassFormat(int kind, double v) => switch (kind) {
+        0 => v.toStringAsFixed(0),
+        1 => '${(v * 100).toStringAsFixed(0)}%',
+        2 => v.toStringAsFixed(1),
+        _ => v.toStringAsFixed(2),
+      };
+
+  /// Sliders for one element, or -- with several [elements] -- one set that
+  /// shows the first element's values and writes every change to all of them.
+  List<_LiquidItem> _glassSliders(
+    AppLocalizations l,
+    List<(List<ValueNotifier<double>>, List<Future<void> Function(double)>)>
+        elements, {
+    List<_LiquidItem> extra = const [],
+  }) {
+    final texts = _glassTexts(l);
+    return [
+      for (var i = 0; i < _glassSliderSpecs.length; i++)
+        _LiquidSliderConfig(
+          label: texts[i].$1,
+          description: texts[i].$2,
+          listenable: elements.first.$1[i],
+          min: _glassSliderSpecs[i].$1,
+          max: _glassSliderSpecs[i].$2,
+          divisions: _glassSliderSpecs[i].$3,
+          format: (v) => _glassFormat(_glassSliderSpecs[i].$4, v),
+          onChanged: (v) async {
+            for (final e in elements) {
+              await e.$2[i](v);
+            }
+          },
+        ),
+      ...extra,
+    ];
+  }
+
+  Future<void> _setGlassQualityAll(LiquidGlassQuality q) async {
+    await SettingsManager.setLiquidGlassNavBarQuality(q);
+    await SettingsManager.setLiquidGlassInputQuality(q);
+    await SettingsManager.setLiquidGlassSearchQuality(q);
+    await SettingsManager.setLiquidGlassAppBarQuality(q);
+  }
+
+  Future<void> _resetGlassToDefaults() async {
+    for (final e in [_glassNav, _glassInput, _glassSearch, _glassAppBar]) {
+      for (var i = 0; i < _glassDefaults.length; i++) {
+        await e.$2[i](_glassDefaults[i]);
+      }
+    }
+    await _setGlassQualityAll(LiquidGlassQuality.quality);
+    await SettingsManager.setLiquidGlassExpansion(14);
+  }
+
+  Future<void> _setAllGlassElements(bool on) async {
+    await SettingsManager.setLiquidGlassOnNavBar(on);
+    await SettingsManager.setLiquidGlassOnInput(on);
+    await SettingsManager.setLiquidGlassOnSearch(on);
+    await SettingsManager.setLiquidGlassOnAppBar(on);
+  }
+
+  /// "General" mode: the navigation bar's values become everybody's.
+  Future<void> _applyGlassCommonToAll() async {
+    for (final e in [_glassInput, _glassSearch, _glassAppBar]) {
+      for (var i = 0; i < _glassNav.$1.length; i++) {
+        await e.$2[i](_glassNav.$1[i].value);
+      }
+    }
+    await _setGlassQualityAll(SettingsManager.liquidGlassNavBarQuality.value);
+  }
+
+  Future<void> _setGlassMaster(bool on) async {
+    if (!on) {
+      final mask = (SettingsManager.liquidGlassOnNavBar.value ? 1 : 0) |
+          (SettingsManager.liquidGlassOnInput.value ? 2 : 0) |
+          (SettingsManager.liquidGlassOnSearch.value ? 4 : 0) |
+          (SettingsManager.liquidGlassOnAppBar.value ? 8 : 0);
+      if (mask != 0) await SettingsManager.setLiquidGlassSavedFlags(mask);
+      await SettingsManager.setLiquidGlassMaster(false);
+      await _setAllGlassElements(false);
+      return;
+    }
+    await SettingsManager.setLiquidGlassMaster(true);
+    if (!SettingsManager.liquidGlassAdvancedMode.value) {
+      await _setAllGlassElements(true);
+      await _applyGlassCommonToAll();
+    } else {
+      final m = SettingsManager.liquidGlassSavedFlags == 0
+          ? 15
+          : SettingsManager.liquidGlassSavedFlags;
+      await SettingsManager.setLiquidGlassOnNavBar(m & 1 != 0);
+      await SettingsManager.setLiquidGlassOnInput(m & 2 != 0);
+      await SettingsManager.setLiquidGlassOnSearch(m & 4 != 0);
+      await SettingsManager.setLiquidGlassOnAppBar(m & 8 != 0);
+    }
+  }
+
+  Future<void> _setGlassAdvancedMode(bool advanced) async {
+    if (SettingsManager.liquidGlassAdvancedMode.value == advanced) return;
+    await SettingsManager.setLiquidGlassAdvancedMode(advanced);
+    if (!advanced) {
+      // Back to "General": every element on, with the common values.
+      await _setAllGlassElements(true);
+      await _applyGlassCommonToAll();
+    }
+  }
+
+  BoxDecoration _glassCardDecoration(ColorScheme cs, {bool active = false}) =>
+      BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(
+          color: active
+              ? cs.primary.withValues(alpha: 0.3)
+              : cs.outlineVariant.withValues(alpha: 0.15),
+        ),
+      );
+
+  Widget _buildGlassTabs(
+      ColorScheme cs, AppLocalizations l, bool advanced) {
+    Widget tab(String label, bool selected, VoidCallback onTap) => Expanded(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: selected
+                    ? cs.primary.withValues(alpha: 0.15)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected
+                      ? cs.primary
+                      : cs.onSurface.withValues(alpha: 0.6),
+                ),
+              ),
+            ),
+          ),
+        );
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: _glassCardDecoration(cs),
+      child: Row(
+        children: [
+          tab(l.glassTabGeneral, !advanced, () => _setGlassAdvancedMode(false)),
+          tab(l.glassTabAdvanced, advanced, () => _setGlassAdvancedMode(true)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLiquidGlassBody(BuildContext context, AppLocalizations l) {
+    final cs = Theme.of(context).colorScheme;
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        SettingsManager.liquidGlassMaster,
+        SettingsManager.liquidGlassAdvancedMode,
+      ]),
+      builder: (_, __) {
+        final master = SettingsManager.liquidGlassMaster.value;
+        final advanced = SettingsManager.liquidGlassAdvancedMode.value;
+        final all = [_glassNav, _glassInput, _glassSearch, _glassAppBar];
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Master switch.
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+              decoration: _glassCardDecoration(cs, active: master),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(l.glassMasterTitle,
+                            style: const TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w600)),
+                        Text(l.glassMasterDesc,
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: cs.onSurface.withValues(alpha: 0.5))),
+                      ],
+                    ),
+                  ),
+                  Switch(value: master, onChanged: _setGlassMaster),
+                ],
+              ),
+            ),
+            // Effects off: nothing else is built or shown.
+            if (master) ...[
+              const SizedBox(height: 12),
+              Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildGlassTabs(cs, l, advanced),
+                    const SizedBox(height: 12),
+                    if (!advanced) ...[
+                      // General: one set of values for every element.
+                      _buildLiquidElementSection(
+                        context: context,
+                        label: l.glassSimpleTitle,
+                        description: l.glassSimpleDesc,
+                        qualityNotifier:
+                            SettingsManager.liquidGlassNavBarQuality,
+                        onQualityChanged: _setGlassQualityAll,
+                        sliders: _glassSliders(l, all),
+                      ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () async {
+                            await _resetGlassToDefaults();
+                          },
+                          icon: const Icon(Icons.restart_alt_rounded,
+                              size: 18),
+                          label: Text(l.glassResetAll),
+                        ),
+                      ),
+                    ] else ...[
+                      // Advanced: every element on/off and tuned on its own.
+                      _buildLiquidElementSection(
+                        context: context,
+                        label: l.liquidGlassNavBarLabel,
+                        description: l.liquidGlassNavBarDesc,
+                        toggleListenable: SettingsManager.liquidGlassOnNavBar,
+                        toggleGetter: (v) => v as bool,
+                        onToggle: SettingsManager.setLiquidGlassOnNavBar,
+                        qualityNotifier:
+                            SettingsManager.liquidGlassNavBarQuality,
+                        onQualityChanged:
+                            SettingsManager.setLiquidGlassNavBarQuality,
+                        sliders: _glassSliders(l, [
+                          _glassNav
+                        ], extra: [
+                          _LiquidSliderConfig(
+                              label: l.glassJelly,
+                              description: l.glassJellyDesc,
+                              listenable:
+                                  SettingsManager.liquidGlassExpansion,
+                              min: 0,
+                              max: 28,
+                              divisions: 28,
+                              format: (v) => v.toStringAsFixed(0),
+                              onChanged:
+                                  SettingsManager.setLiquidGlassExpansion),
+                        ]),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildLiquidElementSection(
+                        context: context,
+                        label: l.liquidGlassInputLabel,
+                        description: l.liquidGlassInputDesc,
+                        toggleListenable: SettingsManager.liquidGlassOnInput,
+                        toggleGetter: (v) => v as bool,
+                        onToggle: SettingsManager.setLiquidGlassOnInput,
+                        qualityNotifier:
+                            SettingsManager.liquidGlassInputQuality,
+                        onQualityChanged:
+                            SettingsManager.setLiquidGlassInputQuality,
+                        sliders: _glassSliders(l, [_glassInput]),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildLiquidElementSection(
+                        context: context,
+                        label: l.liquidGlassSearchLabel,
+                        description: l.liquidGlassSearchDesc,
+                        toggleListenable: SettingsManager.liquidGlassOnSearch,
+                        toggleGetter: (v) => v as bool,
+                        onToggle: SettingsManager.setLiquidGlassOnSearch,
+                        qualityNotifier:
+                            SettingsManager.liquidGlassSearchQuality,
+                        onQualityChanged:
+                            SettingsManager.setLiquidGlassSearchQuality,
+                        sliders: _glassSliders(l, [_glassSearch]),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildLiquidElementSection(
+                        context: context,
+                        label: l.liquidGlassAppBarLabel,
+                        description: l.liquidGlassAppBarDesc,
+                        toggleListenable: SettingsManager.liquidGlassOnAppBar,
+                        toggleGetter: (v) => v as bool,
+                        onToggle: SettingsManager.setLiquidGlassOnAppBar,
+                        qualityNotifier:
+                            SettingsManager.liquidGlassAppBarQuality,
+                        onQualityChanged:
+                            SettingsManager.setLiquidGlassAppBarQuality,
+                        sliders: _glassSliders(l, [_glassAppBar]),
+                      ),
+                    ],
+                  ],
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -7291,6 +6920,7 @@ enum SectionType {
   audio,
   wardLink,
   mesh,
+  onionMode,
   backup,
   recycleBin
 }
@@ -7804,6 +7434,368 @@ class _WardLinkQrDialogState extends State<_WardLinkQrDialog> {
   }
 }
 
+// ── Onion Mode pairing dialog ──────────────────────────────────────────────────
+// Structural copy of _WardLinkQrDialog: same show-QR/scan-QR flow, but the
+// payload carries an onion address instead of a LAN ip:port, and pairing
+// completes over a Tor dial (OnionTransportService.completePairingFromQr)
+// instead of an HTTP POST to a local IP.
+class OnionQrDialog extends StatefulWidget {
+  const OnionQrDialog();
+  @override
+  State<OnionQrDialog> createState() => OnionQrDialogState();
+}
+
+class OnionQrDialogState extends State<OnionQrDialog> {
+  String? _qrJson;
+  String? _username;
+  String? _error;
+  String? _busyMessage;
+  bool _showScanner = false;
+  bool _handled = false;
+  bool _busy = false;
+  bool _poppingDialog = false;
+  MobileScannerController? _scanCtrl;
+  int _initialPeerCount = 0;
+
+  bool get _isMobile =>
+      !Platform.isWindows && !Platform.isMacOS && !Platform.isLinux;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialPeerCount = OnionPairedPeers.peers.value.length;
+    OnionPairedPeers.peers.addListener(_onPeersChanged);
+    _prepare();
+  }
+
+  @override
+  void dispose() {
+    OnionPairedPeers.peers.removeListener(_onPeersChanged);
+    if (OnionTransportService.instance.onPairingRetry == _onPairingRetry) {
+      OnionTransportService.instance.onPairingRetry = null;
+    }
+    _scanCtrl?.dispose();
+    super.dispose();
+  }
+
+  // A fresh onion service's descriptor can take up to a couple of minutes
+  // to finish publishing across the Tor network -- completePairingFromQr
+  // retries the dial with backoff rather than failing immediately, so this
+  // just keeps the busy spinner honest about why it's taking a while.
+  void _onPairingRetry(int attempt, int maxAttempts) {
+    if (!mounted) return;
+    setState(() {
+      _busyMessage =
+          AppLocalizations.of(context).pairRetry(attempt, maxAttempts);
+    });
+  }
+
+  // Fires when the other side dials us back after scanning our QR.
+  void _onPeersChanged() {
+    if (!mounted) return;
+    if (_handled || _poppingDialog) return;
+    if (OnionPairedPeers.peers.value.length > _initialPeerCount) {
+      _poppingDialog = true;
+      _scanCtrl?.dispose();
+      _scanCtrl = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.pop(context);
+        rootScreenKey.currentState?.showSnack(AppLocalizations.of(context).pairedOverTor);
+      });
+    }
+  }
+
+  Future<void> _prepare() async {
+    final username = await AccountManager.getCurrentAccount();
+    if (username == null) {
+      if (mounted) setState(() => _error = AppLocalizations.of(context).notLoggedIn);
+      return;
+    }
+    try {
+      if (!OnionTransportService.instance.isRunning) {
+        final support = await getOnyxSupportDirectory();
+        // Same per-account folder as RootScreen._startOnionMode: another
+        // folder would mean another Tor data directory and a different
+        // onion address (and key) than the one this account really has.
+        final stateDir = p.join(support.path, 'onion_hs_$username');
+        setState(() => _busy = true);
+        await OnionTransportService.instance.start(username, stateDir);
+      }
+      final qr = await OnionTransportService.instance.pairingQrJson(username);
+      if (mounted) {
+        setState(() {
+          _username = username;
+          _qrJson = qr;
+          _busy = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() {
+        _error = AppLocalizations.of(context).pairStartFailed('$e');
+        _busy = false;
+      });
+    }
+  }
+
+  void _startScan() {
+    _scanCtrl = MobileScannerController(
+      detectionSpeed: DetectionSpeed.normal,
+      facing: CameraFacing.back,
+    );
+    setState(() {
+      _showScanner = true;
+      _handled = false;
+      _error = null;
+    });
+  }
+
+  void _stopScan() {
+    _scanCtrl?.dispose();
+    _scanCtrl = null;
+    setState(() => _showScanner = false);
+  }
+
+  Future<void> _onDetect(BarcodeCapture capture) async {
+    if (_handled || _username == null) return;
+    final raw = capture.barcodes.firstOrNull?.rawValue;
+    if (raw == null || !raw.contains('onion_pair')) return;
+    _handled = true;
+    _scanCtrl?.dispose();
+    _scanCtrl = null;
+    setState(() {
+      _showScanner = false;
+      _busy = true;
+      _busyMessage = AppLocalizations.of(context).pairing;
+    });
+
+    OnionTransportService.instance.onPairingRetry = _onPairingRetry;
+    final err = await OnionTransportService.instance
+        .completePairingFromQr(raw, _username!);
+    OnionTransportService.instance.onPairingRetry = null;
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _busyMessage = null;
+    });
+
+    if (err == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.pop(context);
+        rootScreenKey.currentState?.showSnack(AppLocalizations.of(context).pairedOverTor);
+      });
+    } else {
+      setState(() => _error = AppLocalizations.of(context).pairFailedWith(err));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    if (_showScanner && _scanCtrl != null) {
+      return OnyxDialogShell(
+        maxWidth: 340,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            OnyxDialogHeader(
+              leading: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: cs.primary.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.qr_code_scanner_rounded,
+                    size: 20, color: cs.primary),
+              ),
+              title: Text(
+                AppLocalizations.of(context).pairScanTitle,
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: cs.onSurface),
+              ),
+              onClose: _stopScan,
+            ),
+            RepaintBoundary(
+              child: SizedBox(
+                height: 260,
+                child: MobileScanner(
+                  controller: _scanCtrl!,
+                  onDetect: _onDetect,
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+              child: Text(
+                AppLocalizations.of(context).pairScanHint,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6)),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+              child: OutlinedButton(
+                onPressed: _stopScan,
+                style: OutlinedButton.styleFrom(
+                  padding: kOnyxDialogButtonPadding,
+                  shape: kOnyxDialogButtonShape,
+                ),
+                child: Text(AppLocalizations.of(context).cancel),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget body;
+    if (_busy) {
+      body = Padding(
+        padding: const EdgeInsets.symmetric(vertical: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Center(child: CircularProgressIndicator()),
+            if (_busyMessage != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                _busyMessage!,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 12.5, color: cs.onSurface.withValues(alpha: 0.7)),
+              ),
+            ],
+          ],
+        ),
+      );
+    } else if (_error != null && _qrJson == null) {
+      body = Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Text(_error!,
+            style: TextStyle(color: cs.error), textAlign: TextAlign.center),
+      );
+    } else if (_qrJson == null) {
+      body = const Padding(
+        padding: EdgeInsets.symmetric(vertical: 32),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    } else {
+      body = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            AppLocalizations.of(context).pairShowHint,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                fontSize: 13, color: cs.onSurface.withValues(alpha: 0.7)),
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(28),
+              ),
+              child: RepaintBoundary(
+                child: QrImageView(
+                  data: _qrJson!,
+                  version: QrVersions.auto,
+                  size: 200,
+                  backgroundColor: Colors.white,
+                  eyeStyle: const QrEyeStyle(
+                      eyeShape: QrEyeShape.square, color: Color(0xFF1A1A1A)),
+                  dataModuleStyle: const QrDataModuleStyle(
+                      dataModuleShape: QrDataModuleShape.square,
+                      color: Color(0xFF1A1A1A)),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(Icons.lock_outline_rounded, size: 13, color: cs.primary),
+              const SizedBox(width: 5),
+              Text(
+                AppLocalizations.of(context).pairEncrypted,
+                style: TextStyle(
+                    fontSize: 11, color: cs.onSurface.withValues(alpha: 0.5)),
+              ),
+            ],
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!,
+                style: TextStyle(color: cs.error, fontSize: 12),
+                textAlign: TextAlign.center),
+          ],
+        ],
+      );
+    }
+
+    return OnyxDialogShell(
+      maxWidth: 340,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OnyxDialogHeader(
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.security_rounded, size: 20, color: cs.primary),
+            ),
+            title: Text(
+              AppLocalizations.of(context).pairOverTor,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: cs.onSurface),
+            ),
+            onClose: () => Navigator.pop(context),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+            child: body,
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_isMobile && _qrJson != null && !_busy)
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      padding: kOnyxDialogButtonPadding,
+                      shape: kOnyxDialogButtonShape,
+                    ),
+                    icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
+                    label: Text(AppLocalizations.of(context).pairScanCode),
+                    onPressed: _startScan,
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ── Migration blocking dialog ─────────────────────────────────────────────────
 //
 // [targetPath] == null  →  "reset to defaults" (just clears the bootstrap config)
@@ -8125,17 +8117,6 @@ class _PresetsSheetState extends State<_PresetsSheet> {
       'lgLightIntensity': SettingsManager.liquidGlassLightIntensity.value,
       'lgThickness': SettingsManager.liquidGlassThickness.value,
       'lgJelly': SettingsManager.liquidGlassJellyEnabled.value,
-      // Liquid glass — cards
-      'lgOnCards': SettingsManager.liquidGlassOnCards.value,
-      'lgCardsQuality': SettingsManager.liquidGlassCardsQuality.value.name,
-      'lgCardsBlur': SettingsManager.liquidGlassCardsBlur.value,
-      'lgCardsTint': SettingsManager.liquidGlassCardsTint.value,
-      'lgCardsSaturation': SettingsManager.liquidGlassCardsSaturation.value,
-      'lgCardsChromatic': SettingsManager.liquidGlassCardsChromatic.value,
-      'lgCardsRefractive': SettingsManager.liquidGlassCardsRefractive.value,
-      'lgCardsLightIntensity':
-          SettingsManager.liquidGlassCardsLightIntensity.value,
-      'lgCardsThickness': SettingsManager.liquidGlassCardsThickness.value,
       // Liquid glass — input
       'lgOnInput': SettingsManager.liquidGlassOnInput.value,
       'lgInputQuality': SettingsManager.liquidGlassInputQuality.value.name,
@@ -8224,23 +8205,6 @@ class _PresetsSheetState extends State<_PresetsSheet> {
           d('lgLightIntensity', 0.60));
       await SettingsManager.setLiquidGlassThickness(d('lgThickness', 30.0));
       await SettingsManager.setLiquidGlassJellyEnabled(b('lgJelly', true));
-
-      // Liquid glass — cards
-      await SettingsManager.setLiquidGlassOnCards(b('lgOnCards', true));
-      await SettingsManager.setLiquidGlassCardsQuality(
-          qualityByName(preset['lgCardsQuality'] as String?));
-      await SettingsManager.setLiquidGlassCardsBlur(d('lgCardsBlur', 7.0));
-      await SettingsManager.setLiquidGlassCardsTint(d('lgCardsTint', 0.10));
-      await SettingsManager.setLiquidGlassCardsSaturation(
-          d('lgCardsSaturation', 1.0));
-      await SettingsManager.setLiquidGlassCardsChromatic(
-          d('lgCardsChromatic', 0.15));
-      await SettingsManager.setLiquidGlassCardsRefractive(
-          d('lgCardsRefractive', 1.40));
-      await SettingsManager.setLiquidGlassCardsLightIntensity(
-          d('lgCardsLightIntensity', 0.50));
-      await SettingsManager.setLiquidGlassCardsThickness(
-          d('lgCardsThickness', 20.0));
 
       // Liquid glass — input
       await SettingsManager.setLiquidGlassOnInput(b('lgOnInput', true));
@@ -8518,7 +8482,7 @@ class _PresetsSheetState extends State<_PresetsSheet> {
                                   else if (hasWallpaper)
                                     'Image wallpaper',
                                   if (p.containsKey('elementOpacity') ||
-                                      p.containsKey('lgOnCards'))
+                                      p.containsKey('lgOnInput'))
                                     'UI effects',
                                 ].join(' • '),
                                 style: TextStyle(
@@ -8600,6 +8564,64 @@ class _LiquidSliderConfig extends _LiquidItem {
   final int divisions;
   final String Function(double) format;
   final Future<void> Function(double) onChanged;
+}
+
+/// One glass slider. While the thumb is dragged only this tile repaints; the
+/// value is applied (and saved) when the finger lifts. Applying it on every
+/// tick re-rendered the glass shaders of the nav bar / input bar / search and
+/// wrote to disk up to four times per frame, which made the phone stutter.
+class _LiquidSliderTile extends StatefulWidget {
+  const _LiquidSliderTile({required this.config});
+  final _LiquidSliderConfig config;
+
+  @override
+  State<_LiquidSliderTile> createState() => _LiquidSliderTileState();
+}
+
+class _LiquidSliderTileState extends State<_LiquidSliderTile> {
+  double? _drag;
+
+  @override
+  Widget build(BuildContext context) {
+    final config = widget.config;
+    return ValueListenableBuilder<double>(
+      valueListenable: config.listenable,
+      builder: (_, stored, __) {
+        final value = (_drag ?? stored).clamp(config.min, config.max);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Flexible(
+                  child: Text(config.label,
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600)),
+                ),
+                Text(config.format(value),
+                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(config.description,
+                style: const TextStyle(fontSize: 11, color: Colors.grey)),
+            Slider(
+              min: config.min,
+              max: config.max,
+              divisions: config.divisions,
+              value: value,
+              onChanged: (v) => setState(() => _drag = v),
+              onChangeEnd: (v) async {
+                await config.onChanged(v);
+                if (mounted) setState(() => _drag = null);
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 class _LiquidToggleItem extends _LiquidItem {

@@ -69,15 +69,19 @@ import '../managers/lan_message_manager.dart';
 import '../services/wardlink/wardlink_sync_service.dart';
 import '../services/mesh/mesh_manager.dart';
 import '../services/wardlink/wardlink_tombstones.dart';
+import '../services/onion/onion_transport_service.dart';
+import '../services/onion/onion_identity.dart';
+import '../services/onion/onion_paired_peers.dart';
+import '../services/onion/onion_requests.dart';
+import '../services/onion/onion_send_queue.dart';
 import '../widgets/avatar_widget.dart';
 import '../widgets/adaptive_nav_bar.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import '../widgets/connection_title.dart';
-import '../widgets/proxy_shield_badge.dart';
-import '../utils/proxy_manager.dart';
 import '../utils/cert_pinning.dart';
 import '../widgets/animated_nav_icon.dart';
 import '../call/call_manager.dart';
+import '../call/call_notification.dart';
 import '../screens/groups_tab.dart';
 import '../screens/group_chat_screen.dart';
 import '../screens/external_group_chat_screen.dart';
@@ -220,6 +224,70 @@ class RootScreenState extends State<RootScreen>
 
   final Set<String> _dirtyChatIds = {};
   bool _fullSaveRequested = false;
+
+  /// Whose data is in [chats] / [_favorites] right now -- null while an
+  /// account switch has cleared them and the next account's aren't loaded
+  /// yet. Saves only ever go to that owner: a pending save (or a late async
+  /// handler of the previous account) must never write one account's chats
+  /// or favourites under another account's name.
+  String? _chatsOwner;
+  String? _favoritesOwner;
+
+  /// Personal chat ids are "<a>:<b>" (sorted usernames); these prefixes mark
+  /// the other kinds of chat keys.
+  static const Set<String> _nonPersonalChatPrefixes = {
+    'fav', 'lan', 'ble', 'grp', 'group', 'ext', 'channel', 'mesh', 'me',
+  };
+
+  /// Drops personal chats that don't involve [username] -- another account's
+  /// chats that an earlier switch saved under this one.
+  Map<String, List<ChatMessage>> _withoutForeignChats(
+      Map<String, List<ChatMessage>> loaded, String username) {
+    final foreign = loaded.keys.where((id) {
+      final parts = id.split(':');
+      if (parts.length != 2) return false;
+      if (_nonPersonalChatPrefixes.contains(parts[0])) return false;
+      // "<other>:me" -- a legacy key, renamed by _normalizeChatsForCurrentUser.
+      if (parts.contains('me')) return false;
+      return !parts.contains(username);
+    }).toList();
+    if (foreign.isEmpty) return loaded;
+    _appendLog('[chats] hiding ${foreign.length} chat(s) of another account '
+        'for $username: ${foreign.join(', ')}');
+    return Map.of(loaded)..removeWhere((id, _) => foreign.contains(id));
+  }
+
+  /// Saves what's pending for the account whose data is loaded, then
+  /// empties chats/favourites so nothing of it can leak into the account
+  /// that's about to be loaded. Call BEFORE currentUsername changes.
+  Future<void> _detachAccountState() async {
+    _persistChatsTimer?.cancel();
+    if (_hasPendingPersist && currentUsername != null) {
+      await persistChats();
+    }
+    _hasPendingPersist = false;
+    _dirtyChatIds.clear();
+    _fullSaveRequested = false;
+    _chatsOwner = null;
+    _favoritesOwner = null;
+    if (!mounted) return;
+    setState(() {
+      _favorites.clear();
+      _favFolders = [];
+      _favTopOrder = [];
+      _selectedFavoriteId = null;
+      chats.clear();
+      _serverMsgIndex.clear();
+      selectedChatOther = null;
+      _chatScreenCache.clear();
+      _groupChatScreenCache.clear();
+      _externalGroupChatScreenCache.clear();
+      selectedGroup = null;
+      selectedExternalGroup = null;
+      selectedExternalServer = null;
+    });
+    chatsVersion.value++;
+  }
 
   static const List<String> _motivationalHints = [
     'Never be silenced',
@@ -444,29 +512,38 @@ class RootScreenState extends State<RootScreen>
 
   // Public entry point. Coalesces bursts: only the last message in a rapid
   // sequence is actually shown, after a short quiet period.
-  void showSnack(String text, {String? actionLabel, VoidCallback? onAction}) {
+  /// [force]: show even with snackbars turned off in settings -- for
+  /// warnings the user must see (e.g. "contact is offline" on a call).
+  void showSnack(String text,
+      {String? actionLabel, VoidCallback? onAction, bool force = false}) {
     if (!mounted) return;
-    if (!SettingsManager.snackbarEnabled.value) return;
+    if (!force && !SettingsManager.snackbarEnabled.value) return;
     _pendingSnackText = text;
     _pendingSnackActionLabel = actionLabel;
     _pendingSnackAction = onAction;
+    _pendingSnackForce = force;
     _snackDebounce?.cancel();
     _snackDebounce = Timer(const Duration(milliseconds: 350), () {
       final t = _pendingSnackText;
       final actLabel = _pendingSnackActionLabel;
       final act = _pendingSnackAction;
+      final f = _pendingSnackForce;
       _pendingSnackText = null;
       _pendingSnackActionLabel = null;
       _pendingSnackAction = null;
+      _pendingSnackForce = false;
       if (t != null) {
-        _presentSnack(t, actionLabel: actLabel, onAction: act);
+        _presentSnack(t, actionLabel: actLabel, onAction: act, force: f);
       }
     });
   }
 
-  void _presentSnack(String text, {String? actionLabel, VoidCallback? onAction}) {
+  bool _pendingSnackForce = false;
+
+  void _presentSnack(String text,
+      {String? actionLabel, VoidCallback? onAction, bool force = false}) {
     if (!mounted) return;
-    if (!SettingsManager.snackbarEnabled.value) return;
+    if (!force && !SettingsManager.snackbarEnabled.value) return;
     final colorScheme = Theme.of(context).colorScheme;
     final brightness = SettingsManager.elementBrightness.value;
     final opacity = SettingsManager.elementOpacity.value;
@@ -509,8 +586,228 @@ class RootScreenState extends State<RootScreen>
     await launchUrl(Uri.parse('app-settings:'));
   }
 
-  Future<void> sendChatMessage(String to, String text) async {
-    await _sendChatMessage(to, text, null);
+  /// Wraps the display-name label in the top-left account indicator so
+  /// tapping it copies something to the clipboard -- with nothing else
+  /// shown: no masked/partial address, no hint label. This is the only
+  /// on-screen affordance for "what's my address"/"what's my name", so it
+  /// has to double as both the name display and the copy action rather
+  /// than adding a visible second line for it. When onion mode is running
+  /// the onion address is copied (that's the identity peers actually add);
+  /// otherwise the displayed username/display name itself is copied.
+  Widget _wrapAccountNameForCopy(Widget nameText) {
+    final onionOn = SettingsManager.onionModeEnabled.value && OnionIdentity.isRunning;
+    final String textToCopy;
+    final String snackText;
+    if (onionOn) {
+      // With several devices: the onyx: code listing all of them.
+      textToCopy = OnionTransportService.instance.myContactCode;
+      snackText = 'Onion address copied';
+    } else if (currentUsername != null) {
+      textToCopy = currentDisplayName ?? currentUsername!;
+      snackText = 'Username copied';
+    } else {
+      return nameText;
+    }
+    return GestureDetector(
+      onTap: () {
+        Clipboard.setData(ClipboardData(text: textToCopy));
+        _presentSnack(snackText);
+      },
+      child: nameText,
+    );
+  }
+
+  /// Sends [text] as-is -- used for forwarding. A file message forwarded to
+  /// a Tor contact carries its file along (see [_carryMediaOverOnion]).
+  /// Returns false when it couldn't be sent (its file isn't on this device).
+  Future<bool> sendChatMessage(String to, String text) async {
+    var content = text;
+    if (OnionPairedPeers.isTrusted(to) && _isMediaPointer(text)) {
+      final carried = await _carryMediaOverOnion(to, text);
+      if (carried == null) {
+        showSnack(AppLocalizations.of(context).forwardFileUnavailable);
+        return false;
+      }
+      content = carried;
+    }
+    await _sendChatMessage(to, content, null);
+    return true;
+  }
+
+  static const List<String> _mediaPointerPrefixes = [
+    'IMAGEv1:',
+    'VOICEv1:',
+    'AUDIOv1:',
+    'VIDEOv1:',
+    'FILEv1:',
+    'DOCUMENTv1:',
+    'ARCHIVEv1:',
+    'DATAv1:',
+    'ALBUMv1:',
+  ];
+
+  static String? _mediaPrefixOf(String content) {
+    final up = content.toUpperCase();
+    for (final p in _mediaPointerPrefixes) {
+      if (up.startsWith(p.toUpperCase())) return p;
+    }
+    return null;
+  }
+
+  static bool _isMediaPointer(String content) =>
+      _mediaPrefixOf(content) != null;
+
+  /// A file message only names its file (onion://, fav://, lan://, a cache
+  /// name...) -- the bytes live on this device. Sending that pointer to a Tor
+  /// contact as-is (what forwarding used to do) gives them a message whose
+  /// file never arrives. So: find the file here, send it over Tor the same
+  /// way the chat screen sends a fresh file, and point the message at the
+  /// copy they'll have (onion://<new name>). Null if the file isn't here.
+  Future<String?> _carryMediaOverOnion(String to, String content) async {
+    final prefix = _mediaPrefixOf(content);
+    if (prefix == null) return content;
+    final body = content.substring(prefix.length);
+    try {
+      if (prefix == 'ALBUMv1:') {
+        final items = (jsonDecode(body) as List)
+            .whereType<Map>()
+            .map((m) => Map<String, dynamic>.from(m))
+            .toList();
+        final out = <Map<String, dynamic>>[];
+        for (final item in items) {
+          final carried = await _carryOneMediaItem(to, 'IMAGEv1:', item);
+          if (carried == null) return null;
+          out.add(carried);
+        }
+        return '$prefix${jsonEncode(out)}';
+      }
+      final meta = jsonDecode(body) as Map<String, dynamic>;
+      final carried = await _carryOneMediaItem(to, prefix, meta);
+      return carried == null ? null : '$prefix${jsonEncode(carried)}';
+    } catch (e) {
+      _appendLog('[forward] carrying media to $to failed: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _carryOneMediaItem(
+      String to, String prefix, Map<String, dynamic> meta) async {
+    final urlKey = (meta['url'] is String && (meta['url'] as String).isNotEmpty)
+        ? 'url'
+        : 'filename';
+    final ref = meta[urlKey] as String?;
+    if (ref == null || ref.isEmpty) return null;
+    final src = await _findLocalMediaFile(ref);
+    if (src == null) {
+      _appendLog('[forward] no local file for $ref');
+      return null;
+    }
+
+    final docs = await getOnyxDocumentsDirectory();
+    final dir = Directory('${docs.path}/onion_media');
+    await dir.create(recursive: true);
+    var base = src.uri.pathSegments.isEmpty ? 'file' : src.uri.pathSegments.last;
+    // Drop an earlier "<micros>_" prefix so names don't keep growing.
+    base = base.replaceFirst(RegExp(r'^\d{10,}_'), '');
+    final unique = '${DateTime.now().microsecondsSinceEpoch}_$base';
+    final staged = File('${dir.path}/$unique');
+    await src.copy(staged.path);
+
+    final length = await staged.length();
+    final isSmallKind = prefix == 'IMAGEv1:' ||
+        prefix == 'VOICEv1:' ||
+        prefix == 'AUDIOv1:';
+    final svc = OnionTransportService.instance;
+    if (isSmallKind && length <= OnionTransportService.maxMediaBytes) {
+      await svc.sendMedia(
+        to,
+        kind: prefix == 'IMAGEv1:' ? 'image' : 'voice',
+        filename: unique,
+        bytes: await staged.readAsBytes(),
+        extra: {
+          for (final k in const ['blur', 'ar', 'duration', 'format'])
+            if (meta[k] != null) k: meta[k],
+        },
+        filePath: staged.path,
+      );
+    } else {
+      if (length > OnionTransportService.maxChunkedMediaBytes) return null;
+      await svc.sendMediaChunked(
+        to,
+        kind: prefix.substring(0, prefix.length - 3).toLowerCase(),
+        filename: unique,
+        file: staged,
+      );
+    }
+
+    // Server-era fields mean nothing to them (and the media key was for a
+    // server copy that isn't involved here).
+    return {
+      ...meta,
+      urlKey: 'onion://$unique',
+    }
+      ..remove('key')
+      ..remove('owner');
+  }
+
+  /// Where the file a message points at lives on this device, if anywhere.
+  Future<File?> _findLocalMediaFile(String ref) async {
+    Future<File?> existing(String path) async {
+      final f = File(path);
+      return await f.exists() ? f : null;
+    }
+
+    final registered = mediaFilePathRegistry[ref];
+    if (registered != null) {
+      final f = await existing(registered);
+      if (f != null) return f;
+    }
+    final docs = (await getOnyxDocumentsDirectory()).path;
+    final support = (await getOnyxSupportDirectory()).path;
+    String name = ref;
+    List<String> dirs;
+    if (ref.startsWith('onion://')) {
+      name = ref.substring(8);
+      dirs = ['$docs/onion_media'];
+    } else if (ref.startsWith('lan://')) {
+      name = ref.substring(6);
+      dirs = ['$docs/lan_media'];
+    } else if (ref.startsWith('fav://')) {
+      name = ref.substring(6);
+      dirs = [
+        '$docs/fav_media',
+        '$docs/voice_cache',
+        '$support/voice_cache',
+      ];
+    } else if (ref.startsWith('file://')) {
+      return existing(Uri.parse(ref).toFilePath());
+    } else {
+      if (File(ref).isAbsolute) return existing(ref);
+      // A bare (server-era) name: whichever cache it landed in.
+      name = ref.split('/').last;
+      const caches = [
+        'voice_cache',
+        'image_cache',
+        'video_cache',
+        'audio_cache',
+        'data_cache',
+        'document_cache',
+        'archive_cache',
+        'fav_media',
+        'onion_media',
+        'lan_media',
+      ];
+      dirs = [
+        for (final c in caches) '$docs/$c',
+        for (final c in caches) '$support/$c',
+      ];
+    }
+    if (name.isEmpty || name.contains('..')) return null;
+    for (final d in dirs) {
+      final f = await existing('$d/$name');
+      if (f != null) return f;
+    }
+    return null;
   }
 
   void sendMessageToFavorite(String favId, String text) {
@@ -833,9 +1130,12 @@ class RootScreenState extends State<RootScreen>
   }
 
   Future<void> _loadFavorites() async {
-    if (currentUsername == null) return;
+    final username = currentUsername;
+    if (username == null) return;
     final prefs = await SharedPreferences.getInstance();
-    final str = prefs.getString('favorites_${currentUsername}');
+    // Switched away while waiting: these aren't the current account's.
+    if (currentUsername != username || !mounted) return;
+    final str = prefs.getString('favorites_$username');
     if (str != null) {
       final list = (jsonDecode(str) as List)
           .map((e) => FavoriteChat.fromJson(e))
@@ -845,6 +1145,7 @@ class RootScreenState extends State<RootScreen>
       setState(() => _favorites = []);
     }
     await _loadFavStructure();
+    if (currentUsername == username) _favoritesOwner = username;
   }
 
   Future<void> _requestStatusSnapshotForKnownUsers() async {
@@ -886,6 +1187,13 @@ class RootScreenState extends State<RootScreen>
 
   Future<void> _saveFavorites() async {
     if (currentUsername == null) return;
+    // Not loaded for this account (yet): saving now would overwrite its
+    // favourites with whatever is in memory -- see _favoritesOwner.
+    if (_favoritesOwner != currentUsername) {
+      _appendLog('[favorites] save skipped: loaded for '
+          '${_favoritesOwner ?? 'nobody'}, current is $currentUsername');
+      return;
+    }
     final prefs = await SharedPreferences.getInstance();
     final list = _favorites.map((f) => f.toJson()).toList();
     await prefs.setString('favorites_${currentUsername}', jsonEncode(list));
@@ -960,6 +1268,7 @@ class RootScreenState extends State<RootScreen>
 
   Future<void> _saveFavStructure({bool touch = true}) async {
     if (currentUsername == null) return;
+    if (_favoritesOwner != currentUsername) return; // see _saveFavorites
     // A local edit (reorder, folder change…) marks the layout as freshly
     // changed so WardLink propagates it; syncing in a peer's layout passes
     // touch:false to preserve the originating timestamp.
@@ -1504,6 +1813,11 @@ class RootScreenState extends State<RootScreen>
             to, path, replyTo, onTaskCreated);
       }
 
+      if (SettingsManager.onionModeEnabled.value &&
+          OnionPairedPeers.isTrusted(to)) {
+        return await _performVoiceUploadOnion(to, path, replyTo, onTaskCreated);
+      }
+
       final token = await AccountManager.getToken(currentUsername ?? '');
       if (token == null) {
         _appendLog('[voice.upload] no token');
@@ -1801,6 +2115,94 @@ class RootScreenState extends State<RootScreen>
     } catch (e, st) {
       _appendLog('[voice.lan] error: $e\n$st');
       showSnack('Failed to send voice via LAN: $e');
+    }
+  }
+
+  /// Onion-mode analogue of [_performVoiceUploadFavorite]: no server upload
+  /// step exists in onion mode (see OnionTransportService.sendMedia's doc
+  /// comment), so the recorded bytes go straight over Tor to the peer, and
+  /// the VOICEv1 pointer rides the normal [_sendChatMessage] path (same one
+  /// text messages use) so local echo + onion delivery/retry stay identical
+  /// to every other onion send.
+  Future<void> _performVoiceUploadOnion(
+    String to,
+    String path, [
+    Map<String, dynamic>? replyTo,
+    void Function(UploadTask)? onTaskCreated,
+  ]) async {
+    UploadTask? voiceTask;
+    try {
+      final file = File(path);
+      if (!await file.exists()) {
+        showSnack('Voice file not found');
+        return;
+      }
+
+      final bytes = await file.readAsBytes();
+      if (bytes.length > OnionTransportService.maxMediaBytes) {
+        showSnack('Voice note is too large to send over Tor (max '
+            '${OnionTransportService.maxMediaBytes ~/ (1024 * 1024)}MB)');
+        return;
+      }
+
+      String format = 'ogg';
+      if (_isM4A(bytes)) {
+        format = 'm4a';
+      } else if (_isOgg(bytes)) {
+        format = 'ogg';
+      }
+      final basename = 'voice_${DateTime.now().millisecondsSinceEpoch}.$format';
+
+      voiceTask = UploadTask(
+        id: generateLocalMessageId(),
+        type: 'voice',
+        localPath: path,
+        basename: basename,
+      );
+      voiceTask.status = UploadStatus.uploading;
+      onTaskCreated?.call(voiceTask);
+
+      final appDocuments = await getOnyxDocumentsDirectory();
+      final onionMediaDir = Directory('${appDocuments.path}/onion_media');
+      if (!await onionMediaDir.exists()) {
+        await onionMediaDir.create(recursive: true);
+      }
+      final uniqueBasename =
+          '${DateTime.now().microsecondsSinceEpoch}_$basename';
+      final stagedPath = '${onionMediaDir.path}/$uniqueBasename';
+      await File(stagedPath).writeAsBytes(bytes, flush: true);
+
+      final extra = {
+        'duration': bytes.length ~/ (16000 * 2),
+        'format': format,
+      };
+
+      await OnionTransportService.instance.sendMedia(
+        to,
+        kind: 'voice',
+        filename: uniqueBasename,
+        bytes: bytes,
+        extra: extra,
+        filePath: stagedPath,
+      );
+
+      final content = 'VOICEv1:${jsonEncode({
+            'url': 'onion://$uniqueBasename',
+            'orig': basename,
+            ...extra,
+          })}';
+
+      voiceTask.status = UploadStatus.done;
+      await _sendChatMessage(to, content, replyTo);
+      await voiceTask.onComplete?.call(uniqueBasename);
+
+      try {
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+    } catch (e, st) {
+      _appendLog('[voice.onion] error: $e\n$st');
+      voiceTask?.status = UploadStatus.failed;
+      showSnack('Error sending voice note over Tor: $e');
     }
   }
 
@@ -2729,11 +3131,20 @@ class RootScreenState extends State<RootScreen>
       return;
     }
     try {
-      final cached = await AccountManager.loadChats(uname);
+      final cached =
+          _withoutForeignChats(await AccountManager.loadChats(uname), uname);
+      // Switched to another account while this was loading: not ours to set.
+      if (currentUsername != null && currentUsername != uname) return;
       if (mounted) {
         setState(() {
           final merged = Map<String, List<ChatMessage>>.from(cached);
-          for (final entry in chats.entries) {
+          // What's in memory is only merged in if it belongs to this same
+          // account (e.g. a message that arrived during startup) -- never
+          // another account's leftovers.
+          final inMemory = (_chatsOwner == null || _chatsOwner == uname)
+              ? chats.entries
+              : const <MapEntry<String, List<ChatMessage>>>[];
+          for (final entry in inMemory) {
             if (!merged.containsKey(entry.key)) {
               merged[entry.key] = entry.value;
             } else {
@@ -2756,6 +3167,7 @@ class RootScreenState extends State<RootScreen>
             }
           }
           chats = merged;
+          _chatsOwner = uname;
           _buildServerMsgIndex();
         });
         chatsVersion.value++;
@@ -3330,6 +3742,7 @@ class RootScreenState extends State<RootScreen>
 
     _pageController = PageController(initialPage: _index + _graphTabOffset);
     SettingsManager.showAccountGraph.addListener(_onShowGraphChanged);
+    SettingsManager.onionModeEnabled.addListener(_onOnionModeToggled);
     callManager.init(getWs: () => _ws);
 
     // Route voice channel signaling to VoiceChannelManager
@@ -3343,6 +3756,8 @@ class RootScreenState extends State<RootScreen>
     callManager.isInCall.addListener(_onCallStateChanged);
     callManager.isConnecting.addListener(_onCallStateChanged);
     callManager.isRemoteVideoEnabled.addListener(_onCallStateChanged);
+    // Ringtone in the app, call notification in the background.
+    CallNotification.init();
 
     Future.delayed(const Duration(seconds: 5), _scheduleUpdateCheck);
 
@@ -3879,6 +4294,7 @@ class RootScreenState extends State<RootScreen>
     _disconnectWs();
     HardwareKeyboard.instance.removeHandler(_onGlobalKeyEvent);
     SettingsManager.showAccountGraph.removeListener(_onShowGraphChanged);
+    SettingsManager.onionModeEnabled.removeListener(_onOnionModeToggled);
     _pageController.dispose();
     super.dispose();
   }
@@ -3965,7 +4381,9 @@ class RootScreenState extends State<RootScreen>
         _appendLog('[startup] identity missing — generating...');
         await _generateIdentity();
         if (currentUsername != null) {
-          chats = await AccountManager.loadChats(username);
+          chats = _withoutForeignChats(
+              await AccountManager.loadChats(username), username);
+          _chatsOwner = username;
           final extracted = await _identityKeyPair!.extract();
           List<int> privBytes;
           if (extracted is SimpleKeyPairData) {
@@ -4010,6 +4428,103 @@ class RootScreenState extends State<RootScreen>
         if (SettingsManager.meshModeEnabled.value) {
           unawaited(MeshManager.instance.start(currentUsername!));
         }
+        unawaited(OnionPairedPeers.load(currentUsername!));
+        unawaited(OnionRequests.load(currentUsername!));
+        OnionTransportService.instance.onContactRequest = (req) {
+          if (!mounted) return;
+          _scheduleNotificationSound();
+          showSnack(AppLocalizations.of(context).contactRequestNew(
+              req.name.isNotEmpty ? req.name : '@${req.username}'));
+        };
+        OnionTransportService.instance.onQueuedRequestDelivered = (username) {
+          if (!mounted) return;
+          showSnack(AppLocalizations.of(context)
+              .contactRequestDelivered('@$username'));
+        };
+        OnionTransportService.instance.onContactAdded = (username, byMe) {
+          addContactRecord(username, byMe: byMe);
+          if (!byMe && mounted) {
+            final peer = OnionPairedPeers.byUsername(username);
+            final shown = (peer != null &&
+                    peer.name.isNotEmpty &&
+                    peer.name != 'Onyx user')
+                ? peer.name
+                : '@$username';
+            _scheduleNotificationSound();
+            showSnack(AppLocalizations.of(context)
+                .contactRequestAcceptedByThem(shown));
+          }
+        };
+        OnionTransportService.instance.onRemovedByPeer = (username, pub) {
+          // We're not in their contacts: what waits for that device will
+          // never be accepted -- show it as not delivered.
+          final otherDevices = OnionPairedPeers.allByUsername(username)
+              .any((p) => p.identityPubB64 != pub);
+          markOnionDeviceUnpaired(username, pub,
+              hasOtherDevices: otherDevices);
+        };
+        OnionTransportService.instance.onMessage = ({
+          required String from,
+          required String decrypted,
+          String? mid,
+        }) {
+          _ingestDecryptedMessage(
+              from: from, decrypted: decrypted, onionMid: mid);
+        };
+        OnionTransportService.instance.onDeleteMessage = ({
+          required String from,
+          required String mid,
+        }) {
+          _handleOnionDeleteNotice(from: from, mid: mid);
+        };
+        OnionTransportService.instance.onSentCopy = ({
+          required String to,
+          required String text,
+          required String mid,
+          required DateTime at,
+        }) {
+          _ingestSentCopy(to: to, text: text, mid: mid, at: at);
+        };
+        OnionTransportService.instance.onDeleteCopy = ({
+          required String to,
+          required String mid,
+        }) {
+          final chatId = chatIdForUser(to);
+          final msgs = chats[chatId];
+          if (msgs == null) return;
+          final ids = [
+            for (final m in msgs)
+              if (m.outgoing && (m.id == mid || m.onionMid == mid)) m.id,
+          ];
+          if (ids.isNotEmpty) removeMessagesLocally(chatId, ids);
+        };
+        OnionTransportService.instance.onLog = _appendLog;
+        // Tor calls: signaling and relayed media arrive over the onion
+        // channel instead of the server websocket.
+        OnionTransportService.instance.onCallSignal = (from, pub, signal) {
+          unawaited(callManager.handleOnionSignal(from, pub, signal));
+        };
+        OnionTransportService.instance.onCallMedia = callManager.onOnionMedia;
+        OnionTransportService.instance.onPeerOffline = (_) {
+          if (SettingsManager.onionOfflineNoticeSeen.value || !mounted) return;
+          unawaited(SettingsManager.setOnionOfflineNoticeSeen(true));
+          final seconds = SettingsManager.onionRetryIntervalSeconds.value;
+          final l = AppLocalizations.of(context);
+          showOnyxInfoDialog(
+            context: context,
+            title: l.onionOfflineTitle,
+            icon: Icons.cloud_off_outlined,
+            message: l.onionOfflineMessage(seconds),
+            barrierDismissible: true,
+          );
+        };
+        OnionTransportService.instance.onDeliveryUpdate =
+            (peerUsername, localId) {
+          _markMessageDeliveredLocally(peerUsername, localId);
+        };
+        if (SettingsManager.onionModeEnabled.value) {
+          unawaited(_startOnionMode(currentUsername!));
+        }
       }
 
       final wsReadyFuture = _ensurePubkeyAndWsReady(
@@ -4026,10 +4541,7 @@ class RootScreenState extends State<RootScreen>
       }));
       unawaited(ProfilePresetManager.loadPresets());
 
-      final ready = await wsReadyFuture;
-      if (!ready) {
-        showSnack('Account loaded, but connection failed. Retrying...');
-      }
+      await wsReadyFuture;
     } else {
       _appendLog(
           '[startup] no saved account, checking for available accounts...');
@@ -4138,7 +4650,13 @@ class RootScreenState extends State<RootScreen>
 
     _normalizeChatsForCurrentUser();
 
-    currentDisplayName = username;
+    // For an onion-only account there is no server to refresh this from
+    // below (_refreshProfileFromServer no-ops without a token), so the
+    // locally-cached name -- set at account creation, see
+    // AccountManager.cacheDisplayName -- is the only source of truth and
+    // must win over the raw accountId here, not just as a later overwrite.
+    currentDisplayName = await AccountManager.getCachedDisplayName(username) ??
+        username;
     unawaited(_refreshProfileFromServer(username));
 
     final identity = await AccountManager.getIdentity(username);
@@ -4156,7 +4674,9 @@ class RootScreenState extends State<RootScreen>
       }
     }
 
-    chats = await AccountManager.loadChats(username);
+    chats = _withoutForeignChats(
+        await AccountManager.loadChats(username), username);
+    _chatsOwner = username;
     _buildServerMsgIndex();
 
     _initializeUnreadCounts();
@@ -4204,6 +4724,7 @@ class RootScreenState extends State<RootScreen>
           Navigator.of(routeCtx).pop();
           _switchToAccount(username);
         },
+        onCancel: () => Navigator.of(routeCtx).pop(),
         onBiometric: SettingsManager.biometricEnabled.value
             ? () async {
                 try {
@@ -4225,6 +4746,12 @@ class RootScreenState extends State<RootScreen>
       ),
     ));
   }
+
+  /// Makes [accountId] the active account through the normal switch pipeline
+  /// (services restarted and scoped to it, its data loaded). No PIN prompt:
+  /// this is for an identity that was only just created, from the welcome
+  /// screen that is shown while there are no accounts at all.
+  Future<void> switchToNewAccount(String accountId) => _switchToAccount(accountId);
 
   Future<void> _switchToAccount(String username) async {
     if (_isSwitchingAccount) {
@@ -4255,31 +4782,18 @@ class RootScreenState extends State<RootScreen>
       // favorites/chats already reflect the new account, letting a still-
       // trusted peer pull the new account's data under the old identity.
       await WardLinkSyncService.instance.stop();
+      await OnionTransportService.instance.stop();
 
       ExternalServerManager.disconnectAll();
       _appendLog(
           '[ext-servers] Disconnected all external servers for account switch');
 
-      _persistChatsTimer?.cancel();
-      if (_hasPendingPersist && currentUsername != null) {
-        await persistChats();
-      }
-
-      setState(() {
-        _favorites.clear();
-        _selectedFavoriteId = null;
-        chats.clear();
-        _serverMsgIndex.clear();
-        selectedChatOther = null;
-        _chatScreenCache.clear();
-        _groupChatScreenCache.clear();
-        _externalGroupChatScreenCache.clear();
-        _appendLog(
-            '[session] _chatScreenCache cleared on account switch to $username');
-        selectedGroup = null;
-        selectedExternalGroup = null;
-        selectedExternalServer = null;
-      });
+      // Saves the old account's pending changes and empties chats AND the
+      // favourites layout (folders/order were left behind before, so the old
+      // account's favourites stayed visible -- and got saved -- here).
+      await _detachAccountState();
+      _appendLog(
+          '[session] account state detached on switch to $username');
       _pubkeyCache.clear();
       _pubkeyUploadedToServer = false;
 
@@ -4321,6 +4835,23 @@ class RootScreenState extends State<RootScreen>
         unawaited(MeshManager.instance.start(username));
       }
 
+      // Restart Onion Mode scoped to the new account -- it was stopped
+      // above (with the old account still attached) and start() is a no-op
+      // while a service is already running, so this is the only place a
+      // switch actually gets the new account its own onion identity instead
+      // of silently keeping the previous account's. Awaited (not
+      // fire-and-forget): OnionTransportService is a singleton whose
+      // _username field stays pointed at the OLD account for as long as
+      // this hasn't finished, so anything sent in that window (display
+      // name on outgoing frames, presence broadcasts) could still go out
+      // labeled as the account that was just switched away from. Waiting
+      // here means the switch takes as long as a fresh Tor bootstrap
+      // (~seconds, occasionally up to a minute), but that's the price of
+      // never sending a message under an ambiguous identity.
+      if (SettingsManager.onionModeEnabled.value) {
+        await _startOnionMode(username);
+      }
+
       accountSwitchVersion.value++;
 
       // Connect WS immediately after identity is ready
@@ -4328,9 +4859,6 @@ class RootScreenState extends State<RootScreen>
         maxRetries: 10,
         retryDelay: const Duration(milliseconds: 100),
       );
-      if (!ready) {
-        showSnack('Failed to connect after account switch');
-      }
       _appendLog('[account] switch complete, ws ready=$ready');
 
       // Load the rest after WS is up — these don't block connection
@@ -4388,7 +4916,13 @@ class RootScreenState extends State<RootScreen>
   }
 
   Future<void> persistChats() async {
-    if (currentUsername == null) {
+    // Only the account whose chats are actually loaded -- see _chatsOwner.
+    final owner = _chatsOwner;
+    if (currentUsername == null || owner == null || owner != currentUsername) {
+      if (owner != currentUsername && _hasPendingPersist) {
+        _appendLog('[persist] skipped: chats in memory belong to '
+            '${owner ?? 'nobody'}, current account is $currentUsername');
+      }
       _hasPendingPersist = false;
       _dirtyChatIds.clear();
       _fullSaveRequested = false;
@@ -4396,21 +4930,19 @@ class RootScreenState extends State<RootScreen>
     }
 
     if (_fullSaveRequested || _dirtyChatIds.isEmpty) {
-      await AccountManager.saveChats(currentUsername!, chats);
-      _appendLog(
-          '[persist] full save ${chats.length} chats for $currentUsername');
+      await AccountManager.saveChats(owner, chats);
+      _appendLog('[persist] full save ${chats.length} chats for $owner');
     } else {
       final dirty = Set<String>.from(_dirtyChatIds);
       for (final chatId in dirty) {
         final msgs = chats[chatId];
         if (msgs != null) {
-          await AccountManager.saveSingleChat(currentUsername!, chatId, msgs);
+          await AccountManager.saveSingleChat(owner, chatId, msgs);
         } else {
-          await AccountManager.deleteChatFile(currentUsername!, chatId);
+          await AccountManager.deleteChatFile(owner, chatId);
         }
       }
-      _appendLog(
-          '[persist] incremental save ${dirty.length} chats for $currentUsername');
+      _appendLog('[persist] incremental save ${dirty.length} chats for $owner');
     }
 
     _dirtyChatIds.clear();
@@ -4691,6 +5223,7 @@ class RootScreenState extends State<RootScreen>
   }
 
   Future<bool> _uploadPubkeyToServer() async {
+    if (kCentralServerRemoved) return false;
     if (currentUsername == null || identityPubKeyBase64 == null) {
       _appendLog('[pubkey] missing identity or account');
       return false;
@@ -4885,6 +5418,10 @@ class RootScreenState extends State<RootScreen>
       // old account's paired-device data (e.g. favorites from a phone still
       // paired to the old account) into the new account's now-current state.
       await WardLinkSyncService.instance.stop();
+      await OnionTransportService.instance.stop();
+      // Before currentUsername changes: a pending save used to fire after it
+      // and write the previous account's chats under this one.
+      await _detachAccountState();
 
       await AccountManager.saveToken(username, token);
       await AccountManager.saveUsername(username);
@@ -4929,19 +5466,16 @@ class RootScreenState extends State<RootScreen>
       _pubkeyUploadedToServer = false;
       _lastPubkeyUploadAttempt = null;
 
-      bool ready = false;
-      for (int i = 0; i < 5; i++) {
-        ready = await _ensurePubkeyAndWsReady(
-          maxRetries: 3,
-          retryDelay: const Duration(milliseconds: 300),
-        );
-        if (ready && _ws != null) break;
-        await Future.delayed(const Duration(milliseconds: 400));
-      }
-
-      if (!ready || _ws == null) {
-        showSnack('QR login ok but connection unstable');
-        _appendLog('[qr-login] warning: WS not ready after retries');
+      // The account key + roster were imported by the device-link screen
+      // before this runs, so the hidden service comes up under a fresh
+      // address of this device's own and adds it to the account's roster
+      // (see OnionAccount). Awaited for the same reason as _switchToAccount(): until
+      // this finishes, OnionTransportService's singleton _username field
+      // still points at whatever was running before, so anything sent in
+      // that window (display name on outgoing frames, presence broadcasts)
+      // could go out mislabeled.
+      if (SettingsManager.onionModeEnabled.value) {
+        await _startOnionMode(username);
       }
 
       try {
@@ -4981,6 +5515,9 @@ class RootScreenState extends State<RootScreen>
         // letting an in-flight sync from a device paired to the old account
         // land in the new account's now-current state.
         await WardLinkSyncService.instance.stop();
+        await OnionTransportService.instance.stop();
+        // Before currentUsername changes (see loginWithQrToken).
+        await _detachAccountState();
 
         final obj = jsonDecode(res.body);
         final token = obj['token'];
@@ -5319,6 +5856,22 @@ class RootScreenState extends State<RootScreen>
     });
   }
 
+  /// Onion Mode is meant to be a hard cut-over, not an additive transport:
+  /// while it's on, this device should have zero traffic to the central
+  /// server -- no WS, no reconnect attempts, no pubkey upload -- and only
+  /// talk to paired peers directly over Tor. Turning it off restores the
+  /// normal server connection.
+  void _onOnionModeToggled() {
+    if (SettingsManager.onionModeEnabled.value) {
+      _appendLog('[onion] Onion Mode enabled — disconnecting from central server');
+      _stopReconnectLoop();
+      unawaited(_disconnectWs(manual: true, suppressPresence: true));
+    } else {
+      _appendLog('[onion] Onion Mode disabled — reconnecting to central server');
+      _connectWs();
+    }
+  }
+
   void _onShowGraphChanged() {
     if (!mounted) return;
     if (!_mobileGraphEnabled) {
@@ -5506,6 +6059,7 @@ class RootScreenState extends State<RootScreen>
     _disconnectWs();
     ExternalServerManager.disconnectAll();
     unawaited(WardLinkSyncService.instance.stop());
+    unawaited(OnionTransportService.instance.stop());
     PendingDeviceApprovals.clear();
 
     currentUsername = null;
@@ -5539,7 +6093,247 @@ class RootScreenState extends State<RootScreen>
     setState(() {});
   }
 
+  /// Builds a [ChatMessage] from an already-decrypted incoming message and
+  /// runs the same persistence/unread/notification bookkeeping regardless of
+  /// which transport delivered it -- the central WS 'msg' handler below
+  /// calls this after its own decrypt step, and [OnionTransportService]
+  /// (onion-paired 1:1 chats) calls it directly since it hands over
+  /// already-decrypted plaintext. [serverId] is null for onion-delivered
+  /// messages, since there is no central server to assign one.
+  void _ingestDecryptedMessage({
+    required String from,
+    required String decrypted,
+    int? serverId,
+    String? rawPreview,
+    String? encryptedForDevice,
+    int? replyToId,
+    String? replyToSender,
+    String? replyToContent,
+    bool didAutoRecovery = false,
+    String? onionMid,
+  }) {
+    final chatId = chatIdForUser(from);
+
+    if (serverId != null) {
+      final existing = chats[chatId];
+      if (existing != null &&
+          existing.any((m) => m.serverMessageId == serverId)) {
+        _appendLog(
+            '[ws.recv.msg] duplicate server id=$serverId ignored for chat $chatId');
+        return;
+      }
+    }
+
+    // Onion messages have no server id to dedup against (see
+    // ChatMessage.onionMid's doc comment) -- a redelivered frame (e.g. a
+    // retry that landed after the original had already gone through, see
+    // OnionSendQueue) would otherwise show up as a second bubble.
+    if (onionMid != null) {
+      final existing = chats[chatId];
+      if (existing != null && existing.any((m) => m.onionMid == onionMid)) {
+        _appendLog(
+            '[onion.recv.msg] duplicate mid=$onionMid ignored for chat $chatId');
+        return;
+      }
+    }
+
+    final msg = ChatMessage(
+      // An onion message has the same id on every device of ours (direct,
+      // forwarded by another device, or pulled in by WardLink's history
+      // sync), so those all dedupe against each other.
+      id: serverId?.toString() ??
+          (onionMid != null
+              ? 'onion:$from:$onionMid'
+              : UniqueKey().toString()),
+      from: from,
+      to: currentUsername ?? 'me',
+      content: decrypted,
+      outgoing: false,
+      isRead: selectedChatOther == from,
+      serverMessageId: serverId,
+      onionMid: onionMid,
+      rawEnvelopePreview: rawPreview,
+      encryptedForDevice: encryptedForDevice,
+      replyToId: replyToId,
+      replyToSender: replyToSender,
+      replyToContent: replyToContent,
+    );
+    chats.putIfAbsent(chatId, () => []).add(msg);
+    if (msg.serverMessageId != null)
+      _serverMsgIndex[msg.serverMessageId!] = chatId;
+
+    if (!msg.isRead) {
+      unreadManager.incrementUnread(chatId);
+    }
+
+    _scheduleUiUpdate(chatId: chatId);
+
+    schedulePersistChats(chatId: chatId);
+
+    if (!msg.outgoing && !MuteManager.isMuted(from)) {
+      _scheduleNotificationSound();
+    }
+
+    if (SettingsManager.notificationsEnabled.value &&
+        mounted &&
+        !MuteManager.isMuted(from)) {
+      final rawPrev = msg.rawEnvelopePreview ??
+          (msg.content.length > 120
+              ? '${msg.content.substring(0, 120)}...'
+              : msg.content);
+      final messagePreview = getPreviewText(rawPrev);
+      const mediaLabels = {
+        'Voice message',
+        'Image',
+        'Video file',
+        'Music',
+        'Video',
+        'Document',
+        'Spreadsheet',
+        'Presentation',
+        'Archive',
+        'Artifact',
+        'File',
+      };
+      final isMedia = mediaLabels.contains(messagePreview) ||
+          messagePreview.startsWith('[Message not decrypted]') ||
+          messagePreview == 'Album' ||
+          messagePreview.startsWith('Album ·');
+      final displayName = UserCache.getSync(from)?.displayName ?? from;
+      _schedulePopupNotification(
+        from: from,
+        displayName: displayName,
+        messagePreview: messagePreview,
+        isMedia: isMedia,
+      );
+    }
+    _appendLog(
+      '[ws.recv.msg] from=$from id=${serverId ?? "?"} recovered=$didAutoRecovery',
+    );
+  }
+
+  /// A message another of our own devices sent to [to] (see
+  /// OnionTransportService.onSentCopy): shown in that chat as ours, under
+  /// the same id the sending device uses, so a later "delete for everyone"
+  /// from either device finds it.
+  void _ingestSentCopy({
+    required String to,
+    required String text,
+    required String mid,
+    required DateTime at,
+  }) {
+    final me = currentUsername;
+    if (me == null) return;
+    final chatId = chatIdForUser(to);
+    final existing = chats[chatId];
+    if (existing != null &&
+        existing.any((m) => m.id == mid || m.onionMid == mid)) {
+      return;
+    }
+    final list = chats.putIfAbsent(chatId, () => []);
+    list.add(ChatMessage(
+      id: mid,
+      from: me,
+      to: to,
+      content: text,
+      outgoing: true,
+      delivered: true,
+      isRead: true,
+      time: at,
+      deliveryMode: DeliveryMode.onion,
+    ));
+    // Arrives late when this device was off: keep the chat in time order.
+    list.sort((a, b) => a.time.compareTo(b.time));
+    _bumpForChat(chatId);
+    schedulePersistChats(chatId: chatId);
+  }
+
+  /// Handles an incoming onion-mode "delete for everyone" notice (see
+  /// OnionTransportService.sendDeleteNotice): [from] previously sent us the
+  /// message tagged with [mid] (ChatMessage.onionMid) and is now asking us
+  /// to remove our copy of it too. Silently does nothing if that message
+  /// was never received, already deleted, or somehow one of our own --
+  /// there's nothing to reconcile against on this device either way.
+  void _handleOnionDeleteNotice({required String from, required String mid}) {
+    final chatId = chatIdForUser(from);
+    final msgs = chats[chatId];
+    if (msgs == null) return;
+    ChatMessage? match;
+    for (final m in msgs) {
+      if (!m.outgoing && m.onionMid == mid) {
+        match = m;
+        break;
+      }
+    }
+    if (match == null) return;
+    removeMessagesLocally(chatId, [match.id]);
+    _appendLog('[onion] deleted message from $from per their request (mid=$mid)');
+  }
+
+  /// Starts onion-mode's Tor hidden-service listener rooted under this
+  /// device's Onyx data directory. Bootstrapping over the live Tor network
+  /// can take up to ~30s; failures are logged but don't block the rest of
+  /// account startup, since onion mode is an additive, opt-in transport for
+  /// individually-paired chats -- everything else keeps working over the
+  /// central server regardless.
+  Future<void> _startOnionMode(String username) async {
+    OnionIdentity.onLog ??= _appendLog;
+    try {
+      final support = await getOnyxSupportDirectory();
+      // Scoped per account: each local identity gets its own Tor hidden
+      // service key/address, the same way it gets its own chats and
+      // settings. OnionTransportService.start() is a no-op once a service
+      // is already running, so switching accounts must stop() the old one
+      // first (see _switchToAccount) before this can actually take effect.
+      final stateDir = p.join(support.path, 'onion_hs_$username');
+      // Loaded BEFORE the hidden service starts accepting connections: if a
+      // previously-paired contact's device dials in during that gap (their
+      // descriptor for us may already be cached from before this restart,
+      // so they can reach us almost immediately), OnionPairedPeers.byPub()
+      // must already know them -- otherwise the frame gets silently dropped
+      // as "unpaired" and their message never arrives, even though both
+      // sides are actually online.
+      await OnionPairedPeers.load(username);
+      // Contact requests (incoming, outgoing, blocked) are per account too.
+      // They used to be loaded only at app start, so after switching accounts
+      // the new account kept showing -- and writing to -- the previous one's.
+      await OnionRequests.load(username);
+      _appendLog('[onion] starting hidden service (stateDir=$stateDir)...');
+      await OnionTransportService.instance.start(username, stateDir);
+      _appendLog('[onion] hidden service started');
+      // External servers are only reachable through Tor; anything that
+      // failed (or was skipped) before Tor was up gets another go now.
+      // The servers are (re)loaded for THIS account first: on an account
+      // switch ExternalServerManager still holds the previous account's
+      // servers at this point, and refreshing those would put their groups
+      // into the new account's list.
+      unawaited(ExternalServerManager.loadServers().then((_) {
+        unawaited(ExternalServerManager.refreshAllExternalGroups());
+        ExternalServerManager.reconnectIfNeeded();
+      }));
+    } catch (e) {
+      _appendLog('[onion] failed to start: $e');
+    }
+  }
+
+  /// Tears down and re-launches the Tor hidden service for the current
+  /// account -- for the "Restart Tor" button, when bootstrapping got stuck
+  /// or failed and the user wants a clean retry instead of waiting.
+  Future<void> restartOnionMode() async {
+    final username = currentUsername;
+    if (username == null) return;
+    _appendLog('[onion] restart requested');
+    await OnionTransportService.instance.stop();
+    await _startOnionMode(username);
+  }
+
   void _connectWs() async {
+    // The central server no longer exists — never open a connection to it.
+    if (kCentralServerRemoved) return;
+    if (SettingsManager.onionModeEnabled.value) {
+      _appendLog('[ws.connect] onion mode enabled — refusing to connect to central server');
+      return;
+    }
     if (_ws != null && _ws!.closeCode == null) {
       _appendLog('[ws.connect] already connected — skipping');
       return;
@@ -5571,11 +6365,6 @@ class RootScreenState extends State<RootScreen>
         return;
       }
 
-      final proxyEnabled = SettingsManager.proxyEnabled.value;
-      final proxyInfo = proxyEnabled
-          ? '${SettingsManager.proxyType.value.toUpperCase()} ${SettingsManager.proxyHost.value}:${SettingsManager.proxyPort.value}'
-          : 'none (direct)';
-      _appendLog('[ws.connect] proxy=$proxyInfo');
       _appendLog('[ws.connect] Connecting to: $wsUri');
 
       WebSocketChannel boundWs;
@@ -5621,14 +6410,13 @@ class RootScreenState extends State<RootScreen>
                       AccountManager.touchTokenValidated(currentUsername!));
                 }
                 _appendLog(
-                    '[ws] server init complete — WS tunnel established (proxy=${SettingsManager.proxyEnabled.value ? "${SettingsManager.proxyType.value.toUpperCase()} ${SettingsManager.proxyHost.value}:${SettingsManager.proxyPort.value}" : "none"})');
+                    '[ws] server init complete — WS tunnel established');
                 _appendLog('[ws] sending presence...');
                 _sendPresence('online');
                 _drainPendingMsgQueue();
 
                 try {
                   unawaited(_requestStatusSnapshotForKnownUsers());
-                  unawaited(_syncBlocklistFromServer());
 
                   final known = Set<String>.from(chats.keys);
                   if (selectedChatOther != null) known.add(selectedChatOther!);
@@ -5661,22 +6449,6 @@ class RootScreenState extends State<RootScreen>
                 Future.delayed(const Duration(seconds: 2), () {
                   unawaited(_checkAllPeerPubkeysOnConnect());
                 });
-
-                if (ProxyManager.pendingApplyOnConnect) {
-                  ProxyManager.pendingApplyOnConnect = false;
-                  ProxyManager.applyFromSettings();
-                  applyCertPinning();
-                  _appendLog(
-                      '[proxy] Deferred proxy applied — reconnecting via ${SettingsManager.proxyType.value.toUpperCase()} ${SettingsManager.proxyHost.value}:${SettingsManager.proxyPort.value}');
-                  Future.delayed(const Duration(milliseconds: 500), () {
-                    _disconnectWs();
-                    Future.delayed(
-                        const Duration(milliseconds: 300), _connectWs);
-                  });
-                } else if (SettingsManager.proxyEnabled.value &&
-                    ProxyManager.lastApplied != null) {
-                  proxyActiveNotifier.value = true;
-                }
 
                 return;
               }
@@ -6066,27 +6838,11 @@ class RootScreenState extends State<RootScreen>
                       ? content.substring(0, 120) + '...'
                       : content;
                 }
-                final chatId = chatIdForUser(from);
-
-                if (serverId != null) {
-                  final existing = chats[chatId];
-                  if (existing != null &&
-                      existing.any((m) => m.serverMessageId == serverId)) {
-                    _appendLog(
-                        '[ws.recv.msg] duplicate server id=$serverId ignored for chat $chatId');
-                    return;
-                  }
-                }
-
-                final msg = ChatMessage(
-                  id: serverId?.toString() ?? UniqueKey().toString(),
+                _ingestDecryptedMessage(
                   from: from,
-                  to: currentUsername ?? 'me',
-                  content: decrypted,
-                  outgoing: false,
-                  isRead: selectedChatOther == from,
-                  serverMessageId: serverId,
-                  rawEnvelopePreview: rawPreview,
+                  decrypted: decrypted,
+                  serverId: serverId,
+                  rawPreview: rawPreview,
                   encryptedForDevice: encryptedForDevice,
                   replyToId: obj['reply_to_id'] is int
                       ? obj['reply_to_id'] as int
@@ -6095,59 +6851,7 @@ class RootScreenState extends State<RootScreen>
                           : null),
                   replyToSender: obj['reply_to_sender']?.toString(),
                   replyToContent: obj['reply_to_content']?.toString(),
-                );
-                chats.putIfAbsent(chatId, () => []).add(msg);
-                if (msg.serverMessageId != null)
-                  _serverMsgIndex[msg.serverMessageId!] = chatId;
-
-                if (!msg.isRead) {
-                  unreadManager.incrementUnread(chatId);
-                }
-
-                _scheduleUiUpdate(chatId: chatId);
-
-                schedulePersistChats(chatId: chatId);
-
-                if (!msg.outgoing && !MuteManager.isMuted(from)) {
-                  _scheduleNotificationSound();
-                }
-
-                if (SettingsManager.notificationsEnabled.value &&
-                    mounted &&
-                    !MuteManager.isMuted(from)) {
-                  final rawPrev = msg.rawEnvelopePreview ??
-                      (msg.content.length > 120
-                          ? '${msg.content.substring(0, 120)}...'
-                          : msg.content);
-                  final messagePreview = getPreviewText(rawPrev);
-                  const mediaLabels = {
-                    'Voice message',
-                    'Image',
-                    'Video file',
-                    'Music',
-                    'Video',
-                    'Document',
-                    'Spreadsheet',
-                    'Presentation',
-                    'Archive',
-                    'Artifact',
-                    'File',
-                  };
-                  final isMedia = mediaLabels.contains(messagePreview) ||
-                      messagePreview.startsWith('[Message not decrypted]') ||
-                      messagePreview == 'Album' ||
-                      messagePreview.startsWith('Album ·');
-                  final displayName =
-                      UserCache.getSync(from)?.displayName ?? from;
-                  _schedulePopupNotification(
-                    from: from,
-                    displayName: displayName,
-                    messagePreview: messagePreview,
-                    isMedia: isMedia,
-                  );
-                }
-                _appendLog(
-                  '[ws.recv.msg] from=$from id=${serverId ?? "?"} recovered=${didAutoRecovery}',
+                  didAutoRecovery: didAutoRecovery,
                 );
                 return;
               }
@@ -6724,6 +7428,7 @@ class RootScreenState extends State<RootScreen>
       _resetNavigationToRoot();
       await _disconnectWs(manual: true, suppressPresence: false);
       await WardLinkSyncService.instance.stop();
+      await OnionTransportService.instance.stop();
       ExternalServerManager.disconnectAll();
 
       _persistChatsTimer?.cancel();
@@ -7476,6 +8181,29 @@ class RootScreenState extends State<RootScreen>
       return;
     }
 
+    // Tor contacts only get what they'll accept: nothing while our request
+    // waits for their approval, nothing once they've removed us, nothing to
+    // someone we removed ourselves. (LAN/mesh sends don't go through here.)
+    final lanReply = replyTo != null && replyTo['_deliveryMode'] == 'lan';
+    if (!lanReply && SettingsManager.onionModeEnabled.value) {
+      final l = AppLocalizations.of(context);
+      String? refuse;
+      if (OnionRequests.isOutgoingPending(to)) {
+        refuse = l.contactRequestPendingSnack;
+      } else if (!OnionPairedPeers.isTrusted(to)) {
+        refuse = l.contactNotInContacts;
+      } else if (OnionTransportService.instance.isRemovedByAll(to) &&
+          !await OnionTransportService.instance.recheckRemovedBy(to)) {
+        // Only refuse once a fresh hello confirms it: the mark is a note
+        // from the last time a device said "not a contact", and may be stale.
+        refuse = l.contactRemovedYou;
+      }
+      if (refuse != null) {
+        showSnack(refuse, force: true);
+        return;
+      }
+    }
+
     // Re-assert "online" on send: with multiple devices on the same account,
     // another device's offline presence (e.g. it switched accounts) can leave
     // the server showing us offline here even while this device is active.
@@ -7493,6 +8221,7 @@ class RootScreenState extends State<RootScreen>
     final chatId = chatIdForUser(to);
 
     final isLANMode = replyTo != null && replyTo['_deliveryMode'] == 'lan';
+    final isOnionPeer = OnionPairedPeers.isTrusted(to);
 
     final int? replyId = replyTo != null && replyTo['id'] != null
         ? int.tryParse(replyTo['id'].toString())
@@ -7510,7 +8239,9 @@ class RootScreenState extends State<RootScreen>
           ? (replyTo['senderDisplayName'] ?? replyTo['sender'])?.toString()
           : null,
       replyToContent: replyTo != null ? (replyTo['content'])?.toString() : null,
-      deliveryMode: isLANMode ? DeliveryMode.lan : DeliveryMode.internet,
+      deliveryMode: isLANMode
+          ? DeliveryMode.lan
+          : (isOnionPeer ? DeliveryMode.onion : DeliveryMode.internet),
     );
 
     chats.putIfAbsent(chatId, () => []).add(msgLocal);
@@ -7533,6 +8264,71 @@ class RootScreenState extends State<RootScreen>
     chats.putIfAbsent(chatId, () => []).add(message);
     _bumpForChat(chatId);
     schedulePersistChats(chatId: chatId);
+  }
+
+  /// Called by CallManager when a call ends: drops a CALLv1 record into the
+  /// chat with [peer] (rendered by MessageBubble as "Outgoing call · 2:14",
+  /// "Missed call", ...). Local only -- nothing is sent; the other side
+  /// writes its own record. A missed call counts as unread.
+  void addCallRecord(String peer,
+      {required bool outgoing, required String status, int duration = 0}) {
+    if (currentUsername == null) return;
+    final chatId = chatIdForUser(peer);
+    final me = currentUsername ?? 'me';
+    final unread = !outgoing && status == 'missed' && selectedChatOther != peer;
+    final msg = ChatMessage(
+      id: generateLocalMessageId(),
+      from: outgoing ? me : peer,
+      to: outgoing ? peer : me,
+      content: 'CALLv1:${jsonEncode({
+        'dir': outgoing ? 'out' : 'in',
+        'st': status,
+        if (duration > 0) 'dur': duration,
+      })}',
+      outgoing: outgoing,
+      delivered: true,
+      isRead: !unread,
+      time: DateTime.now(),
+    );
+    chats.putIfAbsent(chatId, () => []).add(msg);
+    if (unread) unreadManager.incrementUnread(chatId);
+    _bumpForChat(chatId);
+    schedulePersistChats(chatId: chatId);
+  }
+
+  /// [username] just became a contact (a contact request was accepted):
+  /// a CONTACTv1 note opens the chat with them so it shows up in the chat
+  /// list on both sides -- [byMe]: we accepted theirs ("You accepted..."),
+  /// otherwise they accepted ours. Local only, like call records.
+  void addContactRecord(String username, {required bool byMe}) {
+    if (currentUsername == null) return;
+    final chatId = chatIdForUser(username);
+    final me = currentUsername ?? 'me';
+    final ev = byMe ? 'accepted' : 'accepted_by_them';
+    // The same note is created on every device of the account (accepting a
+    // request is announced to the others, which each add their own), and
+    // WardLink then syncs them to one another -- deduplicating by message id.
+    // A random id per device therefore showed the note twice. A id derived
+    // from what happened instead is identical everywhere (the 10-minute
+    // bucket keeps a later re-add of the same contact a new note).
+    final id = 'contact_${ev}_${username}_'
+        '${DateTime.now().millisecondsSinceEpoch ~/ 600000}';
+    final list = chats.putIfAbsent(chatId, () => []);
+    if (list.any((m) => m.id == id)) return;
+    list.add(ChatMessage(
+          id: id,
+          from: byMe ? me : username,
+          to: byMe ? username : me,
+          content: 'CONTACTv1:${jsonEncode({'ev': ev})}',
+          outgoing: byMe,
+          delivered: true,
+          isRead: true,
+          time: DateTime.now(),
+          deliveryMode: DeliveryMode.onion,
+        ));
+    _bumpForChat(chatId);
+    schedulePersistChats(chatId: chatId);
+    chatsVersion.value++;
   }
 
   /// Called by MeshChatScreen to delete selected messages locally.
@@ -7833,6 +8629,24 @@ class RootScreenState extends State<RootScreen>
 
   Future<void> _sendChatMessageBackgroundTask(String to, String text,
       String localId, Map<String, dynamic>? replyTo) async {
+    // Onion-paired chats bypass the central server entirely: no
+    // multi-device fan-out, no pubkey lookup/cache, no ws -- just dial the
+    // peer's onion address directly. If they're not reachable right now,
+    // OnionTransportService queues it for background retry (see
+    // OnionSendQueue) instead of failing outright -- the message just stays
+    // in its pending (clock-icon) state until OnionTransportService.
+    // onDeliveryUpdate (wired in _loadCurrentAccount) reports it delivered.
+    if (OnionPairedPeers.isTrusted(to)) {
+      final ok = await OnionTransportService.instance
+          .sendMessage(to, text, localId: localId);
+      if (ok) {
+        _markMessageDeliveredLocally(to, localId);
+      } else {
+        _appendLog('[onion] send to $to not delivered yet -- queued for retry');
+      }
+      return;
+    }
+
     Map<String, String>? payloads;
     String? fallbackEnvelope;
 
@@ -7951,6 +8765,65 @@ class RootScreenState extends State<RootScreen>
       }
     }
     _bumpForChat(chatId);
+  }
+
+  /// Marks a locally-sent message delivered without waiting for a server
+  /// ack -- there is none for onion-mode sends, since the peer's own
+  /// hidden-service listener accepting the write is the only confirmation
+  /// this transport provides.
+  void _markMessageDeliveredLocally(String to, String localId) {
+    final chatId = chatIdForUser(to);
+    final msgs = chats[chatId];
+    if (msgs == null) return;
+    for (final m in msgs) {
+      if (m.id == localId) {
+        m.delivered = true;
+        break;
+      }
+    }
+    _bumpForChat(chatId);
+    schedulePersistChats(chatId: chatId);
+  }
+
+  /// Marks a locally-sent message as hard-failed (currently only reached
+  /// from the onion-mode send path, which has no offline queue/retry). Not
+  /// persisted -- see [ChatMessage.sendFailed].
+  void _markMessageSendFailedLocally(String to, String localId) {
+    final chatId = chatIdForUser(to);
+    final msgs = chats[chatId];
+    if (msgs == null) return;
+    for (final m in msgs) {
+      if (m.id == localId) {
+        m.sendFailed = true;
+        break;
+      }
+    }
+    _bumpForChat(chatId);
+  }
+
+  /// Called when one onion-paired device is unpaired (settings_tab.dart's
+  /// removePeer). A contact can have more than one device paired (onion
+  /// identity is per-device), so this only drops queued retries targeting
+  /// *that* device's pubkey -- if [hasOtherDevices] is true, a message still
+  /// queued for the remaining device(s) may yet go through, so it's left
+  /// alone rather than flagged failed. Only once the last device for this
+  /// username is gone does a stuck queued message truly have nowhere left
+  /// to go, and its pending clock icon gets flipped to failed instead of
+  /// waiting forever.
+  void markOnionDeviceUnpaired(String username, String identityPubB64,
+      {required bool hasOtherDevices}) {
+    // No lingering "online" for someone who's no longer a contact.
+    OnionTransportService.instance.refreshPresence(username);
+    if (!hasOtherDevices) {
+      for (final item in OnionSendQueue.items.value) {
+        if (item.peerUsername == username && item.localId != null) {
+          _markMessageSendFailedLocally(username, item.localId!);
+        }
+      }
+      unawaited(OnionSendQueue.removeAllFor(username));
+    } else {
+      unawaited(OnionSendQueue.removeAllForDevice(identityPubB64));
+    }
   }
 
   void _drainPendingMsgQueue() {
@@ -8103,6 +8976,14 @@ class RootScreenState extends State<RootScreen>
     int maxRetries = 6,
     Duration retryDelay = const Duration(milliseconds: 400),
   }) async {
+    if (kCentralServerRemoved) {
+      if (identityPubKeyBase64 == null) {
+        _appendLog('[auto] identity missing -> generating');
+        await _generateIdentity();
+      }
+      return true;
+    }
+    if (SettingsManager.onionModeEnabled.value) return false;
     if (identityPubKeyBase64 == null) {
       _appendLog('[auto] identity missing -> generating');
       await _generateIdentity();
@@ -8306,6 +9187,8 @@ class RootScreenState extends State<RootScreen>
 
   void restoreDeletedChat(TrashedChat chat) {
     if (chat.type == TrashedChatType.dm) {
+      WardLinkTombstones.clearChatMsgs(
+          chat.chatId, chat.messages.map((m) => m.id));
       final msgs = chats.putIfAbsent(chat.chatId, () => []);
       msgs.addAll(chat.messages);
       msgs.sort((a, b) => a.time.compareTo(b.time));
@@ -8342,6 +9225,15 @@ class RootScreenState extends State<RootScreen>
     ));
 
     chats.remove(chatId);
+    // Remove the stored chat too (saving only writes, it never deletes), or
+    // it comes back on the next launch.
+    if (currentUsername != null) {
+      unawaited(AccountManager.deleteChatFile(currentUsername!, chatId));
+    }
+    // Tombstone its messages so WardLink deletes the chat on paired devices
+    // instead of pulling it back from them.
+    WardLinkTombstones.recordChatDeleted(chatId, messages.map((m) => m.id));
+    WardLinkSyncService.instance.pokeNow();
 
     chatsVersion.value++;
     setState(() {});
@@ -8349,59 +9241,26 @@ class RootScreenState extends State<RootScreen>
     schedulePersistChats(chatId: chatId);
   }
 
-  Future<void> _syncBlocklistFromServer() async {
-    try {
-      final me = await AccountManager.getCurrentAccount();
-      if (me == null) return;
-      final token = await AccountManager.getToken(me);
-      if (token == null) return;
-      final res = await http.get(
-        Uri.parse('$serverBase/blocks'),
-        headers: {'authorization': 'Bearer $token'},
-      );
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body) as Map<String, dynamic>;
-        final list = (data['blocked'] as List?)?.cast<String>() ?? [];
-        await BlocklistManager.syncFromServer(list);
-        debugPrint('[blocklist] synced from server: $list');
-      }
-    } catch (e) {
-      debugPrint('[blocklist] sync failed: $e');
-    }
-  }
-
+  /// Removes the contact (every device of theirs, as in the contacts list).
+  /// The onion transport then answers their hello with 'not_contact'; a call
+  /// with them ends now.
   Future<void> _blockUser(String username, String displayName) async {
-    await BlocklistManager.block(username);
-    try {
-      final me = await AccountManager.getCurrentAccount();
-      if (me == null) return;
-      final token = await AccountManager.getToken(me);
-      if (token == null) return;
-      final res = await http.post(
-        Uri.parse('$serverBase/block/$username'),
-        headers: {'authorization': 'Bearer $token'},
-      );
-      debugPrint('[block] server response: ${res.statusCode}');
-    } catch (e) {
-      debugPrint('[block] server call failed: $e');
+    final devices = OnionPairedPeers.allByUsername(username);
+    for (var i = 0; i < devices.length; i++) {
+      await OnionPairedPeers.remove(devices[i].identityPubB64);
+      markOnionDeviceUnpaired(username, devices[i].identityPubB64,
+          hasOtherDevices: i < devices.length - 1);
+    }
+    if (callManager.peerUsername == username) {
+      unawaited(callManager.hangup());
+    } else if (callManager.isIncomingCall.value &&
+        callManager.incomingPeer == username) {
+      callManager.rejectCall();
     }
   }
 
   Future<void> _unblockUser(String username) async {
     await BlocklistManager.unblock(username);
-    try {
-      final me = await AccountManager.getCurrentAccount();
-      if (me == null) return;
-      final token = await AccountManager.getToken(me);
-      if (token == null) return;
-      final res = await http.delete(
-        Uri.parse('$serverBase/block/$username'),
-        headers: {'authorization': 'Bearer $token'},
-      );
-      debugPrint('[unblock] server response: ${res.statusCode}');
-    } catch (e) {
-      debugPrint('[unblock] server call failed: $e');
-    }
   }
 
   Future<String?> _getLocalIp() async {
@@ -8559,34 +9418,22 @@ class RootScreenState extends State<RootScreen>
                     const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
             ),
-            const SizedBox(width: 6),
-            const ProxyShieldBadge(),
           ],
         ),
         centerTitle: true,
         leading: (showInd && currentUsername != null)
-            ? Container(
-                padding: const EdgeInsets.only(left: 17, top: 12),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      currentDisplayName ?? currentUsername!,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                      ),
+            ? Padding(
+                padding: const EdgeInsets.only(left: 17),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: _wrapAccountNameForCopy(Text(
+                    currentDisplayName ?? currentUsername!,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
                     ),
-                    Text(
-                      '@$currentUsername',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: Colors.grey,
-                      ),
-                    ),
-                  ],
+                  )),
                 ),
               )
             : null,
@@ -8768,7 +9615,7 @@ class RootScreenState extends State<RootScreen>
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            Text(
+                                            _wrapAccountNameForCopy(Text(
                                               currentDisplayName ??
                                                   currentUsername!,
                                               style: const TextStyle(
@@ -8777,14 +9624,7 @@ class RootScreenState extends State<RootScreen>
                                                 color: Colors.grey,
                                               ),
                                               overflow: TextOverflow.ellipsis,
-                                            ),
-                                            Text(
-                                              '@$currentUsername',
-                                              style: const TextStyle(
-                                                  fontSize: 10,
-                                                  color: Colors.grey),
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
+                                            )),
                                           ],
                                         ),
                                       );
@@ -8854,8 +9694,6 @@ class RootScreenState extends State<RootScreen>
                                               ),
                                             ),
                                           ),
-                                          const SizedBox(width: 6),
-                                          const ProxyShieldBadge(),
                                         ],
                                       )
                                     : Center(
@@ -8918,8 +9756,6 @@ class RootScreenState extends State<RootScreen>
                                                 ),
                                               ),
                                             ),
-                                            const SizedBox(width: 6),
-                                            const ProxyShieldBadge(),
                                           ],
                                         ),
                                       ),
@@ -9335,19 +10171,14 @@ class RootScreenState extends State<RootScreen>
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
+                        _wrapAccountNameForCopy(Text(
                           currentDisplayName ?? currentUsername!,
                           style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
                             color: Colors.grey,
                           ),
-                        ),
-                        Text(
-                          '@$currentUsername',
-                          style:
-                              const TextStyle(fontSize: 10, color: Colors.grey),
-                        ),
+                        )),
                       ],
                     );
                   },
